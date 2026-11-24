@@ -137,7 +137,7 @@ impl Lower<'_, '_> {
                 .field_type
                 .as_deref()
                 .and_then(|field_type| self.cx.target().field_type(field_type))
-                .map(|field_type| field_type.plan.ty.clone());
+                .map(|field_type| field_type.compiled.ty.clone());
             let given = self.params.and_then(|params| params.get(&param.name));
             let value = match given {
                 Some(given) => self.cx.expr(given, expected.as_ref()),

@@ -111,7 +111,7 @@ pub struct PageEnvironment { pub viewport: (u32, u32), pub locale: String, pub t
 pub struct Address;                                        // an absolute http or https address
 impl Address { pub fn new(text: &str) -> Result<Self, Failure>; pub fn as_str(&self) -> &str;
                 pub fn origin(&self) -> String; }         // as the browser writes it: `https://app.example.com`
-/// The origins a tab may be on: given when it is opened, from the plan's destinations. Empty: nowhere.
+/// The origins a tab may be on: given when it is opened, from the compiled target's destinations. Empty: nowhere.
 pub struct Origins;
 impl Origins { pub fn of<'a>(addresses: impl IntoIterator<Item = &'a Address>) -> Self;
                 pub fn and(self, more: &Origins) -> Self;

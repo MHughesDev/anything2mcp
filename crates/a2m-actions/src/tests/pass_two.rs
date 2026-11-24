@@ -25,13 +25,16 @@ fn run_of(response: &a2m_actions::Response) -> (String, RunId) {
 }
 
 impl World {
-    /// Publishes the plan once more, under a later version, changed by
-    /// `change`.
-    async fn republish(&self, change: impl FnOnce(&mut a2m_core::Plan)) {
-        let mut plan = engine::plan(&self.app.url(""));
-        plan.header.version = a2m_core::Version::new(2, 0, 0);
-        change(&mut plan);
-        self.kernel.publish_plan(&plan).await.unwrap();
+    /// Publishes the compiled target once more, under a later version,
+    /// changed by `change`.
+    async fn republish(&self, change: impl FnOnce(&mut a2m_core::CompiledTarget)) {
+        let mut compiled_target = engine::compiled_target(&self.app.url(""));
+        compiled_target.header.version = a2m_core::Version::new(2, 0, 0);
+        change(&mut compiled_target);
+        self.kernel
+            .publish_compiled_target(&compiled_target)
+            .await
+            .unwrap();
     }
 
     async fn record_rows(&self, run: RunId) -> Vec<a2m_ledger::RecordRow> {
@@ -462,7 +465,7 @@ async fn a_call_made_again_while_its_run_is_stopped_is_given_that_run_marked_as_
 async fn a_record_in_doubt_is_read_by_the_values_its_own_attempt_recorded() {
     let world = World::ready().await;
     world
-        .republish(|plan| engine::keyless_slot_add_scanned(plan, 5))
+        .republish(|compiled_target| engine::keyless_slot_add_scanned(compiled_target, 5))
         .await;
     let input = json!({"order_id": "A-102", "quantity": 4, "length_in": "12"});
     // The first attempt records the code `N-001` before its save, sends
@@ -582,8 +585,8 @@ async fn a_records_preview_carries_the_notices_its_surface_kind_registers() {
     let preview = world.surface.desk().preview(id, 0).await.unwrap();
     assert!(preview.records[0].notices.is_empty(), "{preview:?}");
     world
-        .republish(|plan| {
-            for surface in &mut plan.surfaces {
+        .republish(|compiled_target| {
+            for surface in &mut compiled_target.surfaces {
                 surface.payload =
                     a2m_core::PackPayload::encode(&json!({"profile": "open"})).unwrap();
             }

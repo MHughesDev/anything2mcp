@@ -9,7 +9,7 @@ The one doorway between the kernel and everything that knows a kind of system. I
 | Side | Kernel |
 | Layer | 5, Contract |
 | May depend on | Layers 1 to 4 |
-| Depends on | `a2m-core`, including `Plan` and `Step` as data; `a2m-files` for the compiler registration traits and its schema type; `a2m-auth` for `SessionLease` and `AuthProvider`; `a2m-sources` for `SourceReader`; `a2m-ledger` for `IntentToken` and `RecordRef`; `a2m-telemetry` for the handle a pack is given; `a2m-netstate` for the machine's own interfaces, read to derive a place ([decision 0313](../../decisions/0313-the-place-of-an-address-is-derived-from-its-scope-and-the-machines-subnets.md)). Outside ([decision 0088](../../decisions/0088-the-provider-contracts-outside-crates.md)): `serde`, `toml`, `sha2`, `getrandom`, Tokio; `command-fds` and `rustix` on Linux and macOS; `windows-sys` on Windows. No JSON Schema validator. `rustix` also with its file-system calls, and `windows-sys` also with its thread snapshot ([decision 0148](../../decisions/0148-the-provider-contract-and-the-scheduler-after-their-safety-audit.md)) |
+| Depends on | `a2m-core`, including `CompiledTarget` and `Step` as data; `a2m-files` for the compiler registration traits and its schema type; `a2m-auth` for `SessionLease` and `AuthProvider`; `a2m-sources` for `SourceReader`; `a2m-ledger` for `IntentToken` and `RecordRef`; `a2m-telemetry` for the handle a pack is given; `a2m-netstate` for the machine's own interfaces, read to derive a place ([decision 0313](../../decisions/0313-the-place-of-an-address-is-derived-from-its-scope-and-the-machines-subnets.md)). Outside ([decision 0088](../../decisions/0088-the-provider-contracts-outside-crates.md)): `serde`, `toml`, `sha2`, `getrandom`, Tokio; `command-fds` and `rustix` on Linux and macOS; `windows-sys` on Windows. No JSON Schema validator. `rustix` also with its file-system calls, and `windows-sys` also with its thread snapshot ([decision 0148](../../decisions/0148-the-provider-contract-and-the-scheduler-after-their-safety-audit.md)) |
 | Roadmap packages | Stage B, package B3 (manifest, registry); slice 1.1 (`Driver`); slice 1.3 (compiler registrations); Stage E, package E1 (`Discoverer`, `Describer`); package F3 and Phase 8 (plug-in host) |
 | Carries out | Spec sections [202](../../spec/2-kernel/202-kernel-and-packs.md), [203](../../spec/2-kernel/203-the-provider-contract.md), [204](../../spec/2-kernel/204-supervising-subsystems.md), [218](../../spec/2-kernel/218-discovery-and-findings.md) for the discoverer's side, [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) for effects; the [driver interface](../../reference/technical-reference.md#driver-interface) and the [plug-in protocol](../../reference/technical-reference.md#plug-in-protocol) |
 
@@ -125,7 +125,7 @@ effect = "read"
 
 [effects]                                # each shown as enforced, confined, or declared
 processes = []                           # programs it starts itself: [{ path = "...", digest = "sha256:..." }]; a pack names each by an absolute path
-plan_programs = false                    # true: it may also start programs a published plan names, with their digests
+compiled_target_programs = false                    # true: it may also start programs a published compiled target names, with their digests
 read_roots = ["project", "sources"]      # named roots the kernel resolves; never a free path
 write_roots = ["artifact_out"]
 network = "surfaces"                     # "none" | "surfaces": only the target's declared surfaces
@@ -300,8 +300,8 @@ impl Registry {
 
 The driver interface is settled here as follows, closing the two points the technical reference leaves to slice 1.1.
 
-1. **Confirm and read-back are lists of steps, carried out by `act`.** There is no `read_back` method. The compiler lowers a binding into its step lists, and the engine passes each step to `act`. The plan then says everything a driver will do, the trace has one record per step whatever the part of the loop, and the preview, the freshness check, and reconcile run the read-back list on its own exactly as file formats require. A separate method would let a pack hide reading logic the plan does not show, and would give two ways to read a record.
-2. **A step can report a record as absent.** `StepOutcome::Absent` is allowed only for a step the plan marks `lookup`. Anywhere else it is refused by the handle as `unknown_variant`, `unexpected_absent`.
+1. **Confirm and read-back are lists of steps, carried out by `act`.** There is no `read_back` method. The compiler lowers a binding into its step lists, and the engine passes each step to `act`. The compiled target then says everything a driver will do, the trace has one record per step whatever the part of the loop, and the preview, the freshness check, and reconcile run the read-back list on its own exactly as file formats require. A separate method would let a pack hide reading logic the compiled target does not show, and would give two ways to read a record.
+2. **A step can report a record as absent.** `StepOutcome::Absent` is allowed only for a step the compiled target marks `lookup`. Anywhere else it is refused by the handle as `unknown_variant`, `unexpected_absent`.
 3. **Declared capabilities leave the trait.** The sketch's `mode()` and `capabilities()` repeat the manifest; knowledge lives in one place, so the registry answers both.
 4. **Every failure says whether anything was sent,** as the supervisor's rule asks of every subsystem.
 5. **A step can return what reconcile will need before the commit point.** A key a store assigned inside an open transaction, or the digest a file will have once it is replaced, is learned before the step that commits. A step not marked `commits` may return it as `Observed::for_reconcile`; the engine records it durably before the committing step is sent. The handle refuses `for_reconcile` on the committing step itself, as `unknown_variant`, `reconcile_too_late`.
@@ -329,14 +329,14 @@ impl Prepared {
 pub struct PrepareContext<'a> {
     pub run: RunId, pub epoch: Epoch,                         // the run and its lease number
     pub surface: &'a SurfaceRef,
-    pub plan: &'a Plan,                                       // the published plan as data; a step's `refers_to` names an entry of a pack section
+    pub compiled_target: &'a CompiledTarget,                                       // the published compiled target as data; a step's `refers_to` names an entry of a pack section
     pub posture: Posture, pub deadline: Deadline, pub redact: &'a dyn Redact,
     pub destinations: &'a Destinations,                       // the target's declared surfaces, within the manifest's network effect
     pub paths: &'a CheckedPaths,                              // every file this run may touch, already checked; a driver resolves none;
                                                               // `paths.project()` / `project_folder()`: the project folder of the request that started the run
-    pub supervisor: &'a ScopedSupervisor,                     // starts only what the manifest and the published plan declare
+    pub supervisor: &'a ScopedSupervisor,                     // starts only what the manifest and the published compiled target declare
 }
-pub struct SurfaceRef { pub target: TargetName, pub environment: Environment, pub surface: SurfacePlan }   // at this environment's address
+pub struct SurfaceRef { pub target: TargetName, pub environment: Environment, pub surface: CompiledSurface }   // at this environment's address
 pub enum Posture { Live, Sandbox { test_records: bool }, Discovery }   // the driver applies its own kind's read-only guard outside Live
 pub struct Deadline(/* a Tokio instant */);                   // Deadline::after(duration), at(), remaining(), passed()
 pub struct Destinations { /* addresses, compared as written, each with its scope */ }  // Destinations::new(addresses), contains(address), iter(), scope_of(address) -> Option<&ScopedHost>, place_of(address, &MachineState) -> Option<Placed>
@@ -412,7 +412,7 @@ impl CheckedPath {
     pub fn remove_file(&self) -> Result<(), Failure>;                   // never through a link
     pub fn list(&self) -> Result<(Vec<Self>, usize), Failure>;          // entries in order of name, and how many were left out
 }
-pub struct CheckedPaths { /* by the name the plan gives each */ }       // none(), insert(name, path), get(name), iter()
+pub struct CheckedPaths { /* by the name the compiled target gives each */ }       // none(), insert(name, path), get(name), iter()
 
 /// The only way the engine reaches a driver. Not constructible outside this crate.
 #[derive(Clone)]
@@ -420,8 +420,8 @@ pub struct DriverHandle { /* the driver, the mode's declared steps and codes, th
 impl DriverHandle {
     pub fn mode(&self) -> &Mode;   pub fn archetype(&self) -> Archetype;
     pub fn choice(&self) -> &ProviderChoice;                   // provider, version, manifest digest, reason: recorded in the trace
-    /// The supervisor for the PrepareContext: the manifest's programs, and the plan's where the manifest says `plan_programs`.
-    pub fn supervisor(&self, plan_programs: Vec<ProgramRef>) -> ScopedSupervisor;
+    /// The supervisor for the PrepareContext: the manifest's programs, and the compiled target's where the manifest says `compiled_target_programs`.
+    pub fn supervisor(&self, compiled_target_programs: Vec<ProgramRef>) -> ScopedSupervisor;
     pub async fn prepare(&self, cx: &PrepareContext<'_>, lease: Option<&SessionLease>) -> Result<Prepared, StepFailure>;
     /// A step marked `commits` needs `Authority::Write` with the token `a2m-ledger` issued for its record, or it is refused unsent.
     pub async fn act(&self, prepared: &mut Prepared, step: &Step, input: &StepInput<'_>, authority: Authority<'_>)
@@ -473,7 +473,7 @@ impl DiscovererHandle {
 
 Contracts the signatures do not show:
 
-- **The handle is the enforcement point.** Before calling the pack it checks: the step's kind is one the mode declared (`unknown_variant`, `step_kind_unknown`); a `commits` step is asked for in a posture that may write, `Live` or `Sandbox` with test records (`policy`, `read_only_posture`), and carries a token whose run and lease number are those `prepare` was given and whose record is the one in the step's input (`policy`, `intent_missing`). A refused step is reported `Sent::NotSent`. A `Prepared` that did not come from the handle's own `prepare` commits nothing. Where a mode's manifest lists `commit_steps`, a step of such a kind that is not marked `commits` is refused too, `policy`, `intent_missing`: the mark a plan or a discoverer puts on a step is then not all that stands between a read and a write.
+- **The handle is the enforcement point.** Before calling the pack it checks: the step's kind is one the mode declared (`unknown_variant`, `step_kind_unknown`); a `commits` step is asked for in a posture that may write, `Live` or `Sandbox` with test records (`policy`, `read_only_posture`), and carries a token whose run and lease number are those `prepare` was given and whose record is the one in the step's input (`policy`, `intent_missing`). A refused step is reported `Sent::NotSent`. A `Prepared` that did not come from the handle's own `prepare` commits nothing. Where a mode's manifest lists `commit_steps`, a step of such a kind that is not marked `commits` is refused too, `policy`, `intent_missing`: the mark a compiled target or a discoverer puts on a step is then not all that stands between a read and a write.
 - **The handle fixes the class of a write that was sent and is not settled.** A failure on a `commits` step with `Sent::Unknown` becomes `possible_commit`, `no_confirmation`, whatever class the driver gave. A driver cannot make a doubtful write look retryable. So does a failure on a `commits` step with `Sent::Answered` whose class is `policy` or `input`, and it leaves the handle as `Sent::Unknown`: those two classes say that nothing was sent, the ledger releases a record's lock on them without reading the record, and on a write that did leave they are not the system's verdict. `stale` stays, because there the system answered that the record had changed and nothing was written; `rejected` and every other class stay. A failure with `Sent::NotSent` keeps its class.
 - **A failure's class is one of the twelve, and its code is declared.** A code passes when the manifest's `failure_codes` lists it with the same class, when it is the step's own `fails_as`, or when it is a code of this crate or of the session keeper. Anything else is refused as `unknown_variant`, `undeclared_code`, and so is a code of `codes::KERNEL_ONLY` whatever declares it. Every failure passes the redactor on its way out of the handle.
 - **Cancellation.** A driver must be safe to cancel on any step not marked `commits`. On a `commits` step the engine waits to the deadline and never drops the future.
@@ -560,8 +560,8 @@ pub struct LaunchSpec {
     pub place: Option<String>,                                 // one subsystem of a kind holds a place
 }
 pub struct ProgramRef { pub path: PathBuf, pub digest: Option<Digest> }
-// impl From<&DeclaredProgram> for ProgramRef, from the plan type of the core crate: the engine passes `surface.programs.iter().map(ProgramRef::from).collect()`
-// to `DriverHandle::supervisor`, where `surface` is the `SurfacePlan` of the run (decision 0124).
+// impl From<&DeclaredProgram> for ProgramRef, from the compiled target type of the core crate: the engine passes `surface.programs.iter().map(ProgramRef::from).collect()`
+// to `DriverHandle::supervisor`, where `surface` is the `CompiledSurface` of the run (decision 0124).
 #[derive(Default)]
 pub struct EnvAllowlist { pub pass: Vec<String>, pub set: Vec<(String, OsString)> }   // names passed through; pairs set. Never a secret
 pub struct OneShot { pub max_output_bytes: u64, pub time_limit: Duration, pub stdin: Option<Vec<u8>> }
@@ -583,8 +583,8 @@ pub struct ForeignLink {
     pub program_digest: Digest, pub verified: bool,
 }
 /// What a pack gets. Its allowlist is the manifest's `processes` and the paths of its requirements, plus,
-/// where `plan_programs` is true, the programs the engine names from the published plan. Anything else is `effect_not_declared`.
-/// Each carries the digests declared for it: a process's `digest`, a requirement's `known_digests`, a plan program's digest.
+/// where `compiled_target_programs` is true, the programs the engine names from the published compiled target. Anything else is `effect_not_declared`.
+/// Each carries the digests declared for it: a process's `digest`, a requirement's `known_digests`, a compiled target program's digest.
 #[derive(Clone)]
 pub struct ScopedSupervisor { /* the supervisor, the provider, the declared programs */ }
 impl ScopedSupervisor {
@@ -619,7 +619,7 @@ What the built part holds:
 
 | Rule | How it is held |
 | --- | --- |
-| Identify at every start | The program is named by an absolute path. At every start, immediately before it, the supervisor resolves the path once, opens the file once without following a link at its name, takes only a regular file, and digests it through that handle. Every digest declared for the program must be the one found: the caller's, a manifest process's, a requirement's `known_digests`, a published plan's. One that differs is refused, `policy`, `effect_not_declared`, and nothing starts. With no declared digest it starts and is marked unverified. No digest is remembered between starts |
+| Identify at every start | The program is named by an absolute path. At every start, immediately before it, the supervisor resolves the path once, opens the file once without following a link at its name, takes only a regular file, and digests it through that handle. Every digest declared for the program must be the one found: the caller's, a manifest process's, a requirement's `known_digests`, a published compiled target's. One that differs is refused, `policy`, `effect_not_declared`, and nothing starts. With no declared digest it starts and is marked unverified. No digest is remembered between starts |
 | Start what was digested | On Linux the program is started from the handle it was digested through, by the name the system gives an open file, so nothing done to its path meanwhile changes what runs; the program still sees the path it was asked for by as its own name. That cannot be done for a file that starts with `#!`, which the system hands to an interpreter by name, nor without the process file system, and macOS cannot start an open file at all. There the program is started by its path after a last look, under the start lock, that the path leads to the file that was digested, with the same device, file number, size, and time of last change; a replacement between that look and the start is not seen, and is `effect_not_declared` when it is. On Windows the file is held open, shared for reading only, from before the digest until the process exists: nobody can write, rename, or delete it meanwhile, and a file someone holds open for writing is not started. A folder on the way is not held there; the path is resolved once more under the start lock and must lead to the same file |
 | Off the async threads | Resolving, reading, and starting are one piece of blocking work. If the caller's future is dropped meanwhile, what was started is dropped with its result, which ends its group |
 | Nothing inherited | The child's environment is cleared; only the names listed are passed through and only the pairs listed are set, plus the owner mark, 128 random bits in `ANYTHING2MCP_OWNER_MARK`. A variable whose name starts with `A2M_`, in any letter case, is the engine's own: it is never copied from the engine's environment into a child, and a launch that names one is refused before the start, `policy`, `engine_variable_refused` ([decision 0158](../../decisions/0158-the-product-crate-and-the-local-engine-after-their-safety-audit.md), finding P6). `is_engine_variable` is the one test of the name. A variable that makes a program load code other than its own, or run a program it names (`redirects_loading`: the `LD_` and `DYLD_` variables, the shells' start-up files and imported functions, the start-up and module-path variables of the language runtimes, the .NET Framework's and .NET's settings, OpenSSL's configuration, `COMSPEC` and `SHELL`, and helper commands), is refused the same way, `policy`, `variable_refused`, and never copied or set ([decisions 0250](../../decisions/0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md) and [0271](../../decisions/0271-the-check-of-programs-the-product-starts-after-a-second-reader.md)). A `PATH` the launch passes or sets is held, folder by folder, to `check_program` as a `Folder`, or for a folder that is not there its nearest folder that is; a folder another user could change, or a name that is not absolute, is `policy`, `variable_refused` (decision 0271) |
@@ -658,7 +658,7 @@ Two cases section 204 does not cover:
 
 ## The plug-in host and protocol
 
-The host reads a plug-in's manifest at build time and registers proxies: `PluginDriver`, `PluginDiscoverer`, `PluginDescriber`, `PluginAuthProvider`, `PluginSourceReader`, and compiler registrations whose lowerings and lint rules are calls. The process is started under the supervisor on first use, never at registration. Schemas cross the boundary as the files the manifest names; lowerings and lint rules cross as calls made at compile time, and the plan records the plug-in's digest, so a changed plug-in is a changed plan.
+The host reads a plug-in's manifest at build time and registers proxies: `PluginDriver`, `PluginDiscoverer`, `PluginDescriber`, `PluginAuthProvider`, `PluginSourceReader`, and compiler registrations whose lowerings and lint rules are calls. The process is started under the supervisor on first use, never at registration. Schemas cross the boundary as the files the manifest names; lowerings and lint rules cross as calls made at compile time, and the compiled target records the plug-in's digest, so a changed plug-in is a changed compiled target.
 
 Protocol version 1. JSON-RPC 2.0 objects inside the shared framing. An error carries `data: {class, code, message, next_step, sent}`.
 
@@ -740,7 +740,7 @@ The codes are declared in this crate's `failure_codes!` table, the module `codes
 | A write never goes through a link, at its temporary file's name or at its own | `tests/paths.rs`: a link planted at the old predictable name `<name>.a2m-new` leads outside the root, and the file outside is asked what it holds; a link at the final name, there before the check or put there after. A unit test of `path.rs` chooses the temporary name itself and plants a file, a link to a file outside, and a link to nothing at it. All of them run on Linux and macOS, and on Windows where the test may make a link, which the CI runners may; where it may not, the test ends early and proves nothing there |
 | A file swapped for a link after the check is not opened, and a folder on the way swapped for a link is not passed | `tests/paths.rs`, on Linux and macOS only |
 | A folder made new is made only where nothing was | `tests/paths.rs` |
-| A pack can start only what its manifest and the published plan declare | `tests/supervisor.rs`: a pack whose manifest names the stand's program starts it, and is refused another |
+| A pack can start only what its manifest and the published compiled target declare | `tests/supervisor.rs`: a pack whose manifest names the stand's program starts it, and is refused another |
 | A program's declared digests are checked at every start, on the file that is started | `tests/supervisor.rs`: a required program with a known digest is replaced after the registry was built, by a new file and in place with the same length, and is not started, which the stand is asked; a declared link repointed between two starts; a script. On Linux a test shows that the process was started from the handle and not by the path |
 | On Windows a child runs nothing before it is in its job | Unit tests of `supervisor/windows.rs`, which only a Windows machine runs: a child created suspended does not exit until it is resumed; a child that starts a second process at once has both in its job, and ending the job leaves neither; a held program cannot be written, renamed, or deleted. They have been compiled and linted for Windows and have not been run |
 | A one-shot run captures its output, is ended at its time limit with everything it started, keeps output to its bound, and leaves no process | `tests/supervisor.rs`, against the command-line test stand, which is asked which of its children are alive |
@@ -779,7 +779,7 @@ The codes are declared in this crate's `failure_codes!` table, the module `codes
 - Which operating-system mechanism backs `confined` on each platform. Until it is researched, a plug-in's effects are listed as `declared`.
 - The widget driver extension point has no trait yet. First-party widget drivers stay inside the web pack's driver; the trait is written when a plug-in first needs to supply one.
 - A process that leaves its group on Linux or macOS is not found, even when it holds the program's output, and nothing ends the children of an engine that crashed there; both wait for the ownership records. The macOS answer for a group with only its exited leader left is taken from the system's documented behavior and has not been run from here. Whether job-object membership is enough on Windows in every case.
-- Where the published plan names the programs a command surface starts, so that the engine can pass them to `DriverHandle::supervisor` without reading a pack's payload.
+- Where the published compiled target names the programs a command surface starts, so that the engine can pass them to `DriverHandle::supervisor` without reading a pack's payload.
 - A requirement's version is not checked, because the availability check starts nothing.
 - Whether `Posture::Discovery` and `Posture::Sandbox` should be one posture with a flag; they differ today only in whether test records exist.
 - The Windows code of the supervisor has been compiled and linted, and has not been run. The next Windows run must show the three unit tests of `supervisor/windows.rs` named under the invariants passing, and `tests/supervisor.rs` unchanged: a time limit ends a program and the child it started, and no process is left. If a child is never resumed, every start there fails with `busy`, `start_failed`, or runs into its time limit.

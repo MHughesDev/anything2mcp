@@ -17,7 +17,7 @@ use crate::forms::AnswerSpec;
 use crate::json::{Json, is_plain_number};
 use crate::shape::{Kind, Shape};
 
-/// The version of the shape of this pack's payloads in a plan.
+/// The version of the shape of this pack's payloads in a compiled target.
 pub(crate) const PAYLOAD_FORMAT: u16 = 1;
 
 /// The methods an endpoint may use.
@@ -238,7 +238,7 @@ pub(crate) struct AntiForgery {
 }
 
 /// One endpoint, compiled. This is the pack's entry in its section of the
-/// plan, keyed by the endpoint's name.
+/// compiled target, keyed by the endpoint's name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct EndpointTemplate {
@@ -328,8 +328,8 @@ pub(crate) fn path_text_of(path: &[Segment], trailing_slash: bool) -> String {
     text
 }
 
-/// The section of the plan this pack owns: every endpoint of one surface
-/// kind, by name.
+/// The section of the compiled target this pack owns: every endpoint of one
+/// surface kind, by name.
 pub(crate) type EndpointSection = BTreeMap<String, EndpointTemplate>;
 
 /// How one body field is written.
@@ -539,7 +539,9 @@ fn path_of(segments: &[Segment], trailing_slash: bool, args: &Values) -> Result<
     let unusable = |why: String| {
         codes::failure(
             &codes::row::STEP_NOT_USABLE,
-            format!("The HTTP driver cannot carry out this step as the plan wrote it: {why}."),
+            format!(
+                "The HTTP driver cannot carry out this step as the compiled target wrote it: {why}."
+            ),
             "Compile the target again with the version of the HTTP pack that is enabled.",
         )
     };
@@ -591,7 +593,7 @@ pub(crate) fn build_token_page(
     let Some(forgery) = &template.anti_forgery else {
         return Err(codes::failure(
             &codes::row::STEP_NOT_USABLE,
-            "The HTTP driver cannot carry out this step as the plan wrote it: the endpoint declares no anti-forgery bootstrap.",
+            "The HTTP driver cannot carry out this step as the compiled target wrote it: the endpoint declares no anti-forgery bootstrap.",
             "Compile the target again with the version of the HTTP pack that is enabled.",
         ));
     };
@@ -622,7 +624,9 @@ pub(crate) fn build(
     let unusable = |why: String| {
         codes::failure(
             &codes::row::STEP_NOT_USABLE,
-            format!("The HTTP driver cannot carry out this step as the plan wrote it: {why}."),
+            format!(
+                "The HTTP driver cannot carry out this step as the compiled target wrote it: {why}."
+            ),
             "Compile the target again with the version of the HTTP pack that is enabled.",
         )
     };
@@ -736,8 +740,8 @@ pub(crate) fn build(
         headers.push((header.clone(), token.to_owned()));
     }
 
-    // The compiler refuses a header the connection sets; a plan that holds
-    // one all the same is refused here, where it would be sent.
+    // The compiler refuses a header the connection sets; a compiled target
+    // that holds one all the same is refused here, where it would be sent.
     if let Some((name, _)) = headers.iter().find(|(name, _)| is_connection_header(name)) {
         return Err(unusable(format!(
             "the header `{}` is set by the connection, and no endpoint may write it",
@@ -915,8 +919,8 @@ mod tests {
 
     #[test]
     fn a_header_the_connection_sets_is_refused_where_it_would_be_sent() {
-        // The compiler refuses these; a plan that holds one all the same
-        // never reaches the connection with it.
+        // The compiler refuses these; a compiled target that holds one all
+        // the same never reaches the connection with it.
         let args = Values::new();
         let step = RequestStep::default();
         for name in ["host", "content-length", "transfer-encoding", "connection"] {

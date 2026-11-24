@@ -96,20 +96,21 @@ fn drafts() -> Value {
     Value::List(DRAFTS.iter().map(|id| Value::from(*id)).collect())
 }
 
-/// The same scene, its plan carrying a release version: the plan of a
-/// published version, as the driver sees one. A draft is always compiled
-/// as the draft version, `0.0.0` (decision 0161).
+/// The same scene, its compiled target carrying a release version: the
+/// compiled target of a published version, as the driver sees one. A draft is
+/// always compiled as the draft version, `0.0.0` (decision 0161).
 fn published(mut scene: Scene) -> Scene {
-    scene.plan.header.version = a2m_core::Version::new(1, 0, 0);
+    scene.compiled_target.header.version = a2m_core::Version::new(1, 0, 0);
     scene
 }
 
-/// A search behind `POST`, which the developer asserts only reads: sent in
-/// a live run anywhere, and outside one only when the plan is a published
-/// version's and the run's environment is of kind `test` in it. Under the
-/// drafts, whose environment kind and assertion are the drafts' own word,
-/// it is not sent outside a live run anywhere (decision 0270). A discovery
-/// sends it nowhere. A request the guard refuses never reaches the system.
+/// A search behind `POST`, which the developer asserts only reads: sent in a
+/// live run anywhere, and outside one only when the compiled target is a
+/// published version's and the run's environment is of kind `test` in it.
+/// Under the drafts, whose environment kind and assertion are the drafts' own
+/// word, it is not sent outside a live run anywhere (decision 0270). A
+/// discovery sends it nowhere. A request the guard refuses never reaches the
+/// system.
 #[tokio::test]
 async fn a_request_that_may_write_is_sent_only_where_the_posture_lets_it() {
     let app = TestApp::start().await.unwrap();
@@ -198,11 +199,11 @@ async fn a_request_that_may_write_is_sent_only_where_the_posture_lets_it() {
     }
 }
 
-/// The scene with one entry of the endpoint `status_text_get` changed in
-/// the compiled plan, as a plan the compiler of today refuses would hold
-/// it: `part` is `headers` or `query`.
+/// The scene with one entry of the endpoint `status_text_get` changed in the
+/// compiled target, as a compiled target the compiler of today refuses would
+/// hold it: `part` is `headers` or `query`.
 fn overridden(mut scene: Scene, part: &str, name: &str, value: &str) -> Scene {
-    for section in &mut scene.plan.packs {
+    for section in &mut scene.compiled_target.packs {
         if section.pack != a2m_pack_http::PACK {
             continue;
         }
@@ -391,7 +392,7 @@ async fn a_value_is_bounded_data_and_a_control_character_in_any_form_stops() {
         .iter()
         .flat_map(|name| {
             let operation = scene
-                .plan
+                .compiled_target
                 .operations
                 .iter()
                 .find(|operation| operation.name.as_str() == *name)
@@ -402,7 +403,7 @@ async fn a_value_is_bounded_data_and_a_control_character_in_any_form_stops() {
                 .filter(|output| output.name == "customer")
                 .map(|output| {
                     let field_type = output.field_type.unwrap();
-                    scene.plan.field_types[field_type.get()].untrusted
+                    scene.compiled_target.field_types[field_type.get()].untrusted
                 })
         })
         .collect();

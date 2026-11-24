@@ -3,11 +3,11 @@
 //! write that rests until a person approves it at the desk, the decision
 //! recorded for every dispatch, and the redactor on the way out.
 //!
-//! The test pack, its driver over the test application's JSON interface,
-//! and the hand-built plan of the imaginary `example` target are the
+//! The test pack, its driver over the test application's JSON interface, and
+//! the hand-built compiled target of the imaginary `example` target are the
 //! engine's own test helpers, used here as they are. The tests are part of
-//! the library's own test build, because they publish that plan through
-//! `Kernel::publish_plan`, which exists only for tests.
+//! the library's own test build, because they publish that compiled target
+//! through `Kernel::publish_compiled_target`, which exists only for tests.
 
 #[path = "../../../a2m-engine/tests/common/mod.rs"]
 pub(super) mod engine;
@@ -197,8 +197,9 @@ pub(super) struct Options {
     /// The test application's pack also registers its surface kind with
     /// the compiler, with a notice for `profile: open`.
     pub(super) notices: bool,
-    /// The auth provider `example_login`, which the hand-built plan names,
-    /// is registered: a provider that needs the person (`super::probe`).
+    /// The auth provider `example_login`, which the hand-built compiled
+    /// target names, is registered: a provider that needs the person
+    /// (`super::probe`).
     pub(super) login: bool,
     /// One more pack a test brings, registered beside the others.
     pub(super) extra_pack: Option<Arc<dyn a2m_provider::Pack>>,
@@ -376,7 +377,7 @@ impl World {
         world.kernel.start_runner_loop(4).await.unwrap();
         world
             .kernel
-            .publish_plan(&engine::plan(&world.app.url("")))
+            .publish_compiled_target(&engine::compiled_target(&world.app.url("")))
             .await
             .unwrap();
         world
@@ -409,7 +410,7 @@ impl World {
         world.kernel.start_runner_loop(4).await.unwrap();
         world
             .kernel
-            .publish_plan(&engine::plan(&world.app.url("")))
+            .publish_compiled_target(&engine::compiled_target(&world.app.url("")))
             .await
             .unwrap();
         world
@@ -1027,8 +1028,13 @@ async fn the_first_actions_of_building_answer_through_the_dispatcher() {
     let targets = world.ok("target.list", json!({})).await;
     assert_eq!(targets["targets"][0]["target"], "example");
     assert_eq!(targets["targets"][0]["versions"][0]["current"], true);
-    let plan = world.ok("plan.show", json!({"target": "example"})).await;
-    assert!(plan["text"].as_str().unwrap().contains(ORDER_GET));
+    let compiled_target = world.ok("target.show", json!({"target": "example"})).await;
+    assert!(
+        compiled_target["text"]
+            .as_str()
+            .unwrap()
+            .contains(ORDER_GET)
+    );
 
     let sessions = world.ok("session.status", json!({})).await;
     assert_eq!(sessions["sessions"], json!([]));

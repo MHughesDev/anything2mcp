@@ -17,17 +17,17 @@
 //! [`verbs`], [`step_kinds`], [`lint_code`], and [`finding_kind`] are the
 //! names its manifest declares.
 //!
-//! What a driver for the pack meets in a plan: a `fetch` step reads and may
-//! report a record absent; a `send` step writes, and always commits. The
-//! pack states both once, for the kind of step, and the compiler holds
-//! every lowered step to it: a `send` can never be lowered under an
+//! What a driver for the pack meets in a compiled target: a `fetch` step
+//! reads and may report a record absent; a `send` step writes, and always
+//! commits. The pack states both once, for the kind of step, and the compiler
+//! holds every lowered step to it: a `send` can never be lowered under an
 //! operation that declares `read`, whatever its call's file says, and a
 //! `fetch` of a call whose effect is `write` does not compile. The verb
-//! `upsert` is a write by what it does. Each step refers to its call by name in the pack
-//! section of the kind `call`, whose payload is a JSON map from the call's
-//! name to its `path`, its `effect`, its `surface`, and, where the call has
-//! one, `accept`, the index of an expression. A step's arguments are the
-//! placeholders of the call's path, then the binding's other `args`.
+//! `upsert` is a write by what it does. Each step refers to its call by name
+//! in the pack section of the kind `call`, whose payload is a JSON map from
+//! the call's name to its `path`, its `effect`, its `surface`, and, where the
+//! call has one, `accept`, the index of an expression. A step's arguments are
+//! the placeholders of the call's path, then the binding's other `args`.
 //!
 //! A call whose path has no placeholder is one fixed place, and a binding's
 //! call is the place it names, so an operation over such a call may declare

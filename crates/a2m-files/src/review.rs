@@ -11,8 +11,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use a2m_core::{
-    AddressScope, AuthProviderName, CredentialRef, DeclaredProgram, Digest, EffectClass,
-    Environment, Hazard, Mode, OperationName, Plan, ProbePlan, ScopedHost, SignInMode,
+    AddressScope, AuthProviderName, CompiledProbe, CompiledTarget, CredentialRef, DeclaredProgram,
+    Digest, EffectClass, Environment, Hazard, Mode, OperationName, ScopedHost, SignInMode,
     SurfaceIndex, SurfaceName,
 };
 use serde::Serialize;
@@ -264,7 +264,7 @@ pub enum Reach {
 /// One entry of `auth.yaml`, for the person who publishes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SignInReview {
-    /// The entry's place in the plan's `auth`, which
+    /// The entry's place in the compiled target's `auth`, which
     /// [`ReviewSummary::state_sent_to`] names.
     pub entry: usize,
     /// The surfaces it signs in to.
@@ -627,29 +627,36 @@ fn groups(addresses: &BTreeSet<String>) -> Vec<ReachGroup> {
 }
 
 /// What the compiler learned of one operation while lowering it, beyond
-/// its plan: the fixed place, and what each binding's pack stated.
+/// its compiled target: the fixed place, and what each binding's pack stated.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct OpReview {
     pub place: Option<PlaceReview>,
     pub bindings: Vec<(Mode, SurfaceIndex, Statement)>,
 }
 
-/// The summary of a compiled plan.
-pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>) -> ReviewSummary {
+/// The summary of a compiled target.
+pub(crate) fn review_of(
+    compiled_target: &CompiledTarget,
+    reviews: &BTreeMap<OperationName, OpReview>,
+) -> ReviewSummary {
     let surface_names = |indices: &[SurfaceIndex]| -> Vec<SurfaceName> {
         indices
             .iter()
-            .filter_map(|index| plan.surface(*index).map(|surface| surface.name.clone()))
+            .filter_map(|index| {
+                compiled_target
+                    .surface(*index)
+                    .map(|surface| surface.name.clone())
+            })
             .collect()
     };
     // A surface's address in every environment.
     let surface_addresses = |index: SurfaceIndex| -> Vec<String> {
-        let mut addresses: Vec<String> = plan
+        let mut addresses: Vec<String> = compiled_target
             .surface(index)
             .map(|surface| surface.address.clone())
             .into_iter()
             .collect();
-        for environment in &plan.environments {
+        for environment in &compiled_target.environments {
             for address in &environment.addresses {
                 if address.surface == index {
                     addresses.push(address.address.clone());
@@ -660,7 +667,7 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
     };
     // The bindings and the reach of a list of operations, with their
     // permissions' destinations.
-    let reviewed = |operations: &[&a2m_core::OperationPlan]| -> (Vec<BindingReview>, Reach) {
+    let reviewed = |operations: &[&a2m_core::CompiledOperation]| -> (Vec<BindingReview>, Reach) {
         let mut bindings = Vec::new();
         let mut addresses: BTreeSet<String> = BTreeSet::new();
         let mut partly = false;
@@ -671,7 +678,7 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
                 continue;
             };
             for (mode, surface, statement) in &review.bindings {
-                let Some(plan_surface) = plan.surface(*surface) else {
+                let Some(compiled_surface) = compiled_target.surface(*surface) else {
                     continue;
                 };
                 let states = match statement {
@@ -709,8 +716,8 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
                 bindings.push(BindingReview {
                     operation: operation.name.clone(),
                     mode: mode.clone(),
-                    surface: plan_surface.name.clone(),
-                    surface_programs: plan_surface.programs.clone(),
+                    surface: compiled_surface.name.clone(),
+                    surface_programs: compiled_surface.programs.clone(),
                     states,
                 });
             }
@@ -729,7 +736,7 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
         };
         (bindings, reach)
     };
-    let mut items: Vec<ReviewItem> = plan
+    let mut items: Vec<ReviewItem> = compiled_target
         .operations
         .iter()
         .map(|operation| {
@@ -751,14 +758,14 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
             }
         })
         .collect();
-    for pipeline in &plan.pipelines {
+    for pipeline in &compiled_target.pipelines {
         let mut surfaces = BTreeSet::new();
         let mut destinations = BTreeSet::new();
         let mut uploads = BTreeSet::new();
         let mut downloads = BTreeSet::new();
-        let mut called: Vec<&a2m_core::OperationPlan> = Vec::new();
+        let mut called: Vec<&a2m_core::CompiledOperation> = Vec::new();
         for step in &pipeline.steps {
-            if let Some(operation) = plan.operation(step.operation) {
+            if let Some(operation) = compiled_target.operation(step.operation) {
                 surfaces.extend(operation.manifest.surfaces.iter().copied());
                 destinations.extend(operation.manifest.destinations.iter().cloned());
                 uploads.extend(operation.manifest.uploads.iter().cloned());
@@ -789,7 +796,7 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
             .cmp(&(a.hazard, a.effect, exposure(a)))
             .then_with(|| a.tool.cmp(&b.tool))
     });
-    let mut sign_ins: Vec<SignInReview> = plan
+    let mut sign_ins: Vec<SignInReview> = compiled_target
         .auth
         .iter()
         .enumerate()
@@ -807,21 +814,21 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
                 })
                 .collect(),
             probe: match &auth.probe {
-                ProbePlan::Operation { operation, .. } => ProbeReview::Declared {
-                    name: plan
+                CompiledProbe::Operation { operation, .. } => ProbeReview::Declared {
+                    name: compiled_target
                         .operation(*operation)
                         .map(|found| found.name.to_string())
                         .unwrap_or_default(),
                 },
-                ProbePlan::Entry(reference) => ProbeReview::Declared {
+                CompiledProbe::Entry(reference) => ProbeReview::Declared {
                     name: reference.entry.clone(),
                 },
-                ProbePlan::Pending { name } => ProbeReview::Pending {
+                CompiledProbe::Pending { name } => ProbeReview::Pending {
                     name: name.clone(),
                     says: PROBE_PENDING,
                 },
             },
-            sent_to: plan
+            sent_to: compiled_target
                 .environments
                 .iter()
                 .map(|environment| SentToReview {

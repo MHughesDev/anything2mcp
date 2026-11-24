@@ -69,7 +69,7 @@ mod on_linux {
     /// the write intended: the engine's question on resume.
     fn landed(scene: &Scene, back: &Values, values: &Values) -> bool {
         ["customer", "status"].iter().all(|output| {
-            let rule = normalizer(&scene.plan, UPDATE, output);
+            let rule = normalizer(&scene.compiled_target, UPDATE, output);
             rule.normalize(back.get(output).unwrap())
                 .unwrap()
                 .agrees_with(&rule.normalize(values.get(output).unwrap()).unwrap())

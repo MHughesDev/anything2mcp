@@ -109,7 +109,7 @@ fn signature(scene: &Scene, run: u8, ran: &Ran) -> Digest {
             run: RunId::from_bytes([run; 16]),
             attempt: 1,
             operation: operation.clone(),
-            plan: Digest::of(b"plan"),
+            compiled_target: Digest::of(b"plan"),
             engine: common::VERSION,
             registry: scene.registry.digest(),
         },

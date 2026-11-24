@@ -1006,7 +1006,7 @@ pub(crate) struct ExpirySigns {
 /// is not a form: the address a redirect answering a read from inside the
 /// page points to is not visible to the page, so it could only be guessed.
 pub(crate) fn expiry_signs(
-    plan: &a2m_core::Plan,
+    compiled_target: &a2m_core::CompiledTarget,
     surface: &str,
     screens: &BTreeMap<usize, ScreenSection>,
 ) -> Result<ExpirySigns, String> {
@@ -1018,7 +1018,7 @@ pub(crate) fn expiry_signs(
         #[serde(default)]
         status: Option<u16>,
     }
-    let Some(index) = plan
+    let Some(index) = compiled_target
         .surfaces
         .iter()
         .position(|known| known.name.as_str() == surface)
@@ -1030,7 +1030,7 @@ pub(crate) fn expiry_signs(
         "a sign of expiry of a web surface is written `{screen: <name>}` or `{status: <code>}`, and one is not"
             .to_owned()
     };
-    for auth in &plan.auth {
+    for auth in &compiled_target.auth {
         if !auth.surfaces.iter().any(|covered| covered.get() == index) {
             continue;
         }

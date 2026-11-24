@@ -49,7 +49,8 @@ struct Found {
     /// only evidence that names it is taken (audit finding AC-6).
     pin: a2m_engine::BindingPin,
     /// The binding's place in the operation's file, from 0: what a person
-    /// reads and writes, where the pin's place is the plan's (package 4.6).
+    /// reads and writes, where the pin's place is the compiled target's
+    /// (package 4.6).
     file_position: usize,
     /// The verified binding a binding in shadow beside it is compared
     /// against: the one that acts (decision 0251).
@@ -95,7 +96,7 @@ fn with_status_verified(text: &str, binding: &Located<Doc>) -> Option<String> {
 /// Finds the binding of `mode` of the drafted operation `tool`, checks that
 /// it is one `binding.promote` may make verified, and makes the edited text,
 /// checked by compiling the drafts with it: the operation must compile to
-/// the same plan but for that one status.
+/// the same compiled target but for that one status.
 #[allow(
     clippy::too_many_lines,
     reason = "one search through the drafts, with a refusal at each step"
@@ -121,7 +122,7 @@ fn locate(
     let sources = a2m_files::load(&root, set).map_err(Failure::from)?;
     let compiled = a2m_files::compile(&sources, set, CompileMode::Draft, DRAFT_VERSION)
         .map_err(Failure::from)?;
-    let plan = &compiled.plan;
+    let compiled_target = &compiled.compiled_target;
     let no_tool = || {
         codes::input(
             codes::NOT_FOUND,
@@ -129,25 +130,27 @@ fn locate(
             "Call `draft.lint` to list the drafted tools.",
         )
     };
-    let Some(ToolRuns::Operation(index)) = plan.tool(tool).map(|found| found.runs) else {
+    let Some(ToolRuns::Operation(index)) = compiled_target.tool(tool).map(|found| found.runs)
+    else {
         return Err(no_tool());
     };
-    let operation = plan.operation(index).ok_or_else(no_tool)?;
-    // A person counts bindings as the file lists them; the plan holds them
-    // in the order the compiler gave them (package 4.6).
-    let plan_modes: Vec<&str> = operation
+    let operation = compiled_target.operation(index).ok_or_else(no_tool)?;
+    // A person counts bindings as the file lists them; the compiled target
+    // holds them in the order the compiler gave them (package 4.6).
+    let compiled_modes: Vec<&str> = operation
         .bindings
         .iter()
         .map(|binding| binding.mode.as_str())
         .collect();
     let file_modes = crate::places::file_modes(&sources, tool.as_str()).ok_or_else(no_tool)?;
-    let wanted = position.map(|given| crate::places::plan_place(&plan_modes, &file_modes, given));
+    let wanted =
+        position.map(|given| crate::places::compiled_place(&compiled_modes, &file_modes, given));
     let of_mode: Vec<usize> = operation
         .bindings
         .iter()
         .enumerate()
         .filter(|(at, binding)| {
-            binding.mode == *mode && wanted.is_none_or(|plan| plan == Some(*at))
+            binding.mode == *mode && wanted.is_none_or(|place| place == Some(*at))
         })
         .map(|(position, _)| position)
         .collect();
@@ -169,9 +172,10 @@ fn locate(
             ));
         }
     };
-    let pin = a2m_engine::BindingPin::of(plan, operation, position).ok_or_else(no_tool)?;
-    let against = a2m_engine::verified_binding(plan, operation);
-    let environments = a2m_engine::shadow_evidence_environments(plan);
+    let pin =
+        a2m_engine::BindingPin::of(compiled_target, operation, position).ok_or_else(no_tool)?;
+    let against = a2m_engine::verified_binding(compiled_target, operation);
+    let environments = a2m_engine::shadow_evidence_environments(compiled_target);
     let status = operation.bindings[position].status;
     match status {
         BindingStatus::Draft | BindingStatus::Verified | BindingStatus::Shadow => {}
@@ -208,7 +212,7 @@ fn locate(
     let path = file.path.clone();
     let in_file = doc.get("bindings").map(Located::items).unwrap_or_default();
     let file_position =
-        crate::places::file_place(&plan_modes, &file_modes, position).ok_or_else(no_tool)?;
+        crate::places::file_place(&compiled_modes, &file_modes, position).ok_or_else(no_tool)?;
     let at_place: Vec<&Located<Doc>> = in_file
         .get(file_position)
         .filter(|binding| binding.text("mode") == Some(mode.as_str()))
@@ -256,10 +260,10 @@ fn locate(
     let recompiled = a2m_files::compile(&edited_sources, set, CompileMode::Draft, DRAFT_VERSION)
         .map_err(|_| cannot())?;
     let same = recompiled
-        .plan
+        .compiled_target
         .tool(tool)
         .and_then(|found| match found.runs {
-            ToolRuns::Operation(index) => recompiled.plan.operation(index),
+            ToolRuns::Operation(index) => recompiled.compiled_target.operation(index),
             ToolRuns::Pipeline(_) => None,
         })
         .is_some_and(|after| {
@@ -813,16 +817,19 @@ fn drafted_evidence(
         a2m_files::load(&TargetRoot::new(folder.as_path()), set).map_err(Failure::from)?;
     let compiled = a2m_files::compile(&sources, set, CompileMode::Draft, DRAFT_VERSION)
         .map_err(Failure::from)?;
-    let plan = &compiled.plan;
-    let against = plan
+    let compiled_target = &compiled.compiled_target;
+    let against = compiled_target
         .operations
         .iter()
         .filter_map(|operation| {
-            a2m_engine::verified_binding(plan, operation)
+            a2m_engine::verified_binding(compiled_target, operation)
                 .map(|pin| (operation.name.clone(), pin.digest))
         })
         .collect();
-    Ok((against, a2m_engine::shadow_evidence_environments(plan)))
+    Ok((
+        against,
+        a2m_engine::shadow_evidence_environments(compiled_target),
+    ))
 }
 
 /// One binding's standing in shadow, with whether it may be promoted now:

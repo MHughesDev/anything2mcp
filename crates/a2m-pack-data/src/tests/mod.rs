@@ -25,9 +25,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, FailureClass, FailureCode,
-    NoSecrets, OperationName, Plan, PrincipalId, RecordKey, Redact, RunId, RunState, Step,
-    TargetName, Timestamp, Value, Values, WorkspaceId,
+    CompiledBinding, CompiledTarget, Digest, EffectClass, Environment, Epoch, Failure,
+    FailureClass, FailureCode, NoSecrets, OperationName, PrincipalId, RecordKey, Redact, RunId,
+    RunState, Step, TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, TargetRoot};
 use a2m_ledger::{
@@ -226,13 +226,13 @@ pub(crate) async fn write_run(store: &Store, key: RecordKey) -> (Fence, RecordRe
     (fence, record, token)
 }
 
-// ---- the stand, the plan, and one prepared driver ----
+// ---- the stand, the compiled target, and one prepared driver ----
 
 /// The stand, the registry with only this pack, and the compiled fixtures.
 pub(crate) struct Scene {
     // Order matters: the stand's file goes last, after every connection.
     pub(crate) registry: Registry,
-    pub(crate) plan: Plan,
+    pub(crate) compiled_target: CompiledTarget,
     pub(crate) surface: SurfaceRef,
     paths: CheckedPaths,
     _folder: Folder,
@@ -248,14 +248,14 @@ impl Scene {
         let db = TestDb::start().unwrap();
         let folder = Folder::new("scene");
         let registry = registry_of(pack, &folder, redact);
-        let plan = match compile_folder(&registry, &fixtures()) {
-            Ok(compiled) => compiled.plan,
+        let compiled_target = match compile_folder(&registry, &fixtures()) {
+            Ok(compiled) => compiled.compiled_target,
             Err(problems) => panic!("the fixtures do not compile: {problems:#?}"),
         };
         let surface = SurfaceRef {
-            target: plan.header.target.clone(),
+            target: compiled_target.header.target.clone(),
             environment: Environment::new("test").unwrap(),
-            surface: plan.surfaces[0].clone(),
+            surface: compiled_target.surfaces[0].clone(),
         };
         // The stand's file, as the engine would hand it over: a checked path
         // in the root `project`, under the surface's name.
@@ -272,7 +272,7 @@ impl Scene {
         );
         Self {
             registry,
-            plan,
+            compiled_target,
             surface,
             paths,
             _folder: folder,
@@ -280,11 +280,12 @@ impl Scene {
         }
     }
 
-    /// Changes one statement of the plan's section: a plan as the compiler
-    /// would never make it, to show what the driver itself refuses.
+    /// Changes one statement of the compiled target's section: a compiled
+    /// target as the compiler would never make it, to show what the driver
+    /// itself refuses.
     pub(crate) fn alter(&mut self, name: &str, change: impl FnOnce(&mut crate::model::Statement)) {
         let section = self
-            .plan
+            .compiled_target
             .packs
             .iter_mut()
             .find(|section| section.pack == crate::names::PACK)
@@ -299,9 +300,9 @@ impl Scene {
     }
 
     /// The binding of an operation of the fixtures.
-    pub(crate) fn binding(&self, operation: &str) -> &BindingPlan {
+    pub(crate) fn binding(&self, operation: &str) -> &CompiledBinding {
         let operation = self
-            .plan
+            .compiled_target
             .operations
             .iter()
             .find(|found| found.name.as_str() == operation)
@@ -312,7 +313,7 @@ impl Scene {
     /// A step's arguments, evaluated from the operation's inputs as the
     /// engine evaluates them.
     pub(crate) fn args(&self, step: &Step, inputs: &Values) -> Values {
-        args_of(&self.plan, step, inputs)
+        args_of(&self.compiled_target, step, inputs)
     }
 
     pub(crate) async fn prepare(&self, posture: Posture) -> Run<'_> {
@@ -330,7 +331,7 @@ impl Scene {
         let handle = self.handle();
         let prepared = self.try_prepare(&handle, posture, fence).await.unwrap();
         Run {
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             handle,
             prepared: Some(prepared),
             wait: Duration::from_secs(30),
@@ -363,7 +364,7 @@ impl Scene {
             run: fence.run,
             epoch: fence.epoch,
             surface: &self.surface,
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             posture,
             deadline: Deadline::after(Duration::from_secs(30)),
             redact: &NoSecrets,
@@ -403,12 +404,12 @@ pub(crate) fn project_of(folder: &Path) -> CheckedPaths {
 
 /// A step's arguments, evaluated from the operation's inputs as the engine
 /// evaluates them.
-pub(crate) fn args_of(plan: &Plan, step: &Step, inputs: &Values) -> Values {
+pub(crate) fn args_of(compiled_target: &CompiledTarget, step: &Step, inputs: &Values) -> Values {
     let input = Value::Record(inputs.clone());
     step.args
         .iter()
         .map(|arg| {
-            let expr = plan.expression(arg.value).unwrap();
+            let expr = compiled_target.expression(arg.value).unwrap();
             let program = a2m_expr::Program::load(expr).unwrap();
             let bindings = a2m_expr::Bindings::new().with("input", &input);
             (arg.name.clone(), program.evaluate(&bindings).unwrap())
@@ -421,8 +422,12 @@ pub(crate) fn args_of(plan: &Plan, step: &Step, inputs: &Values) -> Values {
 /// normalized by its field type, as the engine's own shaping does. A value
 /// the step gave that no output declares is not returned; an output the
 /// step gave no value for stops the test, as it stops a read in the engine.
-pub(crate) fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
-    let operation = plan
+pub(crate) fn outputs_of(
+    compiled_target: &CompiledTarget,
+    operation: &str,
+    observed: &Values,
+) -> Values {
+    let operation = compiled_target
         .operations
         .iter()
         .find(|found| found.name.as_str() == operation)
@@ -441,11 +446,11 @@ pub(crate) fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Val
         };
         let value = match output
             .field_type
-            .and_then(|index| plan.field_types[index.get()].normalizer)
+            .and_then(|index| compiled_target.field_types[index.get()].normalizer)
         {
             Some(index) => {
                 let normalizer =
-                    a2m_expr::Normalizer::load(plan.expression(index).unwrap()).unwrap();
+                    a2m_expr::Normalizer::load(compiled_target.expression(index).unwrap()).unwrap();
                 let one = |value: &Value| normalizer.normalize(value).unwrap().normalized;
                 // A list output is normalized value by value. The engine's
                 // own shaping hands the normalizer the whole list, which
@@ -490,7 +495,7 @@ pub(crate) struct Write {
 
 /// One prepared driver, released when the test says so.
 pub(crate) struct Run<'a> {
-    pub(crate) plan: &'a Plan,
+    pub(crate) compiled_target: &'a CompiledTarget,
     pub(crate) handle: DriverHandle,
     pub(crate) prepared: Option<Prepared>,
     /// How long each step is given.
@@ -510,7 +515,7 @@ impl Run<'_> {
         step: &Step,
         inputs: &Values,
     ) -> Result<StepOutcome, StepFailure> {
-        let args = args_of(self.plan, step, inputs);
+        let args = args_of(self.compiled_target, step, inputs);
         self.step_with(step, &args, None).await
     }
 
@@ -553,7 +558,7 @@ impl Run<'_> {
     ) -> Result<StepOutcome, StepFailure> {
         let mut last = None;
         for step in steps {
-            let args = args_of(self.plan, step, inputs);
+            let args = args_of(self.compiled_target, step, inputs);
             last = Some(
                 self.step_with(step, &args, write.filter(|_| step.commits))
                     .await?,

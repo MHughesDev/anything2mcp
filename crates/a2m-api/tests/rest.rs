@@ -142,7 +142,7 @@ impl World {
         assert_eq!(kernel.health().state, HealthState::Ok);
         kernel.start_runner_loop(2).await.unwrap();
         kernel
-            .publish_plan(&engine::plan(&app.url("")))
+            .publish_compiled_target(&engine::compiled_target(&app.url("")))
             .await
             .unwrap();
 

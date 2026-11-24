@@ -56,7 +56,7 @@ This is a design draft. The list is settled action by action as each phase build
 | `test.run` | Run the publish gates and return evidence | Builder | build | 3 |
 | `fixture.record` | Record a read's offline test and fixture from one real read in the sandbox, every value scrubbed by rule | Builder | No | 3 |
 | `shadow.report` | How often a shadow binding matched, and where it differed | Builder | build | 4 |
-| `plan.show` | Print a compiled plan as text | Builder | No | 1 |
+| `target.show` | Print a target's compiled target as text | Builder | No | 1 |
 | `version.diff` | Compare two versions and classify each change | Builder | No | 5 |
 | `publish.request` | Submit a version for human review | Builder | build | 5 |
 

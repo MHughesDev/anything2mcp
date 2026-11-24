@@ -96,7 +96,7 @@ impl World {
         let world = world(Options::default()).await;
         world
             .kernel
-            .publish_plan(&engine::plan(&world.app.url("")))
+            .publish_compiled_target(&engine::compiled_target(&world.app.url("")))
             .await
             .unwrap();
         *world.surface.pages.lock().unwrap() = true;
@@ -211,7 +211,7 @@ async fn an_agent_asks_for_a_watch_and_nothing_runs_until_its_person_confirms_on
 
     // The agent asks. The watch is asked and waits for its person, whose
     // page the result links; where it reads and what a check costs come
-    // from the plan.
+    // from the compiled target.
     let asked = world.call("watch.create", world.watch_input()).await;
     assert_eq!(asked.exit, ExitClass::PersonNeeded, "{asked:?}");
     let watch = asked.result.clone().unwrap();

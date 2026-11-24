@@ -172,13 +172,13 @@ impl LintRule for UntrustedUnmarked {
                 let text = operation
                     .outputs()
                     .iter()
-                    .find(|plan| plan.name == name)
-                    .is_some_and(|plan| holds_text(&plan.ty));
+                    .find(|compiled| compiled.name == name)
+                    .is_some_and(|compiled| holds_text(&compiled.ty));
                 let marked = output
                     .value
                     .text("type")
                     .and_then(|field_type| view.target().field_type(field_type))
-                    .is_some_and(|field_type| field_type.plan.untrusted);
+                    .is_some_and(|field_type| field_type.compiled.untrusted);
                 if text && !marked && !bound.iter().all(|channel| listed(channel, name)) {
                     found.push(problem(
                         "untrusted_unmarked",

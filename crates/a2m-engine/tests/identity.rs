@@ -188,8 +188,8 @@ async fn a_stamped_record_whose_write_never_left_is_written_once_on_resume() {
 
 #[tokio::test]
 async fn a_lookup_that_lags_behind_the_write_is_asked_again_after_its_settle_time() {
-    let scene = Scene::new(REF_ADD, |plan| {
-        plan.operations[6].bindings[0].settle_ms = 5;
+    let scene = Scene::new(REF_ADD, |compiled_target| {
+        compiled_target.operations[6].bindings[0].settle_ms = 5;
     })
     .await;
     let input = slot("A-102", 4, "12");
@@ -213,8 +213,8 @@ async fn a_lookup_that_lags_behind_the_write_is_asked_again_after_its_settle_tim
 
 #[tokio::test]
 async fn a_settle_time_the_lease_does_not_cover_is_not_waited_out() {
-    let scene = Scene::new(REF_ADD, |plan| {
-        plan.operations[6].bindings[0].settle_ms = 60_000;
+    let scene = Scene::new(REF_ADD, |compiled_target| {
+        compiled_target.operations[6].bindings[0].settle_ms = 60_000;
     })
     .await;
     let input = slot("A-102", 4, "12");
@@ -373,7 +373,10 @@ async fn a_keyless_record_its_read_back_finds_absent_stays_in_doubt_and_is_not_s
 /// A keyless create whose binding also has a lookup the mode's manifest
 /// states authoritative for absence (`scan`), its answer lost.
 async fn scanned_in_doubt(settle_ms: u32) -> (Scene, Values) {
-    let scene = Scene::new(SLOT_ADD, |plan| keyless_slot_add_scanned(plan, settle_ms)).await;
+    let scene = Scene::new(SLOT_ADD, |compiled_target| {
+        keyless_slot_add_scanned(compiled_target, settle_ms)
+    })
+    .await;
     let input = slot("A-102", 4, "12");
     approved(&scene, SLOT_ADD, &input).await;
     scene.hooks.lose_answer.store(true, Ordering::SeqCst);
@@ -463,9 +466,9 @@ async fn a_keyless_record_whose_recorded_values_were_masked_is_not_read_by_what_
     // Two values are recorded before the save, the code and the order; the
     // code holds a registered secret, so it is stored as its mask. The save
     // does not take the code, so it is sent, and its answer is lost.
-    let scene = Scene::new(SLOT_ADD, |plan| {
-        keyless_slot_add_scanned(plan, 5);
-        plan.operations[7].bindings[0].act[1]
+    let scene = Scene::new(SLOT_ADD, |compiled_target| {
+        keyless_slot_add_scanned(compiled_target, 5);
+        compiled_target.operations[7].bindings[0].act[1]
             .args
             .retain(|arg| arg.name != "code");
     })
@@ -679,9 +682,9 @@ async fn a_value_that_is_written_may_not_wait_for_a_record_that_is_not_written_y
     // The line's description, a value a person approves, is made to come
     // from the header's result: it cannot be shown before the header
     // exists, so the run is refused at the preview.
-    let scene = Scene::new(KIT_ENTER, |plan| {
-        let from_header = plan.pipelines[2].steps[1].with[1].value;
-        plan.pipelines[2].steps[1].with[2].value = from_header;
+    let scene = Scene::new(KIT_ENTER, |compiled_target| {
+        let from_header = compiled_target.pipelines[2].steps[1].with[1].value;
+        compiled_target.pipelines[2].steps[1].with[2].value = from_header;
     })
     .await;
     give(&scene, legs());
@@ -699,14 +702,14 @@ async fn the_outputs_of_a_record_ended_on_an_acknowledgement_are_handed_back_on_
     // The header is written by an irreversible operation whose only
     // evidence is the system's acknowledgement; its answer carries the code
     // the lines are written under.
-    let scene = Scene::new(KIT_ENTER, |plan| {
-        let header = &mut plan.operations[5];
+    let scene = Scene::new(KIT_ENTER, |compiled_target| {
+        let header = &mut compiled_target.operations[5];
         header.effect = a2m_core::EffectClass::Irreversible;
         for binding in &mut header.bindings {
             binding.evidence = a2m_core::WriteEvidence::Acknowledged;
             binding.read_back.clear();
         }
-        for pipeline in &mut plan.pipelines {
+        for pipeline in &mut compiled_target.pipelines {
             pipeline.effect = a2m_core::EffectClass::Irreversible;
         }
     })

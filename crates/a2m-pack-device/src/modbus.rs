@@ -62,7 +62,7 @@ pub(crate) async fn connect(
     within: Duration,
 ) -> Result<ModbusTcp, OpenError> {
     // A socket address only: a name would need a lookup, and a lookup is a
-    // request the plan did not state.
+    // request the compiled target did not state.
     let address: SocketAddr = address.parse().map_err(|_| OpenError::Address)?;
     let stream = tokio::time::timeout(within, TcpStream::connect(address))
         .await

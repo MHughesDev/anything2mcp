@@ -9,14 +9,14 @@ The device pack: the `device` driver over a device's link. It sends one frame at
 | Side | Pack: device |
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
-| Depends on | `a2m-core` (`Plan`, `Step`, `Value`, `Decimal`, `Finding`, `Hazard`), `a2m-files` (file kind, lowering, lint, and drafting registration), `a2m-auth` (the lease type in the driver's signature), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`), `a2m-telemetry` (the clock a finding is dated with). Outside: `serde`, `serde_json`, and `tokio` with its `io-util` feature. No protocol library ([decision 0106](../../decisions/0106-the-device-pack-speaks-its-first-protocol-itself-and-checks-a-range-before-a-frame-is-built.md)) |
+| Depends on | `a2m-core` (`CompiledTarget`, `Step`, `Value`, `Decimal`, `Finding`, `Hazard`), `a2m-files` (file kind, lowering, lint, and drafting registration), `a2m-auth` (the lease type in the driver's signature), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`), `a2m-telemetry` (the clock a finding is dated with). Outside: `serde`, `serde_json`, and `tokio` with its `io-util` feature. No protocol library ([decision 0106](../../decisions/0106-the-device-pack-speaks-its-first-protocol-itself-and-checks-a-range-before-a-frame-is-built.md)) |
 | Roadmap packages | Packages K2, K3, K4 of the [roadmap](../../plan/roadmap.md) |
 | Carries out | Spec section [310](../../spec/3-packs/310-the-device-pack.md); [201](../../spec/2-kernel/201-archetypes-and-modes.md) (the device archetype); [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (hazards); the entry bar of section [202](../../spec/2-kernel/202-kernel-and-packs.md) |
 
 ## Owns
 
 - The `device` mode, registered by [decision 0107](../../decisions/0107-the-device-mode-and-the-device-pack-as-building-it-settled-it.md), and the surface kind `device_link`.
-- The `registers/` file kind: one map per file, with every address the pack may touch, its layout, its access, its range, and its hazard. It compiles into the pack's own section of the plan.
+- The `registers/` file kind: one map per file, with every address the pack may touch, its layout, its access, its range, and its hazard. It compiles into the pack's own section of the compiled target.
 - The lowering of `read`, `update`, and `submit` into `open`, `build_frame`, `write_frame`, `read_frame`, and `expect` steps, with the pack's own step payload.
 - The protocol interface inside the crate, `Link`, and its first implementation: a subset of the Modbus application protocol over TCP, written here.
 - Turning a register's raw bits into a typed value and back, with both range checks.
@@ -25,7 +25,7 @@ The device pack: the `device` driver over a device's link. It sends one frame at
 - The optional provider `device_firmware`, with a manifest of its own (`anything2mcp-firmware-provider.toml`): the discoverer `firmware_image`, its describer, and the finding kind of the same name, at most `inferred`, from the source `artifact`. `add_to` does not register it; `add_firmware_inspection_to` does, and the product crate does not call it yet.
 - The `device_register_map` finding kind, the discoverer `device_register_map`, its describer, and the two drafting rules from a published map to a map of readable registers and one read of each.
 
-It must never: send a frame to an address its map does not name; build a frame from a value outside its register's range; round a value on the way to a device; send a write frame from a step that does not commit, or where nothing may be written; send anything more on a link after a frame's fate became unknown; send a write twice; read a register whose reading changes it; scan addresses; read a register during discovery; send a write frame whose bytes no earlier step gave out to be recorded, or other bytes than those; write to a device whose serial its surface does not declare for the run's environment; write a register with the hazard `physical`; send a frame past the run's ceiling. The driver holds the last five by checks of its own, whatever the plan it is handed says.
+It must never: send a frame to an address its map does not name; build a frame from a value outside its register's range; round a value on the way to a device; send a write frame from a step that does not commit, or where nothing may be written; send anything more on a link after a frame's fate became unknown; send a write twice; read a register whose reading changes it; scan addresses; read a register during discovery; send a write frame whose bytes no earlier step gave out to be recorded, or other bytes than those; write to a device whose serial its surface does not declare for the run's environment; write a register with the hazard `physical`; send a frame past the run's ceiling. The driver holds the last five by checks of its own, whatever the compiled target it is handed says.
 
 ## What it registers
 
@@ -33,7 +33,7 @@ It must never: send a frame to an address its map does not name; build a frame f
 | --- | --- |
 | Provider | `device` |
 | Mode | `device`, archetype device, rank 60. One read and one write at a time on a session, an intent window of one, and exclusive use of the link |
-| Surface kind | `device_link`, with a session. Fields: `address` (a socket address, such as `192.0.2.7:502`; a host name is refused, because a lookup is a request the plan did not state), `protocol` (one of the crate's `PROTOCOLS`: today `modbus_tcp` alone), `unit` (0 to 255), and `serials` (optional: the serial of the device that answers in each environment, as text, by the environment's name) |
+| Surface kind | `device_link`, with a session. Fields: `address` (a socket address, such as `192.0.2.7:502`; a host name is refused, because a lookup is a request the compiled target did not state), `protocol` (one of the crate's `PROTOCOLS`: today `modbus_tcp` alone), `unit` (0 to 255), and `serials` (optional: the serial of the device that answers in each environment, as text, by the environment's name) |
 | Step kinds | `open`, `build_frame`, `write_frame`, `read_frame`, `expect` |
 | Verbs | `read`, `update`, `submit` |
 | File kind | `register`, in `registers/`, for `device_link` surfaces |
@@ -55,7 +55,7 @@ It must never: send a frame to an address its map does not name; build a frame f
 | `identify.reads` | Which of `vendor`, `model`, `firmware_version`, and `serial` the `open` step reads. All four when it is left out. It must list `model` and `firmware_version` |
 | `pace` | `min_gap` and `reply_within` as `20ms` or `5s`; `max_rate` as `20/s` |
 | `registers` (required) | By name: `address` (`table`, one of `coil`, `discrete`, `holding`, `input`, and `offset`), `data` (`bit`, `u16`, `i16`, `u32`, `i32`, `text`), `words` (text only), `word_order` (`high_first` by default, or `low_first`), `scale` (the value of one raw step), `type` (a field type), `access` (`read`, `write`, `read_write`), `range` (`min`, `max`, in the register's unit), `hazard`, `confirm_by`, `read_effect` (`none`, `clears`, `advances`) |
-| `safe_state`, `on_link_loss` | Compiled into the plan. Nothing acts on them yet |
+| `safe_state`, `on_link_loss` | Compiled into the compiled target. Nothing acts on them yet |
 
 ### Rules checked when a file is compiled or a binding lowered
 
@@ -129,7 +129,7 @@ Every step is declared not idempotent. A step's time limit is the map's `reply_w
 
 **What `act` returns.** `open`: nothing, or, in discovery, what the device reported, each value redacted. `build_frame`: the frame, as above. `write_frame` and `read_frame`: nothing. `expect`: the register's value under its output, or under `before_<register>` for reconcile, redacted; or nothing for an acknowledgement. Every `open` that sent a frame and every `expect` keeps one capture, `exchange`: the frame it sent, as hexadecimal, and the length of the reply. Every step that succeeds also returns the capture `acting`: `means` (the kind of step, what it does, the register it concerns, and whether it compared with a recorded frame) and `measured` (the frames the run has sent, and the result of that comparison), so that five runs of one read give one trace signature. A write's bytes are never among the means.
 
-**What a read-back does with the recorded frame.** `Prepared::recorded()` holds `frame_<register>` for the record, within a pass and on a resume. An `expect` of a register's value, when a frame is recorded for it, reads the frame back into the write it carries (`Link::written`; the Modbus link reads functions 5, 6, and 16 back) and sets what the register holds beside what that write would have put there, in the register's own layout. It keeps the result as the capture `frame_check` (`matches`, `differs`, or `unreadable`) and in `measured`. It is evidence: the value is returned as read and the engine compares it with the intended and earlier values, so a device that rounds a value still verifies, and a frame that does not read back is said and does not stop the read. The record has no key from an input: `StepInput::key` is `None`, and no step of this driver reads it; a register is found by its address in the plan.
+**What a read-back does with the recorded frame.** `Prepared::recorded()` holds `frame_<register>` for the record, within a pass and on a resume. An `expect` of a register's value, when a frame is recorded for it, reads the frame back into the write it carries (`Link::written`; the Modbus link reads functions 5, 6, and 16 back) and sets what the register holds beside what that write would have put there, in the register's own layout. It keeps the result as the capture `frame_check` (`matches`, `differs`, or `unreadable`) and in `measured`. It is evidence: the value is returned as read and the engine compares it with the intended and earlier values, so a device that rounds a value still verifies, and a frame that does not read back is said and does not stop the read. The record has no key from an input: `StepInput::key` is `None`, and no step of this driver reads it; a register is found by its address in the compiled target.
 
 **How a value is read and written.** A raw number becomes an exact decimal by its scale; a bit becomes a truth value, or the text of its code for a choice; text is read two characters to a word, its trailing zero bytes dropped, and refused if it holds a control character. A value to write must be of the register's kind. It is checked against the map's range in the register's unit, then turned into a raw number, which must be a whole number of steps; the raw number is checked against the range converted by the scale, and against what the register's bits hold. A register that holds a number and has no range is refused here too. A choice on a bit takes the code `0` or `1`.
 
@@ -162,7 +162,7 @@ It uses the redactor of its `PackContext` on every value, capture, and finding, 
 
 ## State
 
-A `LinkState` behind `Prepared`, for one run on one link: the link, the plan's maps, the maps the device on this link was compared with, the serial the surface declares for the run's environment, the write frame that was built and waits to be sent, how many more frames the run may send, the frame that waits for its reply, the reply that waits to be read, the time of the last frame, and the posture. When a frame's fate becomes unknown the link is set to none, and nothing more is sent on it in that run. Nothing is kept between runs: release drops the link, and the next run opens its own and identifies the device again.
+A `LinkState` behind `Prepared`, for one run on one link: the link, the compiled target's maps, the maps the device on this link was compared with, the serial the surface declares for the run's environment, the write frame that was built and waits to be sent, how many more frames the run may send, the frame that waits for its reply, the reply that waits to be read, the time of the last frame, and the posture. When a frame's fate becomes unknown the link is set to none, and nothing more is sent on it in that run. Nothing is kept between runs: release drops the link, and the next run opens its own and identifies the device again.
 
 ## Failures
 
@@ -170,7 +170,7 @@ A `LinkState` behind `Prepared`, for one run on one link: the link, the plan's m
 | --- | --- | --- | --- |
 | `input` | `value_out_of_range` | A value outside its register's range in either check; a register with no range; a value between two steps, or more than the register holds; a choice code that is not `0` or `1` on a bit | Not sent |
 | `input` | `schema_invalid` | A value that is absent or not of the register's kind; an address that is not a socket address | Not sent |
-| `input` | `payload_unreadable` | The plan's maps or a step's payload do not decode, or were compiled in another format; a step out of order; a write frame that no step built and gave out first, or whose value changed since; a write to a register that declares no hazard | Not sent |
+| `input` | `payload_unreadable` | The compiled target's maps or a step's payload do not decode, or were compiled in another format; a step out of order; a write frame that no step built and gave out first, or whose value changed since; a write to a register that declares no hazard | Not sent |
 | `policy` | `surface_not_declared` | The surface is not a `device_link`, or its address is not among the run's destinations | Not sent |
 | `policy` | `read_only_posture` | A write frame built or sent from a step that does not commit, or in a posture that may not write. The contract's code; the handle refuses the same first | Not sent |
 | `policy` | `device_serial_not_declared` | A write where the surface declares no serial for the run's environment | Not sent |
@@ -237,7 +237,7 @@ The tests ask [the simulated device](../../../targets/example-device/README.md) 
 2. Done: identification and `read`, with five runs giving one signature through the handle, and a firmware version outside the map stopping.
 3. Done: the discoverer, its describer, and the drafting rule, for identification only.
 4. Done: `update` and `submit` of registers with the hazard `none` or `device_function`, with the fault tests: a dropped reply, no reply, a wrong echo, a refusal, busy, out of range, a link lost after a write.
-5. Not built: writes with the hazard `physical`. The compiler refuses them with `device.physical_not_built`, and the driver refuses a step that would send one with `physical_not_built`. `confirm_by`, `safe_state`, and `on_link_loss` compile into the plan and nothing acts on them. The safe-state operation, the alert that offers it, and the kill switch reaching the link are not built.
+5. Not built: writes with the hazard `physical`. The compiler refuses them with `device.physical_not_built`, and the driver refuses a step that would send one with `physical_not_built`. `confirm_by`, `safe_state`, and `on_link_loss` compile into the compiled target and nothing acts on them. The safe-state operation, the alert that offers it, and the kill switch reaching the link are not built.
 6. Not built: firmware inspection and the firmware update operation.
 7. Not built: one frame that writes several registers; reading a register whose reading changes it; writing text; a float register; an object dictionary; an identification spread over several replies.
 8. Not built: serial links, a console on a link, and any second protocol.

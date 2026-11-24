@@ -554,7 +554,7 @@ impl Kernel {
     pub(crate) async fn held_alone(
         &self,
         row_workspace: a2m_core::WorkspaceId,
-        plan: &a2m_core::Plan,
+        compiled_target: &a2m_core::CompiledTarget,
         tool: &a2m_core::OperationName,
         environment: &a2m_core::Environment,
         writes: bool,
@@ -564,11 +564,11 @@ impl Kernel {
         }
         let engine = self.engine().await?;
         let mut keys = Vec::new();
-        for need in engine.exclusive_needs(plan, tool) {
+        for need in engine.exclusive_needs(compiled_target, tool) {
             keys.push(a2m_sched::ResourceKey::held_alone(
                 need.kind.as_str(),
                 row_workspace,
-                &plan.header.target,
+                &compiled_target.header.target,
                 environment,
                 need.surface.as_str(),
             )?);
@@ -797,7 +797,9 @@ impl Kernel {
                 Ok((row, call))
             })
             .await?;
-        let plan = self.plan_by_hash(&row.target, &row.target_version).await?;
+        let compiled_target = self
+            .compiled_target_by_hash(&row.target, &row.target_version)
+            .await?;
         let Some(call) = call else {
             return self.end_unreadable(fence).await;
         };
@@ -876,14 +878,14 @@ impl Kernel {
             (ToolRef::Tool(row.tool_name.clone()), input)
         };
         let health = self.health();
-        let sessions = self.session_conditions(&row, &plan).await;
+        let sessions = self.session_conditions(&row, &compiled_target).await;
         // The bindings a drift mark of the target stops (decision 0380). A
         // store that cannot say ends the job here: nothing is run on a
         // guess that nothing drifted.
         let drifted = {
-            let (workspace, plan) = (row.workspace, Arc::clone(&plan));
+            let (workspace, compiled_target) = (row.workspace, Arc::clone(&compiled_target));
             store
-                .read(move |tx| crate::drift::stopped(tx, workspace, &plan))
+                .read(move |tx| crate::drift::stopped(tx, workspace, &compiled_target))
                 .await?
         };
         let capture = |key: &str| match self.settings().text(key) {
@@ -898,7 +900,7 @@ impl Kernel {
             attempt: lease.attempt,
             epoch: fence.epoch,
             kind,
-            plan: row.target_version,
+            compiled_target: row.target_version,
             tool,
             environment: Some(row.environment.clone()),
             identity: Some(Identity::Person(row.principal)),
@@ -968,10 +970,16 @@ impl Kernel {
         } else {
             a2m_auth::Purpose::Run
         };
-        let control =
-            InProcessControl::new(self.clone(), fence, lease.lease_ref(), row, plan, caller)
-                .with_discovery_files(handed)
-                .with_purpose(purpose);
+        let control = InProcessControl::new(
+            self.clone(),
+            fence,
+            lease.lease_ref(),
+            row,
+            compiled_target,
+            caller,
+        )
+        .with_discovery_files(handed)
+        .with_purpose(purpose);
         let outcome = engine.run_job(&job, &control).await;
         // The check after a lost runner is the reconcile's own last part,
         // in its lease, while the heartbeats go on: the run has one live
@@ -1138,20 +1146,20 @@ impl Kernel {
         self.run_changed();
     }
 
-    /// The state of the session of each surface of the plan that is signed
-    /// in to, as the session keeper holds it at claim time, for guard's
-    /// third check (decision 0309). Only a session that was ended on
+    /// The state of the session of each surface of the compiled target that
+    /// is signed in to, as the session keeper holds it at claim time, for
+    /// guard's third check (decision 0309). Only a session that was ended on
     /// purpose is listed: it is never signed in again by a lease, so a call
     /// on it can only stop with `needs_login`. A session that is absent or
-    /// expired may still be signed in from a stored credential at the
-    /// lease, one that waits is waited for, one the keeper holds no row for
-    /// has its first sign-in at the lease, and a keeper that cannot be
-    /// asked leaves everything unlisted: the lease decides all of those. No
-    /// source of edge blocks exists here, so `edge_blocked` stays empty.
+    /// expired may still be signed in from a stored credential at the lease,
+    /// one that waits is waited for, one the keeper holds no row for has its
+    /// first sign-in at the lease, and a keeper that cannot be asked leaves
+    /// everything unlisted: the lease decides all of those. No source of edge
+    /// blocks exists here, so `edge_blocked` stays empty.
     async fn session_conditions(
         &self,
         row: &RunRow,
-        plan: &a2m_core::Plan,
+        compiled_target: &a2m_core::CompiledTarget,
     ) -> Vec<(a2m_core::SurfaceName, a2m_core::SessionState)> {
         let Ok(keeper) = self.keeper() else {
             return Vec::new();
@@ -1169,12 +1177,16 @@ impl Kernel {
         if ours.state != a2m_core::SessionState::Revoked {
             return Vec::new();
         }
-        plan.surfaces
+        compiled_target
+            .surfaces
             .iter()
             .enumerate()
             .filter(|(index, _)| {
-                u32::try_from(*index)
-                    .is_ok_and(|at| plan.auth_of(a2m_core::SurfaceIndex::new(at)).is_some())
+                u32::try_from(*index).is_ok_and(|at| {
+                    compiled_target
+                        .auth_of(a2m_core::SurfaceIndex::new(at))
+                        .is_some()
+                })
             })
             .map(|(_, surface)| (surface.name.clone(), ours.state))
             .collect()

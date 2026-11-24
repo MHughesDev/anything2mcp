@@ -382,3 +382,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0388 | [Every refusal of the approval page is named, and a script is proven unable to approve](0388-every-refusal-of-the-approval-page-is-named-and-a-script-is-proven-unable-to-approve.md) | Accepted (design decision) |
 | 0389 | [The `api` mode binds a read to a pinned description, and names its change as drift](0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md) | Accepted (design decision) |
 | 0390 | [The open questions of 2026-11-24 are settled by the lead, and the first release is what progress counts toward](0390-the-open-questions-of-2026-11-24-are-settled-by-the-lead-and-the-first-release-is-what-progress-counts-toward.md) | Accepted (design decision) |
+| 0999 | [The rename sweep renames every name, and keeps what is stored](0999-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md) | Accepted (design decision) |

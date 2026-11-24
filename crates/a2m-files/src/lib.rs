@@ -1,14 +1,14 @@
 //! What a target is: the schemas of target files, the loader that reads
 //! them with a file, a line, and a column for every value, the linter, the
-//! compiler that turns them into a hashed `Plan`, and the drafter that
+//! compiler that turns them into a hashed `CompiledTarget`, and the drafter that
 //! writes draft files from findings.
 //!
 //! The crate is neutral. Every file kind, verb lowering, lint rule, and
 //! drafting rule that belongs to one kind of system arrives from a pack
-//! through the registration traits in [`register`]; the kernel names no
-//! mode, no surface kind, and no control. The plan's types, its encoding,
-//! and the check of its hash are `a2m-core`'s; this crate is the only code
-//! that makes a plan.
+//! through the registration traits in [`register`]; the kernel names no mode,
+//! no surface kind, and no control. The compiled target's types, its
+//! encoding, and the check of its hash are `a2m-core`'s; this crate is the
+//! only code that makes a compiled target.
 //!
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`: `a2m-core` and `a2m-expr`.

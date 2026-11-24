@@ -31,10 +31,11 @@ async fn scene(name: &str, app: &TestApp, profile: Option<&str>) -> Scene {
         ),
         None => text.to_owned(),
     };
-    let plan = compile_changed_files(&stand.registry, "commits", &[("target.yaml", &target)])
-        .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
-        .plan;
-    Scene::over(stand, plan, &app.url(""))
+    let compiled_target =
+        compile_changed_files(&stand.registry, "commits", &[("target.yaml", &target)])
+            .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
+            .compiled_target;
+    Scene::over(stand, compiled_target, &app.url(""))
 }
 
 /// What the application was told, once it has been told at least `count`

@@ -33,7 +33,7 @@ What is the same whatever kind of system is integrated.
 | 203 | [The provider contract](2-kernel/203-the-provider-contract.md) |
 | 204 | [Supervising subsystems](2-kernel/204-supervising-subsystems.md) |
 | 205 | [Target files](2-kernel/205-target-files.md) |
-| 206 | [The compiler and the plan](2-kernel/206-the-compiler-and-the-plan.md) |
+| 206 | [The compiler and the compiled target](2-kernel/206-the-compiler-and-the-compiled-target.md) |
 | 207 | [The engine loop](2-kernel/207-the-engine-loop.md) |
 | 208 | [Runs, the ledger, and resume](2-kernel/208-runs-the-ledger-and-resume.md) |
 | 209 | [Record identity and dependent records](2-kernel/209-record-identity-and-dependent-records.md) |

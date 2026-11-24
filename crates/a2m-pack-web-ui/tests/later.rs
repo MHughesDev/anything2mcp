@@ -16,19 +16,19 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use a2m_core::{FailureClass, NoSecrets, Plan, Value, Values};
+use a2m_core::{CompiledTarget, FailureClass, NoSecrets, Value, Values};
 use a2m_provider::{DriverHandle, Posture, Prepared, Sent, StepFailure};
 use common::{Scene, Stand, Write, compile, compile_changed};
 use example_app::harness::TestApp;
 
-fn plan_of(stand: &Stand) -> Plan {
-    compile(&stand.registry, "cases").plan
+fn compiled_target_of(stand: &Stand) -> CompiledTarget {
+    compile(&stand.registry, "cases").compiled_target
 }
 
 async fn scene(name: &str, app: &TestApp) -> Scene {
     let stand = Stand::new(name, Arc::new(NoSecrets));
-    let plan = plan_of(&stand);
-    Scene::over(stand, plan, &app.url(""))
+    let compiled_target = compiled_target_of(&stand);
+    Scene::over(stand, compiled_target, &app.url(""))
 }
 
 /// What the application was told, once it has been told at least `count`
@@ -263,15 +263,15 @@ async fn an_export_that_finishes_later_is_waited_for_and_an_undeclared_download_
 async fn one_of_two_layouts_is_found_by_ordered_locators_and_a_third_stops() {
     let app = TestApp::start().await.unwrap();
     let stand = Stand::new("case-layout", Arc::new(NoSecrets));
-    let mut plan = plan_of(&stand);
-    for operation in &mut plan.operations {
+    let mut compiled_target = compiled_target_of(&stand);
+    for operation in &mut compiled_target.operations {
         for binding in &mut operation.bindings {
             for step in &mut binding.act {
                 step.timeout_ms = 2500;
             }
         }
     }
-    let scene = Scene::over(stand, plan, &app.url(""));
+    let scene = Scene::over(stand, compiled_target, &app.url(""));
     for flag in ["a", "b"] {
         let (handle, mut prepared, write) = writing(&scene).await;
         write_steps(
@@ -320,12 +320,12 @@ async fn a_choice_is_set_and_read_by_its_code_whatever_language_the_page_speaks(
     {
         let app = TestApp::start().await.unwrap();
         let stand = Stand::new("case-locale", Arc::new(NoSecrets));
-        let plan = compile_changed(&stand.registry, "cases", "target.yaml", |text| {
+        let compiled_target = compile_changed(&stand.registry, "cases", "target.yaml", |text| {
             text.replace("locale: en-US", &format!("locale: {locale}"))
         })
         .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
-        .plan;
-        let scene = Scene::over(stand, plan, &app.url(""));
+        .compiled_target;
+        let scene = Scene::over(stand, compiled_target, &app.url(""));
         let (handle, mut prepared, write) = writing(&scene).await;
         write_steps(
             &scene,
@@ -359,13 +359,13 @@ async fn a_note_that_gives_orders_is_read_as_untrusted_text_and_obeyed_by_nothin
     let app = TestApp::start().await.unwrap();
     let scene = scene("case-note", &app).await;
     let read = scene
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_note_read")
         .unwrap();
     for output in &read.outputs {
-        assert!(scene.plan.field_types[output.field_type.unwrap().get()].untrusted);
+        assert!(scene.compiled_target.field_types[output.field_type.unwrap().get()].untrusted);
     }
     let (handle, mut prepared) = scene.try_prepare(None, Posture::Live).await.unwrap();
     let back = read_steps(

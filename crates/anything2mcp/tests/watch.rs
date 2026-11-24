@@ -458,14 +458,14 @@ async fn a_missed_due_time_is_a_gap_and_is_not_made_up() {
     watching.world.close().await;
 }
 
-/// Decision 0262 holds that a removal is never reported until a read can
-/// say it returned every record. Today no plan declares a list of records
-/// with a key (decision 0283), so every watch compares its read whole, and
-/// no check can report a record removed or out of view: what the stand
-/// changed is `changed`, of the whole. The half of decision 0234's test
+/// Decision 0262 holds that a removal is never reported until a read can say
+/// it returned every record. Today no compiled target declares a list of
+/// records with a key (decision 0283), so every watch compares its read
+/// whole, and no check can report a record removed or out of view: what the
+/// stand changed is `changed`, of the whole. The half of decision 0234's test
 /// that a full list reports `removed` is not built: it needs a declared
-/// record key and the engine's completeness flag. The ledger's own test
-/// holds the rule for keyed records.
+/// record key and the engine's completeness flag. The ledger's own test holds
+/// the rule for keyed records.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_list_cut_short_never_reports_a_removal() {
     let app = TestApp::start().await.unwrap();

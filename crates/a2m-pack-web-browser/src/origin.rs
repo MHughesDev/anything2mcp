@@ -84,9 +84,9 @@ pub(crate) fn path_of(address: &str) -> &str {
     }
 }
 
-/// The origins a tab may be on. A tab is given them when it is opened,
-/// from the destinations its plan or its discovery declared, and they do
-/// not change while it lives. An empty set lets the tab go nowhere.
+/// The origins a tab may be on. A tab is given them when it is opened, from
+/// the destinations its compiled target or its discovery declared, and they
+/// do not change while it lives. An empty set lets the tab go nowhere.
 ///
 /// Beside them, the origins its page may send requests to although the tab
 /// is never on them (`and_requests_to`, decision 0292): a request of the

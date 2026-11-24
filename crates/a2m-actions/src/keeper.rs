@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use a2m_auth::{AskPerson, BoxFuture, PersonAnswer, PersonAsk, ProbeOutcome, RunProbe, SessionRef};
 use a2m_core::{
-    Digest, EffectClass, FailureClass, FieldHasher, Identity, ProbePlan, RunState, SessionId,
+    CompiledProbe, Digest, EffectClass, FailureClass, FieldHasher, Identity, RunState, SessionId,
     TargetName, ToolRuns,
 };
 use a2m_engine::encode_values;
@@ -65,8 +65,8 @@ impl AskPerson for PersonBridge {
 #[derive(Debug, Clone)]
 pub(crate) struct ProbeSource {
     pub(crate) target: TargetName,
-    pub(crate) plan: Digest,
-    pub(crate) probe: ProbePlan,
+    pub(crate) compiled_target: Digest,
+    pub(crate) probe: CompiledProbe,
 }
 
 /// [`RunProbe`] for the keeper of one process: the entry's `probe`
@@ -75,10 +75,10 @@ pub(crate) struct ProbeSource {
 ///
 /// The probe of a session is the one of the published version a run last
 /// leased it under, noted in memory as the lease is given. A session no run
-/// has leased since the engine started, a probe that is an entry of a
-/// pack's file kind, an operation that no tool of the plan runs, and a run
-/// that cannot be made or does not end in time, each answer that nothing is
-/// known: the keeper changes no state for it.
+/// has leased since the engine started, a probe that is an entry of a pack's
+/// file kind, an operation that no tool of the compiled target runs, and a
+/// run that cannot be made or does not end in time, each answer that nothing
+/// is known: the keeper changes no state for it.
 #[derive(Default)]
 pub(crate) struct ProbeBridge {
     kernel: OnceLock<Weak<Inner>>,
@@ -134,13 +134,16 @@ impl Kernel {
         if !self.runner_running() {
             return ProbeOutcome::Unknown;
         }
-        let ProbePlan::Operation { operation, inputs } = &source.probe else {
+        let CompiledProbe::Operation { operation, inputs } = &source.probe else {
             return ProbeOutcome::Unknown;
         };
-        let Ok(plan) = self.plan_by_hash(&source.target, &source.plan).await else {
+        let Ok(compiled_target) = self
+            .compiled_target_by_hash(&source.target, &source.compiled_target)
+            .await
+        else {
             return ProbeOutcome::Unknown;
         };
-        let Some(tool) = plan
+        let Some(tool) = compiled_target
             .tools
             .iter()
             .find(|tool| tool.runs == ToolRuns::Operation(*operation))
@@ -175,7 +178,7 @@ impl Kernel {
             tool_name: tool.name.clone(),
             tool_kind: ToolKind::Operation,
             target: source.target.clone(),
-            target_version: source.plan,
+            target_version: source.compiled_target,
             environment: session.key.environment.clone(),
             identity: Some(Identity::Person(person)),
             effect: EffectClass::Read,

@@ -4,16 +4,18 @@
 //! mode, lower first, unless the operation says `binding_order: listed`. So
 //! an operation's bindings have two places that differ once ordering moves
 //! one: the **file's place**, which counts the bindings as the operation's
-//! file lists them, and the **plan's place**, which counts them as the plan
-//! holds them. A person reads and writes the file's place (a `position` in
-//! a call, a `binding:` entry of a test file, a file rewritten by
-//! `binding.promote`); the engine, a pin, and a run use the plan's place.
+//! file lists them, and the **compiled target's place**, which counts them as
+//! the compiled target holds them. A person reads and writes the file's place
+//! (a `position` in a call, a `binding:` entry of a test file, a file
+//! rewritten by `binding.promote`); the engine, a pin, and a run use the
+//! compiled target's place.
 //!
-//! The compiler orders bindings of equal rank by the file's order, and a
-//! mode has one rank, so the bindings of one mode keep the file's order
-//! among themselves. The k-th binding of a mode in the file is therefore the
-//! k-th binding of that mode in the plan, whatever the order of the modes.
-//! That is the whole conversion; it needs only the modes in each order.
+//! The compiler orders bindings of equal rank by the file's order, and a mode
+//! has one rank, so the bindings of one mode keep the file's order among
+//! themselves. The k-th binding of a mode in the file is therefore the k-th
+//! binding of that mode in the compiled target, whatever the order of the
+//! modes. That is the whole conversion; it needs only the modes in each
+//! order.
 
 use a2m_files::Sources;
 
@@ -66,32 +68,32 @@ fn place_of_nth<M: AsRef<str>>(to: &[M], mode: &str, nth: usize) -> Option<usize
         .map(|(at, _)| at)
 }
 
-/// The file's place of the binding the plan holds at `plan_place`, given
-/// both orders of modes. `None` where the two do not hold the same number of
-/// bindings, which is no conversion to guess at.
+/// The file's place of the binding the compiled target holds at
+/// `compiled_place`, given both orders of modes. `None` where the two do not
+/// hold the same number of bindings, which is no conversion to guess at.
 pub(crate) fn file_place<P: AsRef<str>, F: AsRef<str>>(
-    plan_modes: &[P],
+    compiled_modes: &[P],
     file_modes: &[F],
-    plan_place: usize,
+    compiled_place: usize,
 ) -> Option<usize> {
-    if plan_modes.len() != file_modes.len() {
+    if compiled_modes.len() != file_modes.len() {
         return None;
     }
-    let nth = nth_of_mode(plan_modes, plan_place)?;
-    place_of_nth(file_modes, plan_modes[plan_place].as_ref(), nth)
+    let nth = nth_of_mode(compiled_modes, compiled_place)?;
+    place_of_nth(file_modes, compiled_modes[compiled_place].as_ref(), nth)
 }
 
-/// The plan's place of the binding the file lists at `file_place`.
-pub(crate) fn plan_place<P: AsRef<str>, F: AsRef<str>>(
-    plan_modes: &[P],
+/// The compiled target's place of the binding the file lists at `file_place`.
+pub(crate) fn compiled_place<P: AsRef<str>, F: AsRef<str>>(
+    compiled_modes: &[P],
     file_modes: &[F],
     file_place: usize,
 ) -> Option<usize> {
-    if plan_modes.len() != file_modes.len() {
+    if compiled_modes.len() != file_modes.len() {
         return None;
     }
     let nth = nth_of_mode(file_modes, file_place)?;
-    place_of_nth(plan_modes, file_modes[file_place].as_ref(), nth)
+    place_of_nth(compiled_modes, file_modes[file_place].as_ref(), nth)
 }
 
 #[cfg(test)]
@@ -104,13 +106,13 @@ mod tests {
         // compiler puts the fast mode first, keeping the file's order within
         // a mode.
         let file = ["interface", "request", "request"];
-        let plan = ["request", "request", "interface"];
-        assert_eq!(file_place(&plan, &file, 0), Some(1));
-        assert_eq!(file_place(&plan, &file, 1), Some(2));
-        assert_eq!(file_place(&plan, &file, 2), Some(0));
+        let compiled_target = ["request", "request", "interface"];
+        assert_eq!(file_place(&compiled_target, &file, 0), Some(1));
+        assert_eq!(file_place(&compiled_target, &file, 1), Some(2));
+        assert_eq!(file_place(&compiled_target, &file, 2), Some(0));
         for at in 0..3 {
-            let there = file_place(&plan, &file, at).unwrap();
-            assert_eq!(plan_place(&plan, &file, there), Some(at));
+            let there = file_place(&compiled_target, &file, at).unwrap();
+            assert_eq!(compiled_place(&compiled_target, &file, there), Some(at));
         }
     }
 
@@ -118,8 +120,8 @@ mod tests {
     fn the_same_order_is_the_identity_and_unequal_lists_convert_nothing() {
         let same = ["a", "b", "a"];
         assert_eq!(file_place(&same, &same, 2), Some(2));
-        assert_eq!(plan_place(&same, &same, 1), Some(1));
+        assert_eq!(compiled_place(&same, &same, 1), Some(1));
         assert_eq!(file_place(&["a"], &["a", "b"], 0), None);
-        assert_eq!(plan_place(&same, &same, 3), None);
+        assert_eq!(compiled_place(&same, &same, 3), None);
     }
 }

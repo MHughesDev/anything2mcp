@@ -192,7 +192,7 @@ async fn a_secret_the_system_itself_returns_is_masked_and_is_in_nothing() {
         vec!["trace", "show", run.as_str()],
         vec!["session", "status"],
         vec!["audit", "query"],
-        vec!["plan", "show", "example"],
+        vec!["target", "show", "example"],
         vec!["engine", "status"],
         vec!["doctor", "run"],
         vec!["config", "show"],

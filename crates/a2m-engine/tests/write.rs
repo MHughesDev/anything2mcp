@@ -464,8 +464,8 @@ async fn a_record_in_doubt_whose_stored_values_were_masked_is_not_looked_for_und
     // reconcile. It holds a registered secret, so what is recorded is its
     // mask. The save itself does not take the code here, so it is sent,
     // and its answer is lost.
-    let scene = Scene::new(common::SLOT_ADD, |plan| {
-        plan.operations[7].bindings[0].act[1]
+    let scene = Scene::new(common::SLOT_ADD, |compiled_target| {
+        compiled_target.operations[7].bindings[0].act[1]
             .args
             .retain(|arg| arg.name != "code");
     })
@@ -511,9 +511,9 @@ async fn stored_diff(scene: &Scene) -> a2m_engine::Diff {
 async fn a_write_through_another_binding_than_the_approved_one_is_not_sent() {
     // A keyless create with two bindings: the first reads its record back,
     // the second offers only the system's acknowledgement.
-    let scene = Scene::new(common::SLOT_ADD, |plan| {
-        common::keyless_slot_add(plan);
-        let operation = &mut plan.operations[7];
+    let scene = Scene::new(common::SLOT_ADD, |compiled_target| {
+        common::keyless_slot_add(compiled_target);
+        let operation = &mut compiled_target.operations[7];
         let mut second = operation.bindings[0].clone();
         second.mode = a2m_core::Mode::new(common::SECOND_MODE).unwrap();
         second.evidence = a2m_core::WriteEvidence::Acknowledged;
@@ -550,20 +550,20 @@ async fn a_write_through_another_binding_than_the_approved_one_is_not_sent() {
 
 #[tokio::test]
 async fn a_record_whose_binding_is_chosen_later_is_shown_with_every_binding_it_could_take() {
-    let scene = Scene::new(common::KIT_ENTER, |plan| {
+    let scene = Scene::new(common::KIT_ENTER, |compiled_target| {
         // The lines' operation gets a second binding that is only
         // acknowledged.
-        let operation = &mut plan.operations[2];
+        let operation = &mut compiled_target.operations[2];
         operation.effect = a2m_core::EffectClass::Irreversible;
         let mut second = operation.bindings[0].clone();
         second.mode = a2m_core::Mode::new(common::SECOND_MODE).unwrap();
         second.evidence = a2m_core::WriteEvidence::Acknowledged;
         second.read_back.clear();
         operation.bindings.push(second);
-        for pipeline in &mut plan.pipelines {
+        for pipeline in &mut compiled_target.pipelines {
             pipeline.effect = a2m_core::EffectClass::Irreversible;
         }
-        for tool in &mut plan.tools {
+        for tool in &mut compiled_target.tools {
             tool.annotations.read_only = false;
         }
     })
@@ -600,14 +600,14 @@ async fn a_record_whose_binding_is_chosen_later_is_shown_with_every_binding_it_c
 
 /// The line-item upsert with one more output, `batch`, which neither its
 /// save nor its read-back observes.
-fn with_batch(may_be_absent: bool) -> impl FnOnce(&mut a2m_core::Plan) {
-    move |plan| {
-        let operation = plan
+fn with_batch(may_be_absent: bool) -> impl FnOnce(&mut a2m_core::CompiledTarget) {
+    move |compiled_target| {
+        let operation = compiled_target
             .operations
             .iter_mut()
             .find(|operation| operation.name.as_str() == ITEM_UPSERT)
             .unwrap();
-        operation.outputs.push(a2m_core::OutputPlan {
+        operation.outputs.push(a2m_core::CompiledOutput {
             name: "batch".to_owned(),
             ty: a2m_core::ValueType::Text,
             field_type: None,

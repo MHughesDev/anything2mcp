@@ -777,7 +777,7 @@ struct ToAct {
     origins: Origins,
 }
 
-/// What one run holds: its tabs and the page requests of its plan.
+/// What one run holds: its tabs and the page requests of its compiled target.
 ///
 /// Every session has an observing tab, opened at prepare, in which every
 /// read runs. An acting tab, in the same profile, is opened only when a
@@ -820,7 +820,9 @@ impl Session {
             .get(&named.section.get())
             .and_then(|section| section.get_key_value(&named.entry))
             .map(|(name, entry)| (name.as_str(), entry))
-            .ok_or_else(|| codes::not_usable("the page request it names is not in the plan"))
+            .ok_or_else(|| {
+                codes::not_usable("the page request it names is not in the compiled target")
+            })
     }
 
     /// What every tab refused since it was last asked.
@@ -834,8 +836,9 @@ impl Session {
 
     /// The tab for a `goto`: the acting tab only for a write's own `goto`,
     /// opened then, in a posture that may act; the observing tab in every
-    /// other case. A plan compiled before a `goto` said its tab held reads
-    /// alone, so a `goto` that does not say is the observing tab's.
+    /// other case. A compiled target compiled before a `goto` said its tab
+    /// held reads alone, so a `goto` that does not say is the observing
+    /// tab's.
     async fn choose(&mut self, step: &Step) -> Result<(), StepFailure> {
         let wanted = if step.payload.is_none() {
             TabKind::Observe
@@ -1460,7 +1463,7 @@ impl PageHttpDriver {
         } = setup;
         let surface = &cx.surface.surface;
         let mut sections = BTreeMap::new();
-        for (position, section) in cx.plan.packs.iter().enumerate() {
+        for (position, section) in cx.compiled_target.packs.iter().enumerate() {
             let own = section.pack == PACK
                 && section.kind == REQUEST_KIND
                 && section.surface_kind == surface.kind;
@@ -1484,7 +1487,7 @@ impl PageHttpDriver {
         // The target's signs that the session has ended: its screens, of
         // this pack, and the statuses of an answer.
         let mut screens = BTreeMap::new();
-        for (position, section) in cx.plan.packs.iter().enumerate() {
+        for (position, section) in cx.compiled_target.packs.iter().enumerate() {
             let own = section.pack == PACK
                 && section.kind == SCREEN_KIND
                 && section.surface_kind == surface.kind;
@@ -1505,8 +1508,9 @@ impl PageHttpDriver {
                     .map_err(|_| codes::not_usable("its screens do not decode"))?,
             );
         }
-        let expiry = crate::sign_in::expiry_signs(cx.plan, surface.name.as_str(), &screens)
-            .map_err(codes::not_usable)?;
+        let expiry =
+            crate::sign_in::expiry_signs(cx.compiled_target, surface.name.as_str(), &screens)
+                .map_err(codes::not_usable)?;
         // A status that is both a sign of expiry and a record, or its
         // absence, could not be told apart: unknown means stop.
         for (name, entry) in sections.values().flatten() {

@@ -9,7 +9,7 @@
 //! as values: there is no float anywhere in a comparison.
 
 use a2m_core::{
-    Digest, Failure, FieldTypeIndex, InputIndex, OperationPlan, Sensitivity, Value, Values,
+    CompiledOperation, Digest, Failure, FieldTypeIndex, InputIndex, Sensitivity, Value, Values,
 };
 
 use crate::codes;
@@ -24,7 +24,7 @@ pub(crate) struct Field {
 }
 
 /// The fields of the record an operation writes.
-pub(crate) fn record_fields(loaded: &Loaded, operation: &OperationPlan) -> Vec<Field> {
+pub(crate) fn record_fields(loaded: &Loaded, operation: &CompiledOperation) -> Vec<Field> {
     operation
         .inputs
         .iter()
@@ -44,7 +44,7 @@ pub(crate) fn record_fields(loaded: &Loaded, operation: &OperationPlan) -> Vec<F
 /// The inputs of an operation that are preconditions of its write, in
 /// declared order: shown in the diff and bound by the approval, never
 /// compared with what is read (decision 0378).
-pub(crate) fn precondition_fields(loaded: &Loaded, operation: &OperationPlan) -> Vec<Field> {
+pub(crate) fn precondition_fields(loaded: &Loaded, operation: &CompiledOperation) -> Vec<Field> {
     operation
         .inputs
         .iter()

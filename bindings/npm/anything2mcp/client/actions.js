@@ -51,7 +51,6 @@ const ACTIONS = Object.freeze([
   "net.resolvers",
   "net.routes",
   "net.standing",
-  "plan.show",
   "plugin.install",
   "plugin.list",
   "policy.explain",
@@ -87,6 +86,7 @@ const ACTIONS = Object.freeze([
   "target.add",
   "target.list",
   "target.probe",
+  "target.show",
   "target.status",
   "test.run",
   "tool.call",
@@ -467,14 +467,6 @@ class Actions {
   }
 
   /**
-   * Print a compiled plan as text: its tools, steps, surfaces, and permissions. The
-   * engine action is `plan.show`.
-   */
-  planShow(input, options = {}) {
-    return this.call("plan.show", input, options);
-  }
-
-  /**
    * Install a plug-in from a file, after checking its manifest and signature. The
    * engine action is `plugin.install`.
    */
@@ -760,6 +752,14 @@ class Actions {
   }
 
   /**
+   * Print a target's compiled target as text: its tools, steps, surfaces, and
+   * permissions. The engine action is `target.show`.
+   */
+  targetShow(input, options = {}) {
+    return this.call("target.show", input, options);
+  }
+
+  /**
    * The target's build state and the next action to take. The engine action is
    * `target.status`.
    */
@@ -902,8 +902,8 @@ class Actions {
   }
 
   /**
-   * Publish a target's drafts as an immutable version, compiled to a plan. A person's
-   * act, never an agent's. The engine action is `version.publish`.
+   * Publish a target's drafts, compiled, as an immutable version. A person's act, never
+   * an agent's. The engine action is `version.publish`.
    */
   versionPublish(input, options = {}) {
     return this.call("version.publish", input, options);

@@ -16,9 +16,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, OperationName, PackPayload,
-    Plan, PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName, Timestamp, Value,
-    Values, Version, WorkspaceId,
+    CompiledBinding, CompiledTarget, Digest, EffectClass, Environment, Epoch, Failure,
+    OperationName, PackPayload, PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName,
+    Timestamp, Value, Values, Version, WorkspaceId,
 };
 use a2m_expr::{Bindings, Normalizer, Program};
 use a2m_files::{CompileMode, Compiled, CompilerSet, Diagnostics, RelPath, TargetRoot};
@@ -189,7 +189,7 @@ pub fn compile_files(
     let root = TargetRoot::new("example");
     let sources = a2m_files::load_files(&root, files, set)?;
     // A draft is compiled under the draft version: under a release version
-    // it would have a published plan's bytes.
+    // it would have a published compiled target's bytes.
     let version = if matches!(mode, CompileMode::Draft) {
         a2m_files::DRAFT_VERSION
     } else {
@@ -200,12 +200,12 @@ pub fn compile_files(
 
 /// A target folder on disk, compiled as a draft; a test stops if it does
 /// not compile.
-pub fn compile_folder(root: &Path, set: &CompilerSet) -> Plan {
+pub fn compile_folder(root: &Path, set: &CompilerSet) -> CompiledTarget {
     let sources = a2m_files::load(&TargetRoot::new(root), set)
         .unwrap_or_else(|problems| panic!("{problems}"));
     a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
         .unwrap_or_else(|problems| panic!("{problems}"))
-        .plan
+        .compiled_target
 }
 
 /// The example target, compiled as a draft: publishing also asks for an
@@ -338,12 +338,12 @@ pub async fn write_run(store: &Store, caller: u8, name: &str) -> (Fence, RecordR
     (fence, record, token)
 }
 
-// ---- the plan, the registry, and one simulated device ----
+// ---- the compiled target, the registry, and one simulated device ----
 
 pub struct Scene {
     _folder: Folder,
     pub registry: Registry,
-    pub plan: Plan,
+    pub compiled_target: CompiledTarget,
     pub device: TestDevice,
     pub surface: SurfaceRef,
     pub destinations: Destinations,
@@ -379,22 +379,22 @@ impl Scene {
     pub async fn start_set(redact: Arc<dyn Redact>, settings: Option<Values>) -> Self {
         let folder = Folder::new("scene");
         let registry = registry_set(&folder, redact, settings);
-        let plan = compiled(registry.compiler_set()).plan;
+        let compiled_target = compiled(registry.compiler_set()).compiled_target;
         let device = TestDevice::start().await.unwrap();
-        // The plan's surface, at the address of the run's environment: here
-        // the address the simulated device chose.
-        let mut surface = plan.surfaces[0].clone();
+        // The compiled target's surface, at the address of the run's
+        // environment: here the address the simulated device chose.
+        let mut surface = compiled_target.surfaces[0].clone();
         surface.address = device.address().to_string();
         let destinations = Destinations::new([surface.address.clone()]);
         Self {
             _folder: folder,
             registry,
             surface: SurfaceRef {
-                target: plan.header.target.clone(),
+                target: compiled_target.header.target.clone(),
                 environment: Environment::new("test").unwrap(),
                 surface,
             },
-            plan,
+            compiled_target,
             device,
             destinations,
         }
@@ -433,7 +433,7 @@ impl Scene {
             run: fence.run,
             epoch: fence.epoch,
             surface: &self.surface,
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             posture,
             deadline: Deadline::after(Duration::from_secs(30)),
             redact: &a2m_core::NoSecrets,
@@ -456,9 +456,9 @@ impl Scene {
     }
 
     /// The first binding of an operation.
-    pub fn binding(&self, operation: &str) -> &BindingPlan {
+    pub fn binding(&self, operation: &str) -> &CompiledBinding {
         &self
-            .plan
+            .compiled_target
             .operations
             .iter()
             .find(|found| found.name.as_str() == operation)
@@ -466,13 +466,14 @@ impl Scene {
             .bindings[0]
     }
 
-    /// The values of a step's arguments, from the plan's expressions and
-    /// the call's inputs, as the engine evaluates them.
+    /// The values of a step's arguments, from the compiled target's
+    /// expressions and the call's inputs, as the engine evaluates them.
     fn args(&self, step: &Step, inputs: &Values) -> Values {
         let input = Value::Record(inputs.clone());
         let mut args = Values::new();
         for arg in &step.args {
-            let program = Program::load(&self.plan.expressions[arg.value.get()]).unwrap();
+            let program =
+                Program::load(&self.compiled_target.expressions[arg.value.get()]).unwrap();
             let bindings = Bindings::new().with("input", &input);
             args.insert(arg.name.clone(), program.evaluate(&bindings).unwrap());
         }
@@ -544,13 +545,15 @@ impl Scene {
     /// intended value and a value read back are compared.
     pub fn normalized(&self, field_type: &str, value: &Value) -> Value {
         let field_type = self
-            .plan
+            .compiled_target
             .field_types
             .iter()
             .find(|found| found.name == field_type)
             .unwrap();
-        let normalizer =
-            Normalizer::load(&self.plan.expressions[field_type.normalizer.unwrap().get()]).unwrap();
+        let normalizer = Normalizer::load(
+            &self.compiled_target.expressions[field_type.normalizer.unwrap().get()],
+        )
+        .unwrap();
         normalizer.normalize(value).unwrap().normalized
     }
 

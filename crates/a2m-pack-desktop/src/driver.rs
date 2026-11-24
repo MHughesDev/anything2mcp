@@ -150,7 +150,7 @@ impl Held {
             .get(&named.section.get())
             .and_then(|section| section.get_key_value(&named.entry))
             .map(|(name, screen)| (name.as_str(), screen))
-            .ok_or_else(|| codes::not_usable("the screen it names is not in the plan"))
+            .ok_or_else(|| codes::not_usable("the screen it names is not in the compiled target"))
     }
 
     /// One walk of the window the last `goto` found, whole.
@@ -1112,7 +1112,7 @@ fn acting(means: Vec<a2m_telemetry::Detail>) -> a2m_provider::Capture {
 
 fn sections_of(cx: &PrepareContext<'_>) -> Result<BTreeMap<usize, ScreenSection>, StepFailure> {
     let mut sections = BTreeMap::new();
-    for (position, section) in cx.plan.packs.iter().enumerate() {
+    for (position, section) in cx.compiled_target.packs.iter().enumerate() {
         let own = section.pack == PACK
             && section.kind == SCREEN_KIND
             && section.surface_kind == cx.surface.surface.kind;

@@ -6,7 +6,7 @@
 //! group the supervisor can end as one, bounded in time and output, and
 //! never left behind. A pack
 //! reaches it only through a [`ScopedSupervisor`], which starts nothing the
-//! pack's manifest, or the published plan, does not declare.
+//! pack's manifest, or the published compiled target, does not declare.
 //!
 //! Three kinds of link are built: [`OneShot`], a program run to completion
 //! with its output captured; a foreign link ([`ForeignPipe`]), a program
@@ -80,14 +80,15 @@ pub fn is_engine_variable(name: &str) -> bool {
 pub struct ProgramRef {
     /// Its absolute path. Never a name to search for.
     pub path: PathBuf,
-    /// The digest a manifest or a published plan declared for it.
+    /// The digest a manifest or a published compiled target declared for it.
     pub digest: Option<Digest>,
 }
 
 impl From<&a2m_core::DeclaredProgram> for ProgramRef {
-    /// A program a published plan declares for a surface, as the supervisor
-    /// takes it. The engine makes the list for [`DriverHandle::supervisor`]
-    /// with `surface.programs.iter().map(ProgramRef::from).collect()`.
+    /// A program a published compiled target declares for a surface, as the
+    /// supervisor takes it. The engine makes the list for
+    /// [`DriverHandle::supervisor`] with
+    /// `surface.programs.iter().map(ProgramRef::from).collect()`.
     ///
     /// [`DriverHandle::supervisor`]: crate::DriverHandle::supervisor
     fn from(program: &a2m_core::DeclaredProgram) -> Self {
@@ -457,7 +458,7 @@ impl From<ProgramRef> for Allowed {
 struct Scope {
     provider: ProviderName,
     declared: Arc<Vec<Allowed>>,
-    plan: Arc<Vec<Allowed>>,
+    compiled_target: Arc<Vec<Allowed>>,
 }
 
 /// Why the operating-system half of a start did not start the program.
@@ -498,7 +499,7 @@ fn not_the_declared_program(path: &Path) -> Failure {
 /// path once, checks it against what the scope declares, opens it once, and
 /// digests it through that handle. Every digest declared for it, by the
 /// caller, a manifest's `processes`, a requirement's `known_digests`, or a
-/// published plan, must be the digest found. Blocking.
+/// published compiled target, must be the digest found. Blocking.
 fn identify(program: &ProgramRef, scope: Option<&Scope>) -> Result<Identified, Failure> {
     let not_found = || {
         codes::failure(
@@ -515,7 +516,7 @@ fn identify(program: &ProgramRef, scope: Option<&Scope>) -> Result<Identified, F
     let mut known: Vec<&[Digest]> = Vec::new();
     if let Some(scope) = scope {
         let mut declared = false;
-        for allowed in scope.declared.iter().chain(scope.plan.iter()) {
+        for allowed in scope.declared.iter().chain(scope.compiled_target.iter()) {
             // A path that is not absolute here would be resolved against
             // the engine's own working folder, and is never matched.
             let same = real.is_some()
@@ -532,7 +533,7 @@ fn identify(program: &ProgramRef, scope: Option<&Scope>) -> Result<Identified, F
             return Err(codes::failure(
                 &codes::row::EFFECT_NOT_DECLARED,
                 format!(
-                    "The provider `{}` asked to start a program that neither its manifest nor the published plan declares.",
+                    "The provider `{}` asked to start a program that neither its manifest nor the published compiled target declares.",
                     scope.provider
                 ),
                 "Declare the program under `effects.processes` in the provider's manifest, or name it in the target's files and publish.",
@@ -1474,15 +1475,16 @@ impl Supervisor {
 }
 
 /// What a pack gets: a supervisor that starts only the programs the pack's
-/// manifest declares, and, where the manifest says `plan_programs`, those a
-/// published plan names. Anything else is `policy`/`effect_not_declared`.
-/// A digest declared for a program, in the manifest's `processes`, in a
-/// requirement's `known_digests`, or in the plan, is checked at every start.
+/// manifest declares, and, where the manifest says
+/// `compiled_target_programs`, those a published compiled target names.
+/// Anything else is `policy`/`effect_not_declared`. A digest declared for a
+/// program, in the manifest's `processes`, in a requirement's
+/// `known_digests`, or in the compiled target, is checked at every start.
 #[derive(Clone)]
 pub struct ScopedSupervisor {
     supervisor: Supervisor,
     scope: Scope,
-    plan_allowed: bool,
+    compiled_target_allowed: bool,
 }
 
 impl fmt::Debug for ScopedSupervisor {
@@ -1490,7 +1492,7 @@ impl fmt::Debug for ScopedSupervisor {
         f.debug_struct("ScopedSupervisor")
             .field("provider", &self.scope.provider)
             .field("declared", &self.scope.declared.len())
-            .field("plan", &self.scope.plan.len())
+            .field("compiled_target", &self.scope.compiled_target.len())
             .finish()
     }
 }
@@ -1500,24 +1502,24 @@ impl ScopedSupervisor {
         supervisor: Supervisor,
         provider: ProviderName,
         declared: Vec<Allowed>,
-        plan_allowed: bool,
+        compiled_target_allowed: bool,
     ) -> Self {
         Self {
             supervisor,
             scope: Scope {
                 provider,
                 declared: Arc::new(declared),
-                plan: Arc::new(Vec::new()),
+                compiled_target: Arc::new(Vec::new()),
             },
-            plan_allowed,
+            compiled_target_allowed,
         }
     }
 
-    /// The same scope with the programs of a published plan added, when the
-    /// manifest allows plan programs at all.
-    pub(crate) fn with_plan_programs(&self, programs: Vec<ProgramRef>) -> Self {
+    /// The same scope with the programs of a published compiled target added,
+    /// when the manifest allows compiled target programs at all.
+    pub(crate) fn with_compiled_target_programs(&self, programs: Vec<ProgramRef>) -> Self {
         let mut scoped = self.clone();
-        scoped.scope.plan = Arc::new(if self.plan_allowed {
+        scoped.scope.compiled_target = Arc::new(if self.compiled_target_allowed {
             programs.into_iter().map(Allowed::from).collect()
         } else {
             Vec::new()

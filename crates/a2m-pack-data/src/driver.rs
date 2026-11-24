@@ -5,10 +5,11 @@
 //! checked before `commit`, and any other count rolls back. The driver
 //! never retries, and it says for every failure whether anything was sent.
 //!
-//! The driver trusts no plan to be the compiler's. Before a statement is
-//! first used it is held to the form of one plain read or one keyed write,
-//! as the compiler held it; a writing transaction takes one statement and
-//! one row; and the read of a record by its key must return that key.
+//! The driver trusts no compiled target to be the compiler's. Before a
+//! statement is first used it is held to the form of one plain read or one
+//! keyed write, as the compiler held it; a writing transaction takes one
+//! statement and one row; and the read of a record by its key must return
+//! that key.
 //!
 //! Every call into the store blocks, so each runs on a blocking thread; the
 //! connection moves there and back. A step that is dropped while it waits
@@ -103,8 +104,8 @@ impl Pool {
         while let Some(position) = conns.iter().position(|(held, _)| *held == access) {
             let (_, conn) = conns.remove(position);
             // The connection's own record of where it leads, held to the
-            // plan's surface again here: a connection that says anything
-            // else is closed and never used.
+            // compiled target's surface again here: a connection that says
+            // anything else is closed and never used.
             if conn.usable() && conn.leads_to() == Some(&key.3) {
                 return Some(conn);
             }
@@ -193,7 +194,7 @@ pub(crate) struct Session {
     /// The key the last read by key asked for: each key column with the
     /// value bound to it, until `fetch` holds the record to it.
     asked: Option<Vec<(String, Bound)>>,
-    /// The statements whose shape was compared with the plan.
+    /// The statements whose shape was compared with the compiled target.
     described: BTreeSet<String>,
     /// The tables whose triggers and cascading keys were looked at.
     looked_at: BTreeSet<String>,
@@ -230,7 +231,8 @@ fn lost() -> Failure {
     )
 }
 
-/// A statement of the plan that is not one plain read or one keyed write.
+/// A statement of the compiled target that is not one plain read or one keyed
+/// write.
 fn not_allowed(message: &str) -> Failure {
     failure(
         &codes::row::STATEMENT_NOT_ALLOWED,
@@ -258,12 +260,13 @@ fn too_powerful() -> Failure {
     )
 }
 
-/// The connection, or the file, does not lead where the plan names.
+/// The connection, or the file, does not lead where the compiled target
+/// names.
 #[cfg(feature = "postgres")]
 fn leads_elsewhere() -> Failure {
     failure(
         &codes::server::row::CONNECTION_LEADS_ELSEWHERE,
-        "The connection does not lead where the plan's surface names: the server reports another database, role, or `search_path`, or another address or port than when the connection was opened. It was closed, and nothing was sent.",
+        "The connection does not lead where the compiled target's surface names: the server reports another database, role, or `search_path`, or another address or port than when the connection was opened. It was closed, and nothing was sent.",
         "Check the surface's address, port, database, and schema, and what else may change a connection's settings; then start the run again.",
     )
 }
@@ -465,7 +468,7 @@ impl Session {
         });
         found.ok_or_else(|| {
             StepFailure::not_sent(unexpected(
-                "The step refers to a statement the plan's section does not hold for this surface.",
+                "The step refers to a statement the compiled target's section does not hold for this surface.",
             ))
         })
     }
@@ -806,7 +809,7 @@ impl Session {
         let work = move |conn: &mut dyn Conn| -> Result<Ran, Stopped> {
             if needs_shape {
                 // The store describes the statement without running it; the
-                // plan is held to that description.
+                // compiled target is held to that description.
                 let shape = conn.describe(&text).map_err(Stopped::Store)?;
                 if shape.params != expected_params {
                     return Err(Stopped::Unsent(drift(
@@ -925,9 +928,10 @@ impl Session {
                 ))
                 .await);
         };
-        // A keyed write changes one row. The plan states the count, and the
-        // driver takes no other: a plan that asked for more would commit
-        // more rows than the one record the ledger holds an intent for.
+        // A keyed write changes one row. The compiled target states the
+        // count, and the driver takes no other: a compiled target that asked
+        // for more would commit more rows than the one record the ledger
+        // holds an intent for.
         if expected != 1 || self.open != Some(Access::ReadWrite) || !self.wrote {
             return Err(self
                 .not_sent(unexpected(
@@ -1329,7 +1333,7 @@ impl SqlDriver {
     fn file_of(
         &self,
         cx: &PrepareContext<'_>,
-        surface: &a2m_core::SurfacePlan,
+        surface: &a2m_core::CompiledSurface,
         fields: &SurfaceFields,
     ) -> Result<CheckedPath, StepFailure> {
         // The store's file arrives as a checked path under the surface's
@@ -1444,12 +1448,13 @@ impl Driver for SqlDriver {
                 }
                 None => None,
             };
-            let section_index = cx.plan.packs.iter().position(|section| {
+            let section_index = cx.compiled_target.packs.iter().position(|section| {
                 section.pack == PACK
                     && section.kind == STATEMENT
                     && section.surface_kind == surface.kind
             });
-            let section = match section_index.and_then(|index| cx.plan.packs.get(index)) {
+            let section = match section_index.and_then(|index| cx.compiled_target.packs.get(index))
+            {
                 Some(section) => section
                     .payload
                     .decode::<Section>()

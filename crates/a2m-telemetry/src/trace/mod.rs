@@ -31,8 +31,8 @@ pub use wire::{
     check_trace, read_trace,
 };
 
-/// How much evidence a run keeps. The plan and policy decide a run's level;
-/// this crate applies it. Each level includes the one before it.
+/// How much evidence a run keeps. The compiled target and policy decide a
+/// run's level; this crate applies it. Each level includes the one before it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureLevel {
@@ -69,8 +69,8 @@ pub struct TraceIdentity {
     pub attempt: u32,
     /// The tool that was called.
     pub operation: OperationName,
-    /// The hash of the plan that was run.
-    pub plan: Digest,
+    /// The hash of the compiled target that was run.
+    pub compiled_target: Digest,
     /// The engine's version.
     pub engine: Version,
     /// The digest of the registry: which providers, at which versions, were
@@ -112,7 +112,7 @@ pub struct StepRecord {
     pub pass: u32,
     /// The part of the loop the step belongs to.
     pub phase: Phase,
-    /// The step's position in its list in the plan, from 0.
+    /// The step's position in its list in the compiled target, from 0.
     pub step: u32,
     /// The kind of step.
     pub kind: StepKind,
@@ -158,9 +158,10 @@ pub struct PassStart {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChoiceReason {
-    /// It is the first binding in the plan's order, and it qualified.
+    /// It is the first binding in the compiled target's order, and it
+    /// qualified.
     FirstInOrder,
-    /// Bindings before it in the plan's order did not qualify.
+    /// Bindings before it in the compiled target's order did not qualify.
     EarlierDidNotQualify,
     /// The caller pinned the mode.
     Pinned,
@@ -275,8 +276,8 @@ pub struct TracedValue {
     /// level; `internal` as it is at `standard` and above, and as a keyed
     /// digest at `minimal`; `restricted` only ever as a keyed digest.
     pub sensitivity: Sensitivity,
-    /// True when the plan declares the field's value volatile: it is kept in
-    /// the trace and left out of the signature.
+    /// True when the compiled target declares the field's value volatile: it
+    /// is kept in the trace and left out of the signature.
     pub volatile: bool,
     /// The value the step meant to set or send.
     pub intended: Option<Value>,

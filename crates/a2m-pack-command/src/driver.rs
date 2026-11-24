@@ -168,7 +168,7 @@ fn digest_changed(path: &Path, why: &str) -> StepFailure {
 /// confirms that write, and the failure says so instead.
 fn unconfirmed(session: &Session, failure: StepFailure) -> StepFailure {
     if session.last.as_ref().is_some_and(|last| last.writes) {
-        possible_commit("the step that confirms it cannot be done as the plan wrote it")
+        possible_commit("the step that confirms it cannot be done as the compiled target wrote it")
     } else {
         failure
     }
@@ -254,7 +254,8 @@ impl CliDriver {
             ));
         }
         // The engine's own variables are never handed to a program, whatever
-        // a plan says: the compiler refuses them, and so does the driver.
+        // a compiled target says: the compiler refuses them, and so does the
+        // driver.
         if let Some(name) = program.and_then(|program| {
             program
                 .env_set
@@ -265,7 +266,7 @@ impl CliDriver {
             return Err(not_sent(
                 &codes::row::STEP_NOT_USABLE,
                 format!(
-                    "The plan hands the program the variable `{}`, which belongs to the engine.",
+                    "The compiled target hands the program the variable `{}`, which belongs to the engine.",
                     name.chars().take(64).collect::<String>()
                 ),
                 "Compile the target again from files that do not name the engine's variables.",
@@ -283,7 +284,7 @@ impl CliDriver {
             return Err(not_sent(
                 &codes::row::STEP_NOT_USABLE,
                 format!(
-                    "The plan hands the program the variable `{}`, which makes a program load code other than its own.",
+                    "The compiled target hands the program the variable `{}`, which makes a program load code other than its own.",
                     name.chars().take(64).collect::<String>()
                 ),
                 "Compile the target again from files that do not name such a variable.",
@@ -403,7 +404,7 @@ impl CliDriver {
         let surface = cx.surface.surface.name.as_str().to_owned();
         let path = PathBuf::from(&cx.surface.surface.address);
         let section = cx
-            .plan
+            .compiled_target
             .packs
             .iter()
             .find(|section| {
@@ -429,11 +430,11 @@ impl CliDriver {
                 .iter()
                 .all(|program| program.interpreter.is_some());
         // A program of the provider's closed list of programs whose listed
-        // commands run no code but their own is started only in those
-        // forms: every argument list its files give it, by the row of its
-        // declared name and by the row of the file its path leads to, is
-        // one of them (decision 0299, step one). The plan is not taken at
-        // its word.
+        // commands run no code but their own is started only in those forms:
+        // every argument list its files give it, by the row of its declared
+        // name and by the row of the file its path leads to, is one of them
+        // (decision 0299, step one). The compiled target is not taken at its
+        // word.
         let own_code =
             !interprets && a2m_provider::runs_its_own_code(&path.to_string_lossy()).is_some();
         if own_code {
@@ -532,7 +533,7 @@ impl CliDriver {
         };
 
         let test_environment = cx
-            .plan
+            .compiled_target
             .environment_named(&cx.surface.environment)
             .is_some_and(|environment| environment.kind == EnvironmentKind::Test);
         let session = Session {
@@ -776,10 +777,11 @@ impl CliDriver {
         }
         let (name, command, program) = found(session, step)?;
         let name = name.to_owned();
-        // A command that writes is started only by the step the plan marks
-        // as a commit point, for a record the ledger holds an intent for.
-        // The handle lets such a step through only with the ledger's token;
-        // the compiler's word that the plan is so is not relied on here.
+        // A command that writes is started only by the step the compiled
+        // target marks as a commit point, for a record the ledger holds an
+        // intent for. The handle lets such a step through only with the
+        // ledger's token; the compiler's word that the compiled target is so
+        // is not relied on here.
         let writes = command.effect != Effect::Read;
         if writes && !step.commits {
             return Err(not_usable(&format!(
@@ -1233,7 +1235,7 @@ fn found<'a>(
         .section
         .commands
         .get(entry)
-        .ok_or_else(|| not_usable("the plan holds no command of that name"))?;
+        .ok_or_else(|| not_usable("the compiled target holds no command of that name"))?;
     let program = session
         .section
         .programs

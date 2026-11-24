@@ -219,8 +219,10 @@ async fn the_stands_catalog_drafts_reads_that_read_what_it_stores() {
         let in_place = path.strip_prefix("held/").unwrap();
         assert!(!root.join(in_place).exists(), "{in_place}");
     }
-    let plan = compile_folder(&scene.registry, &root).unwrap().plan;
-    let lines_get = plan
+    let compiled_target = compile_folder(&scene.registry, &root)
+        .unwrap()
+        .compiled_target;
+    let lines_get = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_order_lines_get")
@@ -232,14 +234,14 @@ async fn the_stands_catalog_drafts_reads_that_read_what_it_stores() {
         .iter()
         .find(|output| output.name == "description")
         .unwrap();
-    assert!(plan.field_types[notes.field_type.unwrap().get()].untrusted);
-    for operation in &plan.operations {
+    assert!(compiled_target.field_types[notes.field_type.unwrap().get()].untrusted);
+    for operation in &compiled_target.operations {
         assert_eq!(operation.effect, a2m_core::EffectClass::Read);
     }
-    scene.plan = plan;
+    scene.compiled_target = compiled_target;
     let binding = |name: &str| {
         scene
-            .plan
+            .compiled_target
             .operations
             .iter()
             .find(|operation| operation.name.as_str() == name)
@@ -291,7 +293,10 @@ async fn the_stands_catalog_drafts_reads_that_read_what_it_stores() {
 /// The reads drafted from the stand's catalog, without the two drafts that
 /// hold a question, each list's `max_rows` set to the number given, and
 /// compiled.
-async fn drafted_plan(scene: &Scene, max_rows: u32) -> (Folder, a2m_core::Plan) {
+async fn drafted_compiled_target(
+    scene: &Scene,
+    max_rows: u32,
+) -> (Folder, a2m_core::CompiledTarget) {
     let (findings, _) = discover(scene).await;
     let folder = Folder::new("drafted-list");
     let root = folder.path().join("example");
@@ -315,8 +320,10 @@ async fn drafted_plan(scene: &Scene, max_rows: u32) -> (Folder, a2m_core::Plan) 
         text.replace("max_rows: 1000", &format!("max_rows: {max_rows}")),
     )
     .unwrap();
-    let plan = compile_folder(&scene.registry, &root).unwrap().plan;
-    (folder, plan)
+    let compiled_target = compile_folder(&scene.registry, &root)
+        .unwrap()
+        .compiled_target;
+    (folder, compiled_target)
 }
 
 /// The stand's value as the engine's.
@@ -330,7 +337,8 @@ fn stored(value: Option<&example_db::rows::Value>) -> a2m_core::Value {
 }
 
 #[tokio::test]
-async fn the_drafted_list_returns_the_stands_rows_column_by_column_through_the_plans_outputs() {
+async fn the_drafted_list_returns_the_stands_rows_column_by_column_through_the_compiled_targets_outputs()
+ {
     let mut scene = Scene::new();
     scene.db.set_write_log(false).unwrap();
     let before = scene.db.data_version().unwrap();
@@ -339,10 +347,10 @@ async fn the_drafted_list_returns_the_stands_rows_column_by_column_through_the_p
     assert!(count > 1);
     // At the limit nothing is left; one below it, one row is.
     for (max_rows, more) in [(count, false), (count - 1, true)] {
-        let (_folder, plan) = drafted_plan(&scene, max_rows).await;
-        scene.plan = plan;
+        let (_folder, compiled_target) = drafted_compiled_target(&scene, max_rows).await;
+        scene.compiled_target = compiled_target;
         let operation = scene
-            .plan
+            .compiled_target
             .operations
             .iter()
             .find(|operation| operation.name.as_str() == "example_order_lines_list")
@@ -351,7 +359,11 @@ async fn the_drafted_list_returns_the_stands_rows_column_by_column_through_the_p
         let mut run = scene.prepare(a2m_provider::Posture::Live).await;
         let observed = super::values(run.steps(&steps, &Values::new(), None).await.unwrap());
         run.release().await;
-        let result = super::outputs_of(&scene.plan, "example_order_lines_list", &observed);
+        let result = super::outputs_of(
+            &scene.compiled_target,
+            "example_order_lines_list",
+            &observed,
+        );
         // Every column of the record, and `more`: nothing else.
         assert_eq!(
             result.iter().count(),
@@ -389,7 +401,7 @@ async fn the_drafted_list_returns_the_stands_rows_column_by_column_through_the_p
             .iter()
             .find(|output| output.name == "description")
             .unwrap();
-        assert!(scene.plan.field_types[description.field_type.unwrap().get()].untrusted);
+        assert!(scene.compiled_target.field_types[description.field_type.unwrap().get()].untrusted);
     }
     assert_eq!(scene.db.data_version().unwrap(), before);
 }
@@ -401,7 +413,7 @@ async fn the_drafted_list_returns_the_stands_rows_column_by_column_through_the_p
 async fn a_column_that_takes_a_null_is_drafted_nullable_and_its_outputs_may_be_absent() {
     let mut scene = Scene::new();
     scene.db.set_write_log(false).unwrap();
-    let (folder, plan) = drafted_plan(&scene, 1000).await;
+    let (folder, compiled_target) = drafted_compiled_target(&scene, 1000).await;
     let customers = std::fs::read_to_string(
         folder
             .path()
@@ -421,7 +433,8 @@ async fn a_column_that_takes_a_null_is_drafted_nullable_and_its_outputs_may_be_a
         "{customers}"
     );
     let flags = |operation: &str| -> Vec<(String, bool)> {
-        plan.operations
+        compiled_target
+            .operations
             .iter()
             .find(|found| found.name.as_str() == operation)
             .unwrap()
@@ -446,10 +459,10 @@ async fn a_column_that_takes_a_null_is_drafted_nullable_and_its_outputs_may_be_a
     assert_eq!(flags("example_customers_list"), expected);
 
     // The list of every customer gives `null` for the one with no notes,
-    // and its outputs are what the plan allows.
-    scene.plan = plan;
+    // and its outputs are what the compiled target allows.
+    scene.compiled_target = compiled_target;
     let steps = scene
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_customers_list")
@@ -460,7 +473,7 @@ async fn a_column_that_takes_a_null_is_drafted_nullable_and_its_outputs_may_be_a
     let mut run = scene.prepare(a2m_provider::Posture::Live).await;
     let observed = super::values(run.steps(&steps, &Values::new(), None).await.unwrap());
     run.release().await;
-    let result = super::outputs_of(&scene.plan, "example_customers_list", &observed);
+    let result = super::outputs_of(&scene.compiled_target, "example_customers_list", &observed);
     let notes = result
         .get("notes")
         .and_then(a2m_core::Value::as_list)
@@ -766,10 +779,10 @@ async fn a_column_named_as_a_secret_is_never_drafted_as_a_field_or_an_output() {
 async fn a_drafted_read_by_key_answers_a_row_that_is_not_there_with_found_false() {
     let mut scene = Scene::new();
     scene.db.set_write_log(false).unwrap();
-    let (_folder, plan) = drafted_plan(&scene, 1000).await;
-    scene.plan = plan;
+    let (_folder, compiled_target) = drafted_compiled_target(&scene, 1000).await;
+    scene.compiled_target = compiled_target;
     let operation = scene
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_customers_get")
@@ -801,12 +814,12 @@ async fn a_drafted_read_by_key_answers_a_row_that_is_not_there_with_found_false(
             .unwrap(),
     );
     run.release().await;
-    let got = super::outputs_of(&scene.plan, "example_customers_get", &present);
+    let got = super::outputs_of(&scene.compiled_target, "example_customers_get", &present);
     assert_eq!(got.get("found"), Some(&a2m_core::Value::Bool(true)));
     assert!(got.get("name").and_then(a2m_core::Value::as_text).is_some());
     // A missing row is an answer: `found: false`, and every other output
     // absent, as `null`.
-    let none = super::outputs_of(&scene.plan, "example_customers_get", &missing);
+    let none = super::outputs_of(&scene.compiled_target, "example_customers_get", &missing);
     assert_eq!(none.get("found"), Some(&a2m_core::Value::Bool(false)));
     assert_eq!(none.get("name"), Some(&a2m_core::Value::Null));
     assert_eq!(none.get("notes"), Some(&a2m_core::Value::Null));

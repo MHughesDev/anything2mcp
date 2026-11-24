@@ -7,8 +7,8 @@
 //!
 //! Its `content` is hashed: the same system in the same state, scouted with
 //! the same drafts, gives the same hash. Run identifiers, the scout's own
-//! identifier, and the plan's hash, which changes as the scout drafts, are
-//! kept outside it.
+//! identifier, and the compiled target's hash, which changes as the scout
+//! drafts, are kept outside it.
 
 use std::collections::BTreeMap;
 
@@ -211,7 +211,7 @@ pub(crate) fn assemble(
         "target": target.as_str(),
         "scout_id": scout.to_string(),
         "report_hash": hash.to_string(),
-        "plan_hash": stage(1)["plan_hash"],
+        "compiled_target_hash": stage(1)["compiled_target_hash"],
         "content": content,
         "runs": {"identify": stage(1)["runs"], "tried": stage(6)["runs"]},
     })

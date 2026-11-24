@@ -62,19 +62,23 @@ impl FailureCode {
     /// A decimal, a date, a key part, or a moment cannot be represented.
     pub const VALUE_OUT_OF_RANGE: Self = crate::codes::VALUE_OUT_OF_RANGE;
 
-    /// A plan's bytes do not match the hash it was published with.
-    pub const PLAN_HASH_MISMATCH: Self = crate::codes::PLAN_HASH_MISMATCH;
+    /// A compiled target's bytes do not match the hash it was published with.
+    pub const COMPILED_TARGET_HASH_MISMATCH: Self = crate::codes::COMPILED_TARGET_HASH_MISMATCH;
 
-    /// A plan's format is not one this engine loads.
-    pub const PLAN_FORMAT_UNSUPPORTED: Self = crate::codes::PLAN_FORMAT_UNSUPPORTED;
+    /// A compiled target's format is not one this engine loads.
+    pub const COMPILED_TARGET_FORMAT_UNSUPPORTED: Self =
+        crate::codes::COMPILED_TARGET_FORMAT_UNSUPPORTED;
 
-    /// A plan's bytes match its hash and are not a well-formed plan.
-    pub const PLAN_UNREADABLE: Self = crate::codes::PLAN_UNREADABLE;
+    /// A compiled target's bytes match its hash and are not a well-formed
+    /// compiled target.
+    pub const COMPILED_TARGET_UNREADABLE: Self = crate::codes::COMPILED_TARGET_UNREADABLE;
 
-    /// A payload in a plan does not decode as the type its reader expects.
+    /// A payload in a compiled target does not decode as the type its reader
+    /// expects.
     pub const PAYLOAD_UNREADABLE: Self = crate::codes::PAYLOAD_UNREADABLE;
 
-    /// Data holds something the plan's encoding cannot carry, such as a float.
+    /// Data holds something the compiled target's encoding cannot carry, such
+    /// as a float.
     pub const PAYLOAD_NOT_ENCODABLE: Self = crate::codes::PAYLOAD_NOT_ENCODABLE;
 
     /// Makes a code from a name written in the source.

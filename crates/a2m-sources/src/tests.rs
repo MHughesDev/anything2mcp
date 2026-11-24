@@ -4,10 +4,10 @@
 use std::sync::Arc;
 
 use a2m_core::{
-    Date, Decimal, Digest, Environment, EnvironmentIndex, EnvironmentKind, EnvironmentPlan,
-    ExprIndex, FieldFormat, FieldTypeIndex, FieldTypePlan, PLAN_FORMAT, PackPayload, Plan,
-    PlanHeader, Rounding, Sensitivity, SourcePlan, StepArg, TargetName, TargetPlan, Value,
-    ValueType, Values, Version,
+    COMPILED_TARGET_FORMAT, CompiledEnvironment, CompiledFieldType, CompiledSource, CompiledTarget,
+    CompiledTargetHeader, Date, Decimal, Digest, Environment, EnvironmentIndex, EnvironmentKind,
+    ExprIndex, FieldFormat, FieldTypeIndex, PackPayload, Rounding, Sensitivity, StepArg,
+    TargetName, TargetSection, Value, ValueType, Values, Version,
 };
 use a2m_expr::{DecimalMark, FieldRule, LibraryVersion, TypeEnv, Whitespace, compile};
 use example_files::seed;
@@ -33,24 +33,24 @@ fn input(bytes: &[u8]) -> SourceInput<'_> {
     }
 }
 
-/// A plan that holds only field types and expressions.
+/// A compiled target that holds only field types and expressions.
 struct Target {
-    plan: Plan,
+    compiled_target: CompiledTarget,
 }
 
 impl Target {
     fn new() -> Self {
         Self {
-            plan: Plan {
-                header: PlanHeader {
-                    format: PLAN_FORMAT,
+            compiled_target: CompiledTarget {
+                header: CompiledTargetHeader {
+                    format: COMPILED_TARGET_FORMAT,
                     minimum_engine: Version::new(0, 0, 1),
                     compiler: Version::new(0, 0, 1),
                     target: TargetName::new("example").unwrap(),
                     version: Version::new(1, 0, 0),
                     sources: Digest::of(b"sources/example.yaml"),
                 },
-                target: TargetPlan {
+                target: TargetSection {
                     title: "Example".to_owned(),
                     modules: vec![],
                     default_environment: EnvironmentIndex::new(0),
@@ -62,7 +62,7 @@ impl Target {
                     authorization: None,
                 },
                 surfaces: vec![],
-                environments: vec![EnvironmentPlan {
+                environments: vec![CompiledEnvironment {
                     name: Environment::new("production").unwrap(),
                     kind: EnvironmentKind::Production,
                     addresses: vec![],
@@ -86,15 +86,18 @@ impl Target {
         env.declare_unknown("row").unwrap();
         env.declare_unknown("source").unwrap();
         let compiled = compile(source, &env, Some(result)).unwrap();
-        self.plan.expressions.push(compiled.to_plan_expr().unwrap());
-        ExprIndex::new(u32::try_from(self.plan.expressions.len() - 1).unwrap())
+        self.compiled_target
+            .expressions
+            .push(compiled.to_compiled_expr().unwrap());
+        ExprIndex::new(u32::try_from(self.compiled_target.expressions.len() - 1).unwrap())
     }
 
     fn field_type(&mut self, name: &str, rule: &FieldRule) -> FieldTypeIndex {
-        let normalizer = rule.normalizer().unwrap().to_plan_expr().unwrap();
-        self.plan.expressions.push(normalizer);
-        let normalizer = ExprIndex::new(u32::try_from(self.plan.expressions.len() - 1).unwrap());
-        self.plan.field_types.push(FieldTypePlan {
+        let normalizer = rule.normalizer().unwrap().to_compiled_expr().unwrap();
+        self.compiled_target.expressions.push(normalizer);
+        let normalizer =
+            ExprIndex::new(u32::try_from(self.compiled_target.expressions.len() - 1).unwrap());
+        self.compiled_target.field_types.push(CompiledFieldType {
             name: name.to_owned(),
             base: rule.base(),
             ty: rule.value_type(),
@@ -109,11 +112,11 @@ impl Target {
             sensitivity: Sensitivity::default(),
             untrusted: false,
             // The readers type a cell by the normalizer and never read the
-            // format, so these plans do not state a true one.
+            // format, so these compiled targets do not state a true one.
             format: FieldFormat::Choice,
             normalizer: Some(normalizer),
         });
-        FieldTypeIndex::new(u32::try_from(self.plan.field_types.len() - 1).unwrap())
+        FieldTypeIndex::new(u32::try_from(self.compiled_target.field_types.len() - 1).unwrap())
     }
 
     fn text(&mut self) -> FieldTypeIndex {
@@ -173,8 +176,8 @@ impl Target {
         rows: Option<ExprIndex>,
     ) -> Result<LoadedSource, a2m_core::Failure> {
         LoadedSource::load(
-            &self.plan,
-            &SourcePlan {
+            &self.compiled_target,
+            &CompiledSource {
                 template: "example_stock".to_owned(),
                 reader: reader.to_owned(),
                 mapping,
@@ -1601,14 +1604,14 @@ fn rows_handed_in_by_a_caller_go_through_the_same_validation() {
 #[test]
 fn typed_is_the_same_code_read_uses_and_refuses_what_it_cannot_take() {
     let mut target = Target::new();
-    let text = FieldTyper::load(&target.plan.clone(), target.text()).unwrap_err();
+    let text = FieldTyper::load(&target.compiled_target.clone(), target.text()).unwrap_err();
     assert_eq!(text.code(), &SOURCE_DEFINITION_INVALID);
     let text_index = target.text();
     let integer_index = target.integer();
     let date_index = target.date();
-    let text = FieldTyper::load(&target.plan, text_index).unwrap();
-    let integer = FieldTyper::load(&target.plan, integer_index).unwrap();
-    let date = FieldTyper::load(&target.plan, date_index).unwrap();
+    let text = FieldTyper::load(&target.compiled_target, text_index).unwrap();
+    let integer = FieldTyper::load(&target.compiled_target, integer_index).unwrap();
+    let date = FieldTyper::load(&target.compiled_target, date_index).unwrap();
     let cell = |raw: RawCell| Cell {
         raw,
         at: CellRef::new(0, 2, 3),

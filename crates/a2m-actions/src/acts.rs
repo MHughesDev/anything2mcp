@@ -101,8 +101,8 @@ pub struct ActSurface {
     /// Where it leads in the target's default environment, in the form its
     /// kind's pack defines.
     pub address: String,
-    /// Where it leads in each environment, in the order the plan declares
-    /// them, each `(environment, address)`.
+    /// Where it leads in each environment, in the order the compiled target
+    /// declares them, each `(environment, address)`.
     pub addresses: Vec<(String, String)>,
     /// The notices its pack registers for what its own fields state
     /// (decision 0193).
@@ -160,7 +160,7 @@ pub struct PersonActAsk {
     pub summary: String,
     /// The input it will be carried out with, every field, in order of
     /// name. What the engine pinned when it was asked is among them, such
-    /// as the hash of the plan a publish will store.
+    /// as the hash of the compiled target a publish will store.
     pub input: Vec<ShownField>,
     /// What else the person should read before they act, one line each,
     /// as text, in the kernel's own sentences: for a publish, the tools
@@ -597,8 +597,8 @@ impl Kernel {
     /// The input of an act with what it rests on pinned, and the lines a
     /// person reads beside it. A publish compiles the drafts now, at the
     /// version it will be published as, and pins that version and the
-    /// plan's hash: the person publishes the plan they were shown, and
-    /// drafts changed since are refused when they press.
+    /// compiled target's hash: the person publishes the compiled target they
+    /// were shown, and drafts changed since are refused when they press.
     async fn pinned(
         &self,
         def: &ActionDef,
@@ -707,13 +707,15 @@ impl Kernel {
         }
         input.insert("version".to_owned(), json!(version.to_string()));
         input.insert(
-            "plan_hash".to_owned(),
+            "compiled_target_hash".to_owned(),
             json!(compiled.encoded.hash.to_string()),
         );
         // The bindings that may act for the first time in this version, by
         // operation and mode: a first binding promoted from `draft` acts
         // first here, where a person decides (decision 0189).
-        let mut details = self.first_to_act(&target, &compiled.plan).await?;
+        let mut details = self
+            .first_to_act(&target, &compiled.compiled_target)
+            .await?;
         // Where each surface leads, its notices, and the warnings are
         // handed apart, in `PersonActAsk::surfaces` and `warnings`, and not
         // also as lines: a page prints them once (decision 0199). What each
@@ -722,7 +724,7 @@ impl Kernel {
         shown.review = Some(self.review_shown(&target, &compiled)?);
         if implied_production
             && compiled
-                .plan
+                .compiled_target
                 .environments
                 .iter()
                 .any(|environment| environment.name.as_str() == "production")
@@ -735,7 +737,9 @@ impl Kernel {
         // What this engine's ledger proved of each tool, each fixture, and
         // each verified binding, first, so that a person reads it before
         // the rest (decision 0311).
-        let proved = crate::evidence::lines(self, caller, &target, &compiled.plan, &gates).await?;
+        let proved =
+            crate::evidence::lines(self, caller, &target, &compiled.compiled_target, &gates)
+                .await?;
         details.splice(0..0, proved);
         details.extend(gates.lines());
         Ok((input, details, shown, Vec::new()))
@@ -759,15 +763,16 @@ impl Kernel {
         target: &a2m_core::TargetName,
         compiled: &a2m_files::Compiled,
     ) -> Result<a2m_files::ReviewSummary, Failure> {
-        let plan = &compiled.plan;
+        let compiled_target = &compiled.compiled_target;
         let mut review = compiled.review.clone();
-        if plan.auth.is_empty() {
+        if compiled_target.auth.is_empty() {
             return Ok(review);
         }
         let keeper = self.keeper()?;
-        for (at, auth) in plan.auth.iter().enumerate() {
-            for environment in &plan.environments {
-                let entry = crate::control::entry_of(plan, auth, &environment.name, true);
+        for (at, auth) in compiled_target.auth.iter().enumerate() {
+            for environment in &compiled_target.environments {
+                let entry =
+                    crate::control::entry_of(compiled_target, auth, &environment.name, true);
                 let sent = match keeper.sign_in_addresses(target, &entry) {
                     Ok(addresses) => Some(
                         addresses
@@ -789,32 +794,32 @@ impl Kernel {
         Ok(review)
     }
 
-    /// One line for each verified binding of `plan` that the target's
-    /// current version does not hold verified, at the same place of the
-    /// same operation, doing the same: what may act for the first time once
-    /// `plan` is published. A binding verified before whose steps changed
-    /// is named as acting as changed (audit finding PM-2): its digest is
-    /// compared, not only its mode.
+    /// One line for each verified binding of `compiled_target` that the
+    /// target's current version does not hold verified, at the same place of
+    /// the same operation, doing the same: what may act for the first time
+    /// once `compiled_target` is published. A binding verified before whose
+    /// steps changed is named as acting as changed (audit finding PM-2): its
+    /// digest is compared, not only its mode.
     pub(crate) async fn first_to_act(
         &self,
         target: &a2m_core::TargetName,
-        plan: &a2m_core::Plan,
+        compiled_target: &a2m_core::CompiledTarget,
     ) -> Result<Vec<String>, Failure> {
-        let (plans, _) = self.current_plans().await?;
-        let current = plans
+        let (compiled_targets, _) = self.current_compiled_targets().await?;
+        let current = compiled_targets
             .into_iter()
             .find(|(name, _, _)| name == target)
-            .map(|(_, _, plan)| plan);
+            .map(|(_, _, compiled_target)| compiled_target);
         // Whether the version in force held a verified binding of this
         // operation and mode, and whether one of them does the same.
         let before = |operation: &a2m_core::OperationName,
-                      binding: &a2m_core::BindingPlan|
+                      binding: &a2m_core::CompiledBinding|
          -> (bool, bool) {
             let Some(current) = current.as_ref() else {
                 return (false, false);
             };
-            let digest = a2m_engine::binding_digest(plan, binding);
-            let earlier: Vec<&a2m_core::BindingPlan> = current
+            let digest = a2m_engine::binding_digest(compiled_target, binding);
+            let earlier: Vec<&a2m_core::CompiledBinding> = current
                 .operations
                 .iter()
                 .filter(|earlier| earlier.name == *operation)
@@ -830,7 +835,7 @@ impl Kernel {
             (!earlier.is_empty(), same)
         };
         let mut lines = Vec::new();
-        for operation in &plan.operations {
+        for operation in &compiled_target.operations {
             for (position, binding) in operation.bindings.iter().enumerate() {
                 if binding.status != a2m_core::BindingStatus::Verified {
                     continue;
@@ -1079,29 +1084,29 @@ pub(crate) struct Performed(
 /// environment and the notices its pack registers, and every warning of the
 /// compile: what a person who publishes is told (audit finding AC-1).
 fn publish_shown(kernel: &Kernel, compiled: &a2m_files::Compiled) -> PublishShown {
-    let plan = &compiled.plan;
+    let compiled_target = &compiled.compiled_target;
     let set = kernel.providers().compiler_set();
-    let default = plan
+    let default = compiled_target
         .default_environment()
         .map(|environment| environment.name.clone());
-    let surfaces = plan
+    let surfaces = compiled_target
         .surfaces
         .iter()
         .enumerate()
         .map(|(index, surface)| {
-            let at = |environment: &a2m_core::EnvironmentPlan| {
+            let at = |environment: &a2m_core::CompiledEnvironment| {
                 environment
                     .addresses
                     .iter()
                     .find(|given| given.surface.get() == index)
                     .map_or(surface.address.clone(), |given| given.address.clone())
             };
-            let addresses: Vec<(String, String)> = plan
+            let addresses: Vec<(String, String)> = compiled_target
                 .environments
                 .iter()
                 .map(|environment| (environment.name.to_string(), at(environment)))
                 .collect();
-            let address = plan
+            let address = compiled_target
                 .environments
                 .iter()
                 .find(|environment| Some(&environment.name) == default.as_ref())

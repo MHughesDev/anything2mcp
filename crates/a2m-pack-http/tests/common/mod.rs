@@ -19,9 +19,9 @@ use a2m_auth::{
     SessionLease, SessionRef, SessionStore, StoredCredentials, Wait,
 };
 use a2m_core::{
-    AccountName, BindingPlan, DecisionId, Digest, EffectClass, Environment, Epoch, Failure,
-    Identity, Mode, NoSecrets, OperationName, Plan, PrincipalId, RecordKey, Redact, RunId,
-    RunState, Secret, Step, TargetName, Timestamp, Value, Values, WorkspaceId,
+    AccountName, CompiledBinding, CompiledTarget, DecisionId, Digest, EffectClass, Environment,
+    Epoch, Failure, Identity, Mode, NoSecrets, OperationName, PrincipalId, RecordKey, Redact,
+    RunId, RunState, Secret, Step, TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, RelPath, TargetRoot};
 use a2m_ledger::{
@@ -192,7 +192,7 @@ impl Ran {
 pub struct Scene {
     pub folder: Folder,
     pub registry: Registry,
-    pub plan: Plan,
+    pub compiled_target: CompiledTarget,
     pub surface: SurfaceRef,
     pub destinations: Destinations,
 }
@@ -205,23 +205,28 @@ impl Scene {
     pub fn with_redactor(fixture_name: &str, address: &str, redact: Arc<dyn Redact>) -> Self {
         let folder = Folder::new(fixture_name);
         let registry = registry(&folder, redact);
-        let plan = compile(&registry, fixture_name).plan;
-        Self::over(folder, registry, plan, address)
+        let compiled_target = compile(&registry, fixture_name).compiled_target;
+        Self::over(folder, registry, compiled_target, address)
     }
 
-    pub fn over(folder: Folder, registry: Registry, plan: Plan, address: &str) -> Self {
-        let mut surface = plan.surfaces[0].clone();
+    pub fn over(
+        folder: Folder,
+        registry: Registry,
+        compiled_target: CompiledTarget,
+        address: &str,
+    ) -> Self {
+        let mut surface = compiled_target.surfaces[0].clone();
         surface.address = address.to_owned();
         Self {
             surface: SurfaceRef {
-                target: plan.header.target.clone(),
+                target: compiled_target.header.target.clone(),
                 environment: Environment::new("test").unwrap(),
                 surface,
             },
             destinations: Destinations::new([address.to_owned()]),
             folder,
             registry,
-            plan,
+            compiled_target,
         }
     }
 
@@ -262,7 +267,7 @@ impl Scene {
             run: fence.run,
             epoch: fence.epoch,
             surface: &self.surface,
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             posture,
             deadline: Deadline::after(Duration::from_secs(30)),
             redact: &NoSecrets,
@@ -287,8 +292,8 @@ impl Scene {
     }
 
     /// The first `http` or `api` binding of an operation.
-    pub fn binding(&self, operation: &str) -> &BindingPlan {
-        self.plan
+    pub fn binding(&self, operation: &str) -> &CompiledBinding {
+        self.compiled_target
             .operations
             .iter()
             .find(|known| known.name.as_str() == operation)
@@ -304,7 +309,7 @@ impl Scene {
     pub fn args(&self, step: &Step, inputs: &Values) -> Values {
         let mut args = Values::new();
         for arg in &step.args {
-            let source = &self.plan.expression(arg.value).unwrap().source;
+            let source = &self.compiled_target.expression(arg.value).unwrap().source;
             let name = source
                 .strip_prefix("input.")
                 .unwrap_or_else(|| panic!("the test helper cannot evaluate `{source}`"));

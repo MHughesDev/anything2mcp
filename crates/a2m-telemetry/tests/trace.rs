@@ -56,7 +56,7 @@ fn identity(run: u8) -> TraceIdentity {
         run: RunId::from_bytes([run; 16]),
         attempt: u32::from(run),
         operation: OperationName::new("example_sales_order_update").unwrap(),
-        plan: Digest::of(b"the plan"),
+        compiled_target: Digest::of(b"the plan"),
         engine: Version::new(0, 1, u32::from(run)),
         registry: Digest::of(&[run]),
     }
@@ -232,13 +232,14 @@ fn the_signature_is_blind_to_what_legitimately_varies() {
         assert_eq!(trace_of(1, level, steps(1)).signature, base.signature);
     }
 
-    // The plan's hash is identity, not behaviour. A test in a target's files
-    // may expect a signature, and those files are part of the plan.
-    let mut other_plan = identity(1);
-    other_plan.plan = Digest::of(b"another plan");
-    other_plan.operation = OperationName::new("example_sales_order_sync").unwrap();
+    // The compiled target's hash is identity, not behaviour. A test in a
+    // target's files may expect a signature, and those files are part of the
+    // compiled target.
+    let mut other_compiled_target = identity(1);
+    other_compiled_target.compiled_target = Digest::of(b"another plan");
+    other_compiled_target.operation = OperationName::new("example_sales_order_sync").unwrap();
     let mut builder = TraceBuilder::new(
-        other_plan,
+        other_compiled_target,
         CaptureLevel::Standard,
         Arc::new(NoSecrets),
         Arc::new(TestKey(KEY)),
@@ -270,7 +271,9 @@ fn a_changed_step_value_or_order_changes_the_signature() {
         ("another part of the loop", |steps| {
             steps[3].phase = Phase::Confirm;
         }),
-        ("another position in the plan", |steps| steps[2].step = 2),
+        ("another position in the compiled target", |steps| {
+            steps[2].step = 2
+        }),
         ("another pass", |steps| steps[3].pass = 2),
         ("another record", |steps| {
             steps[0].record = Some(RecordKey::new(vec![Value::from("SO-1002")]).unwrap());
@@ -343,13 +346,13 @@ fn the_same_input_gives_the_same_bytes() {
     )];
     let trace = trace_of(0, CaptureLevel::Minimal, vec![read]);
     let zeros = "0".repeat(32);
-    let plan = Digest::of(b"the plan");
+    let compiled_target = Digest::of(b"the plan");
     let registry = Digest::of(&[0]);
     let driver = Digest::of(&[0, 1]);
     let sig = step_lines(&trace)[0].sig;
     let expected = format!(
         "{{\"type\":\"header\",\"schema\":1,\"run\":\"r_{zeros}\",\"attempt\":0,\
-         \"operation\":\"example_sales_order_update\",\"plan\":\"{plan}\",\"engine\":\"0.1.0\",\
+         \"operation\":\"example_sales_order_update\",\"plan\":\"{compiled_target}\",\"engine\":\"0.1.0\",\
          \"registry\":\"{registry}\",\"level\":\"minimal\"}}\n\
          {{\"type\":\"step\",\"seq\":0,\"pass\":0,\"phase\":\"act\",\"step\":0,\"kind\":\"request\",\
          \"begins\":{{\"operation\":\"example_sales_order_read\",\"mode\":\"http\",\

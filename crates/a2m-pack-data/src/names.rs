@@ -106,7 +106,7 @@ pub mod codes {
             meaning "A statement is not one plain read or one keyed write: it attaches a file, changes a setting or the schema, ends a transaction, is several statements, or is a read that returns no column.",
             next "Correct the statement in the statements file: a read is one `SELECT`, and a write is written by the pack from its record.";
         SCHEMA_CHANGED = Drift, "schema_changed",
-            meaning "A table, column, parameter, or trigger differs from the plan.",
+            meaning "A table, column, parameter, or trigger differs from the compiled target.",
             next "Run discovery again, compare the store's catalog with the statements file, and publish a corrected version.";
         KEY_NOT_UNIQUE = Drift, "key_not_unique",
             meaning "A key matched more than one row.",
@@ -154,7 +154,7 @@ pub mod codes {
     /// The run was given no checked path for the store's file. The provider
     /// contract's own code.
     pub const PATH_NOT_ALLOWED: FailureCode = a2m_provider::codes::PATH_NOT_ALLOWED;
-    /// The plan's section does not decode. The core's own code.
+    /// The compiled target's section does not decode. The core's own code.
     pub const PAYLOAD_UNREADABLE: FailureCode = FailureCode::PAYLOAD_UNREADABLE;
 
     /// The class of [`CONNECTION_LOST`] and [`TIMEOUT`].
@@ -175,7 +175,7 @@ pub mod codes {
                 meaning "The session's credential is not a user and a password, which is all a server store is signed in with.",
                 next "Sign in to the target with a provider that gives a user and a password.";
             CONNECTION_LEADS_ELSEWHERE = Policy, "connection_leads_elsewhere",
-                meaning "A connection, or the server it reaches, does not lead where the plan's surface names: another address, port, database, schema, `search_path`, link mode, or role. It is closed and never used, and nothing is sent.",
+                meaning "A connection, or the server it reaches, does not lead where the compiled target's surface names: another address, port, database, schema, `search_path`, link mode, or role. It is closed and never used, and nothing is sent.",
                 next "Check the surface's address, port, database, and schema, and what else may change a connection's settings; then start the run again.";
             SURFACE_NOT_DECLARED = Policy, "surface_not_declared",
                 meaning "An address outside the target's declared surfaces was asked for.",

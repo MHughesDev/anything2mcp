@@ -28,8 +28,8 @@ use a2m_auth::{
     Wait, WeakKeeper,
 };
 use a2m_core::{
-    DecisionId, Environment, Failure, FailureClass, Identity, Plan, PrincipalId, Redact, RunId,
-    Secret, SessionState, TargetName, Timestamp, Value, Values, WorkspaceId,
+    CompiledTarget, DecisionId, Environment, Failure, FailureClass, Identity, PrincipalId, Redact,
+    RunId, Secret, SessionState, TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_ledger::{Store, StoreConfig};
 use a2m_pack_web_browser::test_support::{self, Screen, screen_required};
@@ -253,9 +253,9 @@ impl World {
             Vec::new(),
             settings,
         );
-        let mut plan: Plan = compile(&stand.registry, fixture).plan;
+        let mut compiled_target: CompiledTarget = compile(&stand.registry, fixture).compiled_target;
         let origin = app.url("").trim_end_matches('/').to_owned();
-        for surface in &mut plan.surfaces {
+        for surface in &mut compiled_target.surfaces {
             match surface.name.as_str() {
                 "app" => surface.address.clone_from(&origin),
                 _ => {
@@ -270,14 +270,18 @@ impl World {
         // The identity provider a window's sign-in passes through is where
         // the stand serves it.
         if let Some(provider) = app.provider_url("") {
-            for setting in &mut plan.auth[0].settings {
+            for setting in &mut compiled_target.auth[0].settings {
                 if setting.name == "identity_providers" {
                     setting.value = provider.trim_end_matches('/').to_owned();
                 }
             }
         }
-        let surfaces = EntrySurfaces::of(&plan, &plan.auth[0], &key().environment);
-        let mut entry = entry_of(&plan.auth[0]);
+        let surfaces = EntrySurfaces::of(
+            &compiled_target,
+            &compiled_target.auth[0],
+            &key().environment,
+        );
+        let mut entry = entry_of(&compiled_target.auth[0]);
         entry.surfaces = match (published, screen.is_some()) {
             (true, _) => surfaces.published(),
             // A drafts' sign-in in a window: the person's page showed every
@@ -287,7 +291,7 @@ impl World {
         };
         let entry = Arc::new(entry);
         let telemetry_dir = stand.folder.path().to_path_buf();
-        let scene = Arc::new(Scene::over(stand, plan, &origin));
+        let scene = Arc::new(Scene::over(stand, compiled_target, &origin));
 
         let store = SessionStore::new(ledger);
         let credentials = StoredCredentials::new(store.clone(), Arc::clone(&vault));
@@ -375,9 +379,10 @@ impl World {
     }
 }
 
-/// The keeper's entry, field by field from the plan, as the engine makes
-/// it (decision 0121); the plan's surfaces are added by the caller.
-fn entry_of(auth: &a2m_core::AuthPlan) -> AuthEntry {
+/// The keeper's entry, field by field from the compiled target, as the engine
+/// makes it (decision 0121); the compiled target's surfaces are added by the
+/// caller.
+fn entry_of(auth: &a2m_core::CompiledAuth) -> AuthEntry {
     let mut entry = AuthEntry::new(auth.provider.clone());
     for setting in &auth.settings {
         entry = entry.setting(&setting.name, &setting.value);
@@ -696,13 +701,13 @@ async fn a_page_request_stops_by_name_at_each_declared_sign_of_expiry_and_reads_
         "signin-page-http-undeclared",
         world.vault.redactor() as Arc<dyn Redact>,
     );
-    let mut plan = compile_changed(&stand.registry, "secure", "auth.yaml", |text| {
+    let mut compiled_target = compile_changed(&stand.registry, "secure", "auth.yaml", |text| {
         text.replace("      - {status: 401}\n", "")
     })
     .unwrap()
-    .plan;
-    plan.surfaces[0].address.clone_from(&origin);
-    let undeclared = Scene::over(stand, plan, &origin);
+    .compiled_target;
+    compiled_target.surfaces[0].address.clone_from(&origin);
+    let undeclared = Scene::over(stand, compiled_target, &origin);
     world
         .app
         .set_fault(&Fault::once(FaultKind::ExpireSessions).on_paths("/secure/api/"))
@@ -721,13 +726,13 @@ async fn a_page_request_stops_by_name_at_each_declared_sign_of_expiry_and_reads_
             "signin-page-http-unknown",
             world.vault.redactor() as Arc<dyn Redact>,
         );
-        let mut plan = compile_changed(&stand.registry, "secure", "auth.yaml", |text| {
+        let mut compiled_target = compile_changed(&stand.registry, "secure", "auth.yaml", |text| {
             text.replace("{status: 401}", sign)
         })
         .unwrap()
-        .plan;
-        plan.surfaces[0].address.clone_from(&origin);
-        let unknown = Scene::over(stand, plan, &origin);
+        .compiled_target;
+        compiled_target.surfaces[0].address.clone_from(&origin);
+        let unknown = Scene::over(stand, compiled_target, &origin);
         let refused = totals(&unknown, &third).await.unwrap_err();
         assert_eq!(
             refused.failure.code().as_str(),
@@ -875,9 +880,14 @@ async fn single_sign_on_crosses_to_the_identity_provider_and_back_and_a_stray_or
 async fn a_sign_in_in_a_browser_refuses_an_entry_that_also_covers_a_surface_of_another_kind() {
     let stand = Stand::new("signin-kinds", Arc::new(a2m_core::NoSecrets));
     for fixture in ["secure", "window"] {
-        let plan: Plan = compile(&stand.registry, fixture).plan;
-        let mut entry = entry_of(&plan.auth[0]);
-        entry.surfaces = EntrySurfaces::of(&plan, &plan.auth[0], &key().environment).published();
+        let compiled_target: CompiledTarget = compile(&stand.registry, fixture).compiled_target;
+        let mut entry = entry_of(&compiled_target.auth[0]);
+        entry.surfaces = EntrySurfaces::of(
+            &compiled_target,
+            &compiled_target.auth[0],
+            &key().environment,
+        )
+        .published();
         let provider = stand
             .registry
             .auth_providers()

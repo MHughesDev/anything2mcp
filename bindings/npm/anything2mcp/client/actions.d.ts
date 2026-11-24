@@ -318,14 +318,6 @@ export type NetRoutesInput = Record<string, never>;
 export type NetStandingInput = Record<string, never>;
 
 /**
- * The input of `plan.show`.
- */
-export interface PlanShowInput {
-  target: string;
-  version?: string;
-}
-
-/**
  * The input of `plugin.install`.
  */
 export interface PluginInstallInput {
@@ -588,6 +580,14 @@ export interface TargetProbeInput {
 }
 
 /**
+ * The input of `target.show`.
+ */
+export interface TargetShowInput {
+  target: string;
+  version?: string;
+}
+
+/**
  * The input of `target.status`.
  */
 export interface TargetStatusInput {
@@ -735,7 +735,7 @@ export interface VersionMigrateInput {
  */
 export interface VersionPublishInput {
   target: string;
-  plan_hash?: string;
+  compiled_target_hash?: string;
   version?: string;
 }
 
@@ -1081,12 +1081,6 @@ export declare abstract class Actions {
   netStanding(input?: NetStandingInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Print a compiled plan as text: its tools, steps, surfaces, and permissions. The
-   * engine action is `plan.show`.
-   */
-  planShow(input: PlanShowInput, options?: CallOptions): Promise<Response>;
-
-  /**
    * Install a plug-in from a file, after checking its manifest and signature. The
    * engine action is `plugin.install`.
    */
@@ -1302,6 +1296,12 @@ export declare abstract class Actions {
   targetProbe(input: TargetProbeInput, options?: CallOptions): Promise<Response>;
 
   /**
+   * Print a target's compiled target as text: its tools, steps, surfaces, and
+   * permissions. The engine action is `target.show`.
+   */
+  targetShow(input: TargetShowInput, options?: CallOptions): Promise<Response>;
+
+  /**
    * The target's build state and the next action to take. The engine action is
    * `target.status`.
    */
@@ -1408,8 +1408,8 @@ export declare abstract class Actions {
   versionMigrate(input: VersionMigrateInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Publish a target's drafts as an immutable version, compiled to a plan. A person's
-   * act, never an agent's. The engine action is `version.publish`.
+   * Publish a target's drafts, compiled, as an immutable version. A person's act, never
+   * an agent's. The engine action is `version.publish`.
    */
   versionPublish(input: VersionPublishInput, options?: CallOptions): Promise<Response>;
 

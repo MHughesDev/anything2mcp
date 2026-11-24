@@ -26,8 +26,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, BindingPlan, Environment, Epoch, Finding, Mode, NoSecrets, Plan, RunId, Step,
-    SurfaceKind, Values,
+    Archetype, CompiledBinding, CompiledTarget, Environment, Epoch, Finding, Mode, NoSecrets,
+    RunId, Step, SurfaceKind, Values,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, DraftReport, Drafter, TargetRoot};
 use a2m_provider::{
@@ -149,7 +149,7 @@ pub struct Scene {
     pub desk: Option<Desk>,
     pub session: Session,
     pub registry: Registry,
-    pub plan: Plan,
+    pub compiled_target: CompiledTarget,
     pub surface: SurfaceRef,
     /// The program that runs the stand, which the surface names.
     pub program: String,
@@ -209,18 +209,18 @@ impl Scene {
             None
         };
         let registry = registry(folder.path(), session.bus());
-        let plan = match compile_at(&registry, target) {
-            Ok(compiled) => compiled.plan,
+        let compiled_target = match compile_at(&registry, target) {
+            Ok(compiled) => compiled.compiled_target,
             Err(problems) => panic!("{}", shown(&problems)),
         };
         let program = session.program();
-        let surface = surface_of(&plan, &program);
+        let surface = surface_of(&compiled_target, &program);
         Some(Self {
             folder,
             desk,
             session,
             registry,
-            plan,
+            compiled_target,
             surface,
             program,
         })
@@ -245,7 +245,7 @@ impl Scene {
             run: RunId::from_bytes([7; 16]),
             epoch: Epoch::new(1),
             surface: &self.surface,
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             posture,
             deadline: Deadline::after(Duration::from_secs(20)),
             redact: &NoSecrets,
@@ -257,8 +257,8 @@ impl Scene {
         Ok((handle, prepared))
     }
 
-    pub fn binding(&self, operation: &str) -> &BindingPlan {
-        binding_of(&self.plan, operation)
+    pub fn binding(&self, operation: &str) -> &CompiledBinding {
+        binding_of(&self.compiled_target, operation)
     }
 
     /// Reads through the `act` steps of a read operation, each with the
@@ -367,19 +367,21 @@ fn yaml_text(path: &str) -> String {
     path.replace('\\', "\\\\")
 }
 
-/// The plan's surface, at the address of the program that runs the stand.
-pub fn surface_of(plan: &Plan, program: &str) -> SurfaceRef {
-    let mut surface = plan.surfaces[0].clone();
+/// The compiled target's surface, at the address of the program that runs the
+/// stand.
+pub fn surface_of(compiled_target: &CompiledTarget, program: &str) -> SurfaceRef {
+    let mut surface = compiled_target.surfaces[0].clone();
     surface.address = program.to_owned();
     SurfaceRef {
-        target: plan.header.target.clone(),
+        target: compiled_target.header.target.clone(),
         environment: Environment::new("test").unwrap(),
         surface,
     }
 }
 
-pub fn binding_of<'a>(plan: &'a Plan, operation: &str) -> &'a BindingPlan {
-    plan.operations
+pub fn binding_of<'a>(compiled_target: &'a CompiledTarget, operation: &str) -> &'a CompiledBinding {
+    compiled_target
+        .operations
         .iter()
         .find(|known| known.name.as_str() == operation)
         .unwrap_or_else(|| panic!("no operation named `{operation}`"))
@@ -445,10 +447,10 @@ pub fn every_file(root: &Path) -> Vec<(PathBuf, String)> {
 
 /// The arguments of a step, as the engine would evaluate them. Every
 /// expression of the fixtures is `input.<name>`.
-pub fn args(plan: &Plan, step: &Step, inputs: &Values) -> Values {
+pub fn args(compiled_target: &CompiledTarget, step: &Step, inputs: &Values) -> Values {
     let mut args = Values::new();
     for arg in &step.args {
-        let source = &plan.expression(arg.value).unwrap().source;
+        let source = &compiled_target.expression(arg.value).unwrap().source;
         let name = source
             .strip_prefix("input.")
             .unwrap_or_else(|| panic!("the test helper cannot evaluate `{source}`"));
@@ -463,7 +465,7 @@ pub fn args(plan: &Plan, step: &Step, inputs: &Values) -> Values {
 /// each with its arguments evaluated, and, for a write, the committing
 /// step with the ledger's token for the record.
 pub async fn run_with(
-    plan: &Plan,
+    compiled_target: &CompiledTarget,
     handle: &DriverHandle,
     prepared: &mut Prepared,
     steps: &[Step],
@@ -473,7 +475,7 @@ pub async fn run_with(
 ) -> Result<Values, StepFailure> {
     let mut values = Values::new();
     for step in steps {
-        let args = args(plan, step, inputs);
+        let args = args(compiled_target, step, inputs);
         let input = StepInput::new(&args, Deadline::after(within));
         let input = match write {
             Some(write) => input.for_record(write.record(), Some(&write.key), None),
@@ -510,7 +512,7 @@ impl Scene {
             run,
             epoch,
             surface: &self.surface,
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             posture,
             deadline: Deadline::after(Duration::from_secs(20)),
             redact: &NoSecrets,
@@ -534,7 +536,7 @@ impl Scene {
     ) -> Result<Values, StepFailure> {
         let (handle, mut prepared) = self.prepare_for(write, posture).await?;
         let result = run_with(
-            &self.plan,
+            &self.compiled_target,
             &handle,
             &mut prepared,
             steps,
@@ -684,8 +686,12 @@ impl Write {
 }
 
 /// The field type's own rule for an output, as the engine loads it.
-pub fn normalizer(plan: &Plan, operation: &str, output: &str) -> a2m_expr::Normalizer {
-    let operation = plan
+pub fn normalizer(
+    compiled_target: &CompiledTarget,
+    operation: &str,
+    output: &str,
+) -> a2m_expr::Normalizer {
+    let operation = compiled_target
         .operations
         .iter()
         .find(|known| known.name.as_str() == operation)
@@ -695,6 +701,11 @@ pub fn normalizer(plan: &Plan, operation: &str, output: &str) -> a2m_expr::Norma
         .iter()
         .find(|known| known.name == output)
         .unwrap();
-    let field_type = &plan.field_types[output.field_type.unwrap().get()];
-    a2m_expr::Normalizer::load(plan.expression(field_type.normalizer.unwrap()).unwrap()).unwrap()
+    let field_type = &compiled_target.field_types[output.field_type.unwrap().get()];
+    a2m_expr::Normalizer::load(
+        compiled_target
+            .expression(field_type.normalizer.unwrap())
+            .unwrap(),
+    )
+    .unwrap()
 }

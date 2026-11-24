@@ -200,7 +200,7 @@ fn value_type(
         .text("type")?;
     cx.target()
         .field_type(name)
-        .map(|found| found.plan.ty.clone())
+        .map(|found| found.compiled.ty.clone())
 }
 
 struct Bound<'a> {

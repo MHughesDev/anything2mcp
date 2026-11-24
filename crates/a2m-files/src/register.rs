@@ -10,9 +10,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use a2m_core::{
-    ControlName, EffectClass, Failure, FailureClass, FileKindName, Finding, FindingKind,
-    IdentityStrategy, LintCode, Mode, PackPayload, Step, StepKind, SurfaceKind, SurfaceName,
-    SurfaceNotice, SurfacePlan, ValueType, Verb, WriteEvidence,
+    CompiledSurface, ControlName, EffectClass, Failure, FailureClass, FileKindName, Finding,
+    FindingKind, IdentityStrategy, LintCode, Mode, PackPayload, Step, StepKind, SurfaceKind,
+    SurfaceName, SurfaceNotice, ValueType, Verb, WriteEvidence,
 };
 
 use crate::diag::{Diagnostic, Diagnostics, Level, REGISTRATION_CONFLICT};
@@ -46,7 +46,7 @@ pub struct DeclaredName {
     /// The name.
     pub name: String,
     /// Its type. An expression that reads a name of no known type cannot go
-    /// into a plan.
+    /// into a compiled target.
     pub ty: ValueType,
 }
 
@@ -65,7 +65,8 @@ pub struct ExprSite {
 }
 
 /// What a file kind compiled its documents to, for one surface kind. The
-/// kernel wraps it in the plan's pack section with the owner's name.
+/// kernel wraps it in the compiled target's pack section with the owner's
+/// name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompiledSection {
     /// The version of the payload's own shape, which the pack sets.
@@ -96,7 +97,7 @@ pub trait FileKind: Send + Sync {
     /// The expressions inside a document, for stage 4.
     fn expressions(&self, doc: &Located<Doc>) -> Vec<ExprSite>;
     /// Compiles the validated documents that live on surfaces of one surface
-    /// kind into one section of the plan.
+    /// kind into one section of the compiled target.
     ///
     /// # Errors
     ///
@@ -192,8 +193,8 @@ pub enum Possible {
     No(String),
 }
 
-/// What a lowering makes of one binding. The step lists go into the plan
-/// unchanged.
+/// What a lowering makes of one binding. The step lists go into the compiled
+/// target unchanged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lowered {
     /// The surface the binding acts on.
@@ -358,7 +359,7 @@ pub struct SurfaceKindSpec {
     /// Which of those fields name a program the surface's driver may start.
     /// Empty for a kind that is not reached by starting a program. The
     /// compiler copies what a surface states under them into
-    /// `SurfacePlan::programs`, and refuses a path that is not absolute.
+    /// `CompiledSurface::programs`, and refuses a path that is not absolute.
     pub programs: Vec<ProgramField>,
     /// The notices a surface of this kind carries for a door to show, each
     /// when one of its fields holds one word ([`SurfaceKindSpec::with_notice`]).
@@ -543,15 +544,15 @@ impl CompilerSet {
             .map(|spec| spec.item.address_key.as_str())
     }
 
-    /// The notices a surface of the plan carries for a door to show, in
-    /// the order of the closed list, each once: those its kind's pack
-    /// registered ([`SurfaceKindSpec::with_notice`]) whose field the
+    /// The notices a surface of the compiled target carries for a door to
+    /// show, in the order of the closed list, each once: those its kind's
+    /// pack registered ([`SurfaceKindSpec::with_notice`]) whose field the
     /// surface's own fields, as the compiler kept them, hold with the word.
-    /// Nothing for a kind no pack registers, or a surface whose fields
-    /// cannot be read. The surface's fields are the target file's; nothing
-    /// a caller sends reaches them (decision 0193).
+    /// Nothing for a kind no pack registers, or a surface whose fields cannot
+    /// be read. The surface's fields are the target file's; nothing a caller
+    /// sends reaches them (decision 0193).
     #[must_use]
-    pub fn surface_notices(&self, surface: &SurfacePlan) -> Vec<SurfaceNotice> {
+    pub fn surface_notices(&self, surface: &CompiledSurface) -> Vec<SurfaceNotice> {
         let Some(spec) = self.surface_kinds.get(&surface.kind) else {
             return Vec::new();
         };
@@ -680,8 +681,8 @@ impl CompilerSet {
     }
 }
 
-/// Gathers what packs register. Each method names the pack, so the plan and
-/// every message can say who owns what.
+/// Gathers what packs register. Each method names the pack, so the compiled
+/// target and every message can say who owns what.
 #[derive(Default)]
 pub struct CompilerSetBuilder {
     set: CompilerSet,

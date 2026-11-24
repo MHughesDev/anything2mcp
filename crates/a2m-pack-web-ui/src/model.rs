@@ -1,13 +1,14 @@
-//! What the pack writes into a plan and its driver reads back: compiled
-//! screens, and the payload of each step. The kernel stores and hashes
-//! these and never decodes them.
+//! What the pack writes into a compiled target and its driver reads back:
+//! compiled screens, and the payload of each step. The kernel stores and
+//! hashes these and never decodes them.
 
 use std::collections::BTreeMap;
 
 use a2m_pack_web_browser::{By, Primitive, Query, ReadWhat, TextMatch};
 use serde::{Deserialize, Serialize};
 
-/// The version of the shapes below. A plan written in another is refused.
+/// The version of the shapes below. A compiled target written in another is
+/// refused.
 pub(crate) const PAYLOAD_FORMAT: u16 = 1;
 
 /// Every screen of the target's web surfaces, by name.

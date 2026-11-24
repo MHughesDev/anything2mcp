@@ -1,5 +1,5 @@
-//! Expressions: checked and compiled once, when a plan is built, and
-//! evaluated many times, when a plan runs.
+//! Expressions: checked and compiled once, when a compiled target is built,
+//! and evaluated many times, when a compiled target runs.
 //!
 //! The syntax is a subset of CEL, read by this crate's own parser, type
 //! checker, and evaluator (decision 0072). There is no float: a number with a
@@ -30,8 +30,8 @@ mod text;
 pub use check::{Checked, Compiled, TypeEnv, compile};
 pub use dates::DateSystem;
 pub use error::{
-    EXPRESSION_COST_EXCEEDED, EXPRESSION_INVALID, EXPRESSION_TYPE_ERROR, ExprError,
-    PLAN_EXPRESSION_UNLOADABLE, Span, VALUE_ABSENT, VALUE_OUT_OF_RANGE, VALUE_UNPARSABLE,
+    COMPILED_EXPRESSION_UNLOADABLE, EXPRESSION_COST_EXCEEDED, EXPRESSION_INVALID,
+    EXPRESSION_TYPE_ERROR, ExprError, Span, VALUE_ABSENT, VALUE_OUT_OF_RANGE, VALUE_UNPARSABLE,
 };
 pub use eval::{Bindings, Program};
 pub use library::{COST_LIMIT, HostFn, HostFnName, Library, LibraryVersion, library};

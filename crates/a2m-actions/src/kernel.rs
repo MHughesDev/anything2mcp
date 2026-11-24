@@ -19,8 +19,8 @@ use a2m_auth::{
     StoredCredentials,
 };
 use a2m_core::{
-    Digest, EffectClass, Environment, Failure, Hazard, OperationName, Plan, PrincipalId, Redact,
-    Secret, TargetName, WorkspaceId,
+    CompiledTarget, Digest, EffectClass, Environment, Failure, Hazard, OperationName, PrincipalId,
+    Redact, Secret, TargetName, WorkspaceId,
 };
 use a2m_ledger::{AuditEntry, Durability, Owner, SqlValue, Store, StoreConfig, Tx};
 use a2m_policy::{ActingFor, BuiltIn, Policy, PolicyHealth, PrincipalRef};
@@ -213,10 +213,11 @@ pub(crate) struct Inner {
     /// Where other programs keep their data on this machine: what a
     /// project folder may not be.
     pub(crate) places: crate::project::Places,
-    /// The plans read from the store, by target and hash, the newest
-    /// [`PLANS_KEPT`] of them.
-    pub(crate) plans: Mutex<BTreeMap<(TargetName, Digest), Arc<Plan>>>,
-    /// The drafted plans of trials, newest last, the newest [`DRAFTS_KEPT`].
+    /// The compiled targets read from the store, by target and hash, the
+    /// newest [`COMPILED_TARGETS_KEPT`] of them.
+    pub(crate) compiled_targets: Mutex<BTreeMap<(TargetName, Digest), Arc<CompiledTarget>>>,
+    /// The drafted compiled targets of trials, newest last, the newest
+    /// [`DRAFTS_KEPT`].
     pub(crate) drafts: Mutex<Vec<KeptDraft>>,
     /// The trials a fixture is being recorded from, by the digest that
     /// makes each the run it is, with what each step observed, in memory
@@ -521,7 +522,7 @@ impl Kernel {
                 fixed,
                 not_in_force,
                 places: crate::project::Places::of_process(),
-                plans: Mutex::new(BTreeMap::new()),
+                compiled_targets: Mutex::new(BTreeMap::new()),
                 drafts: Mutex::new(Vec::new()),
                 recordings: Mutex::new(BTreeMap::new()),
                 runner: crate::runner::RunnerState::default(),
@@ -1024,12 +1025,14 @@ impl Kernel {
     }
 }
 
-/// How many plans read from the store are kept in memory.
-pub(crate) const PLANS_KEPT: usize = 64;
-/// A drafted plan kept for a trial: its target and hash, and the plan.
-pub(crate) type KeptDraft = ((TargetName, Digest), Arc<Plan>);
-/// How many drafted plans of trials are kept in memory. A trial whose plan
-/// was let go since cannot be resumed; it is tried again.
+/// How many compiled targets read from the store are kept in memory.
+pub(crate) const COMPILED_TARGETS_KEPT: usize = 64;
+/// A drafted compiled target kept for a trial: its target and hash, and the
+/// compiled target.
+pub(crate) type KeptDraft = ((TargetName, Digest), Arc<CompiledTarget>);
+/// How many drafted compiled targets of trials are kept in memory. A trial
+/// whose compiled target was let go since cannot be resumed; it is tried
+/// again.
 pub(crate) const DRAFTS_KEPT: usize = 16;
 
 /// The shortest lease the in-process runner works under. The engine sends

@@ -1,7 +1,7 @@
-//! Package 2.4: the keeper's probe, run through the product. The probe of
-//! a session is its auth file entry's `probe` read, run by the runner loop
-//! as an ordinary read through the engine under a lease of purpose
-//! `Probe` (spec section 215), with the inputs the plan gives it (decision
+//! Package 2.4: the keeper's probe, run through the product. The probe of a
+//! session is its auth file entry's `probe` read, run by the runner loop as
+//! an ordinary read through the engine under a lease of purpose `Probe` (spec
+//! section 215), with the inputs the compiled target gives it (decision
 //! 0121). The keeper's clock is the kernel's manual one.
 //!
 //! The test pack's driver stands for the system: with its `session_ended`
@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use a2m_auth::{SessionKey, SignInBy};
-use a2m_core::{Environment, Identity, ProbePlan, SessionState, TargetName, Values};
+use a2m_core::{CompiledProbe, Environment, Identity, SessionState, TargetName, Values};
 use serde_json::json;
 
 use super::kernel::engine::{self, SECURE_GET};
@@ -41,7 +41,7 @@ auth_provider = ["example_login"]
 sessions = ["json_app"]
 "#;
 
-/// A pack with the one auth provider the hand-built plan names.
+/// A pack with the one auth provider the hand-built compiled target names.
 pub(super) struct LoginPack(pub(super) Arc<AtomicU32>);
 
 impl a2m_provider::Pack for LoginPack {
@@ -137,29 +137,30 @@ impl a2m_auth::AuthProvider for LoginProvider {
 
 // ---- the world -------------------------------------------------------------
 
-/// The hand-built plan, whose signed-in surface is checked with the read
-/// `example_secure_order_get` of order `A-100`, with the idle timeout given.
-fn probed_plan(address: &str, idle: Option<Duration>) -> a2m_core::Plan {
-    let mut plan = engine::plan(address);
-    let operation = plan
+/// The hand-built compiled target, whose signed-in surface is checked with
+/// the read `example_secure_order_get` of order `A-100`, with the idle
+/// timeout given.
+fn probed_compiled_target(address: &str, idle: Option<Duration>) -> a2m_core::CompiledTarget {
+    let mut compiled_target = engine::compiled_target(address);
+    let operation = compiled_target
         .operations
         .iter()
         .position(|operation| operation.name.as_str() == SECURE_GET)
         .and_then(|at| u32::try_from(at).ok())
         .map(a2m_core::OperationIndex::new)
         .unwrap();
-    plan.auth[0].probe = ProbePlan::Operation {
+    compiled_target.auth[0].probe = CompiledProbe::Operation {
         operation,
         inputs: Values::new().with("order_id", "A-100"),
     };
-    plan.auth[0].idle_ms = idle.map(|idle| u64::try_from(idle.as_millis()).unwrap());
-    plan
+    compiled_target.auth[0].idle_ms = idle.map(|idle| u64::try_from(idle.as_millis()).unwrap());
+    compiled_target
 }
 
 impl World {
     /// A kernel whose calls do not wait for a sign-in and whose sessions
     /// are kept alive for an hour after their last use, with the runner
-    /// loop started and `plan` published.
+    /// loop started and `compiled_target` published.
     async fn probed(idle: Option<Duration>) -> Self {
         let mut options = Options::with_user_settings(
             "[sessions]\nlogin_wait_minutes = 0\nkeep_alive_hours = 1\n",
@@ -169,7 +170,7 @@ impl World {
         world.kernel.start_runner_loop(4).await.unwrap();
         world
             .kernel
-            .publish_plan(&probed_plan(&world.app.url(""), idle))
+            .publish_compiled_target(&probed_compiled_target(&world.app.url(""), idle))
             .await
             .unwrap();
         world
@@ -186,10 +187,10 @@ impl World {
 
     /// The person signs in themself, once.
     async fn person_signs_in(&self) {
-        let plan = probed_plan(&self.app.url(""), None);
+        let compiled_target = probed_compiled_target(&self.app.url(""), None);
         let entry = crate::control::entry_of(
-            &plan,
-            &plan.auth[0],
+            &compiled_target,
+            &compiled_target.auth[0],
             &Environment::new("test").unwrap(),
             true,
         );

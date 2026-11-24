@@ -14,7 +14,7 @@ mod common;
 
 use std::sync::Arc;
 
-use a2m_core::{Digest, FailureClass, NoSecrets, PackPayload, Plan, Value, Values};
+use a2m_core::{CompiledTarget, Digest, FailureClass, NoSecrets, PackPayload, Value, Values};
 use a2m_files::{CompileMode, RelPath};
 use a2m_ledger::Store;
 use a2m_provider::{Posture, Registry, Sent, StepFailure, SurfaceRef};
@@ -139,15 +139,20 @@ fn writes(scene: &Scene) -> Vec<Request> {
         .collect()
 }
 
-/// The plan of the example target with one edit.
-fn edited_plan(registry: &Registry, path: &str, find: &str, replace: &str) -> Plan {
+/// The compiled target of the example target with one edit.
+fn edited_compiled_target(
+    registry: &Registry,
+    path: &str,
+    find: &str,
+    replace: &str,
+) -> CompiledTarget {
     compile_files(
         &edited(path, find, replace),
         registry.compiler_set(),
         CompileMode::Draft,
     )
     .unwrap_or_else(|problems| panic!("{problems}"))
-    .plan
+    .compiled_target
 }
 
 /// Declares another serial for the device of the environment `test`, or
@@ -339,7 +344,7 @@ async fn an_image_off_the_operations_list_of_digests_is_not_sent() {
     let bytes = image(Version::new(2, 4, 1));
     let listed = Digest::of(&bytes).to_string();
     let other = "0".repeat(64);
-    scene.plan = edited_plan(
+    scene.compiled_target = edited_compiled_target(
         &scene.registry,
         OPERATION_FILE,
         "      signature_checked: false\n",
@@ -353,7 +358,7 @@ async fn an_image_off_the_operations_list_of_digests_is_not_sent() {
     assert!(writes(&scene).is_empty());
 
     // The same image, once its digest is on the list.
-    scene.plan = edited_plan(
+    scene.compiled_target = edited_compiled_target(
         &scene.registry,
         OPERATION_FILE,
         "      signature_checked: false\n",
@@ -370,7 +375,7 @@ async fn an_update_is_not_started_while_a_precondition_does_not_hold() {
     let store = store().await;
     let control = scene.device.control();
     // The operation says the pump must run at 10 before an update.
-    scene.plan = edited_plan(
+    scene.compiled_target = edited_compiled_target(
         &scene.registry,
         OPERATION_FILE,
         "pump_speed_setpoint: \"0\"",
@@ -519,7 +524,7 @@ async fn a_device_that_does_not_come_back_is_a_possible_commit_and_nothing_is_re
     let control = scene.device.control();
     // A short restart window, so that the test does not wait the ten
     // seconds the map declares.
-    scene.plan = edited_plan(
+    scene.compiled_target = edited_compiled_target(
         &scene.registry,
         MAP,
         "restart_within: 10s",
@@ -715,11 +720,11 @@ fn an_update_is_irreversible_with_the_hazard_device_function_and_needs_a_mechani
 }
 
 #[test]
-fn the_update_plan_is_a_firmware_operation_with_one_commit_point() {
+fn the_update_compiled_target_is_a_firmware_operation_with_one_commit_point() {
     let folder = Folder::new("firmware-plan");
     let registry = registry(&folder);
-    let plan = common::compiled(registry.compiler_set()).plan;
-    let operation = plan
+    let compiled_target = common::compiled(registry.compiler_set()).compiled_target;
+    let operation = compiled_target
         .operations
         .iter()
         .find(|found| found.name.as_str() == OPERATION)

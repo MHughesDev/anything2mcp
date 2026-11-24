@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use a2m_core::{Digest, Step, Value, Values};
 use a2m_provider::{Access, FileIdentity, Observed, Posture, StepFailure, StepInput, StepOutcome};
 
-use crate::codes::{self, plan_unreadable, stop};
+use crate::codes::{self, compiled_target_unreadable, stop};
 use crate::driver::FileLimits;
 use crate::folder::{self, Entry, Kind};
 use crate::model::{
@@ -79,7 +79,7 @@ pub(crate) struct Entries {
 }
 
 fn out_of_order(what: &str) -> StepFailure {
-    plan_unreadable(&format!("{what}, which no lowering of the pack gives"))
+    compiled_target_unreadable(&format!("{what}, which no lowering of the pack gives"))
 }
 
 fn name_of(input: &StepInput<'_>, arg: &str) -> Result<String, StepFailure> {
@@ -90,7 +90,9 @@ fn name_of(input: &StepInput<'_>, arg: &str) -> Result<String, StepFailure> {
             "An entry's name is text.",
             "Give the entry's name as text.",
         )),
-        None => Err(plan_unreadable("a folder's step lacks the entry's name")),
+        None => Err(compiled_target_unreadable(
+            "a folder's step lacks the entry's name",
+        )),
     }
 }
 
@@ -110,9 +112,9 @@ fn joined<T>(
 
 impl Entries {
     fn spec(&self, name: &str) -> Result<&FolderSpec, StepFailure> {
-        self.folders
-            .get(name)
-            .ok_or_else(|| plan_unreadable("a step names a folder the surface does not have"))
+        self.folders.get(name).ok_or_else(|| {
+            compiled_target_unreadable("a step names a folder the surface does not have")
+        })
     }
 
     fn current(&mut self, folder: &str) -> Result<&mut Current, StepFailure> {
@@ -150,7 +152,9 @@ impl Entries {
                     .logs
                     .get(name)
                     .ok_or_else(|| {
-                        plan_unreadable("a step names a growing file the surface does not have")
+                        compiled_target_unreadable(
+                            "a step names a growing file the surface does not have",
+                        )
                     })?
                     .clone();
                 let from = match input.args.get(LOG_FROM) {
@@ -180,7 +184,7 @@ impl Entries {
                 let spec = self.spec(name)?.clone();
                 if for_write {
                     if spec.may_be_open != Some(false) {
-                        return Err(plan_unreadable(
+                        return Err(compiled_target_unreadable(
                             "a write to a folder that does not say that no application holds its entries open",
                         ));
                     }
@@ -349,7 +353,9 @@ impl Entries {
                                 "Give the content as text.",
                             ));
                         }
-                        None => return Err(plan_unreadable("a `set` lacks the content")),
+                        None => {
+                            return Err(compiled_target_unreadable("a `set` lacks the content"));
+                        }
                     };
                     if bytes.len() as u64 > max {
                         return Err(stop(

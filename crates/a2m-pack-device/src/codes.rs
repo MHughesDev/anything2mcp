@@ -11,7 +11,7 @@ a2m_core::failure_codes! {
         meaning "A value is not of the kind its register takes. Nothing was sent.",
         next "Give a value of the register's field type.";
     PAYLOAD_UNREADABLE = Input, "payload_unreadable",
-        meaning "The plan's section for this pack does not decode.",
+        meaning "The compiled target's section for this pack does not decode.",
         next "Compile the target again with the device pack that is enabled now.";
     IMAGE_NOT_ACCEPTED = Input, "image_not_accepted",
         meaning "The firmware image is not one an update will send: it is not hexadecimal text, it is not of the form an image has, its checksum does not hold, it is larger than the device takes, it carries another version than the operation names, or its digest is not on the operation's list. Nothing was sent.",

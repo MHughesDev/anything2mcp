@@ -16,7 +16,7 @@ Everything Anything2MCP claims about a run has to be checkable afterwards. Every
 
 | Group | Fields |
 | --- | --- |
-| Identity | Run, attempt, step, step kind, record, operation, plan hash, engine and driver versions |
+| Identity | Run, attempt, step, step kind, record, operation, compiled target hash, engine and driver versions |
 | Choice | Binding mode and the reason it was chosen |
 | Timing | How long the step took; on the first record of a pass, how long the pass queued and prepared. The act, confirm, and read-back times of a pass are the sums of their steps |
 | Locating | For a mode that locates elements, which locator matched, at which position in the list, and the fingerprint score |
@@ -29,7 +29,7 @@ Request and response bodies are not in the step trace. They are artifacts, captu
 
 ## The trace signature
 
-Two runs are "the same" when they did the same things, not when they took the same time. The trace signature is a hash over the parts of a step trace that should not vary: step order, step kinds, the bindings chosen, the locators matched and their positions, normalized values, and outcomes. Timings, identifiers, run and attempt numbers, the plan's hash, and the values the plan declares volatile are left out. Each record gives one SHA-256 digest over its parts, in a fixed order, with values in their canonical form; a value that is not public enters as its keyed digest. The signature chains those digests in step order and closes with their count, and the store records it on the run. Each record's digest is written in its line, so two traces that differ show where ([decision 0076](../../decisions/0076-one-trace-record-per-step-and-a-signature-chained-over-record-digests.md); the exact rule is in the [crate design](../../architecture/crates/a2m-telemetry.md)).
+Two runs are "the same" when they did the same things, not when they took the same time. The trace signature is a hash over the parts of a step trace that should not vary: step order, step kinds, the bindings chosen, the locators matched and their positions, normalized values, and outcomes. Timings, identifiers, run and attempt numbers, the compiled target's hash, and the values the compiled target declares volatile are left out. Each record gives one SHA-256 digest over its parts, in a fixed order, with values in their canonical form; a value that is not public enters as its keyed digest. The signature chains those digests in step order and closes with their count, and the store records it on the run. Each record's digest is written in its line, so two traces that differ show where ([decision 0076](../../decisions/0076-one-trace-record-per-step-and-a-signature-chained-over-record-digests.md); the exact rule is in the [crate design](../../architecture/crates/a2m-telemetry.md)).
 
 - The **determinism gate** passes when five runs on the same input have the same signature ([section 403](../4-building-tools/403-testing-and-publish-gates.md); hypothesis H-16).
 - The **binding-equivalence gate** compares normalized results across bindings and, for an HTTP binding against a UI binding, the shape of the request each produced.
@@ -43,7 +43,7 @@ Two runs are "the same" when they did the same things, not when they took the sa
 | `standard` | Plus a snapshot at each checkpoint and at any failure | Writes in production; the default |
 | `full` | Plus every network exchange and a screenshot per step | Building, testing, and a time-boxed window an administrator opens to investigate |
 
-The plan and policy decide a run's level; `a2m-telemetry` applies it. Screenshots are the riskiest evidence, because they show whatever was on the screen. Outside `full` they are kept only at a failure.
+The compiled target and policy decide a run's level; `a2m-telemetry` applies it. Screenshots are the riskiest evidence, because they show whatever was on the screen. Outside `full` they are kept only at a failure.
 
 **When capture fails.** A failure to capture evidence never fails a read. For a write the engine decides: under `standard`, a checkpoint snapshot that cannot be kept stops the run before the next record, because the evidence the level promises is missing. A trace that passes its size limit is cut, the cut is recorded as a `truncated` limitation, and the run is not stopped for it.
 
@@ -62,7 +62,7 @@ A test in CI plants a known secret in the test application's traffic and fails i
 
 ## Evidence in the store
 
-- **Evidence is named by a keyed digest of its content.** A blob's name is the workspace's keyed digest of its plain content, never its plain hash, so someone who can read the store cannot confirm a guessed value by hashing it. Identical evidence within a workspace is still stored once. A digest that must be the same on every machine, such as a diff hash or a plan hash, is never a blob name.
+- **Evidence is named by a keyed digest of its content.** A blob's name is the workspace's keyed digest of its plain content, never its plain hash, so someone who can read the store cannot confirm a guessed value by hashing it. Identical evidence within a workspace is still stored once. A digest that must be the same on every machine, such as a diff hash or a compiled target hash, is never a blob name.
 - **Blobs are sealed before they are written,** with the blob's name, kind, and owner as the sealing context, and synced to disk before the row that names them commits. A blob whose row never committed is collected by retention.
 - Event payloads, audit entries, and failure messages pass the redactor before they are written.
 

@@ -65,7 +65,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Approval Page | part | pages | coined | The page that shows one stored change and its hash for approval. |
 | Approval Sequence | group | pages | coined | The title of the numbered walk through the Person Pages view, told in 7 steps. |
 | Argument Builder | part | pack-command | coined | The building of the argument list from the template, with each value checked against its field type. |
-| Atomic Compilation | part | plan | coined | The rule that a target compiles whole or not at all, with problems reported together. |
+| Atomic Compilation | part | compiled-target | coined | The rule that a target compiles whole or not at all, with problems reported together. |
 | Atomic Replace | part | pack-file | coined | The writing of a temporary file in the same folder and replacing the old file in one step. |
 | Attended Path | group | policy | coined | The group in the Policy Engine view that holds Approvals. |
 | Audit Chain | part | ledger | code: a2m-ledger: src/audit.rs | The ledger's chain of entries per workspace, each linked to the one before, so that removing or changing an entry shows. |
@@ -96,7 +96,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Check Cycle | group | watches | coined | The group in the Watches and Canaries view that holds Due Times, Check, Baseline Comparison. |
 | Checked Names | part | core | coined | The checked names, such as a mode or a failure code, whose values arrive with packs and crates. |
 | Checked Paths | part | contract | code: a2m-provider: src/path.rs | The paths a pack may open, which can only be made by checking against its manifest's roots. |
-| Checking Stages | group | plan | coined | The group in the Plan view that holds Type-Checking, Lowering, Plan Analysis. |
+| Checking Stages | group | compiled-target | coined | The group in the Compiled Target view that holds Type-Checking, Lowering, Compiled Target Analysis. |
 | Clean Capture | group | telemetry | coined | The group in the Telemetry view that holds Capture Redaction, Recordable Headers. |
 | Closed Vocabularies | part | core | coined | The closed vocabularies, each an enum whose names are the documents' names. |
 | Command Declaration | group | pack-command | coined | The group in the command view that holds Commands File, Program Check. |
@@ -111,20 +111,20 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Command Tree | part | command-line | coined | The command tree built from the registry. |
 | Command-Line Tool | part | system | coined | A command-line program the person already uses, reached through the command pack. |
 | Commands File | part | pack-command | code: a2m-pack-command: src/model.rs | The commands file kind that describes a program's commands, as an endpoints file does for a service. |
-| Compilation Sequence | group | plan | coined | The title of the numbered walk through the Plan view, told in 7 steps. |
+| Compilation Sequence | group | compiled-target | coined | The title of the numbered walk through the Compiled Target view, told in 7 steps. |
 | Compile Time | group | expr | coined | The group in the Expressions view that holds Type Environment, Expression Compilation. |
-| Compiler Output | group | plan | coined | The group in the Plan view that holds Plan Contents, Plan Hash, Atomic Compilation, Drafts and Versions. |
+| Compiler Output | group | compiled-target | coined | The group in the Compiled Target view that holds Compiled Target Contents, Compiled Target Hash, Atomic Compilation, Drafts and Versions. |
 | Compiler Registrations | part | contract | code: a2m-files: src/register.rs | What a pack registers with the compiler: file kinds, lowering of each verb, lint rules, and drafting rules. |
-| Compiler Stages | group | plan | coined | The group in the Plan view that holds Parsing, Schema Validation, Resolution, Type-Checking, Lowering, Plan Analysis, Linting, Plan Description, Emission. |
+| Compiler Stages | group | compiled-target | coined | The group in the Compiled Target view that holds Parsing, Schema Validation, Resolution, Type-Checking, Lowering, Compiled Target Analysis, Linting, Compiled Target Description, Emission. |
 | Condition Waits | part | web-browser | coined | The waits that end on a named event or in-page observer, with a deadline. |
 | Connection Phase | group | http-driver | coined | The group in the HTTP Driver view that holds Connection Preparation. |
 | Connection Preparation | part | http-driver | coined | The opening of a warm client for the session and origin. |
 | Containment | group | web-browser | coined | The group in the Browser Engine view that holds Origin Confinement, Crash and Dialog Reports. |
 | Content Check | part | sources | coined | The confirmation that an input is the format it claims, from its content and not its name. |
 | Continuation | group | engine-resume | coined | The group in the Reconciliation view that holds Run Continuation. |
-| Control Port | part | engine-loop | coined | The engine's one port to the control plane, through which it asks for the plan, the policy decision, a session lease, a record lock, a budget, and approval, and records an intent. |
+| Control Port | part | engine-loop | coined | The engine's one port to the control plane, through which it asks for the compiled target, the policy decision, a session lease, a record lock, a budget, and approval, and records an intent. |
 | Core Type Roles | group | core | coined | The title of the numbered walk through the Core Types view, told in 5 steps. |
-| Core Types | part | core, system | code: a2m-core | The shared words of the product as types: archetypes, effect classes, hazards, failure classes, evidence levels, statuses, and the plan's shape. |
+| Core Types | part | core, system | code: a2m-core | The shared words of the product as types: archetypes, effect classes, hazards, failure classes, evidence levels, statuses, and the compiled target's shape. |
 | Crash and Dialog Reports | part | web-browser | coined | The detection of a crash, a disconnect, and a dialog, with a report of whether input reached the page. |
 | Crash Recovery | walk | system | coined | A worked case in the Anything2MCP on One Machine view, told in 4 steps, which begins: An intent was recorded and the engine stopped before it could record the outcome. |
 | Current Record Read | part | engine-resume | coined | The step of reconciliation that reads the record through the mode its intent was stored for, never another. |
@@ -182,14 +182,14 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Draft Levels | group | scout-ladder | coined | The group in the Evidence Levels view that holds Reconstructed, Schema Verified. |
 | Drafted Read | walk | pack-http | coined | A worked case in the http view, told in 5 steps, which begins: The service publishes a description of itself. |
 | Drafting Stage | group | http-draft | coined | The group in the Endpoint Drafting view that holds Endpoint Entries, Read Operations. |
-| Drafts and Versions | part | plan | coined | The distinction between drafts, which compile in memory, and published versions. |
+| Drafts and Versions | part | compiled-target | coined | The distinction between drafts, which compile in memory, and published versions. |
 | Driver Handle | part | contract | code: a2m-provider: src/driver.rs | The only way the engine reaches a driver. |
 | Driving Crate | group | pack-web | coined | The group in the web view that holds Web Drivers. |
 | Due Times | part | watches | coined | The due times of a watch's checks, worked out on the store's clock. |
 | Duplicates and Resume | part | pack-stream | coined | The handling of at-least-once delivery, with an idempotency token and no automatic resume of an irreversible publish. |
 | Early Redaction | part | http-description | coined | The passing of the description text through the redactor before parsing. |
 | Editable Formats | part | pack-file | coined | The formats the file pack can edit, those with a patch editor that passes two byte-identity tests. |
-| Emission | part | plan | coined | The compiler stage that writes the plan as canonical JSON and takes its hash. |
+| Emission | part | compiled-target | coined | The compiler stage that writes the compiled target as canonical JSON and takes its hash. |
 | Endpoint Catalog | part | pack-http | code: a2m-pack-http: src/endpoints.rs | The endpoints file kind: each endpoint's method, path template, request template, status codes, answer form, and shapes. |
 | Endpoint Drafting | part | http-draft, pack-http | coined | The drafting of endpoint entries and one read for each safe method from findings. |
 | Endpoint Entries | part | http-draft | coined | The endpoint file drafted with field types from the schema. |
@@ -209,12 +209,12 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Exclusive Link | part | pack-device | coined | The opening of the device link with exclusive use for a run. |
 | Exit Status and Output | part | pack-command | coined | The check of the exit status and output against declared meanings. |
 | Expiry and Block Signs | part | web-ui | coined | The recognition of a sign-in page, an edge block, or an expiry sign in a page or response. |
-| Expression Compilation | part | expr | coined | The parsing and checking of an expression and its turning into the plan's expression form. |
+| Expression Compilation | part | expr | coined | The parsing and checking of an expression and its turning into the compiled target's expression form. |
 | Expression Lifecycle | group | expr | coined | The title of the numbered walk through the Expressions view, told in 5 steps. |
 | Expressions | part | expr, system | code: a2m-expr | The small language a target file uses to compute an input or compare a value, with decimal arithmetic and no floats in a comparison. |
 | Extension Points | group | contract | coined | The group in the Provider Contract view that holds Driver, Discoverer, Compiler Registrations, Auth Provider, Source Reader. |
 | Face Generation | group | registry | coined | The group in the Action Registry view that holds Generated Faces. |
-| Failed Compile | walk | plan | coined | A worked case in the Plan view, told in 5 steps, which begins: Every file is parsed with the place of each value kept, then checked against its schema. |
+| Failed Compile | walk | compiled-target | coined | A worked case in the Compiled Target view, told in 5 steps, which begins: Every file is parsed with the place of each value kept, then checked against its schema. |
 | Failure | part | core | code: a2m-core: src/failure.rs | The one form in which anything in the kernel reports it could not do what was asked. |
 | Field-Type Normalizers | part | expr | coined | The normalizer for each field-type base: decimals, dates, and text case and whitespace. |
 | File Change | group | pack-file | coined | The group in the file view that holds Place Locator, Span Patching, Untouched Check. |
@@ -230,7 +230,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Finding Drafting | group | http-draft | coined | The title of the numbered walk through the Endpoint Drafting view, told in 5 steps. |
 | Finding Levels | group | scout-ladder | coined | The group in the Evidence Levels view that holds Inferred, Discovered. |
 | Findings Stage | group | http-description | coined | The group in the Description Reader view that holds Description Findings. |
-| Finishing Stages | group | plan | coined | The group in the Plan view that holds Linting, Plan Description, Emission. |
+| Finishing Stages | group | compiled-target | coined | The group in the Compiled Target view that holds Linting, Compiled Target Description, Emission. |
 | Firmware | part | pack-device | coined | The device pack's treatment of firmware: inspection of a supplied image is discovery only, and an update is irreversible. |
 | Format Readers | part | sources | coined | The built-in readers for workbooks, delimited text, and JSON, and the extension point a pack's own reader fills. |
 | Foundation Crates | group | system | coined | The group in the Anything2MCP on One Machine view that holds Core Types, Expressions, Telemetry, Network State, Sources. |
@@ -266,7 +266,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Input Validation | part | reg-dispatch | coined | The dispatcher step that checks the input against the action's full schema. |
 | Intent Before Action | part | ledger-rules | coined | The ledger rule that a record reaches acted only if its intent was durably stored before the write was sent. |
 | Intent Recording | part | engine-write | coined | The step of the write path that sends the intended values to the ledger and waits until they are durably stored. |
-| Interchange Types | group | core | coined | The group in the Core Types view that holds Failure, Finding, Plan Types. |
+| Interchange Types | group | core | coined | The group in the Core Types view that holds Failure, Finding, Compiled Target Types. |
 | Job Leases | part | scheduler | coined | The leases the scheduler grants a runner for one job, each with a number that only increases. |
 | Job Sequence | group | scheduler | coined | The title of the numbered walk through the Scheduler view, told in 7 steps. |
 | Kernel Control | group | system | coined | The group in the Anything2MCP on One Machine view that holds Action Registry, Policy Engine, Scheduler, Session Keeper. |
@@ -289,12 +289,12 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Ledger Store | part | ledger | code: a2m-ledger: src/store.rs, sqlite.rs, migrate.rs | The ledger's storage: one SQLite file with one writing thread and two reading threads. |
 | Ledger Write Sequence | group | ledger | coined | The title of the numbered walk through the Ledger view, told in 7 steps. |
 | Limits and Quotas | part | policy | coined | The maximum records per run, the quotas per caller, and the checks that apply them. |
-| Linting | part | plan | coined | The compiler stage that applies the kernel's and the packs' lint rules. |
+| Linting | part | compiled-target | coined | The compiler stage that applies the kernel's and the packs' lint rules. |
 | Local Channel | group | bridge | coined | The group in the Stdio Proxy view that holds Engine Finder, Message Relay. |
 | Local Channel Client | part | command-line | coined | The client that connects to the engine on the local channel and sends the action. |
 | Local Engine | group | system | coined | The frame in the Anything2MCP on One Machine view drawn around the columns Front Doors, Kernel Control, Kernel Execution, Packs, which together make one process. |
 | Local Listeners | part | netstate | coined | The sockets listening on the machine. |
-| Local Storage | group | system | coined | The group in the Anything2MCP on One Machine view that holds Project, Plan, Ledger, Vault, Browser Profile. |
+| Local Storage | group | system | coined | The group in the Anything2MCP on One Machine view that holds Project, Compiled Target, Ledger, Vault, Browser Profile. |
 | Lock Acquisition | part | engine-write | coined | The step of the write path that asks the ledger for the lock on one record in one target and environment. |
 | Lock Confirmation | part | engine-resume | coined | The step of reconciliation that takes or confirms the record's lock under the new lease number. |
 | Loopback Listener | part | pages | coined | The listener that serves the person's pages on the loopback address only while one is pending. |
@@ -303,7 +303,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Lost HTTP Answer | walk | pack-http | coined | A worked case in the http view, told in 4 steps, which begins: The driver builds the request from the template, places the session's credential, and sends it once. |
 | Lost Leases | part | scheduler | coined | The scheduler's handling of a job whose lease ran out: it is declared lost, stopped as possible_commit, and a reconcile job is queued after a quarantine. |
 | Lost Link | part | pack-device | coined | The handling of a link lost after a write, which may have been applied and is marked possible_commit. |
-| Lowering | part | plan | coined | The compiler stage that turns each binding's verb into the fixed list of steps its driver runs. |
+| Lowering | part | compiled-target | coined | The compiler stage that turns each binding's verb into the fixed list of steps its driver runs. |
 | Machine Actions | part | registry | coined | The group of actions for the local engine, its settings, doctor, network view, browser install, plug-ins, and built-in docs. |
 | Machine Scope | group | registry | coined | The group in the Action Registry view that holds Machine Actions, Absent Actions, Kernel Handle. |
 | Match Wait | part | pack-stream | coined | The waiting, within a time limit, for the next message matching a key or correlation field. |
@@ -361,7 +361,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Page Sequence | group | pack-web | coined | The title of the numbered walk through the web view, told in 6 steps. |
 | Page Snapshots | part | web-browser | coined | The snapshots of a page built from the accessibility tree in one form shared by evidence and discovery. |
 | Page Write | walk | pack-web | coined | A worked case in the web view, told in 5 steps, which begins: The binding names the ui mode. |
-| Parsing | part | plan | coined | The compiler stage that reads every YAML file and keeps the position of each value. |
+| Parsing | part | compiled-target | coined | The compiler stage that reads every YAML file and keeps the position of each value. |
 | Parsing Stage | group | http-description | coined | The group in the Description Reader view that holds Description Parser. |
 | Path Opening | part | pack-file | coined | The receipt of a path resolved and checked to lie inside an allowed root. |
 | Peer Readers | group | netstate | coined | The group in the Network State view that holds Network Neighbours, Local Listeners, System Proxy. |
@@ -377,11 +377,11 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Person Requirement | part | reg-dispatch | coined | The dispatcher step that requires proof of presence from the person's own surface for an act that is a person's. |
 | pipelines/ | part | project | code: a2m-files: src/schema.rs | The folder holding one file per pipeline. |
 | Place Locator | part | pack-file | coined | The finding of each named place in the parsed form with its position in the bytes. |
-| Plan Analysis | part | plan | coined | The compiler stage that counts commit steps and works out each effect class and manifest. |
-| Plan Contents | part | plan | coined | What a compiled plan holds: header, target, field types, pack sections, operations with steps, pipelines, expressions, and tools. |
-| Plan Description | part | plan | coined | The compiler stage that generates each tool's name, description, schemas, and annotations. |
-| Plan Hash | part | plan | code: a2m-core: src/digest.rs | The digest of all the plan's bytes, to which a version and an approval are tied. |
-| Plan Types | part | core | coined | The compiled plan and its steps as immutable data, with their canonical encoding and hash check. |
+| Compiled Target Analysis | part | compiled-target | coined | The compiler stage that counts commit steps and works out each effect class and manifest. |
+| Compiled Target Contents | part | compiled-target | coined | What a compiled target holds: header, target, field types, pack sections, operations with steps, pipelines, expressions, and tools. |
+| Compiled Target Description | part | compiled-target | coined | The compiler stage that generates each tool's name, description, schemas, and annotations. |
+| Compiled Target Hash | part | compiled-target | code: a2m-core: src/digest.rs | The digest of all the compiled target's bytes, to which a version and an approval are tied. |
+| Compiled Target Types | part | core | coined | The compiled target and its steps as immutable data, with their canonical encoding and hash check. |
 | Plug-In Host | part | contract | coined | The host that runs providers written in other languages as separate processes speaking a fixed protocol. |
 | Policy Decision | part | policy | coined | The stored decision of the policy engine for one call, with the rules that decided it and the policy version. |
 | Policy Query | part | reg-dispatch | coined | The dispatcher step that gets one decision from the policy engine and refuses to go on without it. |
@@ -428,7 +428,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Read Operations | part | http-draft | coined | The one read drafted for each safe method. |
 | Read Sequence | group | engine-loop | coined | The group in the Engine Loop view that holds Guard, Binding Selector, Preparation, Read Execution, Result Store. |
 | Reader Limits | group | netstate | coined | The group in the Network State view that holds Network Bounds. |
-| Reading Stages | group | plan | coined | The group in the Plan view that holds Parsing, Schema Validation, Resolution. |
+| Reading Stages | group | compiled-target | coined | The group in the Compiled Target view that holds Parsing, Schema Validation, Resolution. |
 | Reconcile Outcomes | group | engine-resume | coined | The group in the Reconciliation view that holds Landed Outcome, Not-Landed Outcome, Unresolved Outcome. |
 | Reconciliation | part | engine-resume, engine-loop | coined | The part of the engine loop that, after a stop, reads every record that was in doubt before anything else is written. |
 | Reconciliation After Doubt | part | ledger-rules | coined | The ledger rule that no new intent is stored while a record of the run is in intent or acted under an older lease. |
@@ -452,7 +452,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Renewal Stage | group | session-keeper | coined | The group in the Session Keeper view that holds Renewal Ladder, Person Prompt. |
 | Reporting Stage | group | scout | coined | The group in the Scout and Drafter view that holds Scout Report. |
 | Request Sender | part | http-driver | coined | The building of the request from the template and its single sending. |
-| Resolution | part | plan | coined | The compiler stage that links names: operations to screens, endpoints, and types, and pipelines to operations and sources. |
+| Resolution | part | compiled-target | coined | The compiler stage that links names: operations to screens, endpoints, and types, and pipelines to operations and sources. |
 | REST Face | part | rest-face, system | code: a2m-api, a2m-local | The front door that offers one route for each action, used by the command line and the clients over the local channel. |
 | REST Face Contents | group | rest-face | coined | The title of the numbered walk through the REST Face view, told in 5 steps. |
 | REST Routes | group | rest-face | coined | The group in the REST Face view that holds Action Routes, OpenAPI Document, Run Events. |
@@ -476,7 +476,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Saved Session State | part | session-keeper | coined | The sealed session state, such as cookies, kept in the vault and restored after a restart. |
 | Scenario Comparison | part | scout | coined | The scout stage that sets what a system describes against what was observed. |
 | Scheduler | part | scheduler, system | code: a2m-sched | The part that admits or refuses a run against queues, limits, and budgets, hands out jobs under leases, and times watches. |
-| Schema Validation | part | plan | coined | The compiler stage that checks each file against its published schema and the target's schema version. |
+| Schema Validation | part | compiled-target | coined | The compiler stage that checks each file against its published schema and the target's schema version. |
 | Scout Bounds | part | scout | coined | The limits on time, size, depth, and requests that every scout stage has. |
 | Scout Findings | part | scout | coined | The facts the scout learned about a system, each with its subject, kind, level, limits, and sources. |
 | Scout Pipeline | group | scout | coined | The group in the Scout and Drafter view that holds Identification, Discovery, Scenario Comparison, Drafter, Draft Check, Trial, Scout Report. |
@@ -571,7 +571,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Transactional Write | part | pack-data | coined | The write in a declared transaction with bound parameters and an expected row count. |
 | Tree Stage | group | command-line | coined | The group in the Command Line view that holds Command Tree. |
 | Type Environment | part | expr | coined | The names an expression may use and their types, as the caller declares them. |
-| Type-Checking | part | plan | coined | The compiler stage that checks every expression against input and output schemas and field types. |
+| Type-Checking | part | compiled-target | coined | The compiler stage that checks every expression against input and output schemas and field types. |
 | Typed Row Fetch | part | pack-data | coined | The fetching of rows into typed values up to the statement's row limit. |
 | types.yaml | part | project | code: a2m-files: src/schema.rs | The file of field types: units, rounding, code lists, and how the system writes a value. |
 | ui Step Sequence | group | web-ui | coined | The title of the numbered walk through the Web Drivers view, told in 5 steps. |

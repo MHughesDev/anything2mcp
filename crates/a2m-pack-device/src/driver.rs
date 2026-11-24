@@ -10,9 +10,9 @@
 //! was sent and not clearly acknowledged is `possible_commit`. Nothing is
 //! retried.
 //!
-//! The driver holds its own lines, whatever the plan says: no frame but
-//! identification in the discovery posture, no write to a register with
-//! the hazard `physical`, no write to a device whose serial the surface
+//! The driver holds its own lines, whatever the compiled target says: no
+//! frame but identification in the discovery posture, no write to a register
+//! with the hazard `physical`, no write to a device whose serial the surface
 //! does not declare, and no frame past the run's ceiling.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_auth::SessionLease;
-use a2m_core::{Decimal, Digest, Failure, Hazard, Plan, Redact, Step, Value, Values};
+use a2m_core::{CompiledTarget, Decimal, Digest, Failure, Hazard, Redact, Step, Value, Values};
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
@@ -33,7 +33,9 @@ use crate::codes;
 use crate::firmware;
 use crate::link::{self, Link, LinkError, OpenError, Refusal, Reply, Request, SendError};
 use crate::lower::{StepPayload, before_name, frame_name};
-use crate::map::{MapPlan, MapSection, ReadEffect, RegisterPlan, SECTION_FORMAT, UpdatePlan};
+use crate::map::{
+    CompiledMap, CompiledRegister, CompiledUpdate, MapSection, ReadEffect, SECTION_FORMAT,
+};
 use crate::names::{Names, PACK};
 
 /// How long a reply may take when neither a map nor a setting says.
@@ -108,11 +110,12 @@ struct Unread {
     reply: Vec<u8>,
 }
 
-/// What `prepare` acquired: the open link and what the plan says about it.
+/// What `prepare` acquired: the open link and what the compiled target says
+/// about it.
 struct LinkState {
     /// The link; `None` once it was lost, after which nothing more is sent.
     link: Option<Box<dyn Link>>,
-    /// The plan's maps, by the position of their section.
+    /// The compiled target's maps, by the position of their section.
     maps: BTreeMap<usize, MapSection>,
     /// The maps the device on this link was compared with.
     identified: BTreeSet<(usize, String)>,
@@ -143,10 +146,10 @@ fn fail(row: &a2m_core::CodeEntry, message: impl Into<String>, next: impl Into<S
     codes::failure(row, message, next)
 }
 
-fn plan_unreadable(what: &str) -> StepFailure {
+fn compiled_target_unreadable(what: &str) -> StepFailure {
     StepFailure::not_sent(fail(
         &codes::row::PAYLOAD_UNREADABLE,
-        format!("The plan cannot be carried out on a device link: {what}."),
+        format!("The compiled target cannot be carried out on a device link: {what}."),
         "Compile the target again with the device pack that is enabled now.",
     ))
 }
@@ -277,22 +280,25 @@ impl DeviceDriver {
         }
     }
 
-    /// The plan's sections that this pack compiled, decoded.
-    fn maps(&self, plan: &Plan) -> Result<BTreeMap<usize, MapSection>, StepFailure> {
+    /// The compiled target's sections that this pack compiled, decoded.
+    fn maps(
+        &self,
+        compiled_target: &CompiledTarget,
+    ) -> Result<BTreeMap<usize, MapSection>, StepFailure> {
         let mut maps = BTreeMap::new();
-        for (index, section) in plan.packs.iter().enumerate() {
+        for (index, section) in compiled_target.packs.iter().enumerate() {
             if section.pack != PACK || section.kind != self.names.register_kind {
                 continue;
             }
             if section.format != SECTION_FORMAT {
-                return Err(plan_unreadable(
+                return Err(compiled_target_unreadable(
                     "its maps were compiled in a form this pack does not read",
                 ));
             }
             let decoded = section
                 .payload
                 .decode::<MapSection>()
-                .map_err(|_| plan_unreadable("its maps do not decode"))?;
+                .map_err(|_| compiled_target_unreadable("its maps do not decode"))?;
             maps.insert(index, decoded);
         }
         Ok(maps)
@@ -315,17 +321,19 @@ impl DeviceDriver {
 }
 
 impl LinkState {
-    fn map<'a>(&'a self, step: &'a Step) -> Result<(usize, &'a str, &'a MapPlan), StepFailure> {
+    fn map<'a>(&'a self, step: &'a Step) -> Result<(usize, &'a str, &'a CompiledMap), StepFailure> {
         let refers = step
             .refers_to
             .as_ref()
-            .ok_or_else(|| plan_unreadable("a step names no map"))?;
+            .ok_or_else(|| compiled_target_unreadable("a step names no map"))?;
         let index = refers.section.get();
         self.maps
             .get(&index)
             .and_then(|section| section.get(&refers.entry))
             .map(|map| (index, refers.entry.as_str(), map))
-            .ok_or_else(|| plan_unreadable("a step names a map the plan does not hold"))
+            .ok_or_else(|| {
+                compiled_target_unreadable("a step names a map the compiled target does not hold")
+            })
     }
 
     /// A register of the step's map, once the device was compared with it.
@@ -333,7 +341,7 @@ impl LinkState {
         &self,
         step: &Step,
         register: &str,
-    ) -> Result<(RegisterPlan, MapPlan), StepFailure> {
+    ) -> Result<(CompiledRegister, CompiledMap), StepFailure> {
         let (index, name, map) = self.map(step)?;
         if !self.identified.contains(&(index, name.to_owned())) {
             return Err(StepFailure::not_sent(fail(
@@ -345,7 +353,9 @@ impl LinkState {
         map.registers
             .get(register)
             .map(|found| (found.clone(), map.clone()))
-            .ok_or_else(|| plan_unreadable("a step names a register its map does not hold"))
+            .ok_or_else(|| {
+                compiled_target_unreadable("a step names a register its map does not hold")
+            })
     }
 
     /// What every frame passes before it is built, whatever step asks for
@@ -364,12 +374,12 @@ impl LinkState {
             )));
         }
         if self.pending.is_some() {
-            return Err(plan_unreadable(
+            return Err(compiled_target_unreadable(
                 "a frame is sent while another still waits for its reply",
             ));
         }
         if self.staged.is_some() || self.staged_image.is_some() {
-            return Err(plan_unreadable(
+            return Err(compiled_target_unreadable(
                 "a frame is sent while a write frame that was built still waits to be sent",
             ));
         }
@@ -387,7 +397,7 @@ impl LinkState {
             return Err(link_lost_before());
         };
         link.frame(request)
-            .ok_or_else(|| plan_unreadable("the link's protocol cannot carry a request"))
+            .ok_or_else(|| compiled_target_unreadable("the link's protocol cannot carry a request"))
     }
 
     /// Builds the frame of a request that reads or identifies, and sends
@@ -399,7 +409,7 @@ impl LinkState {
         within: Duration,
     ) -> Result<(), StepFailure> {
         if request.is_write() {
-            return Err(plan_unreadable(
+            return Err(compiled_target_unreadable(
                 "a write frame is sent that no step built and recorded first",
             ));
         }
@@ -457,7 +467,7 @@ impl LinkState {
     /// Reads the reply to the pending frame.
     async fn receive(&mut self, within: Duration) -> Result<(), StepFailure> {
         let Some(pending) = self.pending.take() else {
-            return Err(plan_unreadable(
+            return Err(compiled_target_unreadable(
                 "a reply is read and no frame waits for one",
             ));
         };
@@ -511,7 +521,7 @@ impl LinkState {
         let unread = self
             .unread
             .take()
-            .ok_or_else(|| plan_unreadable("a reply is expected and none was read"))?;
+            .ok_or_else(|| compiled_target_unreadable("a reply is expected and none was read"))?;
         let reply = self
             .link
             .as_ref()
@@ -674,7 +684,7 @@ impl DeviceDriver {
         state: &LinkState,
         step: &Step,
         writing: bool,
-    ) -> Result<(MapPlan, UpdatePlan), StepFailure> {
+    ) -> Result<(CompiledMap, CompiledUpdate), StepFailure> {
         let (index, name, map) = state.map(step)?;
         if !state.identified.contains(&(index, name.to_owned())) {
             return Err(StepFailure::not_sent(fail(
@@ -691,7 +701,9 @@ impl DeviceDriver {
             )));
         }
         let update = map.firmware_update.clone().ok_or_else(|| {
-            plan_unreadable("a step updates firmware on a map that declares no update mechanism")
+            compiled_target_unreadable(
+                "a step updates firmware on a map that declares no update mechanism",
+            )
         })?;
         Ok((map.clone(), update))
     }
@@ -705,7 +717,7 @@ impl DeviceDriver {
         input: &StepInput<'_>,
         image: &str,
         version: &str,
-        update: &UpdatePlan,
+        update: &CompiledUpdate,
         accepts: &[String],
     ) -> Result<Vec<u8>, StepFailure> {
         let refuse = |why: &str| {
@@ -761,7 +773,9 @@ impl DeviceDriver {
             reads_after,
         } = payload
         else {
-            return Err(plan_unreadable("a `build_frame` step builds no frame"));
+            return Err(compiled_target_unreadable(
+                "a `build_frame` step builds no frame",
+            ));
         };
         if !may_write(state.posture) {
             return Err(read_only());
@@ -831,7 +845,7 @@ impl DeviceDriver {
         &self,
         state: &mut LinkState,
         step: &Step,
-        update: &UpdatePlan,
+        update: &CompiledUpdate,
         (gap, within): (Duration, Duration),
         (offset, words): (u16, Vec<u16>),
         entered: bool,
@@ -914,7 +928,7 @@ impl DeviceDriver {
         &self,
         state: &mut LinkState,
         step: &Step,
-        update: &UpdatePlan,
+        update: &CompiledUpdate,
         timing: (Duration, Duration),
     ) -> Option<i64> {
         state.link.as_ref()?;
@@ -929,7 +943,7 @@ impl DeviceDriver {
     async fn leave_update_mode(
         &self,
         state: &mut LinkState,
-        update: &UpdatePlan,
+        update: &CompiledUpdate,
         (gap, within): (Duration, Duration),
         why: Option<i64>,
     ) -> StepFailure {
@@ -975,7 +989,7 @@ impl DeviceDriver {
         payload: &StepPayload,
     ) -> Result<StepOutcome, StepFailure> {
         let StepPayload::Install { image, version } = payload else {
-            return Err(plan_unreadable("a step installs nothing"));
+            return Err(compiled_target_unreadable("a step installs nothing"));
         };
         if !step.commits || !may_write(state.posture) {
             return Err(read_only());
@@ -993,7 +1007,7 @@ impl DeviceDriver {
                         == Some(staged.version.as_str())
             })
             .ok_or_else(|| {
-                plan_unreadable(
+                compiled_target_unreadable(
                     "an image is installed that was not built and recorded first, or that changed since",
                 )
             })?;
@@ -1001,8 +1015,9 @@ impl DeviceDriver {
             self.gap(&map),
             self.reply_within(&map).min(input.deadline.remaining()),
         );
-        let length = u16::try_from(staged.bytes.len())
-            .map_err(|_| plan_unreadable("an image is longer than the device's length register"))?;
+        let length = u16::try_from(staged.bytes.len()).map_err(|_| {
+            compiled_target_unreadable("an image is longer than the device's length register")
+        })?;
         self.update_write(
             state,
             step,
@@ -1170,7 +1185,7 @@ impl DeviceDriver {
         }
     }
 
-    fn reply_within(&self, map: &MapPlan) -> Duration {
+    fn reply_within(&self, map: &CompiledMap) -> Duration {
         map.pace
             .reply_within_ms
             .map_or(self.defaults.reply_within, |ms| {
@@ -1180,7 +1195,7 @@ impl DeviceDriver {
 
     /// The gap to keep between frames: the map's, and never less than its
     /// greatest rate allows.
-    fn gap(&self, map: &MapPlan) -> Duration {
+    fn gap(&self, map: &CompiledMap) -> Duration {
         let gap = map.pace.min_gap_ms.map_or(self.defaults.min_gap, |ms| {
             Duration::from_millis(u64::from(ms))
         });
@@ -1201,23 +1216,22 @@ impl DeviceDriver {
         input: &StepInput<'_>,
         register: &str,
         arg: &str,
-    ) -> Result<(Request, MapPlan), StepFailure> {
+    ) -> Result<(Request, CompiledMap), StepFailure> {
         let (found, map) = state.register(step, register)?;
         if !found.access.writable() {
-            return Err(plan_unreadable(
+            return Err(compiled_target_unreadable(
                 "a step writes a register its map declares read-only",
             ));
         }
         match found.hazard {
             None => {
-                return Err(plan_unreadable(
+                return Err(compiled_target_unreadable(
                     "a step writes a register that declares no hazard",
                 ));
             }
-            // The compiler refuses such a binding. A plan is data, and a
-            // write that moves something is refused here too, until
-            // `confirm_by`, the safe state, and link-loss handling are
-            // built.
+            // The compiler refuses such a binding. A compiled target is data,
+            // and a write that moves something is refused here too, until
+            // `confirm_by`, the safe state, and link-loss handling are built.
             Some(Hazard::Physical) => {
                 return Err(StepFailure::not_sent(fail(
                     &codes::row::PHYSICAL_NOT_BUILT,
@@ -1317,7 +1331,7 @@ impl DeviceDriver {
             StepPayload::AskRead { register } => {
                 let (found, map) = state.register(step, register)?;
                 if !found.access.readable() || found.read_effect != ReadEffect::None {
-                    return Err(plan_unreadable(
+                    return Err(compiled_target_unreadable(
                         "a step reads a register that has nothing to read, or that reading changes",
                     ));
                 }
@@ -1338,7 +1352,7 @@ impl DeviceDriver {
                     .take()
                     .filter(|staged| staged.register == *register && staged.request == request)
                     .ok_or_else(|| {
-                        plan_unreadable(
+                        compiled_target_unreadable(
                             "a write frame is sent that was not built and recorded first, or whose value changed since",
                         )
                     })?;
@@ -1352,7 +1366,7 @@ impl DeviceDriver {
                 return self.install(state, step, input, payload).await;
             }
             _ => {
-                return Err(plan_unreadable(
+                return Err(compiled_target_unreadable(
                     "a `write_frame` step holds no frame to send",
                 ));
             }
@@ -1365,7 +1379,7 @@ impl DeviceDriver {
     /// recorded for the register, which is every plain read.
     fn frame_check(
         state: &LinkState,
-        found: &RegisterPlan,
+        found: &CompiledRegister,
         recorded: &Values,
         register: &str,
         held: &Value,
@@ -1412,7 +1426,9 @@ impl DeviceDriver {
         match payload {
             StepPayload::Value { register, .. } | StepPayload::Before { register } => {
                 if unread.request.is_write() {
-                    return Err(plan_unreadable("a value is expected from a write's reply"));
+                    return Err(compiled_target_unreadable(
+                        "a value is expected from a write's reply",
+                    ));
                 }
                 let (found, _) = state.register(step, register)?;
                 let value = match reply {
@@ -1461,7 +1477,7 @@ impl DeviceDriver {
                     None => return Err(unexpected()),
                 };
                 let expected = Decimal::parse(equals).map_err(|_| {
-                    plan_unreadable("a precondition holds a number that is not one")
+                    compiled_target_unreadable("a precondition holds a number that is not one")
                 })?;
                 let held = match &value {
                     Value::Int(number) => Some(Decimal::from_i64(*number)),
@@ -1501,7 +1517,9 @@ impl DeviceDriver {
                     .and_then(unhex)
                     .and_then(|bytes| firmware::read(&bytes).ok())
                     .map(|image| image.carried)
-                    .ok_or_else(|| plan_unreadable("a checksum is compared with no image"))?;
+                    .ok_or_else(|| {
+                        compiled_target_unreadable("a checksum is compared with no image")
+                    })?;
                 if reported != i64::from(carried) {
                     return Err(StepFailure::answered(fail(
                         &codes::row::IMAGE_CHECKSUM_DIFFERS,
@@ -1522,7 +1540,7 @@ impl DeviceDriver {
             }
             StepPayload::Acknowledged => {
                 if !unread.request.is_write() {
-                    return Err(plan_unreadable(
+                    return Err(compiled_target_unreadable(
                         "an acknowledgement is expected from a read's reply",
                     ));
                 }
@@ -1542,7 +1560,9 @@ impl DeviceDriver {
                     }
                 }
             }
-            _ => Err(plan_unreadable("an `expect` step expects nothing")),
+            _ => Err(compiled_target_unreadable(
+                "an `expect` step expects nothing",
+            )),
         }
     }
 }
@@ -1568,11 +1588,10 @@ impl Driver for DeviceDriver {
             if !cx.destinations.contains(&surface.address) {
                 return Err(not_declared("its address is not one this run may reach"));
             }
-            let fields = surface
-                .payload
-                .decode::<LinkFields>()
-                .map_err(|_| plan_unreadable("the surface does not state its protocol and unit"))?;
-            let maps = self.maps(cx.plan)?;
+            let fields = surface.payload.decode::<LinkFields>().map_err(|_| {
+                compiled_target_unreadable("the surface does not state its protocol and unit")
+            })?;
+            let maps = self.maps(cx.compiled_target)?;
             // The unit this run means: the serial the surface declares for
             // the run's environment.
             let serial = fields.serials.get(cx.surface.environment.as_str()).cloned();
@@ -1630,13 +1649,13 @@ impl Driver for DeviceDriver {
             // What this record's earlier steps gave for reconcile: the frame
             // of a write, and the value before it.
             let recorded = prepared.recorded().clone();
-            let state = prepared
-                .state::<LinkState>()
-                .ok_or_else(|| plan_unreadable("the link was not prepared by this driver"))?;
+            let state = prepared.state::<LinkState>().ok_or_else(|| {
+                compiled_target_unreadable("the link was not prepared by this driver")
+            })?;
             let payload = step
                 .payload
                 .decode::<StepPayload>()
-                .map_err(|_| plan_unreadable("a step's details do not decode"))?;
+                .map_err(|_| compiled_target_unreadable("a step's details do not decode"))?;
             let names = &self.names;
             let mut measured = Vec::new();
             let outcome = if step.kind == names.open {
@@ -1646,7 +1665,7 @@ impl Driver for DeviceDriver {
                     StepPayload::AfterUpdate { output } => {
                         self.after_update(state, step, input, output).await
                     }
-                    _ => Err(plan_unreadable("an `open` step opens nothing")),
+                    _ => Err(compiled_target_unreadable("an `open` step opens nothing")),
                 }
             } else if step.kind == names.build_frame {
                 match &payload {
@@ -1658,13 +1677,17 @@ impl Driver for DeviceDriver {
                     StepPayload::BuildFirmware { .. } => {
                         self.build_firmware(state, step, input, &payload)
                     }
-                    _ => Err(plan_unreadable("a `build_frame` step builds no frame")),
+                    _ => Err(compiled_target_unreadable(
+                        "a `build_frame` step builds no frame",
+                    )),
                 }
             } else if step.kind == names.write_frame {
                 self.write_frame(state, step, input, &payload).await
             } else if step.kind == names.read_frame {
                 if payload != StepPayload::Reply {
-                    return Err(plan_unreadable("a `read_frame` step reads no reply"));
+                    return Err(compiled_target_unreadable(
+                        "a `read_frame` step reads no reply",
+                    ));
                 }
                 let within = match state.map(step) {
                     Ok((_, _, map)) => self.reply_within(map),
@@ -1677,7 +1700,7 @@ impl Driver for DeviceDriver {
             } else if step.kind == names.expect {
                 self.expect(state, step, input, &payload, &recorded, &mut measured)
             } else {
-                Err(plan_unreadable(
+                Err(compiled_target_unreadable(
                     "a step is of a kind this driver does not carry out",
                 ))
             };
@@ -1733,8 +1756,8 @@ mod tests {
     use crate::link::{Link, LinkError, Reply, Request, SendError};
     use crate::lower::StepPayload;
     use crate::map::{
-        Access, Data, MapPlan, MapSection, Pace, ReadEffect, RegisterPlan, Table, ValueKind,
-        WordOrder,
+        Access, CompiledMap, CompiledRegister, Data, MapSection, Pace, ReadEffect, Table,
+        ValueKind, WordOrder,
     };
     use crate::names::Names;
 
@@ -1771,8 +1794,8 @@ mod tests {
         }
     }
 
-    fn map(pace: Pace) -> MapPlan {
-        MapPlan {
+    fn map(pace: Pace) -> CompiledMap {
+        CompiledMap {
             surface: "controller".to_owned(),
             model: "example-controller".to_owned(),
             firmware: vec!["1.0.0".to_owned()],
@@ -1780,7 +1803,7 @@ mod tests {
             pace,
             registers: BTreeMap::from([(
                 "level".to_owned(),
-                RegisterPlan {
+                CompiledRegister {
                     table: Table::Input,
                     offset: 1,
                     data: Data::U16,

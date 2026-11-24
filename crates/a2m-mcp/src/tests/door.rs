@@ -1058,7 +1058,7 @@ async fn a_listed_tool_says_its_target_and_version_in_its_meta_and_no_client_cha
         "{published}"
     );
     assert_eq!(meta.len(), 3, "{published}");
-    // The description is the plan's own words, as published.
+    // The description is the compiled target's own words, as published.
     assert!(!published["description"].as_str().unwrap().is_empty());
     // A control tool belongs to no target and carries no `_meta`.
     let control = tools
@@ -1102,7 +1102,7 @@ async fn text_from_the_system_stays_a_value_in_the_result() {
     });
     world
         .kernel
-        .publish_plan(&super::engine::plan(&base))
+        .publish_compiled_target(&super::engine::compiled_target(&base))
         .await
         .unwrap();
     let http = Http::new(world.service("use", McpSettings::local()));

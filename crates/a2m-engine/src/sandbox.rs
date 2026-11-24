@@ -145,17 +145,19 @@ impl Engine {
         };
         let timed = Timed::new(control, self.deps.settings.control_timeout);
         let control: &dyn Control = &timed;
-        let loaded = self.plan(&job.plan, control).await?;
+        let loaded = self.compiled_target(&job.compiled_target, control).await?;
         let position = Self::environment(&loaded, job)?;
-        let plan = &loaded.plan;
-        let surface_position = plan
+        let compiled_target = &loaded.compiled_target;
+        let surface_position = compiled_target
             .surfaces
             .iter()
             .position(|surface| &surface.name == name)
             .ok_or_else(|| {
-                codes::job_invalid(format!("The plan holds no surface named `{name}`."))
+                codes::job_invalid(format!(
+                    "The compiled target holds no surface named `{name}`."
+                ))
             })?;
-        let surface = &plan.surfaces[surface_position];
+        let surface = &compiled_target.surfaces[surface_position];
         let registry = &self.deps.registry;
         let entry = registry.surface_kind(&surface.kind).ok_or_else(|| {
             codes::job_invalid(format!(

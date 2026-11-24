@@ -30,8 +30,8 @@ vocabulary! {
 
 vocabulary! {
     /// What a write binding offers as the evidence that its write landed
-    /// (spec section 208). A plan states it for each binding; the engine
-    /// holds the binding to it.
+    /// (spec section 208). A compiled target states it for each binding; the
+    /// engine holds the binding to it.
     #[derive(Default)]
     pub enum WriteEvidence: "write evidence" {
         /// The binding's read-back steps read the record, and what they read

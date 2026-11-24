@@ -359,10 +359,10 @@ handler!(
 handler!(
     /// `draft.delete`: one draft file of a target removed from the project
     /// (decision 0189). Only a file the compiler would read as one of the
-    /// target's drafts, in one of its folders, is removed: never the
-    /// target's own top-level files, a name no file kind claims, a link, a
-    /// folder, or a device. A published version is untouched: its sources
-    /// are held in the store, beside its plan, and no path reaches them. The
+    /// target's drafts, in one of its folders, is removed: never the target's
+    /// own top-level files, a name no file kind claims, a link, a folder, or
+    /// a device. A published version is untouched: its sources are held in
+    /// the store, beside its compiled target, and no path reaches them. The
     /// lint of what is left comes back.
     draft_delete,
     |kernel, call| {
@@ -582,7 +582,7 @@ handler!(
                             .map(|row| {
                                 json!({
                                     "version": row.version.to_string(),
-                                    "plan_hash": row.plan_hash.to_string(),
+                                    "compiled_target_hash": row.compiled_target_hash.to_string(),
                                     "current": row.current,
                                 })
                             })

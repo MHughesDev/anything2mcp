@@ -24,7 +24,7 @@ Every design decision is weighed against four qualities, in this order when they
 
 ## What makes it different
 
-1. **Deterministic at run time.** No model runs inside a tool call and nothing improvises. A run carries out a compiled plan; a step that cannot be done as written stops with a named failure class.
+1. **Deterministic at run time.** No model runs inside a tool call and nothing improvises. A run carries out a compiled target; a step that cannot be done as written stops with a named failure class.
 2. **Every write verified.** A write is recorded before it is attempted, previewed and approved where policy asks, read back from the system afterwards, and compared after normalization. A run that is interrupted resumes without writing twice.
 3. **Honest about evidence.** Everything learned about a system carries an evidence level, from `inferred` to `approved`. A guess never passes as a fact, and a person sees how far each tool has been proven before publishing it ([section 219](../2-kernel/219-the-evidence-ladder.md)); the level informs and gates no run ([decision 0307](../../decisions/0307-what-the-evidence-level-is-for-and-what-a-review-shows-about-a-tools-evidence.md)).
 4. **Many ways to one operation.** One operation can have several bindings, each in a different mode: a page's interface, the requests the page makes, a direct request, an MCP server's tool, a declared command. The engine uses the verified binding first in the declared order, and falls to the next when one is unhealthy.

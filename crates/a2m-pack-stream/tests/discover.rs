@@ -301,8 +301,8 @@ async fn the_drafted_reads_return_what_the_broker_holds() {
     );
     // A person answers the one judgment each channel leaves open.
     common::answer_keys(&root);
-    scene.plan = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
-        Ok(compiled) => compiled.plan,
+    scene.compiled_target = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the drafts do not compile:\n{problems}"),
     };
     let before = scene.broker.truth();
@@ -319,7 +319,11 @@ async fn the_drafted_reads_return_what_the_broker_holds() {
         .await
         .unwrap(),
     );
-    let result = common::outputs_of(&scene.plan, "example_orders_status_get", &observed);
+    let result = common::outputs_of(
+        &scene.compiled_target,
+        "example_orders_status_get",
+        &observed,
+    );
     let held = &before.channels["example.orders.status"].retained["A-100"];
     assert_eq!(
         result.get("status").and_then(a2m_core::Value::as_text),
@@ -327,7 +331,7 @@ async fn the_drafted_reads_return_what_the_broker_holds() {
     );
     // Its text is marked untrusted.
     let operation = scene
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|found| found.name.as_str() == "example_orders_status_get")
@@ -335,7 +339,7 @@ async fn the_drafted_reads_return_what_the_broker_holds() {
     assert!(operation.outputs.iter().all(|output| {
         output
             .field_type
-            .is_some_and(|index| scene.plan.field_types[index.get()].untrusted)
+            .is_some_and(|index| scene.compiled_target.field_types[index.get()].untrusted)
     }));
 
     for (operation, address) in [
@@ -348,7 +352,7 @@ async fn the_drafted_reads_return_what_the_broker_holds() {
                 .await
                 .unwrap(),
         );
-        let result = common::outputs_of(&scene.plan, operation, &observed);
+        let result = common::outputs_of(&scene.compiled_target, operation, &observed);
         let contents = &before.channels[address];
         let holds = contents.log.len() + contents.queue.len();
         assert_eq!(

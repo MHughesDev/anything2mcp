@@ -16,7 +16,7 @@ REA declares ten effects for each of its tools and derives every hint from them,
 
 | Effect | Declared with | Checked by |
 | --- | --- | --- |
-| Starts a process | Which programs, by path and digest; and whether programs a published plan names may be started | The supervisor, scoped to what the manifest and the published plan declare: nothing else can be started ([section 204](204-supervising-subsystems.md)) |
+| Starts a process | Which programs, by path and digest; and whether programs a published compiled target names may be started | The supervisor, scoped to what the manifest and the published compiled target declare: nothing else can be started ([section 204](204-supervising-subsystems.md)) |
 | Reads files | Which roots | The kernel's file access, for packs: the checked path in `a2m-provider`, which only the check against the allowed roots of section 502 can make. A pack receives checked paths and never resolves one |
 | Writes files | Which roots | The same |
 | Uses the network | Which destinations | The surfaces a target declares; the kernel's clients |

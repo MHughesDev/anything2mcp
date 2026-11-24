@@ -1035,9 +1035,9 @@ impl fmt::Debug for Browser {
 
 impl Browser {
     /// A new tab that may act, with the fixed environment given, for the
-    /// origins given: the destinations the plan declares. The tab goes to
-    /// no other origin, whoever moves it, and looks at and acts on no page
-    /// of another: each of those is [`BrowserError::ForeignOrigin`].
+    /// origins given: the destinations the compiled target declares. The tab
+    /// goes to no other origin, whoever moves it, and looks at and acts on no
+    /// page of another: each of those is [`BrowserError::ForeignOrigin`].
     ///
     /// # Errors
     ///

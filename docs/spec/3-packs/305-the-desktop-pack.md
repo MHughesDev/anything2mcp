@@ -22,7 +22,7 @@ The pack is one crate, `a2m-pack-desktop`. It has no base crate and depends on n
 
 | Reaches | How |
 | --- | --- |
-| A desktop application on the machine the engine runs on, in an interactive desktop session | Started through the supervisor the pack's context scopes to the programs the manifest and the published plan declare, by path and digest; or attached to one a person named |
+| A desktop application on the machine the engine runs on, in an interactive desktop session | Started through the supervisor the pack's context scopes to the programs the manifest and the published compiled target declare, by path and digest; or attached to one a person named |
 
 | Refused | Why |
 | --- | --- |

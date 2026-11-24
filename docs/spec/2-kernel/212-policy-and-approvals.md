@@ -198,7 +198,7 @@ A kill switch is set with `killswitch.set`. It does not stop administration or a
 
 Text read from a system, such as notes and comments, enters the calling agent's context and may contain instructions aimed at the agent. Results are structured; free text sits only in fields marked untrusted, limited in length and stripped of markup and hidden characters; the permission manifest blocks undeclared destinations, so a steered agent cannot use a tool to send data elsewhere; and writes still need a person's approval of a visible diff. [Section 502](../5-security/502-defending-against-a-manipulated-agent.md) gives the full defense.
 
-Published versions are immutable, hashed, and signed by the publisher, and a server loads only versions whose signature and hash are in its registry ([section 206](206-the-compiler-and-the-plan.md)).
+Published versions are immutable, hashed, and signed by the publisher, and a server loads only versions whose signature and hash are in its registry ([section 206](206-the-compiler-and-the-compiled-target.md)).
 
 ## Speed targets
 

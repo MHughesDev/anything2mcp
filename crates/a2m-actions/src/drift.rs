@@ -4,7 +4,9 @@
 //! the runner into a job's conditions, so that every binding the drifted
 //! knowledge stops is refused before anything is sent.
 
-use a2m_core::{Failure, FailureCode, Mode, OperationName, Plan, RunId, SurfaceName, WorkspaceId};
+use a2m_core::{
+    CompiledTarget, Failure, FailureCode, Mode, OperationName, RunId, SurfaceName, WorkspaceId,
+};
 use a2m_engine::{DriftKnowledge, DriftMark};
 use a2m_ledger::{Owner, SqlValue, Tx};
 
@@ -94,20 +96,20 @@ pub(crate) fn lift(
     Ok(())
 }
 
-/// Every binding of `plan`, by its operation and mode, that a mark of its
-/// target stops. A mark that cannot be read stops every binding of the
-/// plan: what it said is not known, and unknown means stop.
+/// Every binding of `compiled_target`, by its operation and mode, that a mark
+/// of its target stops. A mark that cannot be read stops every binding of the
+/// compiled target: what it said is not known, and unknown means stop.
 pub(crate) fn stopped(
     tx: &mut Tx<'_>,
     workspace: WorkspaceId,
-    plan: &Plan,
+    compiled_target: &CompiledTarget,
 ) -> Result<Vec<(OperationName, Mode)>, Failure> {
     let rows = tx.tables(Owner::Actions).query(
         "SELECT surface, mode, knowledge, digest, entry, operation
          FROM actions_drift_marks WHERE workspace_id = ?1 AND target = ?2",
         &[
             SqlValue::from(workspace.to_string()),
-            SqlValue::from(plan.header.target.as_str()),
+            SqlValue::from(compiled_target.header.target.as_str()),
         ],
     )?;
     let mut marks = Vec::with_capacity(rows.len());
@@ -131,7 +133,7 @@ pub(crate) fn stopped(
         match read() {
             Some(mark) => marks.push(mark),
             None => {
-                return Ok(plan
+                return Ok(compiled_target
                     .operations
                     .iter()
                     .flat_map(|operation| {
@@ -144,5 +146,5 @@ pub(crate) fn stopped(
             }
         }
     }
-    Ok(a2m_engine::drift_covers(plan, &marks))
+    Ok(a2m_engine::drift_covers(compiled_target, &marks))
 }

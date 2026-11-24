@@ -1,5 +1,6 @@
-//! Build-order steps 1 to 4: a read through the eight parts, the step
-//! trace, the plan fetched by its hash, and a surface that needs a sign-in.
+//! Build-order steps 1 to 4: a read through the eight parts, the step trace,
+//! the compiled target fetched by its hash, and a surface that needs a
+//! sign-in.
 //!
 //! Every test runs against the built-in test application, through a driver
 //! registered by a test pack as a real pack registers one.
@@ -64,8 +65,8 @@ async fn a_read_is_guarded_chosen_prepared_acted_and_recorded() {
     assert_eq!(questions[0].tool.as_str(), ORDER_GET);
     assert!(!questions[0].writes);
 
-    // The first binding in the plan's order was chosen, and its driver was
-    // prepared for a live run and asked for one step.
+    // The first binding in the compiled target's order was chosen, and its
+    // driver was prepared for a live run and asked for one step.
     assert_eq!(
         chosen(&scene),
         vec![(FIRST_MODE.to_owned(), ChoiceReason::FirstInOrder)]
@@ -114,13 +115,13 @@ async fn the_step_trace_is_sent_with_its_signature() {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    // A header that names the run, the plan, the engine, and the registry;
-    // one record for the step that reached the driver, which says which
-    // binding was chosen and why; and the end, with the signature.
+    // A header that names the run, the compiled target, the engine, and the
+    // registry; one record for the step that reached the driver, which says
+    // which binding was chosen and why; and the end, with the signature.
     assert_eq!(lines.len(), 3, "{text}");
     assert_eq!(lines[0]["type"], "header");
     assert_eq!(lines[0]["operation"], ORDER_GET);
-    assert_eq!(lines[0]["plan"], scene.plan_hash.to_string());
+    assert_eq!(lines[0]["plan"], scene.compiled_target_hash.to_string());
     assert_eq!(lines[1]["phase"], "act");
     assert_eq!(lines[1]["kind"], "get_order");
     assert_eq!(lines[1]["begins"]["mode"], FIRST_MODE);
@@ -132,9 +133,9 @@ async fn the_step_trace_is_sent_with_its_signature() {
 }
 
 #[tokio::test]
-async fn a_plan_that_is_not_the_one_its_hash_names_is_refused_at_guard() {
+async fn a_compiled_target_that_is_not_the_one_its_hash_names_is_refused_at_guard() {
     let mut scene = Scene::new(ORDER_GET, |_| {}).await;
-    scene.plan_hash = Digest::of(b"another plan");
+    scene.compiled_target_hash = Digest::of(b"another plan");
     let outcome = scene
         .work(JobKind::Execute, ORDER_GET, order("A-100"))
         .await;
@@ -147,7 +148,7 @@ async fn a_plan_that_is_not_the_one_its_hash_names_is_refused_at_guard() {
         panic!("{outcome:?}");
     };
     assert_eq!(failure.class(), FailureClass::Policy);
-    assert_eq!(failure.code().as_str(), "plan_unverified");
+    assert_eq!(failure.code().as_str(), "compiled_target_unverified");
     // Nothing was asked of the decider or of a driver: the run was moved
     // to `validating`, and nothing else happened.
     assert!(scene.control.questions.lock().unwrap().is_empty());
@@ -296,9 +297,9 @@ async fn a_session_known_to_need_a_person_is_not_asked_for() {
 async fn a_condition_that_is_neither_true_nor_false_stops_the_call() {
     // A step's condition gives a text. It is not taken for false, which
     // would skip the step silently and run the ones after it.
-    let scene = Scene::new(ORDER_GET, |plan| {
-        let not_a_condition = expr(plan, "input.order_id", a2m_core::ValueType::Text);
-        for binding in &mut plan.operations[0].bindings {
+    let scene = Scene::new(ORDER_GET, |compiled_target| {
+        let not_a_condition = expr(compiled_target, "input.order_id", a2m_core::ValueType::Text);
+        for binding in &mut compiled_target.operations[0].bindings {
             binding.act[0].when = Some(not_a_condition);
         }
     })
@@ -315,9 +316,9 @@ async fn a_condition_that_is_neither_true_nor_false_stops_the_call() {
 
     // A binding's precondition that gives no boolean is not taken as "does
     // not qualify" either.
-    let scene = Scene::new(ORDER_GET, |plan| {
-        let not_a_condition = expr(plan, "input.order_id", a2m_core::ValueType::Text);
-        plan.operations[0].bindings[0].precondition = Some(not_a_condition);
+    let scene = Scene::new(ORDER_GET, |compiled_target| {
+        let not_a_condition = expr(compiled_target, "input.order_id", a2m_core::ValueType::Text);
+        compiled_target.operations[0].bindings[0].precondition = Some(not_a_condition);
     })
     .await;
     let outcome = scene
@@ -331,14 +332,14 @@ async fn a_condition_that_is_neither_true_nor_false_stops_the_call() {
 }
 
 #[tokio::test]
-async fn what_a_writing_tool_must_hold_alone_is_told_from_the_plan_and_the_manifests() {
+async fn what_a_writing_tool_must_hold_alone_is_told_from_the_compiled_target_and_the_manifests() {
     let scene = Scene::new(ORDER_GET, |_| {}).await;
-    let plan = scene.control.plan.clone();
+    let compiled_target = scene.control.compiled_target.clone();
     let name = |text: &str| a2m_core::OperationName::new(text).unwrap();
     let needs = |tool: &str| -> Vec<(String, String)> {
         scene
             .engine
-            .exclusive_needs(&plan, &name(tool))
+            .exclusive_needs(&compiled_target, &name(tool))
             .into_iter()
             .map(|need| (need.kind.as_str().to_owned(), need.surface.to_string()))
             .collect()

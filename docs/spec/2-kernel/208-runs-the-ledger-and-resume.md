@@ -28,7 +28,7 @@ Research notes 13 and [38](../../research/38-recording-intent-and-reconciling-af
 | Approval | Decision by a person | Binds a person to one exact diff ([section 212](212-policy-and-approvals.md)) | `a2m-policy` |
 | Job | Piece of a run handed to a runner | Scheduling and leases ([section 223](223-the-runner-protocol.md)) | `a2m-sched` |
 
-The store also holds published versions and their plans, findings, and the audit chain. Every table has one owning crate, and no crate's SQL names another's table, with one declared exception: when writes begin, the ledger checks the approval that policy recorded, in the same transaction (rule 3 below).
+The store also holds published versions and their compiled targets, findings, and the audit chain. Every table has one owning crate, and no crate's SQL names another's table, with one declared exception: when writes begin, the ledger checks the approval that policy recorded, in the same transaction (rule 3 below).
 
 **One record row is one commit point.** A commit point is the moment the system itself saves: one Save click, one PUT request, one file replaced, one message published, one frame written. If an operation saves twice, for example on two tabs of a form, it has two rows. This rule is what makes resume exact, because every row is either saved in the system or not.
 
@@ -179,7 +179,7 @@ The class alone decides what happens next ([section 207](207-the-engine-loop.md)
 | `policy`, `stale` | `failed` | Released by the ledger; nothing is in doubt once read |
 | `session_expired` | `needs_login` | Quarantined |
 | `transient` after retries, `busy`, `mismatch`, `edge_blocked`, `unknown_variant`, `rejected` | `stopped` | Quarantined if a record is in doubt, released otherwise |
-| `drift` | `stopped`, and pinned to the plan that drifted | As above |
+| `drift` | `stopped`, and pinned to the compiled target that drifted | As above |
 | `possible_commit` | `stopped` | Quarantined until reconcile |
 
 The class `rejected` (the system refused the input) and the run state `rejected` (the inputs were invalid before anything ran) are different things; the first ends in `stopped`.
@@ -206,7 +206,7 @@ Record locks belong to the ledger, because storing an intent must check the lock
 ## Evidence and retention
 
 - Values, diffs, snapshots, and traces are stored as blobs, sealed through the vault ([section 216](216-the-vault-and-its-keys.md)), and referenced from rows. Identical evidence within a workspace is stored once.
-- A blob is named by the workspace's keyed digest of its plain content, never by its plain hash, so someone who can read the store cannot confirm a guessed value by hashing it. A digest that must be the same on every machine, such as a diff hash or a plan hash, is never a blob name.
+- A blob is named by the workspace's keyed digest of its plain content, never by its plain hash, so someone who can read the store cannot confirm a guessed value by hashing it. A digest that must be the same on every machine, such as a diff hash or a compiled target hash, is never a blob name.
 - A blob is synced to disk before the row that names it commits. A blob whose row never committed is collected by retention.
 - Each blob has a retention class: short for traces and screenshots, longer for diffs and before-and-after values, longest for the audit log.
 - A retention job deletes whole runs and their unreferenced blobs once they are past their class. Legal hold on a run suspends it.

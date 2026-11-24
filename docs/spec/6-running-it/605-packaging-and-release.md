@@ -12,7 +12,7 @@ anything2mcp/
   crates/
     # The kernel: the same whatever kind of system is integrated.
     a2m-core/             # shared types: targets, operations, bindings, effects, failure classes
-    a2m-files/            # schemas, loader, linter, plan compiler
+    a2m-files/            # schemas, loader, linter, compiled target compiler
     a2m-expr/             # CEL evaluation; host functions for units, numbers, dates
     a2m-vault/            # envelope encryption, key-store back ends, redactor
     a2m-telemetry/        # traces, metrics, OpenTelemetry export

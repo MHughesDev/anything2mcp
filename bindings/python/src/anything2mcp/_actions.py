@@ -64,7 +64,6 @@ ACTIONS = (
     "net.resolvers",
     "net.routes",
     "net.standing",
-    "plan.show",
     "plugin.install",
     "plugin.list",
     "policy.explain",
@@ -100,6 +99,7 @@ ACTIONS = (
     "target.add",
     "target.list",
     "target.probe",
+    "target.show",
     "target.status",
     "test.run",
     "tool.call",
@@ -812,27 +812,6 @@ class Actions:
         """
         return self._action("net.standing", {}, idempotency_key)
 
-    def plan_show(
-        self,
-        *,
-        target: str,
-        version: Optional[str] = None,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Print a compiled plan as text: its tools, steps, surfaces, and
-        permissions.
-
-        The engine action is ``plan.show``.
-        """
-        return self._action(
-            "plan.show",
-            {
-                "target": target,
-                "version": version,
-            },
-            idempotency_key,
-        )
-
     def plugin_install(
         self,
         *,
@@ -1395,6 +1374,27 @@ class Actions:
             idempotency_key,
         )
 
+    def target_show(
+        self,
+        *,
+        target: str,
+        version: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Print a target's compiled target as text: its tools, steps, surfaces,
+        and permissions.
+
+        The engine action is ``target.show``.
+        """
+        return self._action(
+            "target.show",
+            {
+                "target": target,
+                "version": version,
+            },
+            idempotency_key,
+        )
+
     def target_status(
         self,
         *,
@@ -1702,12 +1702,12 @@ class Actions:
         self,
         *,
         target: str,
-        plan_hash: Optional[str] = None,
+        compiled_target_hash: Optional[str] = None,
         version: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Publish a target's drafts as an immutable version, compiled to a plan. A
-        person's act, never an agent's.
+        """Publish a target's drafts, compiled, as an immutable version. A person's
+        act, never an agent's.
 
         The engine action is ``version.publish``.
         """
@@ -1715,7 +1715,7 @@ class Actions:
             "version.publish",
             {
                 "target": target,
-                "plan_hash": plan_hash,
+                "compiled_target_hash": compiled_target_hash,
                 "version": version,
             },
             idempotency_key,

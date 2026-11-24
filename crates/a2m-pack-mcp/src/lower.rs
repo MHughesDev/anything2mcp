@@ -590,13 +590,13 @@ impl Lowering for McpLowering {
             let text = operation
                 .outputs()
                 .iter()
-                .find(|plan| plan.name == output.key.value)
-                .is_some_and(|plan| holds_text(&plan.ty));
+                .find(|compiled| compiled.name == output.key.value)
+                .is_some_and(|compiled| holds_text(&compiled.ty));
             let marked = output
                 .value
                 .text("type")
                 .and_then(|name| target.field_type(name))
-                .is_some_and(|field_type| field_type.plan.untrusted);
+                .is_some_and(|field_type| field_type.compiled.untrusted);
             if text && !marked {
                 problems.push(Diagnostic::error(
                     names::UNTRUSTED_UNMARKED,

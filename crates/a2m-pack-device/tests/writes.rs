@@ -793,8 +793,8 @@ async fn the_bytes_of_a_write_are_recorded_before_the_frame_is_sent() {
     assert_eq!(control.write_count("dosing_rate"), 1);
 }
 
-/// The steps of a write, with every step that builds or sends the write
-/// frame pointed at another register: a plan the compiler did not make.
+/// The steps of a write, with every step that builds or sends the write frame
+/// pointed at another register: a compiled target the compiler did not make.
 fn pointed_at(steps: &[Step], register: &str) -> Vec<Step> {
     steps
         .iter()

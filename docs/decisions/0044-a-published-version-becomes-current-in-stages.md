@@ -28,4 +28,4 @@ Shadowed reads prove too costly for an application.
 ## Spec sections
 
 - [52-when-the-engine-itself-fails.md](../spec/2-kernel/224-when-the-engine-itself-fails.md)
-- [46-target-compiler-and-plan.md](../spec/2-kernel/206-the-compiler-and-the-plan.md)
+- [46-target-compiler-and-plan.md](../spec/2-kernel/206-the-compiler-and-the-compiled-target.md)

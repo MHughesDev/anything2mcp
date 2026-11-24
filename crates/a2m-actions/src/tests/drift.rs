@@ -36,10 +36,13 @@ impl World {
     /// Publishes a version of the target whose screens are modelled as
     /// `layout`, numbered by `patch`.
     async fn publish_screens(&self, layout: &str, patch: u32) {
-        let mut plan = engine::plan(&self.app.url(""));
-        screens(&mut plan, layout);
-        plan.header.version = Version::new(1, 0, patch);
-        self.kernel.publish_plan(&plan).await.unwrap();
+        let mut compiled_target = engine::compiled_target(&self.app.url(""));
+        screens(&mut compiled_target, layout);
+        compiled_target.header.version = Version::new(1, 0, patch);
+        self.kernel
+            .publish_compiled_target(&compiled_target)
+            .await
+            .unwrap();
     }
 
     /// A canary of the read of an order: a watch of it, confirmed by its

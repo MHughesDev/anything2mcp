@@ -14,8 +14,8 @@ use crate::{
     VariableValue, compile, lint_one, load_files,
 };
 use a2m_core::{
-    AddressScope, Digest, EffectClass, Environment, FileKindName, IdentityStrategy, Mode,
-    ProbePlan, StepKind, SurfaceKind, Verb, Version, WriteEvidence,
+    AddressScope, CompiledProbe, Digest, EffectClass, Environment, FileKindName, IdentityStrategy,
+    Mode, StepKind, SurfaceKind, Verb, Version, WriteEvidence,
 };
 
 type Files = Vec<(RelPath, Vec<u8>)>;
@@ -34,7 +34,7 @@ fn add(files: &mut Files, path: &str, text: &str) {
     files.push((RelPath::new(path).unwrap(), text.as_bytes().to_vec()));
 }
 
-fn compiled_with(
+fn compiled_target_with(
     files: &Files,
     set: &CompilerSet,
     mode: CompileMode,
@@ -91,14 +91,14 @@ const FIXED: &str = "identity: {strategy: natural, place: fixed}";
 #[test]
 fn a_write_of_one_fixed_place_compiles_with_no_identity_input() {
     let set = stand_set().unwrap();
-    let compiled = compiled_with(
+    let compiled = compiled_target_with(
         &with_settings(FIXED, "settings_put"),
         &set,
         CompileMode::Draft,
     )
     .unwrap_or_else(|problems| panic!("{problems}"));
     let operation = compiled
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_settings_set")
@@ -121,7 +121,7 @@ fn a_write_of_one_fixed_place_compiles_with_no_identity_input() {
         })
     );
     // The example names no fixed place, and its summary shows none.
-    let example = compiled_with(&example_files(), &set, CompileMode::Draft).unwrap();
+    let example = compiled_target_with(&example_files(), &set, CompileMode::Draft).unwrap();
     assert!(example.review.items.iter().all(|item| item.place.is_none()));
 }
 
@@ -129,7 +129,7 @@ fn a_write_of_one_fixed_place_compiles_with_no_identity_input() {
 fn a_fixed_place_is_only_one_its_file_kind_declares_and_no_input_chooses() {
     let set = stand_set().unwrap();
     let refused = |files: &Files| -> String {
-        let problems = compiled_with(files, &set, CompileMode::Draft).unwrap_err();
+        let problems = compiled_target_with(files, &set, CompileMode::Draft).unwrap_err();
         let found = problems
             .find("kernel.place_not_fixed")
             .unwrap_or_else(|| panic!("{problems}"));
@@ -162,7 +162,7 @@ fn a_fixed_place_is_only_one_its_file_kind_declares_and_no_input_chooses() {
         inner: testing::lowering(),
         names_place: false,
     }));
-    let problems = compiled_with(
+    let problems = compiled_target_with(
         &with_settings(FIXED, "settings_put"),
         &silent,
         CompileMode::Draft,
@@ -349,7 +349,7 @@ fn the_summary_shows_what_a_tool_starts_sets_and_reaches_by_the_kind_of_place() 
         inner: testing::lowering(),
         names_place: true,
     }));
-    let compiled = compiled_with(&stating_files(), &set, CompileMode::Draft)
+    let compiled = compiled_target_with(&stating_files(), &set, CompileMode::Draft)
         .unwrap_or_else(|problems| panic!("{problems}"));
     let item = |name: &str| {
         compiled
@@ -436,7 +436,7 @@ fn every_text_of_the_summary_passes_through_the_function_given() {
         inner: testing::lowering(),
         names_place: true,
     }));
-    let mut review = compiled_with(&stating_files(), &set, CompileMode::Draft)
+    let mut review = compiled_target_with(&stating_files(), &set, CompileMode::Draft)
         .unwrap_or_else(|problems| panic!("{problems}"))
         .review;
     let test: Environment = "test".parse().unwrap();
@@ -482,7 +482,7 @@ fn every_text_of_the_summary_passes_through_the_function_given() {
 #[test]
 fn a_pack_that_states_nothing_is_shown_as_stating_nothing_and_never_as_nothing() {
     let set = stand_set().unwrap();
-    let compiled = compiled_with(&example_files(), &set, CompileMode::Draft).unwrap();
+    let compiled = compiled_target_with(&example_files(), &set, CompileMode::Draft).unwrap();
     for item in &compiled.review.items {
         assert!(!item.bindings.is_empty(), "{}", item.tool);
         for binding in &item.bindings {
@@ -503,7 +503,7 @@ fn a_pack_that_states_nothing_is_shown_as_stating_nothing_and_never_as_nothing()
 #[test]
 fn a_sign_in_shows_its_provider_its_credentials_by_name_and_where_it_sends() {
     let set = stand_set().unwrap();
-    let mut compiled = compiled_with(&example_files(), &set, CompileMode::Draft).unwrap();
+    let mut compiled = compiled_target_with(&example_files(), &set, CompileMode::Draft).unwrap();
     let sign_in = &compiled.review.sign_ins[0];
     assert_eq!(sign_in.provider.as_str(), "http_basic");
     assert_eq!(sign_in.credentials[0].role, "password");
@@ -569,11 +569,11 @@ fn a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only() {
     let files = with_pending_probe();
     // A draft compiles, with the sign-in marked in the lint result and in
     // the summary.
-    let draft = compiled_with(&files, &set, CompileMode::Draft)
+    let draft = compiled_target_with(&files, &set, CompileMode::Draft)
         .unwrap_or_else(|problems| panic!("{problems}"));
     assert_eq!(
-        draft.plan.auth[0].probe,
-        ProbePlan::Pending {
+        draft.compiled_target.auth[0].probe,
+        CompiledProbe::Pending {
             name: "example_session_check".to_owned()
         }
     );
@@ -601,7 +601,7 @@ fn a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only() {
     );
     // A publish never compiles one: a session nobody can check is a
     // session nobody can trust.
-    let published = compiled_with(&files, &set, CompileMode::Publish).unwrap_err();
+    let published = compiled_target_with(&files, &set, CompileMode::Publish).unwrap_err();
     assert!(
         published.find("kernel.unknown_name").is_some(),
         "{published}"
@@ -622,7 +622,7 @@ fn a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only() {
         "call: order_get",
         "call: order_missing",
     );
-    let problems = compiled_with(&broken, &set, CompileMode::Draft).unwrap_err();
+    let problems = compiled_target_with(&broken, &set, CompileMode::Draft).unwrap_err();
     assert!(
         problems.find("kernel.probe_pending").is_none(),
         "{problems}"

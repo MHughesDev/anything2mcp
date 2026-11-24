@@ -5030,6 +5030,9 @@
           "result": {
            "additionalProperties": false,
            "properties": {
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -5059,9 +5062,6 @@
             },
             "ok": {
              "type": "boolean"
-            },
-            "plan_hash": {
-             "type": "string"
             },
             "problems": {
              "items": {
@@ -5130,6 +5130,9 @@
           "result": {
            "additionalProperties": false,
            "properties": {
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -5159,9 +5162,6 @@
             },
             "ok": {
              "type": "boolean"
-            },
-            "plan_hash": {
-             "type": "string"
             },
             "problems": {
              "items": {
@@ -11463,204 +11463,6 @@
     "x-action": "net.standing"
    }
   },
-  "/api/v1/actions/plan.show": {
-   "post": {
-    "operationId": "plan_show",
-    "parameters": [
-     {
-      "description": "Makes a repeated write the same write.",
-      "in": "header",
-      "name": "Idempotency-Key",
-      "required": false,
-      "schema": {
-       "maxLength": 200,
-       "minLength": 1,
-       "type": "string"
-      }
-     }
-    ],
-    "requestBody": {
-     "content": {
-      "application/json": {
-       "schema": {
-        "additionalProperties": false,
-        "properties": {
-         "target": {
-          "type": "string"
-         },
-         "version": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "target"
-        ],
-        "type": "object"
-       }
-      }
-     },
-     "required": true
-    },
-    "responses": {
-     "200": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "properties": {
-          "action": {
-           "type": "string"
-          },
-          "decision": {
-           "type": "string"
-          },
-          "error": {
-           "$ref": "#/components/schemas/Error"
-          },
-          "next": {
-           "$ref": "#/components/schemas/Next"
-          },
-          "ok": {
-           "type": "boolean"
-          },
-          "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
-             "additionalProperties": false,
-             "properties": {
-              "action": {
-               "type": "string"
-              },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
-               "type": "object"
-              },
-              "tool": {
-               "type": "string"
-              },
-              "when": {
-               "type": "string"
-              }
-             },
-             "required": [
-              "action",
-              "tool",
-              "args",
-              "when"
-             ],
-             "type": "object"
-            }
-           },
-           "required": [],
-           "type": "object"
-          },
-          "warnings": {
-           "items": {
-            "type": "string"
-           },
-           "type": "array"
-          }
-         },
-         "required": [
-          "ok",
-          "action",
-          "warnings"
-         ],
-         "type": "object"
-        }
-       }
-      },
-      "description": "The action did what was asked."
-     },
-     "202": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "properties": {
-          "action": {
-           "type": "string"
-          },
-          "decision": {
-           "type": "string"
-          },
-          "error": {
-           "$ref": "#/components/schemas/Error"
-          },
-          "next": {
-           "$ref": "#/components/schemas/Next"
-          },
-          "ok": {
-           "type": "boolean"
-          },
-          "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
-             "additionalProperties": false,
-             "properties": {
-              "action": {
-               "type": "string"
-              },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
-               "type": "object"
-              },
-              "tool": {
-               "type": "string"
-              },
-              "when": {
-               "type": "string"
-              }
-             },
-             "required": [
-              "action",
-              "tool",
-              "args",
-              "when"
-             ],
-             "type": "object"
-            }
-           },
-           "required": [],
-           "type": "object"
-          },
-          "warnings": {
-           "items": {
-            "type": "string"
-           },
-           "type": "array"
-          }
-         },
-         "required": [
-          "ok",
-          "action",
-          "warnings"
-         ],
-         "type": "object"
-        }
-       }
-      },
-      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
-     },
-     "default": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Failed"
-        }
-       }
-      },
-      "description": "A failure: its class, code, message, and fix."
-     }
-    },
-    "summary": "Print a compiled plan as text: its tools, steps, surfaces, and permissions.",
-    "x-action": "plan.show"
-   }
-  },
   "/api/v1/actions/plugin.install": {
    "post": {
     "operationId": "plugin_install",
@@ -13904,6 +13706,9 @@
             {
              "additionalProperties": false,
              "properties": {
+              "compiled_target_hash": {
+               "type": "string"
+              },
               "current": {
                "type": "boolean"
               },
@@ -13934,9 +13739,6 @@
                ],
                "type": "object"
               },
-              "plan_hash": {
-               "type": "string"
-              },
               "target": {
                "type": "string"
               },
@@ -13953,7 +13755,7 @@
              "required": [
               "target",
               "version",
-              "plan_hash",
+              "compiled_target_hash",
               "tools",
               "current"
              ],
@@ -14064,6 +13866,9 @@
             {
              "additionalProperties": false,
              "properties": {
+              "compiled_target_hash": {
+               "type": "string"
+              },
               "current": {
                "type": "boolean"
               },
@@ -14094,9 +13899,6 @@
                ],
                "type": "object"
               },
-              "plan_hash": {
-               "type": "string"
-              },
               "target": {
                "type": "string"
               },
@@ -14113,7 +13915,7 @@
              "required": [
               "target",
               "version",
-              "plan_hash",
+              "compiled_target_hash",
               "tools",
               "current"
              ],
@@ -20147,6 +19949,204 @@
     "x-action": "target.probe"
    }
   },
+  "/api/v1/actions/target.show": {
+   "post": {
+    "operationId": "target_show",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "target": {
+          "type": "string"
+         },
+         "version": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "target"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": {},
+           "properties": {
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            }
+           },
+           "required": [],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": {},
+           "properties": {
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            }
+           },
+           "required": [],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Print a target's compiled target as text: its tools, steps, surfaces, and permissions.",
+    "x-action": "target.show"
+   }
+  },
   "/api/v1/actions/target.status": {
    "post": {
     "operationId": "target_status",
@@ -20940,6 +20940,9 @@
              "required": [],
              "type": "object"
             },
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "description": {
              "type": "string"
             },
@@ -20994,9 +20997,6 @@
              "required": [],
              "type": "object"
             },
-            "plan_hash": {
-             "type": "string"
-            },
             "target": {
              "type": "string"
             },
@@ -21014,7 +21014,7 @@
             "kind",
             "effect",
             "hazard",
-            "plan_hash",
+            "compiled_target_hash",
             "title",
             "description",
             "input_schema",
@@ -21070,6 +21070,9 @@
              "required": [],
              "type": "object"
             },
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "description": {
              "type": "string"
             },
@@ -21124,9 +21127,6 @@
              "required": [],
              "type": "object"
             },
-            "plan_hash": {
-             "type": "string"
-            },
             "target": {
              "type": "string"
             },
@@ -21144,7 +21144,7 @@
             "kind",
             "effect",
             "hazard",
-            "plan_hash",
+            "compiled_target_hash",
             "title",
             "description",
             "input_schema",
@@ -21308,6 +21308,9 @@
                 "required": [],
                 "type": "object"
                },
+               "compiled_target_hash": {
+                "type": "string"
+               },
                "description": {
                 "type": "string"
                },
@@ -21334,9 +21337,6 @@
                 "properties": {},
                 "required": [],
                 "type": "object"
-               },
-               "plan_hash": {
-                "type": "string"
                },
                "target": {
                 "type": "string"
@@ -21452,6 +21452,9 @@
                 "required": [],
                 "type": "object"
                },
+               "compiled_target_hash": {
+                "type": "string"
+               },
                "description": {
                 "type": "string"
                },
@@ -21478,9 +21481,6 @@
                 "properties": {},
                 "required": [],
                 "type": "object"
-               },
-               "plan_hash": {
-                "type": "string"
                },
                "target": {
                 "type": "string"
@@ -24196,7 +24196,7 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
-         "plan_hash": {
+         "compiled_target_hash": {
           "type": "string"
          },
          "target": {
@@ -24241,6 +24241,9 @@
             {
              "additionalProperties": false,
              "properties": {
+              "compiled_target_hash": {
+               "type": "string"
+              },
               "current": {
                "type": "boolean"
               },
@@ -24271,9 +24274,6 @@
                ],
                "type": "object"
               },
-              "plan_hash": {
-               "type": "string"
-              },
               "target": {
                "type": "string"
               },
@@ -24290,7 +24290,7 @@
              "required": [
               "target",
               "version",
-              "plan_hash",
+              "compiled_target_hash",
               "tools",
               "current"
              ],
@@ -24401,6 +24401,9 @@
             {
              "additionalProperties": false,
              "properties": {
+              "compiled_target_hash": {
+               "type": "string"
+              },
               "current": {
                "type": "boolean"
               },
@@ -24431,9 +24434,6 @@
                ],
                "type": "object"
               },
-              "plan_hash": {
-               "type": "string"
-              },
               "target": {
                "type": "string"
               },
@@ -24450,7 +24450,7 @@
              "required": [
               "target",
               "version",
-              "plan_hash",
+              "compiled_target_hash",
               "tools",
               "current"
              ],
@@ -24547,7 +24547,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Publish a target's drafts as an immutable version, compiled to a plan. A person's act, never an agent's.",
+    "summary": "Publish a target's drafts, compiled, as an immutable version. A person's act, never an agent's.",
     "x-action": "version.publish"
    }
   },
@@ -25217,6 +25217,9 @@
                 "records"
                ]
               },
+              "compiled_target_hash": {
+               "type": "string"
+              },
               "condition": {
                "type": "string"
               },
@@ -25274,9 +25277,6 @@
               "next_due_at": {
                "type": "integer"
               },
-              "plan_hash": {
-               "type": "string"
-              },
               "reason": {
                "type": "string"
               },
@@ -25310,7 +25310,7 @@
               "tool",
               "target",
               "environment",
-              "plan_hash",
+              "compiled_target_hash",
               "state",
               "interval_seconds",
               "ends_at",
@@ -25440,6 +25440,9 @@
                 "records"
                ]
               },
+              "compiled_target_hash": {
+               "type": "string"
+              },
               "condition": {
                "type": "string"
               },
@@ -25497,9 +25500,6 @@
               "next_due_at": {
                "type": "integer"
               },
-              "plan_hash": {
-               "type": "string"
-              },
               "reason": {
                "type": "string"
               },
@@ -25533,7 +25533,7 @@
               "tool",
               "target",
               "environment",
-              "plan_hash",
+              "compiled_target_hash",
               "state",
               "interval_seconds",
               "ends_at",
@@ -25745,6 +25745,9 @@
               "records"
              ]
             },
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "condition": {
              "type": "string"
             },
@@ -25811,9 +25814,6 @@
             "person": {
              "type": "string"
             },
-            "plan_hash": {
-             "type": "string"
-            },
             "reason": {
              "type": "string"
             },
@@ -25847,7 +25847,7 @@
             "tool",
             "target",
             "environment",
-            "plan_hash",
+            "compiled_target_hash",
             "state",
             "interval_seconds",
             "ends_at",
@@ -25916,6 +25916,9 @@
               "records"
              ]
             },
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "condition": {
              "type": "string"
             },
@@ -25982,9 +25985,6 @@
             "person": {
              "type": "string"
             },
-            "plan_hash": {
-             "type": "string"
-            },
             "reason": {
              "type": "string"
             },
@@ -26018,7 +26018,7 @@
             "tool",
             "target",
             "environment",
-            "plan_hash",
+            "compiled_target_hash",
             "state",
             "interval_seconds",
             "ends_at",
@@ -26135,6 +26135,9 @@
               "records"
              ]
             },
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "condition": {
              "type": "string"
             },
@@ -26192,9 +26195,6 @@
             "next_due_at": {
              "type": "integer"
             },
-            "plan_hash": {
-             "type": "string"
-            },
             "reason": {
              "type": "string"
             },
@@ -26228,7 +26228,7 @@
             "tool",
             "target",
             "environment",
-            "plan_hash",
+            "compiled_target_hash",
             "state",
             "interval_seconds",
             "ends_at",
@@ -26294,6 +26294,9 @@
               "records"
              ]
             },
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "condition": {
              "type": "string"
             },
@@ -26351,9 +26354,6 @@
             "next_due_at": {
              "type": "integer"
             },
-            "plan_hash": {
-             "type": "string"
-            },
             "reason": {
              "type": "string"
             },
@@ -26387,7 +26387,7 @@
             "tool",
             "target",
             "environment",
-            "plan_hash",
+            "compiled_target_hash",
             "state",
             "interval_seconds",
             "ends_at",
@@ -26504,6 +26504,9 @@
               "records"
              ]
             },
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "condition": {
              "type": "string"
             },
@@ -26561,9 +26564,6 @@
             "next_due_at": {
              "type": "integer"
             },
-            "plan_hash": {
-             "type": "string"
-            },
             "reason": {
              "type": "string"
             },
@@ -26597,7 +26597,7 @@
             "tool",
             "target",
             "environment",
-            "plan_hash",
+            "compiled_target_hash",
             "state",
             "interval_seconds",
             "ends_at",
@@ -26663,6 +26663,9 @@
               "records"
              ]
             },
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "condition": {
              "type": "string"
             },
@@ -26720,9 +26723,6 @@
             "next_due_at": {
              "type": "integer"
             },
-            "plan_hash": {
-             "type": "string"
-            },
             "reason": {
              "type": "string"
             },
@@ -26756,7 +26756,7 @@
             "tool",
             "target",
             "environment",
-            "plan_hash",
+            "compiled_target_hash",
             "state",
             "interval_seconds",
             "ends_at",
@@ -26905,6 +26905,9 @@
                  "records"
                 ]
                },
+               "compiled_target_hash": {
+                "type": "string"
+               },
                "condition": {
                 "type": "string"
                },
@@ -26934,9 +26937,6 @@
                },
                "next_due_at": {
                 "type": "integer"
-               },
-               "plan_hash": {
-                "type": "string"
                },
                "reason": {
                 "type": "string"
@@ -26971,7 +26971,7 @@
                "tool",
                "target",
                "environment",
-               "plan_hash",
+               "compiled_target_hash",
                "state",
                "interval_seconds",
                "ends_at",
@@ -27080,6 +27080,9 @@
                  "records"
                 ]
                },
+               "compiled_target_hash": {
+                "type": "string"
+               },
                "condition": {
                 "type": "string"
                },
@@ -27109,9 +27112,6 @@
                },
                "next_due_at": {
                 "type": "integer"
-               },
-               "plan_hash": {
-                "type": "string"
                },
                "reason": {
                 "type": "string"
@@ -27146,7 +27146,7 @@
                "tool",
                "target",
                "environment",
-               "plan_hash",
+               "compiled_target_hash",
                "state",
                "interval_seconds",
                "ends_at",
@@ -27272,6 +27272,9 @@
               "records"
              ]
             },
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "condition": {
              "type": "string"
             },
@@ -27329,9 +27332,6 @@
             "next_due_at": {
              "type": "integer"
             },
-            "plan_hash": {
-             "type": "string"
-            },
             "reason": {
              "type": "string"
             },
@@ -27365,7 +27365,7 @@
             "tool",
             "target",
             "environment",
-            "plan_hash",
+            "compiled_target_hash",
             "state",
             "interval_seconds",
             "ends_at",
@@ -27431,6 +27431,9 @@
               "records"
              ]
             },
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "condition": {
              "type": "string"
             },
@@ -27488,9 +27491,6 @@
             "next_due_at": {
              "type": "integer"
             },
-            "plan_hash": {
-             "type": "string"
-            },
             "reason": {
              "type": "string"
             },
@@ -27524,7 +27524,7 @@
             "tool",
             "target",
             "environment",
-            "plan_hash",
+            "compiled_target_hash",
             "state",
             "interval_seconds",
             "ends_at",
@@ -27641,6 +27641,9 @@
               "records"
              ]
             },
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "condition": {
              "type": "string"
             },
@@ -27698,9 +27701,6 @@
             "next_due_at": {
              "type": "integer"
             },
-            "plan_hash": {
-             "type": "string"
-            },
             "reason": {
              "type": "string"
             },
@@ -27734,7 +27734,7 @@
             "tool",
             "target",
             "environment",
-            "plan_hash",
+            "compiled_target_hash",
             "state",
             "interval_seconds",
             "ends_at",
@@ -27800,6 +27800,9 @@
               "records"
              ]
             },
+            "compiled_target_hash": {
+             "type": "string"
+            },
             "condition": {
              "type": "string"
             },
@@ -27857,9 +27860,6 @@
             "next_due_at": {
              "type": "integer"
             },
-            "plan_hash": {
-             "type": "string"
-            },
             "reason": {
              "type": "string"
             },
@@ -27893,7 +27893,7 @@
             "tool",
             "target",
             "environment",
-            "plan_hash",
+            "compiled_target_hash",
             "state",
             "interval_seconds",
             "ends_at",
@@ -29623,6 +29623,9 @@
                 "required": [],
                 "type": "object"
                },
+               "compiled_target_hash": {
+                "type": "string"
+               },
                "description": {
                 "type": "string"
                },
@@ -29649,9 +29652,6 @@
                 "properties": {},
                 "required": [],
                 "type": "object"
-               },
-               "plan_hash": {
-                "type": "string"
                },
                "target": {
                 "type": "string"
@@ -29767,6 +29767,9 @@
                 "required": [],
                 "type": "object"
                },
+               "compiled_target_hash": {
+                "type": "string"
+               },
                "description": {
                 "type": "string"
                },
@@ -29793,9 +29796,6 @@
                 "properties": {},
                 "required": [],
                 "type": "object"
-               },
-               "plan_hash": {
-                "type": "string"
                },
                "target": {
                 "type": "string"

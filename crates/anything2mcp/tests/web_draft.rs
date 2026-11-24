@@ -27,8 +27,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, Environment, Epoch, Failure, Finding, Mode, NoSecrets, PackPayload, Plan, RunId,
-    SurfaceKind, SurfaceName, SurfacePlan, TargetName, Value, Values,
+    Archetype, CompiledSurface, CompiledTarget, Environment, Epoch, Failure, Finding, Mode,
+    NoSecrets, PackPayload, RunId, SurfaceKind, SurfaceName, TargetName, Value, Values,
 };
 use a2m_files::{CompileMode, DraftReport, Drafter, RelPath, TargetRoot};
 use a2m_provider::{
@@ -73,7 +73,7 @@ fn web_surface(origin: &str) -> SurfaceRef {
     SurfaceRef {
         target: TargetName::new("example").unwrap(),
         environment: Environment::new("test").unwrap(),
-        surface: SurfacePlan {
+        surface: CompiledSurface {
             name: SurfaceName::new("app").unwrap(),
             kind: SurfaceKind::new("web").unwrap(),
             address: origin.to_owned(),
@@ -191,7 +191,7 @@ fn draft_and_compile(
     machine: &Machine,
     registry: &Registry,
     findings: &[Finding],
-) -> (Folder, Plan) {
+) -> (Folder, CompiledTarget) {
     let folder = Folder::new("web-drafts");
     std::fs::write(
         folder.path().join("target.yaml"),
@@ -214,10 +214,11 @@ fn draft_and_compile(
         .collect();
     let sources =
         a2m_files::load_files(&root, &files, set).unwrap_or_else(|problems| panic!("{problems:?}"));
-    let plan = a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
-        .unwrap_or_else(|problems| panic!("{problems:?}"))
-        .plan;
-    (folder, plan)
+    let compiled_target =
+        a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
+            .unwrap_or_else(|problems| panic!("{problems:?}"))
+            .compiled_target;
+    (folder, compiled_target)
 }
 
 /// A person's answer to the one question a drafted page request holds
@@ -274,28 +275,28 @@ fn answer_what_an_answer_may_leave_out(folder: &std::path::Path, report: &DraftR
 /// `input.<name>`, evaluated here from `inputs` as the engine would.
 async fn read_through_ui(
     registry: &Registry,
-    plan: &Plan,
+    compiled_target: &CompiledTarget,
     origin: &str,
     name: &str,
     inputs: &Values,
 ) -> Result<Values, StepFailure> {
-    read_through(registry, plan, origin, name, "ui", inputs).await
+    read_through(registry, compiled_target, origin, name, "ui", inputs).await
 }
 
 /// The same, through the binding of the mode named.
 async fn read_through(
     registry: &Registry,
-    plan: &Plan,
+    compiled_target: &CompiledTarget,
     origin: &str,
     name: &str,
     mode: &str,
     inputs: &Values,
 ) -> Result<Values, StepFailure> {
-    let read = plan
+    let read = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == name)
-        .unwrap_or_else(|| panic!("no `{name}` in the compiled plan"));
+        .unwrap_or_else(|| panic!("no `{name}` in the compiled compiled_target"));
     assert_eq!(read.effect, a2m_core::EffectClass::Read);
     let ui = Mode::new(mode).unwrap();
     let binding = read
@@ -304,10 +305,10 @@ async fn read_through(
         .find(|binding| binding.mode == ui)
         .unwrap_or_else(|| panic!("`{name}` has no `{mode}` binding"));
     let handle = registry.driver(&ui).unwrap();
-    let mut surface = plan.surfaces[binding.surface.get()].clone();
+    let mut surface = compiled_target.surfaces[binding.surface.get()].clone();
     surface.address = origin.to_owned();
     let surface = SurfaceRef {
-        target: plan.header.target.clone(),
+        target: compiled_target.header.target.clone(),
         environment: Environment::new("test").unwrap(),
         surface,
     };
@@ -317,7 +318,7 @@ async fn read_through(
         run: RunId::from_bytes([7; 16]),
         epoch: Epoch::new(1),
         surface: &surface,
-        plan,
+        compiled_target,
         posture: Posture::Sandbox {
             test_records: false,
         },
@@ -336,7 +337,7 @@ async fn read_through(
     for step in &binding.act {
         let mut args = Values::new();
         for arg in &step.args {
-            let source = &plan.expression(arg.value).unwrap().source;
+            let source = &compiled_target.expression(arg.value).unwrap().source;
             let input = source
                 .strip_prefix("input.")
                 .unwrap_or_else(|| panic!("a drafted read's argument is `{source}`"));
@@ -406,11 +407,11 @@ async fn a_page_that_shows_an_order_is_scouted_drafted_and_read_through_the_web_
     assert_eq!(screens_at(&found, PAGE).len(), 1, "{found:?}");
 
     // 2 and 3. Drafted and compiled.
-    let (_folder, plan) = draft_and_compile(&machine, registry, &found);
+    let (_folder, compiled_target) = draft_and_compile(&machine, registry, &found);
 
     // 4. Read through the `ui` driver. The read takes no input: the page
     // is the one order's.
-    let values = read_through_ui(registry, &plan, &origin, READ, &Values::new())
+    let values = read_through_ui(registry, &compiled_target, &origin, READ, &Values::new())
         .await
         .unwrap_or_else(|failure| panic!("{failure}"));
 
@@ -468,13 +469,13 @@ async fn two_pages_of_one_screen_are_drafted_into_reads_by_key_in_the_product() 
         assert!(screens_at(&found, page).is_empty(), "{page}: {found:?}");
     }
 
-    let (_folder, plan) = draft_and_compile(&machine, registry, &found);
+    let (_folder, compiled_target) = draft_and_compile(&machine, registry, &found);
     for name in [BY_KEY, VALUES] {
-        let read = plan
+        let read = compiled_target
             .operations
             .iter()
             .find(|operation| operation.name.as_str() == name)
-            .unwrap_or_else(|| panic!("no `{name}` in the compiled plan"));
+            .unwrap_or_else(|| panic!("no `{name}` in the compiled compiled_target"));
         let inputs: Vec<&str> = read
             .inputs
             .iter()
@@ -487,7 +488,7 @@ async fn two_pages_of_one_screen_are_drafted_into_reads_by_key_in_the_product() 
     // holds for it.
     let key = Values::new().with("order_id", "A-101");
     let stored = app.stored_order("A-101").await.unwrap().unwrap();
-    let lines = read_through_ui(registry, &plan, &origin, BY_KEY, &key)
+    let lines = read_through_ui(registry, &compiled_target, &origin, BY_KEY, &key)
         .await
         .unwrap_or_else(|failure| panic!("{failure}"));
     assert_eq!(
@@ -500,7 +501,7 @@ async fn two_pages_of_one_screen_are_drafted_into_reads_by_key_in_the_product() 
         Some(&column(&stored, &|item| item.quantity.to_string())),
         "{lines:?}"
     );
-    let order = read_through_ui(registry, &plan, &origin, VALUES, &key)
+    let order = read_through_ui(registry, &compiled_target, &origin, VALUES, &key)
         .await
         .unwrap_or_else(|failure| panic!("{failure}"));
     assert_eq!(
@@ -520,7 +521,7 @@ async fn two_pages_of_one_screen_are_drafted_into_reads_by_key_in_the_product() 
         let before = app.seen().await.unwrap();
         let key = Values::new().with("order_id", refused);
         for name in [BY_KEY, VALUES] {
-            let stopped = read_through_ui(registry, &plan, &origin, name, &key)
+            let stopped = read_through_ui(registry, &compiled_target, &origin, name, &key)
                 .await
                 .unwrap_err();
             assert_eq!(
@@ -598,12 +599,12 @@ async fn a_request_two_pages_make_is_drafted_into_a_page_http_read_by_key_in_the
         .collect();
     assert_eq!(exchanges.len(), 1, "{found:?}");
 
-    let (_folder, plan) = draft_and_compile(&machine, registry, &found);
-    let read = plan
+    let (_folder, compiled_target) = draft_and_compile(&machine, registry, &found);
+    let read = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == TOTALS)
-        .unwrap_or_else(|| panic!("no `{TOTALS}` in the compiled plan"));
+        .unwrap_or_else(|| panic!("no `{TOTALS}` in the compiled compiled_target"));
     assert_eq!(read.effect, a2m_core::EffectClass::Read);
     assert!(
         read.bindings
@@ -614,9 +615,16 @@ async fn a_request_two_pages_make_is_drafted_into_a_page_http_read_by_key_in_the
     for order in ["A-100", "A-101"] {
         let key = Values::new().with("order_id", order);
         let before = app.seen().await.unwrap().len();
-        let values = read_through(registry, &plan, &origin, TOTALS, "page_http", &key)
-            .await
-            .unwrap_or_else(|failure| panic!("{order}: {failure}"));
+        let values = read_through(
+            registry,
+            &compiled_target,
+            &origin,
+            TOTALS,
+            "page_http",
+            &key,
+        )
+        .await
+        .unwrap_or_else(|failure| panic!("{order}: {failure}"));
         let wanted = totals_of(&app, order).await;
         for (name, value) in wanted.iter() {
             assert_eq!(values.get(name), Some(value), "{order}: {values:?}");
@@ -635,9 +643,16 @@ async fn a_request_two_pages_make_is_drafted_into_a_page_http_read_by_key_in_the
     for refused in ["A-100/x", "..", "A-100?view=all", "%2e%2e"] {
         let before = app.seen().await.unwrap();
         let key = Values::new().with("order_id", refused);
-        let stopped = read_through(registry, &plan, &origin, TOTALS, "page_http", &key)
-            .await
-            .unwrap_err();
+        let stopped = read_through(
+            registry,
+            &compiled_target,
+            &origin,
+            TOTALS,
+            "page_http",
+            &key,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(
             (stopped.failure.class(), stopped.failure.code().as_str()),
             (a2m_core::FailureClass::Input, "address_value_refused"),

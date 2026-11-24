@@ -65,7 +65,7 @@ impl TargetRoot {
         Self(path.into())
     }
 
-    /// The folder's path on this machine. It never reaches a plan.
+    /// The folder's path on this machine. It never reaches a compiled target.
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.0
@@ -243,7 +243,7 @@ impl SourceFile {
 }
 
 /// Reads files held in memory, such as the sources stored beside a
-/// published plan.
+/// published compiled target.
 ///
 /// # Errors
 ///

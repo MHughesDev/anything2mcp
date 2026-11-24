@@ -8,9 +8,10 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use a2m_core::{
-    BindingStatus, EffectClass, ExprIndex, FieldTypeIndex, FieldTypePlan, FileKindName, Hazard,
-    IdentityStrategy, InputIndex, InputPlan, Mode, OperationName, PackSection, PlanExpr,
-    SectionIndex, SurfaceIndex, SurfaceKind, SurfaceName, SurfacePlan, TargetName, ValueType, Verb,
+    BindingStatus, CompiledExpr, CompiledFieldType, CompiledInput, CompiledSurface, EffectClass,
+    ExprIndex, FieldTypeIndex, FileKindName, Hazard, IdentityStrategy, InputIndex, Mode,
+    OperationName, PackSection, SectionIndex, SurfaceIndex, SurfaceKind, SurfaceName, TargetName,
+    ValueType, Verb,
 };
 use a2m_expr::{LibraryVersion, TypeEnv};
 
@@ -20,15 +21,15 @@ use crate::doc::{Doc, Located, Place};
 use crate::load::Sources;
 use crate::register::{CompileMode, CompilerSet, ExprSite};
 
-/// Every expression of the plan being built, each once.
+/// Every expression of the compiled target being built, each once.
 #[derive(Debug, Default)]
 pub(crate) struct ExprTable {
-    pub exprs: Vec<PlanExpr>,
+    pub exprs: Vec<CompiledExpr>,
     by_source: BTreeMap<String, Vec<u32>>,
 }
 
 impl ExprTable {
-    pub fn intern(&mut self, expr: PlanExpr) -> ExprIndex {
+    pub fn intern(&mut self, expr: CompiledExpr) -> ExprIndex {
         let same = self.by_source.get(&expr.source).and_then(|positions| {
             positions
                 .iter()
@@ -51,14 +52,14 @@ impl ExprTable {
 /// One surface, with the document it came from.
 #[derive(Debug, Clone)]
 pub(crate) struct SurfaceInfo {
-    pub plan: SurfacePlan,
+    pub compiled: CompiledSurface,
     pub doc: Located<Doc>,
 }
 
 /// One input of an operation or pipeline, with its place.
 #[derive(Debug, Clone)]
 pub(crate) struct InputInfo {
-    pub plan: InputPlan,
+    pub compiled: CompiledInput,
     pub at: Place,
 }
 
@@ -70,7 +71,7 @@ pub(crate) struct OpInfo {
     pub effect: EffectClass,
     pub hazard: Hazard,
     pub inputs: Vec<InputInfo>,
-    pub outputs: Vec<a2m_core::OutputPlan>,
+    pub outputs: Vec<a2m_core::CompiledOutput>,
     pub strategy: IdentityStrategy,
     pub key: Vec<String>,
     /// Where `place: fixed` is written, for an operation whose record is
@@ -85,7 +86,7 @@ pub(crate) struct Model {
     pub target: Option<TargetName>,
     pub modules: Vec<String>,
     pub surfaces: Vec<SurfaceInfo>,
-    pub field_types: Vec<FieldTypePlan>,
+    pub field_types: Vec<CompiledFieldType>,
     pub incomplete_types: BTreeMap<String, String>,
     pub entries: BTreeMap<(FileKindName, SurfaceKind), Vec<Located<Doc>>>,
     pub owners: BTreeMap<(FileKindName, SurfaceKind), String>,
@@ -105,7 +106,7 @@ impl Model {
     pub fn surface(&self, name: &str) -> Option<SurfaceView<'_>> {
         self.surfaces
             .iter()
-            .position(|surface| surface.plan.name.as_str() == name)
+            .position(|surface| surface.compiled.name.as_str() == name)
             .map(|position| self.surface_at(position))
     }
 
@@ -113,9 +114,9 @@ impl Model {
         let info = &self.surfaces[position];
         SurfaceView {
             index: SurfaceIndex::new(index(position)),
-            name: &info.plan.name,
-            kind: &info.plan.kind,
-            address: &info.plan.address,
+            name: &info.compiled.name,
+            kind: &info.compiled.kind,
+            address: &info.compiled.address,
             doc: &info.doc,
         }
     }
@@ -126,7 +127,7 @@ impl Model {
             .position(|field_type| field_type.name == name)
             .map(|position| FieldTypeView {
                 index: FieldTypeIndex::new(index(position)),
-                plan: &self.field_types[position],
+                compiled: &self.field_types[position],
             })
     }
 
@@ -163,7 +164,7 @@ pub(crate) fn current_type(inputs: &[InputInfo]) -> ValueType {
         inputs
             .iter()
             .map(|input| {
-                a2m_core::FieldOf::optional(input.plan.name.clone(), input.plan.ty.clone())
+                a2m_core::FieldOf::optional(input.compiled.name.clone(), input.compiled.ty.clone())
             })
             .collect(),
     )
@@ -184,10 +185,16 @@ pub(crate) fn input_type(inputs: &[InputInfo]) -> ValueType {
         inputs
             .iter()
             .map(|input| {
-                if input.plan.required || input.plan.default.is_some() {
-                    a2m_core::FieldOf::required(input.plan.name.clone(), input.plan.ty.clone())
+                if input.compiled.required || input.compiled.default.is_some() {
+                    a2m_core::FieldOf::required(
+                        input.compiled.name.clone(),
+                        input.compiled.ty.clone(),
+                    )
                 } else {
-                    a2m_core::FieldOf::optional(input.plan.name.clone(), input.plan.ty.clone())
+                    a2m_core::FieldOf::optional(
+                        input.compiled.name.clone(),
+                        input.compiled.ty.clone(),
+                    )
                 }
             })
             .collect(),
@@ -207,7 +214,7 @@ pub(crate) fn type_env(names: &[(&str, ValueType)]) -> TypeEnv {
 
 /// An environment whose names have no type until the expression runs. An
 /// expression that reads one must still end in a known type to go into a
-/// plan.
+/// compiled target.
 pub(crate) fn unknown_env(names: &[&str]) -> TypeEnv {
     let mut env = TypeEnv::new(LibraryVersion::CURRENT);
     for name in names {
@@ -216,14 +223,14 @@ pub(crate) fn unknown_env(names: &[&str]) -> TypeEnv {
     env
 }
 
-/// Checks one expression and gives its plan form, or a diagnostic at its
-/// place in the file.
+/// Checks one expression and gives its compiled target form, or a diagnostic
+/// at its place in the file.
 pub(crate) fn check_expr(
     text: &str,
     at: &Place,
     env: &TypeEnv,
     expected: Option<&ValueType>,
-) -> Result<PlanExpr, Diagnostic> {
+) -> Result<CompiledExpr, Diagnostic> {
     let to_diagnostic = |error: a2m_expr::ExprError| {
         let code = if error.code == a2m_expr::EXPRESSION_TYPE_ERROR {
             codes::EXPRESSION_TYPE_ERROR
@@ -246,7 +253,7 @@ pub(crate) fn check_expr(
         )
     };
     a2m_expr::compile(text, env, expected)
-        .and_then(|compiled| compiled.to_plan_expr())
+        .and_then(|compiled| compiled.to_compiled_expr())
         .map_err(to_diagnostic)
 }
 
@@ -265,7 +272,7 @@ pub fn expr_text(doc: &Located<Doc>) -> Option<String> {
 /// One surface of the target.
 #[derive(Debug, Clone, Copy)]
 pub struct SurfaceView<'a> {
-    /// Its position in the plan.
+    /// Its position in the compiled target.
     pub index: SurfaceIndex,
     /// Its name.
     pub name: &'a SurfaceName,
@@ -280,10 +287,11 @@ pub struct SurfaceView<'a> {
 /// One field type.
 #[derive(Debug, Clone, Copy)]
 pub struct FieldTypeView<'a> {
-    /// Its position in the plan.
+    /// Its position in the compiled target.
     pub index: FieldTypeIndex,
-    /// What the plan holds about it: base, value type, units, rounding.
-    pub plan: &'a FieldTypePlan,
+    /// What the compiled target holds about it: base, value type, units,
+    /// rounding.
+    pub compiled: &'a CompiledFieldType,
 }
 
 /// One input of an operation.
@@ -291,8 +299,8 @@ pub struct FieldTypeView<'a> {
 pub struct InputView<'a> {
     /// Its position among the operation's inputs.
     pub index: InputIndex,
-    /// What the plan holds about it: name, type, field type.
-    pub plan: &'a InputPlan,
+    /// What the compiled target holds about it: name, type, field type.
+    pub compiled: &'a CompiledInput,
     /// Where it is declared.
     pub at: &'a Place,
 }
@@ -332,8 +340,8 @@ impl<'a> TargetView<'a> {
 
     /// A timeout the target states under `defaults.timeouts`, in
     /// milliseconds. A lowering gives it to a step that states none of its
-    /// own, so the plan holds every step's timeout and the engine applies no
-    /// default.
+    /// own, so the compiled target holds every step's timeout and the engine
+    /// applies no default.
     #[must_use]
     pub fn default_timeout_ms(&self, name: &str) -> Option<u32> {
         self.model.default_timeouts.get(name).copied()
@@ -386,7 +394,7 @@ impl<'a> OperationView<'a> {
             .enumerate()
             .map(|(position, input)| InputView {
                 index: InputIndex::new(index(position)),
-                plan: &input.plan,
+                compiled: &input.compiled,
                 at: &input.at,
             })
             .collect()
@@ -397,12 +405,12 @@ impl<'a> OperationView<'a> {
     pub fn input(&self, name: &str) -> Option<InputView<'a>> {
         self.inputs()
             .into_iter()
-            .find(|input| input.plan.name == name)
+            .find(|input| input.compiled.name == name)
     }
 
     /// The fields of its result, in declared order.
     #[must_use]
-    pub fn outputs(&self) -> &'a [a2m_core::OutputPlan] {
+    pub fn outputs(&self) -> &'a [a2m_core::CompiledOutput] {
         &self.info.outputs
     }
 
@@ -467,19 +475,19 @@ impl<'a> KindContext<'a> {
     }
 
     /// Checks an expression of one of the pack's documents and puts it in
-    /// the plan.
+    /// the compiled target.
     ///
     /// # Errors
     ///
     /// A diagnostic at the expression's place when it does not check.
     pub fn expr(&self, site: &ExprSite) -> Result<ExprIndex, Diagnostic> {
-        let plan_expr = check_site(site)?;
-        Ok(self.model.exprs.borrow_mut().intern(plan_expr))
+        let compiled_expr = check_site(site)?;
+        Ok(self.model.exprs.borrow_mut().intern(compiled_expr))
     }
 }
 
 /// Checks one expression site of a pack's document.
-pub(crate) fn check_site(site: &ExprSite) -> Result<PlanExpr, Diagnostic> {
+pub(crate) fn check_site(site: &ExprSite) -> Result<CompiledExpr, Diagnostic> {
     let names: Vec<(&str, ValueType)> = site
         .names
         .iter()
@@ -517,12 +525,13 @@ impl<'a> LowerContext<'a> {
         }
     }
 
-    /// Checks an expression written in the binding and puts it in the plan.
-    /// It may read `input`, the operation's inputs; `env`; `current`, what
-    /// the engine's last read of the record gave, by the operation's inputs,
-    /// null when the record does not exist; and `record`, whose `key` is the
-    /// record's key in the system, its parts as text, null when it has none
-    /// yet. `expected` is the type the place needs, when it needs one.
+    /// Checks an expression written in the binding and puts it in the
+    /// compiled target. It may read `input`, the operation's inputs; `env`;
+    /// `current`, what the engine's last read of the record gave, by the
+    /// operation's inputs, null when the record does not exist; and `record`,
+    /// whose `key` is the record's key in the system, its parts as text, null
+    /// when it has none yet. `expected` is the type the place needs, when it
+    /// needs one.
     ///
     /// # Errors
     ///
@@ -560,8 +569,8 @@ impl<'a> LowerContext<'a> {
         at: &Place,
         expected: Option<&ValueType>,
     ) -> Result<ExprIndex, Diagnostic> {
-        let plan_expr = check_expr(text, at, &self.env, expected)?;
-        Ok(self.model.exprs.borrow_mut().intern(plan_expr))
+        let compiled_expr = check_expr(text, at, &self.env, expected)?;
+        Ok(self.model.exprs.borrow_mut().intern(compiled_expr))
     }
 
     /// The type of an expression this context returned.
@@ -576,7 +585,8 @@ impl<'a> LowerContext<'a> {
     }
 
     /// One of the pack's own compiled sections, with its position in the
-    /// plan for a step's `refers_to`. Another pack's section is never given.
+    /// compiled target for a step's `refers_to`. Another pack's section is
+    /// never given.
     #[must_use]
     pub fn section(
         &self,
@@ -621,8 +631,8 @@ impl<'a> LowerContext<'a> {
         }
     }
 
-    /// The position in the plan of the section that holds a kind this
-    /// lowering reads or owns, for a step's `refers_to`.
+    /// The position in the compiled target of the section that holds a kind
+    /// this lowering reads or owns, for a step's `refers_to`.
     #[must_use]
     pub fn section_index(
         &self,

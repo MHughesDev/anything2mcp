@@ -20,7 +20,7 @@ use a2m_files::{
 use serde::{Deserialize, Serialize};
 
 use crate::codes;
-use crate::map::{MapPlan, MapSection, ReadEffect, RegisterPlan, ValueKind, scalar_text};
+use crate::map::{CompiledMap, CompiledRegister, MapSection, ReadEffect, ValueKind, scalar_text};
 use crate::names::{Names, lint_code};
 
 /// How long a reply may take when neither the map nor the target says.
@@ -207,7 +207,7 @@ struct Scene<'a> {
     names: &'a Names,
     section: SectionIndex,
     map_name: String,
-    map: MapPlan,
+    map: CompiledMap,
     reply_ms: u32,
     problems: Diagnostics,
 }
@@ -453,7 +453,7 @@ impl DeviceLowering {
     fn written<'d>(
         scene: &mut Scene<'_>,
         binding: &ResolvedBinding<'d>,
-    ) -> Option<(String, RegisterPlan, &'d Located<Doc>)> {
+    ) -> Option<(String, CompiledRegister, &'d Located<Doc>)> {
         let Some(registers) = binding.field("registers") else {
             scene.problem(
                 "registers_missing",
@@ -495,7 +495,7 @@ impl DeviceLowering {
         scene: &mut Scene<'_>,
         binding: &ResolvedBinding<'_>,
         name: &str,
-        register: &RegisterPlan,
+        register: &CompiledRegister,
     ) -> Option<Hazard> {
         let at = &binding.doc.at;
         let Some(hazard) = register.hazard else {
@@ -538,7 +538,7 @@ impl DeviceLowering {
         scene: &mut Scene<'_>,
         cx: &LowerContext<'_>,
         name: &str,
-        register: &RegisterPlan,
+        register: &CompiledRegister,
         value: &Located<Doc>,
         reads_after: u32,
     ) -> Option<[Step; 2]> {

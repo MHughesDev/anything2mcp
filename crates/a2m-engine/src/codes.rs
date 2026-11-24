@@ -27,8 +27,8 @@
 use a2m_core::{CodeEntry, Failure};
 
 a2m_core::failure_codes! {
-    PLAN_UNVERIFIED = Policy, "plan_unverified",
-        meaning "The plan's bytes do not give the hash the job names.",
+    COMPILED_TARGET_UNVERIFIED = Policy, "compiled_target_unverified",
+        meaning "The compiled target's bytes do not give the hash the job names.",
         next "Publish the target again from its stored sources.";
     ENGINE_DEGRADED = Busy, "engine_degraded",
         meaning "A write was asked of a kernel that takes reads only, or the kernel has stopped.",
@@ -42,8 +42,8 @@ a2m_core::failure_codes! {
         meaning "An `expect` does not hold.",
         next "Look at the record in the system; the tool runs only when its expectation holds.";
     JOB_INVALID = Input, "job_invalid",
-        meaning "The job names a tool, an environment, or a surface the plan does not hold, or a job of a kind the tool cannot run as.",
-        next "Submit the job again for a tool, environment, and surface the published plan holds.";
+        meaning "The job names a tool, an environment, or a surface the compiled target does not hold, or a job of a kind the tool cannot run as.",
+        next "Submit the job again for a tool, environment, and surface the published compiled target holds.";
     INPUT_INVALID = Input, "input_invalid",
         meaning "An input is missing, is not declared, or is not of its type.",
         next "Call the tool with every input it declares, each of its type.";
@@ -82,7 +82,7 @@ a2m_core::failure_codes! {
         meaning "A binding has no steps that read the record, so nothing it writes can be verified.",
         next "Give the binding a read-back, or declare the operation `irreversible`, and publish the target again.";
     OUTPUT_UNEXPECTED = UnknownVariant, "output_unexpected",
-        meaning "A step returned a value the plan gives no place to.",
+        meaning "A step returned a value the compiled target gives no place to.",
         next "Compare the operation's outputs in the target files with what the system returns.";
     BLOCKED_BY_PARENT = Busy, "blocked_by_parent",
         meaning "A record waits on a parent record that failed.",
@@ -158,7 +158,7 @@ pub(crate) fn job_invalid(what: impl Into<String>) -> Failure {
     fail(
         &row::JOB_INVALID,
         what,
-        "Submit the job again for a tool, environment, and surface the published plan holds.",
+        "Submit the job again for a tool, environment, and surface the published compiled target holds.",
     )
 }
 
@@ -167,14 +167,14 @@ mod tests {
     use super::*;
 
     /// No source of this crate gives a failure a class of its own: each is
-    /// made from a row of a table, which gives it its class, or from what
-    /// a step's plan says it fails as. `tool.rs` remakes a recorded
-    /// failure, or one it adds to, in the class it already has, in two
-    /// places: a failed record that settles the run, and a failure that
+    /// made from a row of a table, which gives it its class, or from what a
+    /// step of the compiled target says it fails as. `tool.rs` remakes a
+    /// recorded failure, or one it adds to, in the class it already has, in
+    /// two places: a failed record that settles the run, and a failure that
     /// shows what was recorded. `run.rs` makes one in one place, from the
     /// table of a provider: a driver's code that its health gives, in the
-    /// class the provider's manifest declares for it (decision 0377). A
-    /// place more fails this test.
+    /// class the provider's manifest declares for it (decision 0377). A place
+    /// more fails this test.
     #[test]
     fn every_failure_takes_its_class_from_a_table() {
         let found = a2m_core::testing::classes_of_their_own(

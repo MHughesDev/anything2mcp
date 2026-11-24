@@ -34,7 +34,7 @@ A hazard raises the approval an effect asks for. It never lowers it.
 
 ## Publishing
 
-`publish.request` asks for review. It answers `needs_person` with a link to a page: give the person the link and stop. The page shows exactly what will be published: the target, the version, the hash of the plan the drafts compile to, and what each tool may do, the most dangerous first. The person presses Carry out and answers the computer's own prompt; only then is the version published, once, as the person. If the drafts change before the press, nothing is published. Call `publish.request` again afterwards to be told what was done. Only a person publishes. You cannot, and you cannot change a version once published.
+`publish.request` asks for review. It answers `needs_person` with a link to a page: give the person the link and stop. The page shows exactly what will be published: the target, the version, the hash of the compiled target the drafts compile to, and what each tool may do, the most dangerous first. The person presses Carry out and answers the computer's own prompt; only then is the version published, once, as the person. If the drafts change before the press, nothing is published. Call `publish.request` again afterwards to be told what was done. Only a person publishes. You cannot, and you cannot change a version once published.
 
 Not shown yet: what changed since the last version (new surfaces and destinations, effects that rose, changed identity and read-back, expressions, and descriptions), which needs `version.diff`.
 

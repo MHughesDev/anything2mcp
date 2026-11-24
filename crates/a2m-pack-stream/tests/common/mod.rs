@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use a2m_core::{NoSecrets, Plan, REDACTED, Redact, Version};
+use a2m_core::{CompiledTarget, NoSecrets, REDACTED, Redact, Version};
 use a2m_files::{CompileMode, Compiled, Diagnostics, TargetRoot};
 use a2m_provider::{
     HostServices, ProviderSettings, Registry, RegistryBuilder, Roots, Supervisor, SupervisorLimits,
@@ -106,9 +106,9 @@ pub fn compile(registry: &Registry, root: &TargetRoot) -> Result<Compiled, Diagn
     a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
-pub fn plan(registry: &Registry) -> Plan {
+pub fn compiled_target(registry: &Registry) -> CompiledTarget {
     match compile(registry, &fixture_root()) {
-        Ok(compiled) => compiled.plan,
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the example target does not compile:\n{problems}"),
     }
 }
@@ -172,7 +172,7 @@ pub fn mode() -> a2m_core::Mode {
 pub struct Scene {
     pub folder: Folder,
     pub registry: Registry,
-    pub plan: Plan,
+    pub compiled_target: CompiledTarget,
     pub broker: TestBroker,
     pub surface: SurfaceRef,
     pub destinations: Destinations,
@@ -182,22 +182,22 @@ impl Scene {
     pub async fn start() -> Self {
         let folder = Folder::new("scene");
         let registry = registry(&folder);
-        let plan = plan(&registry);
+        let compiled_target = compiled_target(&registry);
         let broker = TestBroker::start().await.unwrap();
         // The surface, at the address of the run's environment: here, the
         // test broker's own.
-        let mut surface = plan.surfaces[0].clone();
+        let mut surface = compiled_target.surfaces[0].clone();
         surface.address = broker.address().to_string();
         let destinations = Destinations::new([surface.address.clone()]);
         Self {
             surface: SurfaceRef {
-                target: plan.header.target.clone(),
+                target: compiled_target.header.target.clone(),
                 environment: Environment::new("test").unwrap(),
                 surface,
             },
             folder,
             registry,
-            plan,
+            compiled_target,
             broker,
             destinations,
         }
@@ -208,9 +208,9 @@ impl Scene {
     }
 
     /// The one binding of an operation of the example target.
-    pub fn binding(&self, operation: &str) -> &a2m_core::BindingPlan {
+    pub fn binding(&self, operation: &str) -> &a2m_core::CompiledBinding {
         &self
-            .plan
+            .compiled_target
             .operations
             .iter()
             .find(|found| found.name.as_str() == operation)
@@ -244,7 +244,7 @@ impl Scene {
             run: fence.run,
             epoch: fence.epoch,
             surface: &self.surface,
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             posture,
             deadline: Deadline::after(Duration::from_secs(20)),
             redact: &Planted,
@@ -290,8 +290,8 @@ pub async fn read(
 /// normalized by its field type, as the engine's own shaping does. A value
 /// the step gave that no output declares is not returned; an output the
 /// step gave no value for stops the test, as it stops a read in the engine.
-pub fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
-    let operation = plan
+pub fn outputs_of(compiled_target: &CompiledTarget, operation: &str, observed: &Values) -> Values {
+    let operation = compiled_target
         .operations
         .iter()
         .find(|found| found.name.as_str() == operation)
@@ -303,11 +303,11 @@ pub fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
             .unwrap_or_else(|| panic!("no value for the output `{}`", output.name));
         let value = match output
             .field_type
-            .and_then(|index| plan.field_types[index.get()].normalizer)
+            .and_then(|index| compiled_target.field_types[index.get()].normalizer)
         {
             Some(index) => {
                 let normalizer =
-                    a2m_expr::Normalizer::load(plan.expression(index).unwrap()).unwrap();
+                    a2m_expr::Normalizer::load(compiled_target.expression(index).unwrap()).unwrap();
                 let one = |value: &Value| normalizer.normalize(value).unwrap().normalized;
                 // A list output is normalized value by value; the engine
                 // hands a normalizer the whole list (decision 0182).
@@ -594,7 +594,7 @@ pub fn signature_with(
             run: RunId::from_bytes([7; 16]),
             attempt: 1,
             operation: OperationName::new("example_order_status_get").unwrap(),
-            plan: Digest::of(b"plan"),
+            compiled_target: Digest::of(b"plan"),
             engine: Version::new(0, 0, 1),
             registry: Digest::of(b"registry"),
         },

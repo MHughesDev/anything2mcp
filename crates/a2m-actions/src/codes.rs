@@ -86,7 +86,7 @@ a2m_core::failure_codes! {
         meaning "An idempotency key the caller already gave with another call: another tool, environment, input, or source.",
         next "Use a new key for a new call. To get the run of the call the key was first given with, make that call again with the key, or call `run.list` with `idempotency_key`.";
     DRAFTS_CHANGED = Stale, "drafts_changed",
-        meaning "The drafts of a publish a person was shown changed before they pressed: they compile to another plan.",
+        meaning "The drafts of a publish a person was shown changed before they pressed: they compile to another compiled target.",
         next "Ask again, and read the new page before pressing.";
     PUBLISH_GATES_NOT_PASSED = Input, "publish_gates_not_passed",
         meaning "A publish whose offline tests did not all run and pass: a version is published only when they do (spec section 403, decision 0180).",

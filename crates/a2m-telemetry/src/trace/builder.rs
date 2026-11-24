@@ -141,7 +141,7 @@ impl TraceBuilder {
             run: builder.identity.run,
             attempt: builder.identity.attempt,
             operation: builder.identity.operation.clone(),
-            plan: builder.identity.plan,
+            compiled_target: builder.identity.compiled_target,
             engine: builder.identity.engine,
             registry: builder.identity.registry,
             level,

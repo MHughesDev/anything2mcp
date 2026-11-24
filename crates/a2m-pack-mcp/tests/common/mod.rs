@@ -13,8 +13,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    Digest, EffectClass, Environment, Epoch, Failure, NoSecrets, OperationName, Plan, PrincipalId,
-    RecordKey, Redact, RunId, RunState, Step, TargetName, Timestamp, Value, Values, WorkspaceId,
+    CompiledTarget, Digest, EffectClass, Environment, Epoch, Failure, NoSecrets, OperationName,
+    PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName, Timestamp, Value, Values,
+    WorkspaceId,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, TargetRoot};
 use a2m_ledger::{
@@ -171,9 +172,9 @@ pub fn compile(registry: &Registry, root: &Path) -> Result<Compiled, Diagnostics
 }
 
 /// The fixture target, compiled as it is in the repository.
-pub fn compiled_fixture(registry: &Registry) -> Plan {
+pub fn compiled_fixture(registry: &Registry) -> CompiledTarget {
     match compile(registry, &fixture_root()) {
-        Ok(compiled) => compiled.plan,
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the fixture target does not compile:\n{}", shown(&problems)),
     }
 }
@@ -186,20 +187,20 @@ pub fn shown(problems: &Diagnostics) -> String {
         .join("\n")
 }
 
-/// The surface of the plan with this name, at `address`, as the engine
-/// hands it to a driver for the environment `test`.
-pub fn surface(plan: &Plan, name: &str, address: Option<&str>) -> SurfaceRef {
-    let mut surface = plan
+/// The surface of the compiled target with this name, at `address`, as the
+/// engine hands it to a driver for the environment `test`.
+pub fn surface(compiled_target: &CompiledTarget, name: &str, address: Option<&str>) -> SurfaceRef {
+    let mut surface = compiled_target
         .surfaces
         .iter()
         .find(|surface| surface.name.as_str() == name)
-        .expect("the plan has the surface")
+        .expect("the compiled target has the surface")
         .clone();
     if let Some(address) = address {
         address.clone_into(&mut surface.address);
     }
     SurfaceRef {
-        target: plan.header.target.clone(),
+        target: compiled_target.header.target.clone(),
         environment: Environment::new("test").unwrap(),
         surface,
     }
@@ -212,12 +213,12 @@ pub struct Steps {
     pub lookup: Option<Step>,
 }
 
-pub fn steps(plan: &Plan, operation: &str) -> Steps {
-    let operation = plan
+pub fn steps(compiled_target: &CompiledTarget, operation: &str) -> Steps {
+    let operation = compiled_target
         .operations
         .iter()
         .find(|found| found.name.as_str() == operation)
-        .expect("the plan has the operation");
+        .expect("the compiled target has the operation");
     let binding = &operation.bindings[0];
     Steps {
         act: binding.act[0].clone(),
@@ -233,35 +234,35 @@ pub fn fence_of(run: u8) -> Fence {
     }
 }
 
-/// The plan with one mapped tool's entry changed, as a plan compiled by
-/// something other than this build's compiler could hold it. The driver is
-/// the second line behind the compiler, so it is tested with plans the
-/// compiler would refuse.
+/// The compiled target with one mapped tool's entry changed, as a compiled
+/// target compiled by something other than this build's compiler could hold
+/// it. The driver is the second line behind the compiler, so it is tested
+/// with compiled targets the compiler would refuse.
 pub fn remapped(
-    plan: &Plan,
+    compiled_target: &CompiledTarget,
     surface: &str,
     tool: &str,
     change: impl FnOnce(&mut serde_json::Value),
-) -> Plan {
-    let mut plan = plan.clone();
-    let section = plan
+) -> CompiledTarget {
+    let mut compiled_target = compiled_target.clone();
+    let section = compiled_target
         .packs
         .iter_mut()
         .find(|section| section.pack == a2m_pack_mcp::PACK)
-        .expect("the plan has the pack's section");
+        .expect("the compiled target has the pack's section");
     let mut body: serde_json::Value = section.payload.decode().unwrap();
     let entry = &mut body["surfaces"][surface]["tools"][tool];
     assert!(entry.is_object(), "the mapping names the tool `{tool}`");
     change(entry);
     section.payload = a2m_core::PackPayload::encode(&body).unwrap();
-    plan
+    compiled_target
 }
 
 /// Prepares the driver for a surface through the handle. The run may
 /// reach the surface's own address.
 pub async fn prepare(
     registry: &Registry,
-    plan: &Plan,
+    compiled_target: &CompiledTarget,
     surface: &SurfaceRef,
     fence: Fence,
     posture: Posture,
@@ -270,7 +271,7 @@ pub async fn prepare(
     let destinations = Destinations::new([surface.surface.address.clone()]);
     prepare_reaching(
         registry,
-        plan,
+        compiled_target,
         surface,
         fence,
         posture,
@@ -284,7 +285,7 @@ pub async fn prepare(
 /// may reach `destinations` and nothing else.
 pub async fn prepare_reaching(
     registry: &Registry,
-    plan: &Plan,
+    compiled_target: &CompiledTarget,
     surface: &SurfaceRef,
     fence: Fence,
     posture: Posture,
@@ -293,7 +294,7 @@ pub async fn prepare_reaching(
 ) -> Result<(DriverHandle, Prepared), StepFailure> {
     prepare_within(
         registry,
-        plan,
+        compiled_target,
         surface,
         fence,
         posture,
@@ -311,7 +312,7 @@ pub async fn prepare_reaching(
 )]
 pub async fn prepare_within(
     registry: &Registry,
-    plan: &Plan,
+    compiled_target: &CompiledTarget,
     surface: &SurfaceRef,
     fence: Fence,
     posture: Posture,
@@ -332,7 +333,7 @@ pub async fn prepare_within(
         run: fence.run,
         epoch: fence.epoch,
         surface,
-        plan,
+        compiled_target,
         posture,
         deadline: Deadline::after(within),
         redact: &NoSecrets,
@@ -601,8 +602,8 @@ impl Sessions {
             )
             .await
             .unwrap();
-        // As the entry of a published version's plan: only such an entry
-        // signs in without its person (decision 0248).
+        // As the entry of a published version's compiled target: only such an
+        // entry signs in without its person (decision 0248).
         let entry = Arc::new(entry.credential(role, reference).published());
         self.keeper
             .sign_in(&key, Arc::clone(&entry), None)

@@ -76,7 +76,7 @@ a2m_core::failure_codes! {
         next "Use the read once a version of the desktop pack that carries out the step is enabled.",
         passes not_by_itself;
     STEP_NOT_USABLE = Input, "step_not_usable",
-        meaning "A step this driver cannot carry out as the plan wrote it, or a snapshot of the driver's that is not in the form the pack's discoverer reads.",
+        meaning "A step this driver cannot carry out as the compiled target wrote it, or a snapshot of the driver's that is not in the form the pack's discoverer reads.",
         next "Compile the target again with the version of the desktop pack that is enabled.";
     APP_VALIDATION_ERROR = Rejected, "app_validation_error",
         meaning "After a committing action, the window shows a state its screen declares as the application's refusal. Nothing was stored.",
@@ -119,7 +119,7 @@ pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
     StepFailure::not_sent(failure(
         &row::STEP_NOT_USABLE,
         format!(
-            "The desktop driver cannot carry out this step as the plan wrote it: {}.",
+            "The desktop driver cannot carry out this step as the compiled target wrote it: {}.",
             why.into()
         ),
         "Compile the target again with the version of the desktop pack that is enabled.",

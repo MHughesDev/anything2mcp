@@ -70,7 +70,7 @@ The list is the spine's `Control`, in its order. The engine on a runner opens no
 
 | The engine asks | Sent as | Notes |
 | --- | --- | --- |
-| The plan by its hash | `need` | Checked with the check in `a2m-core` before it is used; cached by hash |
+| The compiled target by its hash | `need` | Checked with the check in `a2m-core` before it is used; cached by hash |
 | The policy decision at guard | `need` | Decided and recorded by `a2m-policy` on the control plane |
 | A session lease | `need` for session material, unless this runner already holds the session live | Material arrives wrapped to the runner's public key, is unwrapped with `a2m-vault`, and is kept in memory only |
 | A record lock | `need` | Taken in `a2m-ledger` under the job's lease number; a wait for a held lock is queued by `a2m-sched` |
@@ -182,4 +182,4 @@ A server runner may be given jobs for its enrolled targets as a service account 
 - Whether long polling is fast enough for interactive reads; hypothesis H-07.
 - The certificate authority: built in, or the organization's own.
 - Quarantine defaults per mode, from measured step times.
-- Whether the plan is sent with the lease or fetched by `need`. Fetching by hash with a cache is assumed here.
+- Whether the compiled target is sent with the lease or fetched by `need`. Fetching by hash with a cache is assumed here.

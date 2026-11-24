@@ -84,11 +84,11 @@ fn scene(redact: Arc<dyn Redact>) -> Scene {
     let folder = Folder::new("binary");
     let stand = Stand::start().unwrap();
     let registry = registry(&folder, redact);
-    let plan = common::stand_plan(&stand, registry.compiler_set());
+    let compiled_target = common::stand_compiled_target(&stand, registry.compiler_set());
     let surface = SurfaceRef {
-        target: plan.header.target.clone(),
+        target: compiled_target.header.target.clone(),
         environment: Environment::new("test").unwrap(),
-        surface: plan.surfaces[0].clone(),
+        surface: compiled_target.surfaces[0].clone(),
     };
     Scene {
         folder,

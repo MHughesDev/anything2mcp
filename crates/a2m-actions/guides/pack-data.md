@@ -44,7 +44,7 @@ The surface says `stands: alone`, or `beneath: <surface>` when an application ow
 
 ## Rules
 
-- A `form: table` statement is written by the pack, from the record. A `text` statement is reviewed, hashed with the plan, and uses `?` parameters declared in `params`.
+- A `form: table` statement is written by the pack, from the record. A `text` statement is reviewed, hashed with the compiled target, and uses `?` parameters declared in `params`.
 - A read-back is one read by the record's key. A key that identifies more than one row is `key_not_unique`.
 - `guard: version` sends the row version as a precondition. A change by someone else is `stale`, `version_conflict`.
 - A write is one transaction.
