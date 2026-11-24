@@ -49,6 +49,8 @@ pub(crate) const WARNINGS_KEY: &str = "anything2mcp/warnings";
 pub(crate) const TOOL_TARGET_KEY: &str = "anything2mcp/target";
 /// The key of a published tool's version in the tool's `_meta`.
 pub(crate) const TOOL_VERSION_KEY: &str = "anything2mcp/version";
+/// The `_meta` key of who wrote a published tool's description.
+pub(crate) const TOOL_DESCRIPTION_BY_KEY: &str = "anything2mcp/description_by";
 
 /// What an endpoint works with.
 pub(crate) struct Core {
@@ -631,10 +633,14 @@ fn entry(name: &str, tool: &Json) -> ToolEntry {
     let hint = |key: &str| tool["annotations"][key].as_bool().unwrap_or(false);
     let title = tool["title"].as_str().unwrap_or(name).to_owned();
     // The target and the version, as the plan the tool was published in
-    // states them. Who wrote the description is not sent: a published tool
-    // does not carry it yet (decision 0307, point 6).
+    // states them, and who wrote the description, `rule` or `builder`
+    // (decision 0307, point 6).
     let mut meta = Map::new();
-    for (key, field) in [(TOOL_TARGET_KEY, "target"), (TOOL_VERSION_KEY, "version")] {
+    for (key, field) in [
+        (TOOL_TARGET_KEY, "target"),
+        (TOOL_VERSION_KEY, "version"),
+        (TOOL_DESCRIPTION_BY_KEY, "description_by"),
+    ] {
         if let Some(text) = tool[field].as_str() {
             meta.insert(key.to_owned(), json!(text));
         }

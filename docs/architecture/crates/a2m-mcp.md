@@ -36,6 +36,7 @@ As built ([decision 0115](../../decisions/0115-the-mcp-endpoint-as-built-checks-
 pub struct McpService { /* Kernel, toolset, settings */ }
 impl McpService {
     /// Refuses a toolset other than `use` and `build`, and settings with no revision.
+    /// A toolset a policy set defines is not served yet (decision 0399, point 5).
     pub fn new(kernel: Kernel, toolset: ToolsetName, settings: McpSettings) -> Result<Self, Failure>;
     pub fn toolset(&self) -> &ToolsetName;
     /// Stateless Streamable HTTP, as a router to nest at `mcp_path(toolset)`.
@@ -190,7 +191,7 @@ A toolset's list is the same for every caller connected to it; rights are checke
 | `next` of a success | Inside the structured content, as `next`: the action, the name of its tool, its input, and when. Every output schema admits it. Rendered by `McpResultFace::of_in` with the endpoint's toolset: when this toolset does not list the tool, `next` names `a2m_action_run` with the action as its argument |
 | Kept blobs: traces, diffs, snapshots, files | A reference in the result, never inlined. Resource links and `resources/read` are not built |
 | `warnings` of a success | `_meta`, under `anything2mcp/warnings`. The output schemas take no key for them |
-| a published tool in a list | its `_meta`, under `anything2mcp/target` and `anything2mcp/version`; a control tool has none. The same for every client. Who wrote the description (decision 0307, point 6) is not sent yet: a tool of a plan does not carry it |
+| a published tool in a list | its `_meta`, under `anything2mcp/target`, `anything2mcp/version`, and `anything2mcp/description_by` (`rule` or `builder`, who wrote the description; decision 0307, point 6); a control tool has none. The same for every client |
 | `error` | `isError`, and one text item: the class, code, message, fix, and whether a retry is safe, as one JSON object. No structured content |
 | Text from the target | Inside fields marked untrusted, already cut and stripped by the dispatcher |
 

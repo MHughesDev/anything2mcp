@@ -500,6 +500,7 @@ fn described(found: &FoundTool) -> Json {
         "hazard": hazard.to_string(),
         "title": found.tool.title,
         "description": found.tool.description,
+        "description_by": found.tool.description_by.as_str(),
         "input_schema": schema(&found.tool.input_schema),
         "output_schema": schema(&found.tool.output_schema),
         "annotations": {
@@ -1947,7 +1948,23 @@ handler!(
                     "Declare an environment in the target's files.",
                 )
             })?;
-        let binding = named_binding(&plan, &found.tool, &call)?;
+        let file_modes = {
+            let (kernel, folder, target, name) = (
+                kernel.clone(),
+                call.project_folder()?.to_path_buf(),
+                target.clone(),
+                name.clone(),
+            );
+            super::build::off_thread(move || {
+                Ok(super::build::target_folder(&folder, &target)
+                    .ok()
+                    .and_then(|folder| {
+                        crate::places::file_modes_in(&kernel, folder.as_path(), name.as_str())
+                    }))
+            })
+            .await?
+        };
+        let binding = named_binding(&plan, &found.tool, &call, file_modes.as_deref())?;
         kernel.keep_draft(&target, compiled.encoded.hash, std::sync::Arc::clone(&plan));
         let run = submit_trial(kernel, &call, &found, &input, environment, binding).await?;
         let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
@@ -1994,8 +2011,9 @@ pub(crate) async fn submit_trial(
 }
 
 /// The binding of an operation a trial or a recording runs (audit finding
-/// AC-6): the one the call names by `mode`, and by `position` (from 1)
-/// where two share the mode; with neither, the one that would act if the
+/// AC-6): the one the call names by `mode`, and by `position` (from 1, as
+/// the operation's file lists its bindings, `file_modes` being their modes
+/// in that order) where two share the mode; with neither, the one that would act if the
 /// operation were called live, the first `verified`, else the first not
 /// retired. A retired binding is refused. `None` for a pipeline, whose
 /// operations are chosen for as live.
@@ -2003,6 +2021,7 @@ pub(crate) fn named_binding(
     plan: &a2m_core::Plan,
     tool: &a2m_core::ToolPlan,
     call: &Call,
+    file_modes: Option<&[String]>,
 ) -> Result<Option<a2m_engine::BindingPin>, Failure> {
     let ToolRuns::Operation(index) = tool.runs else {
         return Ok(None);
@@ -2011,10 +2030,25 @@ pub(crate) fn named_binding(
         return Ok(None);
     };
     let mode = call.text("mode");
-    let position = call
-        .int("position")
-        .and_then(|position| usize::try_from(position).ok())
-        .and_then(|position| position.checked_sub(1));
+    // The call counts bindings as the operation's file lists them; the plan
+    // holds them in the order the compiler gave them (package 4.6). A place
+    // that cannot be turned into the plan's names no binding: `usize::MAX`.
+    let position =
+        call.int("position")
+            .and_then(|position| usize::try_from(position).ok())
+            .and_then(|position| position.checked_sub(1))
+            .map(|given| {
+                let plan_modes: Vec<&str> = operation
+                    .bindings
+                    .iter()
+                    .map(|binding| binding.mode.as_str())
+                    .collect();
+                match file_modes {
+                    Some(file_modes) => crate::places::plan_place(&plan_modes, file_modes, given)
+                        .unwrap_or(usize::MAX),
+                    None => given,
+                }
+            });
     let unnamed = || {
         codes::input(
             codes::NOT_FOUND,
