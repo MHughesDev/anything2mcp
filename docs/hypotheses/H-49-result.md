@@ -2,7 +2,7 @@
 
 **Status:** open. The first half is tested for content locators and fingerprints on one form; the test-id locator and the proposer are not.
 
-**Tested:** 2026-11-24, roadmap package 9.1, [decision 0399](../decisions/0399-a-screen-changed-on-purpose-is-caught-by-its-locators-or-its-fingerprint-and-a-named-section-is-a-region.md).
+**Tested:** 2026-11-24, roadmap package 9.1, [decision 0384](../decisions/0384-a-screen-changed-on-purpose-is-caught-by-its-locators-or-its-fingerprint-and-a-named-section-is-a-region.md).
 
 ## What was assumed
 
@@ -25,7 +25,7 @@ The two content locators break together, on the reword, as research note 37 says
 
 ## What changes
 
-The browser base's page helper gives a named `section` the role `region`, as the HTML accessibility mapping does; before, the wrapped form's card had no role a model could name (decision 0399).
+The browser base's page helper gives a named `section` the role `region`, as the HTML accessibility mapping does; before, the wrapped form's card had no role a model could name (decision 0384).
 
 ## What is still unknown
 

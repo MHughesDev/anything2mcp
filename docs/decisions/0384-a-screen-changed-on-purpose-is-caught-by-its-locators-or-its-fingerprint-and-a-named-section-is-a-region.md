@@ -1,4 +1,4 @@
-# 0399. A screen changed on purpose is caught by its locators or its fingerprint, and a named section is a region
+# 0384. A screen changed on purpose is caught by its locators or its fingerprint, and a named section is a region
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
 
