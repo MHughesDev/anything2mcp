@@ -1511,7 +1511,16 @@ impl Ledger<'_, '_> {
         why: Option<&Failure>,
     ) -> Result<(), Failure> {
         let run = self.fenced(fence)?;
-        if !may_move(run.state, to) {
+        // A run stopped before anything was planned, such as a write a
+        // drift or an edge block stopped at its preview, goes back to
+        // `validating` when it is resumed, so its records can be planned;
+        // one with a planned record or a stored diff never does (decision
+        // 0399, the state rule).
+        let replans = run.state == RunState::Stopped
+            && to == RunState::Validating
+            && run.diff_hash.is_none()
+            && self.tally(run.id)? == RecordTally::default();
+        if !replans && !may_move(run.state, to) {
             return Err(failure::unexpected(format!(
                 "a run cannot move from `{}` to `{to}`",
                 run.state

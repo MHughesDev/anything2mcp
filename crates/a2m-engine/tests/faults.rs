@@ -568,6 +568,38 @@ async fn a_surface_its_driver_says_is_unavailable_starts_nothing_and_names_the_d
     assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
 }
 
+/// A write the edge stopped at its preview, before anything was planned, is
+/// validated again when it is resumed: its preview stores its records, a
+/// person approves it, and it writes once (decision 0399, the state rule).
+#[tokio::test]
+async fn a_write_stopped_at_its_preview_is_resumed_and_writes_once() {
+    let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
+    *scene.hooks.unavailable.lock().unwrap() = Some("example_held_at_edge");
+    let outcome = scene.work(JobKind::Preview, ITEM_UPSERT, rail()).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::EdgeBlocked, "example_held_at_edge".to_owned())
+    );
+    assert_eq!(scene.run_row().await.state, RunState::Stopped);
+
+    // The edge lets it through: the same run, under a new lease, is
+    // previewed, approved, and written once.
+    *scene.hooks.unavailable.lock().unwrap() = None;
+    scene.new_lease().await;
+    approved(&scene, ITEM_UPSERT, &rail()).await;
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    assert!(completed(&outcome), "{outcome:?}");
+    assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 1);
+    let stored = scene
+        .app
+        .stored_item("A-102", "L-300")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.description, "New rail");
+    assert_eq!(stored.quantity, 3);
+}
+
 /// A record in doubt whose surface its driver then holds off, or whose
 /// read is refused at the edge: the reconcile reads nothing it cannot, and
 /// the run still says that a write may have gone through, never a class a

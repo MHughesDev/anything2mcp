@@ -1416,3 +1416,76 @@ async fn a_token_is_never_reused_for_changed_intended_values() {
     assert_eq!(records[0].intended, intended("second"));
     assert_ne!(records[0].idempotency_token, first);
 }
+
+/// A write run stopped at `validating`, before anything was planned: the
+/// moment a drift or an edge block stops a write at its preview.
+async fn stopped_before_planning(store: &Store) -> Fence {
+    store
+        .write(Durability::Synced, move |tx| {
+            let mut ledger = tx.ledger();
+            let Opened::New(opened) =
+                ledger.open_run(new_run(EffectClass::Write, 1, "unplanned"))?
+            else {
+                panic!("the run exists already");
+            };
+            let fence = ledger.new_epoch(opened.run)?;
+            ledger.set_state(&fence, RunState::Validating, None)?;
+            let why = stopped_by(FailureClass::Drift, "binding_drifted");
+            ledger.set_state(&fence, RunState::Stopped, Some(&why))?;
+            Ok(fence)
+        })
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_stopped_run_with_nothing_planned_is_validated_again_and_plans_its_records() {
+    let store = memory().await;
+    let fence = stopped_before_planning(&store).await;
+    // Resumed under a new lease, it goes back to `validating`, plans its
+    // records, and stores its diff.
+    store
+        .write(Durability::Synced, move |tx| {
+            let mut ledger = tx.ledger();
+            let fence = ledger.new_epoch(fence.run)?;
+            ledger.set_state(&fence, RunState::Validating, None)?;
+            ledger.plan_records(&fence, &[planned(0, "a")])?;
+            ledger.store_diff(&fence, diff_hash(), None)?;
+            ledger.set_state(&fence, RunState::NeedsApproval, None)
+        })
+        .await
+        .unwrap();
+    let run = store
+        .read(move |tx| tx.ledger().run(fence.run))
+        .await
+        .unwrap();
+    assert_eq!(run.state, RunState::NeedsApproval);
+    assert_eq!(run.diff_hash, Some(diff_hash()));
+}
+
+#[tokio::test]
+async fn a_stopped_run_with_a_planned_record_is_never_validated_again() {
+    let store = memory().await;
+    let fence = running(&store, 1, &["a"]).await;
+    store
+        .write(Durability::Synced, move |tx| {
+            let why = stopped_by(FailureClass::Transient, "timeout");
+            tx.ledger().set_state(&fence, RunState::Stopped, Some(&why))
+        })
+        .await
+        .unwrap();
+    let refused = store
+        .write(Durability::Synced, move |tx| {
+            let mut ledger = tx.ledger();
+            let fence = ledger.new_epoch(fence.run)?;
+            ledger.set_state(&fence, RunState::Validating, None)
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), &codes::LEDGER_STATE_UNEXPECTED);
+    let run = store
+        .read(move |tx| tx.ledger().run(fence.run))
+        .await
+        .unwrap();
+    assert_eq!(run.state, RunState::Stopped);
+}
