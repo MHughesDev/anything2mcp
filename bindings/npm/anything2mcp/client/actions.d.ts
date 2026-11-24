@@ -66,6 +66,7 @@ export type BrowserInstallInput = Record<string, never>;
  */
 export interface CaptureStartInput {
   target: string;
+  capture?: string;
   surface?: string;
 }
 
@@ -74,6 +75,7 @@ export interface CaptureStartInput {
  */
 export interface CaptureStopInput {
   target: string;
+  capture?: string;
 }
 
 /**
@@ -950,13 +952,15 @@ export declare abstract class Actions {
   browserInstall(input?: BrowserInstallInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Begin recording actions and traffic on a surface, redacted as it is recorded. The
-   * engine action is `capture.start`.
+   * Ask for a capture of your person's own use of a surface. Nothing records until the
+   * person begins it on the engine's page; then only the structure of what they use is
+   * kept, never a value. The engine action is `capture.start`.
    */
   captureStart(input: CaptureStartInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * End the recording and store it. The engine action is `capture.stop`.
+   * End a capture you asked for, or read how it ended, and store what it found as
+   * findings. The engine action is `capture.stop`.
    */
   captureStop(input: CaptureStopInput, options?: CallOptions): Promise<Response>;
 
