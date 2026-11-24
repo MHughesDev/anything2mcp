@@ -312,42 +312,6 @@ impl Machine {
         Ok(())
     }
 
-    /// The bindings of the operation are written in the other order: the
-    /// request binding first, the interface binding after it as the
-    /// fall-back.
-    fn put_requests_first(&self) -> Result<(), BenchError> {
-        let file = self
-            .project
-            .0
-            .join("targets")
-            .join("example")
-            .join("operations")
-            .join("line_items.yaml");
-        let text = std::fs::read_to_string(&file).map_err(fail)?;
-        let (head, rest) = text
-            .split_once("bindings:\n")
-            .ok_or_else(|| fail("the operation has no bindings"))?;
-        let (bindings, tail) = rest
-            .split_once("description:")
-            .ok_or_else(|| fail("the operation has no description after its bindings"))?;
-        let mut blocks: Vec<String> = Vec::new();
-        for line in bindings.split_inclusive('\n') {
-            match blocks.last_mut() {
-                Some(block) if !line.starts_with("  - ") => block.push_str(line),
-                _ => blocks.push(line.to_owned()),
-            }
-        }
-        if blocks.len() != 2 {
-            return Err(fail(format!(
-                "expected two bindings, found {}",
-                blocks.len()
-            )));
-        }
-        blocks.reverse();
-        let rewritten = format!("{head}bindings:\n{}description:{tail}", blocks.concat());
-        std::fs::write(&file, rewritten).map_err(fail)
-    }
-
     /// The request binding is added to the operation in shadow, with the
     /// surface and the endpoint it reads, as a person adds one.
     fn add_shadow_binding(&self, address: &str) -> Result<(), BenchError> {
@@ -491,11 +455,10 @@ impl Scenario for PromotionSpeedup {
         if promoted["promoted"] != true {
             return Err(fail(format!("the binding was not promoted: {promoted}")));
         }
-        // The promotion changes the binding's status and nothing else, and the
-        // engine takes the first verified binding of the file's order. Putting
-        // the faster binding first is the person's step here, as decision 0207
-        // says; roadmap package 4.6 would do it for them.
-        request.put_requests_first()?;
+        // The promotion changes the binding's status and nothing else; the
+        // publish that follows is the person's act. The compiler orders an
+        // operation's bindings by the rank of their modes, so the request
+        // binding acts first with no edit by hand (package 4.6).
         request.publish().await?;
 
         // The application says how the promoted read reached it: as a
