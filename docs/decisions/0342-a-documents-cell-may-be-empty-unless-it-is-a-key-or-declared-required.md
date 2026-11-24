@@ -1,4 +1,4 @@
-# 0399. A document's cell may be empty, unless it is a key or declared `required`
+# 0342. A document's cell may be empty, unless it is a key or declared `required`
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged. Carries on [decision 0315](0315-every-declared-output-is-in-every-result-on-every-path.md) for the file pack, and supersedes the sentence of its point 6 that left a document's cells as values that may not be absent.
 
