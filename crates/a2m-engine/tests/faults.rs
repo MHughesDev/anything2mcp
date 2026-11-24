@@ -589,7 +589,7 @@ async fn a_record_in_doubt_that_cannot_be_read_leaves_the_run_possible_commit() 
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
     assert_eq!(
         failed_as(&outcome),
-        (FailureClass::PossibleCommit, "cannot_reconcile".to_owned()),
+        (FailureClass::PossibleCommit, "no_confirmation".to_owned()),
         "{outcome:?}"
     );
     let message = outcome.failure().unwrap().message().to_owned();
@@ -959,10 +959,14 @@ async fn a_record_in_doubt_is_read_through_the_mode_that_wrote_it_and_never_by_a
     scene.conditions.lock().unwrap().drifted = vec![(upsert, Mode::new(FIRST_MODE).unwrap())];
     scene.new_lease().await;
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
+    // The record is still in doubt, and the run says so, naming why it
+    // could not be read (decision 0399).
     assert_eq!(
         failed_as(&outcome),
-        (FailureClass::Busy, "no_binding".to_owned())
+        (FailureClass::PossibleCommit, "no_confirmation".to_owned())
     );
+    let message = outcome.failure().unwrap().message().to_owned();
+    assert!(message.contains("busy/no_binding"), "{message}");
     assert_eq!(scene.hooks.steps_of(SECOND_MODE), 0);
 
     scene.conditions.lock().unwrap().drifted.clear();

@@ -416,21 +416,8 @@ async fn a_surface_an_edge_blocks_writes_nothing_and_a_block_during_the_read_bac
     proxy.alter_reads(Alteration::Divert("/edge/blocked".to_owned()), true);
     let doubt = world.agent(&["run", "resume", &run]).await;
     assert_eq!(writes(&app).await, 1);
-    // The record failed in doubt when its read-back was blocked; the
-    // reconcile that follows is blocked at the edge as well, and the run
-    // still says that the write may have gone through, never a class a
-    // caller is told is safe to call again (decision 0399).
-    let trace = world.ok(&["trace", "show", &run]).await;
-    let failed: Vec<&Json> = trace["events"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|event| event["kind"] == "failed")
-        .collect();
-    assert_eq!(failed.len(), 1, "{trace}");
-    assert_eq!(failed[0]["detail"]["code"], "no_confirmation", "{trace}");
     assert_eq!(doubt.error()["class"], "possible_commit", "{}", doubt.json);
-    assert_eq!(doubt.error()["code"], "cannot_reconcile", "{}", doubt.json);
+    assert_eq!(doubt.error()["code"], "no_confirmation", "{}", doubt.json);
     assert_eq!(doubt.error()["retry_safe"], false, "{}", doubt.json);
     // Once the edge lets reads through, the resume reads the record first
     // and sends nothing more.

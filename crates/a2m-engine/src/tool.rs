@@ -2065,14 +2065,16 @@ async fn reconcile(
             reconcile_keyless(run, loaded, found, record, held).await?;
             continue;
         }
-        // The record could not be read: it is still in doubt, and the run
-        // says so. A failure that ends the run for good, or that does not
-        // pass by itself, a surface blocked at the edge or held off by its
-        // driver among them (decision 0399), says only that the record could
-        // not be read, and waits for a resume or a person. `transient` and
-        // `busy` stand, for the scheduler to try the reconcile again; a
-        // session that ended stands, because only a sign-in lets the read go
-        // on.
+        // The record could not be read: it is still in doubt, whatever the
+        // read failed with, and the run says so (decision 0399), by the
+        // rule a failure after the save follows (`after_send`): a surface
+        // blocked at the edge or held off by its driver, a connection lost,
+        // is the write in doubt, naming the cause, and the scheduler
+        // reconciles again after a wait that grows. A failure of a class
+        // that would end the run for good says that a person must settle
+        // it. A session that ended stands and rests the run until a person
+        // signs in: a reconcile queued again would only spend the sign-in's
+        // attempts against a credential the system refuses.
         let (raw, seen, evidence, context) = match read_in_doubt(
             run,
             loaded,
@@ -2082,15 +2084,7 @@ async fn reconcile(
         )
         .await
         {
-            Err(Stop::Fail(failure))
-                if !matches!(
-                    failure.class(),
-                    FailureClass::PossibleCommit
-                        | FailureClass::SessionExpired
-                        | FailureClass::Transient
-                        | FailureClass::Busy
-                ) =>
-            {
+            Err(Stop::Fail(failure)) if settles(failure.class()) => {
                 return Err(Stop::Fail(codes::fail(
                     &codes::row::CANNOT_RECONCILE,
                     format!(
@@ -2100,6 +2094,12 @@ async fn reconcile(
                         failure.code()
                     ),
                     "Look at the system, then resume the run, cancel it, or settle the record by hand.",
+                )));
+            }
+            Err(Stop::Fail(failure)) if failure.class() != FailureClass::SessionExpired => {
+                return Err(Stop::Fail(after_send(
+                    failure,
+                    "reading the record in doubt",
                 )));
             }
             read => read?,
