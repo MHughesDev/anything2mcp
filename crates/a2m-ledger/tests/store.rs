@@ -339,6 +339,12 @@ async fn a_sealed_value_survives_a_restart_over_the_store_and_opens_nothing_with
     // Nor does the engine start over it: attaching asks for the digest key.
     let unattached = store.attach(Arc::clone(&vault)).await.unwrap_err();
     assert_eq!(unattached.code(), &vault_codes::KEY_STORE_ENTRY_MISSING);
+    // The store is closed before its files are searched: on Windows its
+    // folder lock is a lock on the file's bytes, which no other reader may
+    // read while it is held. Every file is searched, the lock file among them.
+    drop(vault);
+    store.release_folder();
+    drop(store);
     let mut files = Vec::new();
     let mut folders = vec![folder.path().to_path_buf()];
     while let Some(next) = folders.pop() {
