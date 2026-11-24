@@ -1,4 +1,4 @@
-# 0999. A person-driven discoverer is held to its bound by the handle, and has a code for the watch it lacks
+# 0406. A person-driven discoverer is held to its bound by the handle, and has a code for the watch it lacks
 
 **Status:** Accepted. Design decision, made by the agent that built package E2a. The owner had not read this record when it was merged. It settles three points [decision 0395](0395-a-person-driven-discoverer-is-called-through-a-method-of-its-own-and-the-scope-is-left-as-it-is.md) left open, and changes nothing it decided.
 
