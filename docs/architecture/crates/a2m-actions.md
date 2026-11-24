@@ -140,7 +140,7 @@ impl Kernel {
     pub async fn runs_in_hand(&self) -> Result<RunsInHand, Failure>;
     /// Stops the loops, waits for every job in hand to end, empties the desk's hold on
     /// the store, and lets go of the store's lock: a closed kernel leaves no clone of
-    /// the store open, whatever a surface keeps (decision 0999).
+    /// the store open, whatever a surface keeps (decision 0423).
     pub async fn close(self, why: CloseReason);
 }
 pub struct RunsInHand { pub working: u64, pub waiting_for_person: u64 }

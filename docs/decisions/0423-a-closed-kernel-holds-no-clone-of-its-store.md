@@ -1,4 +1,4 @@
-# 0999. A closed kernel holds no clone of its store
+# 0423. A closed kernel holds no clone of its store
 
 **Status:** Accepted. Design decision, made by the worker on the Windows failure of the copied data folder test under the lead's brief. The owner had not read this record when it was written. It changes what `Kernel::close` does and how the approval desk reaches the store; no public interface changes.
 
