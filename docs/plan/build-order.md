@@ -218,9 +218,9 @@ The packs' own packages: after each field test, close what it found, a stand cas
 
 | # | Package | What it builds | Proof |
 | --- | --- | --- | --- |
-| ~~1.7~~ | ~~Budgets measured~~, done in part: six measured, two revised, four not yet measurable, and the comparison runs in CI against a stored baseline once a quiet runner has stored one ([0399](../decisions/0399-the-comparison-holds-the-floor-of-each-number-and-the-program-has-a-size-budget.md)) | Every budget of section 225 measured; `a2m-bench compare` run in CI | [0363](../decisions/0363-the-budgets-as-first-measured-two-are-revised-and-four-cannot-yet-be-told-from-the-systems-own-time.md) |
+| ~~1.7~~ | ~~Budgets measured~~, done in part: six measured, two revised, four not yet measurable, and the comparison runs in CI against a stored baseline once a quiet runner has stored one ([0369](../decisions/0369-the-comparison-holds-the-floor-of-each-number-and-the-program-has-a-size-budget.md)) | Every budget of section 225 measured; `a2m-bench compare` run in CI | [0363](../decisions/0363-the-budgets-as-first-measured-two-are-revised-and-four-cannot-yet-be-told-from-the-systems-own-time.md) |
 | ~~F3~~ | ~~Provider packages~~, done | Packs found through a Python entry point | [0313](../decisions/0314-a-provider-package-is-found-by-reading-its-entry-and-no-package-code-runs.md) |
-| ~~F4~~ | ~~Sizes~~, done | ~~The binary and wheel measured~~ | [0399](../decisions/0399-the-comparison-holds-the-floor-of-each-number-and-the-program-has-a-size-budget.md) |
+| ~~F4~~ | ~~Sizes~~, done | ~~The binary and wheel measured~~ | [0369](../decisions/0369-the-comparison-holds-the-floor-of-each-number-and-the-program-has-a-size-budget.md) |
 | 5.4 | The clients | The Python and TypeScript clients on Windows | Each client calls a read |
 | 5.5 | The release pipeline | pip, crates.io, npm, standalone binaries, signed, with a bill of materials | A tagged pre-release installs by each route on three systems |
 | 5.6 | The exit test of Phase 5 | An agent takes a new system to published reads | The first tool in under ten minutes, measured |

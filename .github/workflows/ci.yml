@@ -96,7 +96,7 @@ jobs:
           A2M_BENCH_COMMIT: ${{ github.sha }}
       # The comparison holds the floor of each number to a result stored from a
       # quiet runner, which is a file a person puts in bench/baseline/ on
-      # purpose: bench/baseline/<os>-<arch>.json (decision 0399). With none
+      # purpose: bench/baseline/<os>-<arch>.json (decision 0369). With none
       # stored the step says so and passes; a budgeted number that rose more
       # than 10% over its stored floor, or went missing, fails it.
       - name: Compare the benchmark with the stored baseline

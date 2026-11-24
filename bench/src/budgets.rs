@@ -84,7 +84,7 @@ impl Metric {
     }
 
     /// The number a comparison holds against a stored one: the floor of what
-    /// the run measured, not its middle (decision 0399).
+    /// the run measured, not its middle (decision 0369).
     ///
     /// A time is its fastest iteration, and an overhead is the fastest
     /// operation less the fastest baseline. Load on a shared machine only ever

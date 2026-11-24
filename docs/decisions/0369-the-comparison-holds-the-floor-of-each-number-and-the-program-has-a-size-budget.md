@@ -1,4 +1,4 @@
-# 0399. The comparison holds the floor of each number, and the program has a size budget
+# 0369. The comparison holds the floor of each number, and the program has a size budget
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged. Carries out package F4 and settles the point [decision 0363](0363-the-budgets-as-first-measured-two-are-revised-and-four-cannot-yet-be-told-from-the-systems-own-time.md) left open: which statistic `a2m-bench compare` holds, and where a baseline comes from.
 

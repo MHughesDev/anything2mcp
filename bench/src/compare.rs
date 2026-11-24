@@ -3,7 +3,7 @@
 //!
 //! What is compared is the floor of each number, not its middle: the fastest
 //! iteration of a time, the fastest operation less the fastest baseline of an
-//! overhead ([`crate::budgets::Metric::floor_in`], decision 0399). Load on a
+//! overhead ([`crate::budgets::Metric::floor_in`], decision 0369). Load on a
 //! shared machine only adds time, so the floor holds still where the median
 //! moves threefold between two runs of the same build. The limit of a budget
 //! is still held to the median, in [`standing`].
