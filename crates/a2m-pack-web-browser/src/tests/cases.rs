@@ -95,6 +95,9 @@ async fn an_element_found_before_the_page_draws_again_is_stale_and_role_and_name
         first_id, second_id,
         "the page was to draw the button again with a new identifier"
     );
+    // A read alone finds the element again by the query that found it, and
+    // reads the one the page draws now.
+    assert_eq!(id_of(&tab, &before).await, second_id);
     must(tab.input(&after, &Input::Click, soon()).await);
     must(
         tab.wait(&text_is(css("#status"), "Archived Crate."), soon())
@@ -111,6 +114,9 @@ async fn an_element_found_before_the_page_draws_again_is_stale_and_role_and_name
         )
         .await,
     );
+    // When its query matches nothing now, a read of it is stale.
+    let gone = tab.read(&after, &ReadWhat::Text, soon()).await.unwrap_err();
+    assert!(matches!(gone, BrowserError::NotFound), "{gone:?}");
     drop(tab);
     stand.end().await;
 }

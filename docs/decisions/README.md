@@ -370,3 +370,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0376 | [A stamped record never sent is not looked for before its intent](0376-a-stamped-record-never-sent-is-not-looked-for-before-its-intent.md) | Accepted (design decision) |
 | 0375 | [A session that ends after a write was sent leaves the write in doubt](0375-a-session-that-ends-after-a-write-was-sent-leaves-the-write-in-doubt.md) | Accepted (design decision) |
 | 0378 | [An input marked precondition is sent with a write and never compared with its read-back](0378-an-input-marked-precondition-is-sent-with-a-write-and-never-compared-with-its-read-back.md) | Accepted (design decision) |
+| 0399 | [A read of an element the page drew again finds it by the query that found it](0399-a-read-of-an-element-the-page-drew-again-finds-it-by-the-query-that-found-it.md) | Accepted (design decision) |

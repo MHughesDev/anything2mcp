@@ -485,13 +485,17 @@ pub enum RawValue {
     Absent,
 }
 
-/// One element of one page generation. After a navigation, or a re-render
-/// that removes it, using it is [`BrowserError::NotFound`]; it is never
-/// looked for again silently.
+/// One element of one page generation, and the query that found it. After
+/// a navigation, acting on it or reading it is [`BrowserError::NotFound`].
+/// After a re-render that removes it, acting on it is
+/// [`BrowserError::NotFound`] and it is never looked for again; a read
+/// alone finds it again by its query, in the same document and the same
+/// call that reads it, when that query still matches exactly one element.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Element {
     object: String,
     tab: u64,
+    query: Query,
 }
 
 /// A page that has loaded as far as its document.
@@ -1515,6 +1519,7 @@ impl Page {
             return Ok(Element {
                 object,
                 tab: self.serial,
+                query: query.clone(),
             });
         }
         match found.count() {
@@ -1547,11 +1552,16 @@ impl Page {
                 BrowserError::Unexpected("a helper argument could not be written".to_owned())
             })?,
             CallArgument::number(self.max_read),
+            // A page that drew the element again since it was found is read
+            // in the element its query finds now (decision 0399).
+            CallArgument::of(&element.query).ok_or_else(|| {
+                BrowserError::Unexpected("a helper argument could not be written".to_owned())
+            })?,
         ];
         let evaluated = self
             .on_element(
                 element,
-                "function (what, limit) { return __a2m.read(this, what, limit); }",
+                "function (what, limit, query) { return __a2m.read(this, what, limit, query); }",
                 arguments,
                 deadline,
             )

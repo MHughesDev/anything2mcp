@@ -91,7 +91,7 @@ The rules every driver keeps are the kernel's ([section 207](../2-kernel/207-the
 
 - **No retries inside a step.** A widget driver's escalation from fill to key-by-key typing to the native value setter is one strategy in one step, chosen by the control, not a retry.
 - **Every failure says whether input reached the page.** The base reports each act as sent, not sent, or unknown. A crash or a disconnect after an `invoke` reached the page is unknown, and for a commit point that is `possible_commit`, never `transient`.
-- **An element is valid for one page generation.** A navigation or a re-render that removes the node makes it stale, and using it is a failure, never a silent re-query.
+- **An element is valid for one page generation.** A navigation or a re-render that removes the node makes it stale, and acting on it is a failure, never a silent re-query. A read alone finds it again in the same document by the query that found it, in the one call that reads it, when that query matches exactly one element ([decision 0399](../../decisions/0399-a-read-of-an-element-the-page-drew-again-finds-it-by-the-query-that-found-it.md)).
 - **An outcome can carry outputs known before the commit point,** such as a value the form shows before saving. The engine records them before the committing step runs.
 - **A driver never signs in or renews.** It reports a sign of expiry through the lease and stops; the session keeper decides.
 - **The fixed environment never varies:** viewport, locale, time zone, color scheme, and reduced motion are set per target. So is `refuse_quietly`, the origins a surface's pages are refused without a stop.

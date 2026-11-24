@@ -268,8 +268,16 @@
   const isElement = (el) => !!el && el.nodeType === Node.ELEMENT_NODE;
   const stale = (el) => !isElement(el) || !el.isConnected;
 
-  function read(el, what, limit) {
-    if (stale(el)) return { stale: true };
+  // A read of an element the page has drawn again since it was found reads
+  // the one element the query that found it matches now, in this same call,
+  // so no drawing comes between the finding and the reading. Only a read
+  // does this: an element acted on is never looked for again.
+  function read(el, what, limit, query) {
+    if (stale(el)) {
+      const again = query ? locate(query) : null;
+      if (!isElement(again)) return { stale: true };
+      el = again;
+    }
     if (isPassword(el)) return { password: true };
     let value;
     switch (what.kind) {
