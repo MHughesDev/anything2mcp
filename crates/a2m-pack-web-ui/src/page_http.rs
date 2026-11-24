@@ -49,6 +49,7 @@ use a2m_pack_web_browser::{
     FieldValue, Look, ObserveTab, Origins, PageAnswer, PageEnvironment, PagePath, PageWrite,
     Primitive, ProfileKey, SafeRequests, TokenFrom, TokenTo, Visibility, WriteMethod,
 };
+use a2m_provider::shape::{Misfit, MisfitKind, PathStep};
 use a2m_provider::{
     BoxFuture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
@@ -699,7 +700,7 @@ fn outputs(
 ) -> RequestStep {
     let mut payload = RequestStep::default();
     for output in cx.operation().outputs() {
-        let Some(kind) = entry.properties.get(&output.name) else {
+        let Some(kind) = entry.properties.get(&output.name).copied() else {
             problems.push(problem(
                 "unknown_field",
                 Stage::Resolve,
@@ -728,7 +729,7 @@ fn outputs(
             Kind::String => output.ty == ValueType::Text,
             Kind::Integer => output.ty == ValueType::Int,
             Kind::Boolean => output.ty == ValueType::Bool,
-            Kind::Number | Kind::Null | Kind::Object | Kind::Array => false,
+            Kind::Any | Kind::Number | Kind::Null | Kind::Object | Kind::Array => false,
         };
         if !fits {
             problems.push(problem(
@@ -1404,33 +1405,43 @@ fn checked(
     } else {
         None
     };
-    let Some(Json::Object(fields)) = body else {
+    let Some(body) = body else {
         return Err("the answer is not a JSON object".to_owned());
     };
-    for required in &entry.required {
-        if !fields.contains_key(required) {
-            return Err(format!(
-                "the answer lacks `{}`, which it declares as required",
-                shown(required)
-            ));
+    entry
+        .answer()
+        .check(&body)
+        .map_err(|misfit| misfit_said(&misfit))?;
+    match body {
+        Json::Object(fields) => Ok(fields),
+        _ => Err("the answer is not a JSON object".to_owned()),
+    }
+}
+
+/// Where an answer does not fit its entry's shape, in this pack's words. It
+/// names a field and a kind, never a value.
+fn misfit_said(misfit: &Misfit) -> String {
+    let field = match misfit.path.first() {
+        Some(PathStep::Name(name)) => shown(name),
+        Some(PathStep::Item(_)) | None => String::new(),
+    };
+    match &misfit.kind {
+        MisfitKind::Kind { declared, .. } if !misfit.path.is_empty() => {
+            format!("the answer's `{field}` is not a {}", declared.word())
+        }
+        MisfitKind::Kind { .. } => "the answer is not a JSON object".to_owned(),
+        MisfitKind::NotOneOf => {
+            format!("the answer's `{field}` is not one of the texts it declares")
+        }
+        MisfitKind::Lacks(missing) => format!(
+            "the answer lacks `{}`, which it declares as required",
+            shown(missing)
+        ),
+        MisfitKind::Undeclared => {
+            "the answer holds a name it does not declare, and it declares that it holds no other"
+                .to_owned()
         }
     }
-    for (field, value) in &fields {
-        match entry.properties.get(field) {
-            Some(kind) if !kind.fits(value) => {
-                return Err(format!(
-                    "the answer's `{}` is not a {}",
-                    shown(field),
-                    kind.word()
-                ));
-            }
-            None if entry.closed => {
-                return Err("the answer holds a name it does not declare, and it declares that it holds no other".to_owned());
-            }
-            _ => {}
-        }
-    }
-    Ok(fields)
 }
 
 /// The answer is not the shape the entry declares: `drift`, as the HTTP

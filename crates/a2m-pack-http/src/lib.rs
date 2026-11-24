@@ -43,7 +43,6 @@ mod json;
 mod link;
 mod lower;
 mod openapi;
-mod shape;
 mod template;
 mod xml;
 
@@ -51,6 +50,10 @@ use std::sync::Arc;
 
 use a2m_core::{Failure, Mode};
 use a2m_files::{JsonSchema, SurfaceKindSpec};
+/// The closed shape of a body, which this pack reads in its endpoint
+/// entries and checks against answers, is the provider contract's, shared
+/// with the web pack's page requests (decision 0394, point 1).
+use a2m_provider::shape;
 use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar, RegistryBuilder};
 
 pub use described::{API_MODE, DESCRIPTION_KIND};
