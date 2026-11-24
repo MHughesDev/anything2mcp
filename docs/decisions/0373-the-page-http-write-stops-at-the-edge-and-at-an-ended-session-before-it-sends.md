@@ -1,4 +1,4 @@
-# 0399. The `page_http` write stops at the edge and at an ended session before it sends, proven through the product
+# 0373. The `page_http` write stops at the edge and at an ended session before it sends, proven through the product
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged.
 
