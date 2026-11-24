@@ -11,6 +11,7 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fmt;
 
 /// One command of the protocol: its method, its parameters (the type
 /// itself), and its reply.
@@ -133,7 +134,7 @@ pub(crate) enum EventKind {
     TargetCrashed,
     Attached(Attached),
     Detached(Detached),
-    RequestPaused(RequestPaused),
+    RequestPaused(Box<RequestPaused>),
     ResponseReceived(ResponseReceived),
     BindingCalled(BindingCalled),
     /// The page itself asked for a move of one of its frames.
@@ -185,7 +186,7 @@ impl EventKind {
             "Inspector.targetCrashed" => Self::TargetCrashed,
             "Target.attachedToTarget" => Self::Attached(of(params)?),
             "Target.detachedFromTarget" => Self::Detached(of(params)?),
-            "Fetch.requestPaused" => Self::RequestPaused(of(params)?),
+            "Fetch.requestPaused" => Self::RequestPaused(Box::new(of(params)?)),
             "Network.responseReceived" => Self::ResponseReceived(of(params)?),
             "Runtime.bindingCalled" => Self::BindingCalled(of(params)?),
             "Page.frameRequestedNavigation" => Self::MoveAsked(of(params)?),
@@ -292,6 +293,123 @@ pub(crate) struct PausedRequest {
     /// page's own document's, and then dropped.
     #[serde(default)]
     pub headers: serde_json::Map<String, Value>,
+    /// The body, as the browser hands it to the interception. Only an
+    /// observing tab's verdict on a request that could be a safe one reads
+    /// it (decision 0394, point 3); it is printed as a count of parts.
+    #[serde(flatten)]
+    pub body: HeldBody,
+}
+
+/// What the browser hands the interception of a request's body: whether it
+/// says there is one, and the entries it gives. Its `Debug` prints how many
+/// entries there are and never a byte of them.
+#[derive(Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HeldBody {
+    /// `true` when the browser says the request carries a body.
+    #[serde(default)]
+    has_post_data: Option<Value>,
+    /// The body's parts, each with its bytes in base64 when the browser
+    /// gives them. Kept as the browser wrote them: a form that is not the
+    /// one expected is a body not given whole, never an event dropped.
+    #[serde(default)]
+    post_data_entries: Option<Value>,
+}
+
+impl fmt::Debug for HeldBody {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let entries = match &self.post_data_entries {
+            Some(Value::Array(entries)) => entries.len(),
+            _ => 0,
+        };
+        write!(f, "HeldBody({entries} entries)")
+    }
+}
+
+/// What the browser said of a request's body.
+pub(crate) enum Sent {
+    /// It carries none.
+    Nothing,
+    /// It carries these bytes, whole.
+    Whole(Vec<u8>),
+    /// It carries one the browser did not give whole, or one past the
+    /// bound, or the event's form is not the one known.
+    NotWhole,
+}
+
+impl HeldBody {
+    /// What the request carries, read only up to `longest` bytes.
+    pub(crate) fn sent(&self, longest: usize) -> Sent {
+        let says = match &self.has_post_data {
+            None => false,
+            Some(Value::Bool(says)) => *says,
+            Some(_) => return Sent::NotWhole,
+        };
+        let entries = match &self.post_data_entries {
+            None if !says => return Sent::Nothing,
+            Some(Value::Array(entries)) if says && !entries.is_empty() => entries,
+            _ => return Sent::NotWhole,
+        };
+        let mut bytes = Vec::new();
+        for entry in entries {
+            let Some(Value::String(encoded)) = entry.get("bytes") else {
+                return Sent::NotWhole;
+            };
+            // Four characters for each three bytes: one longer cannot fit.
+            if encoded.len() / 4 * 3 > longest.saturating_sub(bytes.len()) + 2 {
+                return Sent::NotWhole;
+            }
+            if !decode_base64(encoded, &mut bytes) || bytes.len() > longest {
+                return Sent::NotWhole;
+            }
+        }
+        Sent::Whole(bytes)
+    }
+}
+
+/// Appends the bytes of standard base64 with its padding, as the browser
+/// writes it; `false` for anything else.
+pub(crate) fn decode_base64(text: &str, out: &mut Vec<u8>) -> bool {
+    fn value(byte: u8) -> Option<u32> {
+        Some(u32::from(match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        }))
+    }
+    let bytes = text.as_bytes();
+    let (groups, rest) = bytes.as_chunks::<4>();
+    if !rest.is_empty() {
+        return false;
+    }
+    let count = groups.len();
+    for (index, group) in groups.iter().enumerate() {
+        let last = index + 1 == count;
+        let padding = group.iter().rev().take_while(|byte| **byte == b'=').count();
+        if padding > 2 || (padding > 0 && !last) {
+            return false;
+        }
+        let mut word = 0u32;
+        for byte in &group[..4 - padding] {
+            let Some(six) = value(*byte) else {
+                return false;
+            };
+            word = word << 6 | six;
+        }
+        word <<= 6 * u32::try_from(padding).unwrap_or(0);
+        let [_, first, second, third] = word.to_be_bytes();
+        out.push(first);
+        if padding < 2 {
+            out.push(second);
+        }
+        if padding < 1 {
+            out.push(third);
+        }
+    }
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]

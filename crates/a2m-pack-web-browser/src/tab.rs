@@ -33,6 +33,7 @@ use crate::protocol::{
     SetAcceptLanguage, SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia, SetFileInputFiles,
     SetLifecycleEvents, SetLocale, SetTimezone,
 };
+use crate::safe::SafeRequests;
 use crate::snapshot::{Snapshot, SnapshotLimits};
 
 /// The helper that runs in the page, in a world of its own.
@@ -215,53 +216,6 @@ impl Default for PageEnvironment {
             reduced_motion: true,
         }
     }
-}
-
-/// One request an observing tab lets through although its method could
-/// change the system. Only a person marks a request safe.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SafeRequest {
-    /// The method, in capitals, such as `POST`.
-    pub method: String,
-    /// The address the request must be at or under: the same origin, and
-    /// the same path or a path below it, such as the address of a search
-    /// endpoint that is called with POST. Text that only begins the same
-    /// way is not under it: neither a longer host nor a longer last name
-    /// of the path. An address with a query marks nothing.
-    pub address_prefix: String,
-}
-
-/// The requests an observing tab lets through beside GET, HEAD, and
-/// OPTIONS. Empty by default.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct SafeRequests {
-    /// Each request marked safe.
-    pub allowed: Vec<SafeRequest>,
-}
-
-impl SafeRequests {
-    pub(crate) fn allows(&self, method: &str, address: &str) -> bool {
-        matches!(method, "GET" | "HEAD" | "OPTIONS")
-            || self
-                .allowed
-                .iter()
-                .any(|safe| safe.method == method && under(&safe.address_prefix, address))
-    }
-}
-
-/// Whether `address` is at `prefix` or under it.
-fn under(prefix: &str, address: &str) -> bool {
-    let (Some(marked), Some(asked)) = (origin_of(prefix), origin_of(address)) else {
-        return false;
-    };
-    if marked != asked || prefix.contains(['?', '#']) {
-        return false;
-    }
-    let (marked, asked) = (path_of(prefix), path_of(address));
-    asked == marked
-        || asked
-            .strip_prefix(marked)
-            .is_some_and(|below| marked.ends_with('/') || below.starts_with('/'))
 }
 
 pub(crate) enum Posture {
@@ -2504,7 +2458,14 @@ impl Page {
             return Verdict::Refuse(Some(OUTSIDE.to_owned()));
         }
         match &self.safe {
-            Some(safe) if !safe.allows(&request.method, &request.url) => {
+            Some(safe)
+                if !safe.allows(
+                    &request.method,
+                    &request.url,
+                    &request.headers,
+                    &request.body,
+                ) =>
+            {
                 Verdict::Refuse(Some(request.method.clone()))
             }
             _ => Verdict::Pass,
@@ -3452,7 +3413,9 @@ async fn prepare(
         // and "answered" rest on none of them: they are the page's own
         // request and its answer, through the helper. The interception's
         // own event carries a held request's body as the browser holds it;
-        // none of it is read into a field (decision 0292).
+        // an acting tab never decodes it (decision 0292), and only an
+        // observing tab's verdict on a request one safe request could match
+        // does (decision 0394).
         page.call(&fetch_everything(), deadline).await?;
         page.call(
             &SetAutoAttach {
@@ -4111,6 +4074,7 @@ mod tests {
                 url: address.to_owned(),
                 method: "GET".to_owned(),
                 headers: serde_json::Map::new(),
+                body: crate::protocol::HeldBody::default(),
             },
             frame_id: "frame".to_owned(),
             resource_type: "Document".to_owned(),

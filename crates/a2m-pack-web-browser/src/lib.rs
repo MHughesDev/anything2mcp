@@ -46,6 +46,7 @@ mod origin;
 mod page_read;
 mod page_write;
 mod protocol;
+mod safe;
 mod snapshot;
 mod structure;
 mod tab;
@@ -72,6 +73,7 @@ pub use page_write::{
     AntiForgery, BodyEncoding, FieldValue, LONGEST_FIELD_TEXT, LONGEST_WRITE_NAME, MOST_FIELDS,
     PageWrite, REFUSED_HEADERS, TokenFrom, TokenProblem, TokenTo, WriteMethod, plain_write_name,
 };
+pub use safe::{LONGEST_SAFE_BODY, SafeBody, SafeRequest, SafeRequests};
 pub use snapshot::{ElementState, MASK, Snapshot, SnapshotElement, SnapshotLimits};
 pub use structure::{
     ACTION_WORDS, LONGEST_NAME, LONGEST_NAME_PART, LONGEST_SEGMENT, LONGEST_SEGMENT_PART,
@@ -82,6 +84,5 @@ pub use tab::{
     ActTab, BROWSER_DEFAULT_HEADERS, BROWSER_HEADERS, By, CREDENTIAL_HEADER_WORDS, DialogAnswer,
     Download, DownloadError, EXCHANGES_KEPT, Element, Input, Key, Loaded, Look, OUTSIDE,
     ObserveTab, OpenDialog, PageEnvironment, PageExchange, PageExchanges, PageRequest,
-    PageResponse, Primitive, Query, RawValue, ReadWhat, SafeRequest, SafeRequests, SiteAnswer,
-    SiteTool, TextMatch, digest_of,
+    PageResponse, Primitive, Query, RawValue, ReadWhat, SiteAnswer, SiteTool, TextMatch, digest_of,
 };
