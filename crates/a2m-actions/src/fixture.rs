@@ -740,14 +740,10 @@ fn test_file(
     name: &str,
     inputs: &Json,
     expect: &Json,
-    binding: Option<&a2m_engine::BindingPin>,
+    binding: Option<(&a2m_core::Mode, usize)>,
 ) -> String {
-    let binding = binding.map_or_else(String::new, |pin| {
-        format!(
-            "binding: {{mode: {}, position: {}}}\n",
-            pin.mode,
-            pin.position + 1
-        )
+    let binding = binding.map_or_else(String::new, |(mode, place)| {
+        format!("binding: {{mode: {mode}, position: {}}}\n", place + 1)
     });
     format!(
         "# Recorded by `fixture.record` from one read, every value scrubbed by rule.\n\
@@ -1038,7 +1034,39 @@ handler!(
         // The binding recorded is the one named, else the one that would
         // act live; the trial, the test, and the recorded test name it
         // (audit finding AC-6).
-        let binding = crate::handlers::tools::named_binding(&plan, &tool, &call)?;
+        // A person counts bindings as the operation's file lists them, and
+        // a test file names one by that place (package 4.6).
+        let file_modes = {
+            let (kernel, folder, target, name) = (
+                kernel.clone(),
+                project_folder.clone(),
+                target.clone(),
+                tool.name.clone(),
+            );
+            crate::handlers::build::off_thread(move || {
+                Ok(crate::handlers::build::target_folder(&folder, &target)
+                    .ok()
+                    .and_then(|folder| {
+                        crate::places::file_modes_in(&kernel, folder.as_path(), name.as_str())
+                    }))
+            })
+            .await?
+        };
+        let binding =
+            crate::handlers::tools::named_binding(&plan, &tool, &call, file_modes.as_deref())?;
+        let file_place = binding.as_ref().map(|pin| {
+            let plan_modes: Vec<&str> = operation
+                .bindings
+                .iter()
+                .map(|binding| binding.mode.as_str())
+                .collect();
+            file_modes
+                .as_deref()
+                .and_then(|file_modes| {
+                    crate::places::file_place(&plan_modes, file_modes, pin.position)
+                })
+                .unwrap_or(pin.position)
+        });
         let named = call.text("mode").is_some() || call.int("position").is_some();
         kernel.keep_draft(&target, compiled.encoded.hash, Arc::clone(&plan));
         let recorder = Recorder::start(kernel, digest);
@@ -1213,7 +1241,11 @@ handler!(
                 &name,
                 &inputs_json,
                 &got,
-                binding.as_ref().filter(|_| named),
+                binding
+                    .as_ref()
+                    .zip(file_place)
+                    .filter(|_| named)
+                    .map(|(pin, place)| (&pin.mode, place)),
             )
             .into_bytes(),
         ));

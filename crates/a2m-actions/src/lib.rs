@@ -37,6 +37,7 @@ mod kernel;
 mod offline;
 mod paths;
 mod person;
+mod places;
 mod project;
 mod registry;
 mod render;

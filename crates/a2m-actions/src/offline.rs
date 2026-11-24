@@ -1444,6 +1444,7 @@ fn untested_bindings(
     missing: &[Json],
     promoting: Option<&Promoting>,
     target: &a2m_core::TargetName,
+    file_modes: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> Vec<Json> {
     let mut lacks = Vec::new();
     let next = json!({"action": "test.run", "input": {"target": target.as_str()}});
@@ -1498,27 +1499,35 @@ fn untested_bindings(
             }
             continue;
         }
+        let plan_modes: Vec<&str> = operation
+            .bindings
+            .iter()
+            .map(|binding| binding.mode.as_str())
+            .collect();
         for position in acting {
             let Some(pin) = BindingPin::of(plan, operation, position) else {
                 continue;
             };
+            // What a person is told to write counts the bindings as the
+            // operation's file lists them (package 4.6).
+            let shown = file_modes
+                .get(name)
+                .and_then(|modes| crate::places::file_place(&plan_modes, modes, position))
+                .unwrap_or(position)
+                + 1;
             let (state, reason) = if !tested(Some(position), false) {
                 (
                     "binding_untested",
                     format!(
-                        "No passing offline test ran the binding {} (`{}`) of this operation, which may act once published. Add a test that names it with `binding: {{mode: {}, position: {}}}`, or that names no binding when it is the operation's first verified one.",
-                        position + 1,
-                        pin.mode,
-                        pin.mode,
-                        position + 1
+                        "No passing offline test ran the binding {shown} (`{}`) of this operation, which may act once published. Add a test that names it with `binding: {{mode: {}, position: {shown}}}`, or that names no binding when it is the operation's first verified one.",
+                        pin.mode, pin.mode,
                     ),
                 )
             } else if writes && !tested(Some(position), true) {
                 (
                     "no_save_sent",
                     format!(
-                        "No passing offline test sent this write's save through the binding {} (`{}`) and compared it. Add a test of that binding whose fixture records the save's request in `<step>{REQUEST_SUFFIX}`.",
-                        position + 1,
+                        "No passing offline test sent this write's save through the binding {shown} (`{}`) and compared it. Add a test of that binding whose fixture records the save's request in `<step>{REQUEST_SUFFIX}`.",
                         pin.mode
                     ),
                 )
@@ -1558,6 +1567,11 @@ pub(crate) async fn run_gates(
     use crate::handlers::build::{off_thread, problems_json, target_folder};
     let plan = Arc::new(compiled.plan.clone());
     let (named, tests) = (target.clone(), plan.tests.clone());
+    let plan_tools: Vec<String> = plan
+        .tools
+        .iter()
+        .map(|tool| tool.name.as_str().to_owned())
+        .collect();
     let checker = kernel.clone();
     // Every fixture is read once, off the engine's threads, and held: the
     // tests run on the bytes read here. The compiler names a fixture by
@@ -1567,7 +1581,7 @@ pub(crate) async fn run_gates(
     // file the digest the compiled plan names (audit finding AC-3), so a
     // file changed between the compile and the tests is never published
     // under evidence it did not earn.
-    let (fixtures, tied) = off_thread(move || {
+    let (fixtures, tied, file_modes) = off_thread(move || {
         let folder = target_folder(&project_folder, &named)?;
         let fixtures: Vec<_> = tests
             .iter()
@@ -1584,8 +1598,20 @@ pub(crate) async fn run_gates(
             .map(|test| test.fixture.as_deref())
             .zip(&fixtures)
             .collect();
+        // Each operation's bindings, in the order its file lists them.
+        let file_modes: std::collections::BTreeMap<String, Vec<String>> = loaded
+            .as_ref()
+            .map(|loaded| {
+                plan_tools
+                    .iter()
+                    .filter_map(|name| {
+                        crate::places::file_modes(loaded, name).map(|modes| (name.clone(), modes))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let tied = loaded.is_some_and(|loaded| tested_as_compiled(&held, &loaded, sources, set));
-        Ok((fixtures, tied))
+        Ok((fixtures, tied, file_modes))
     })
     .await?;
     if !tied {
@@ -1682,6 +1708,7 @@ pub(crate) async fn run_gates(
         &missing,
         promoting.as_ref(),
         target,
+        &file_modes,
     ));
     let offline: Vec<&Json> = results
         .iter()
