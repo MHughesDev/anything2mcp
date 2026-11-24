@@ -77,11 +77,48 @@ while todo:
 for i in sorted(set(nodes) - seen - {data['root']}):
     bad.append(f'{i} cannot be reached from the first screen')
 
+# 4. The seam: the outline names the one part that is the boundary between the kernel and the packs. It sits in a
+#    station that is followed by another (the packs hang off it), and its view has a row of extension points.
+seam = outline.get('seam')
+if seam:
+    holders = [i for i, st in enumerate(outline['stations']) if any(seam in g['ids'] for g in st['groups'])]
+    if len(holders) != 1:
+        bad.append(f'outline: the seam {seam} is not in exactly one station')
+    elif holders[0] + 1 >= len(outline['stations']):
+        bad.append(f'outline: the seam {seam} is in the last station, so nothing hangs off it')
+    if not any(re.search('extension', r.get('title', ''), re.I) for r in nodes.get(seam, {}).get('rows', [])):
+        bad.append(f'outline: the seam {seam} has no row of extension points to draw on it')
+
+# 5. Every decision record a part cites by number exists, so the reading panel can link to it.
+here = os.path.dirname(os.path.abspath(__file__))
+decisions = os.path.join(here, '..', '..', 'decisions')
+records = {f[:4]: f for f in os.listdir(decisions) if re.match(r'\d{4}-.*\.md$', f)}
+cited = set()
+for nid, n in nodes.items():
+    for key in ('decided', 'weighing'):
+        for line in n.get(key) or []:
+            for num in re.findall(r'\b(0\d{3})\b', line):
+                if num not in records:
+                    bad.append(f'{nid}: cites decision {num}, which has no record')
+                cited.add(num)
+data['records'] = {k: records[k] for k in sorted(cited) if k in records}
+
+# 6. The page itself: the three panels, the map, the one script and its version, and the title the host expects.
+template = open('template.html', encoding='utf-8').read()
+for need in ('<title>A2MArchitecture</title>', 'id="left"', 'id="graph"', 'id="right"', 'id="reader"', 'id="tree"',
+             'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js', ':root:not([data-theme="light"])', ':root[data-theme="dark"]'):
+    if need not in template:
+        bad.append(f'template.html: missing {need}')
+for src in re.findall(r'<script[^>]+src="([^"]+)"|\.src=\'([^\']+)\'', template):
+    url = src[0] or src[1]
+    if not re.match(r'https://(cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net/npm|unpkg\.com)/.*\d+\.\d+\.\d+', url):
+        bad.append(f'template.html: script {url} is not from an allowed host at an exact version')
+
 if bad:
     print('\n'.join(bad))
     sys.exit(1)
 
-# 4. How much of the roadmap is done, from tools/progress.py.
+# 7. How much of the roadmap is done, from tools/progress.py.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools'))
 try:
     import progress
@@ -93,7 +130,6 @@ except Exception:  # the page is still built where the roadmap cannot be read
     data.setdefault('percent', None)
 
 data['outline'] = outline
-template = open('template.html', encoding='utf-8').read()
 if template.count('/*DATA*/null/*END*/') != 1:
     print('template.html must hold the data marker exactly once')
     sys.exit(1)
