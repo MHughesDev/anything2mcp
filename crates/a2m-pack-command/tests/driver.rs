@@ -1682,3 +1682,226 @@ async fn an_output_the_form_does_not_make_certain_is_flagged_and_still_reads_nul
     let item = done(scene.read("example_item_get", &sku("SK-1001")).await);
     assert_eq!(item.values.get("ref"), Some(&Value::Null));
 }
+
+// ---- decision 0399: field test 5, findings 30 to 34 ----
+
+/// The fixtures with one command's text changed in `commands/inventory.yaml`.
+fn inventory_changed(from: &'static str, to: &'static str) -> impl Fn(&mut Vec<(String, String)>) {
+    move |files| {
+        let file = files
+            .iter_mut()
+            .find(|(path, _)| path == "commands/inventory.yaml")
+            .unwrap();
+        assert!(file.1.contains(from), "`{from}` is not in the fixture");
+        file.1 = file.1.replacen(from, to, 1);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_read_that_prints_nothing_is_absent_when_its_command_says_so_and_not_otherwise() {
+    // Finding 30: a program that answers a key it does not hold with no
+    // output and status 0. Without the declaration the read stops, as it did.
+    let plain = Scene::new();
+    plain
+        .stand
+        .control()
+        .set_fault(&Fault::until_cleared(FaultKind::SilentMiss).on("item show"))
+        .unwrap();
+    let unread = failed(plain.read("example_item_get", &sku("SK-9999")).await);
+    is(
+        &unread,
+        FailureClass::Drift,
+        &codes::OUTPUT_UNPARSED,
+        Sent::Answered,
+    );
+
+    let scene = Scene::build(
+        Arc::new(NoSecrets),
+        inventory_changed(
+            "    args: [item, show, {param: sku}, --format=json]\n    exits: {3: absent}\n",
+            "    args: [item, show, {param: sku}, --format=json]\n    exits: {3: absent}\n    absent: empty_output\n",
+        ),
+    );
+    scene
+        .stand
+        .control()
+        .set_fault(&Fault::until_cleared(FaultKind::SilentMiss).on("item show"))
+        .unwrap();
+    // The read answers absent, and a record the program holds is read.
+    let missing = scene.read("example_item_get", &sku("SK-9999")).await;
+    assert!(matches!(missing, Ok(StepOutcome::Absent(_))), "{missing:?}");
+    let held = done(scene.read("example_item_get", &sku("SK-1001")).await);
+    assert_eq!(held.values.get("quantity"), Some(&Value::Int(120)));
+    // The look before an update finds no record, so the update stops before
+    // anything is written.
+    let binding = scene.binding("example_item_set_quantity");
+    let mut prepared = scene.live().await;
+    let looked = scene
+        .run(
+            &mut prepared,
+            &binding.read_back,
+            &set("SK-9999", 5),
+            With::default(),
+        )
+        .await;
+    scene.handle.release(prepared, false).await;
+    assert!(matches!(looked, Ok(StepOutcome::Absent(_))), "{looked:?}");
+    assert_eq!(scene.stand.control().write_count("SK-9999").unwrap(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_list_gives_each_declared_field_as_a_list_for_the_operations_outputs() {
+    // Finding 31: the engine reads an operation's list output from the
+    // field's own list; the rows stay under `rows`.
+    let scene = Scene::new();
+    let listed = done(scene.read("example_item_list", &Values::new()).await);
+    let skus = listed.values.get("sku").and_then(Value::as_list).unwrap();
+    assert_eq!(
+        skus,
+        [
+            Value::from("SK-1001"),
+            Value::from("SK-1002"),
+            Value::from("SK-1003")
+        ]
+    );
+    assert_eq!(
+        listed
+            .values
+            .get("quantity")
+            .and_then(Value::as_list)
+            .map(<[Value]>::len),
+        Some(3)
+    );
+    assert_eq!(
+        listed
+            .values
+            .get("rows")
+            .and_then(Value::as_list)
+            .map(<[Value]>::len),
+        Some(3)
+    );
+    // No row: each field is an empty list, not missing.
+    let none = done(
+        scene
+            .read("example_item_list", &Values::new().with("location", "A02"))
+            .await,
+    );
+    assert_eq!(none.values.get("sku"), Some(&Value::List(Vec::new())));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_nested_document_is_read_at_the_path_its_command_declares() {
+    // Finding 34: a header, and the records under a key.
+    let scene = Scene::build(
+        Arc::new(NoSecrets),
+        inventory_changed(
+            "    args: [item, list, {flag: --location, param: location}]\n    output: {table: {separator: tab, header: [sku, name, quantity, location]}}\n",
+            "    args: [item, list, {flag: --location, param: location}, --format=json]\n    output:\n      json:\n        at: [items]\n        fields:\n          sku: text\n          name: text\n          quantity: integer\n          location: text\n          ref: {type: text, required: false}\n          note: {type: text, required: false}\n          version: integer\n",
+        ),
+    );
+    scene
+        .stand
+        .control()
+        .set_fault(&Fault::until_cleared(FaultKind::NestedJson).on("item list"))
+        .unwrap();
+    let listed = done(scene.read("example_item_list", &Values::new()).await);
+    assert_eq!(
+        listed
+            .values
+            .get("sku")
+            .and_then(Value::as_list)
+            .map(<[Value]>::len),
+        Some(3)
+    );
+    // The same command with no path reads the nested document as drift.
+    let flat = Scene::build(
+        Arc::new(NoSecrets),
+        inventory_changed(
+            "    args: [item, list, {flag: --location, param: location}]\n    output: {table: {separator: tab, header: [sku, name, quantity, location]}}\n",
+            "    args: [item, list, {flag: --location, param: location}, --format=json]\n    output:\n      json:\n        fields:\n          sku: text\n          name: text\n          quantity: integer\n          location: text\n          ref: {type: text, required: false}\n          note: {type: text, required: false}\n          version: integer\n",
+        ),
+    );
+    flat.stand
+        .control()
+        .set_fault(&Fault::until_cleared(FaultKind::NestedJson).on("item list"))
+        .unwrap();
+    let drifted = failed(flat.read("example_item_list", &Values::new()).await);
+    is(
+        &drifted,
+        FailureClass::Drift,
+        &codes::OUTPUT_UNPARSED,
+        Sent::Answered,
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failure_quotes_whole_lines_of_standard_error_within_the_bound() {
+    // Finding 33: the program prints warnings first and the cause last. The
+    // quote keeps whole lines, the last ones, and says how many it left out.
+    const SECRET: &str = "secret-for-tests-0123456789-abcdefghijklmnopqrstuvwxyz-9876543210";
+    let scene = Scene::build(Arc::new(Planted(SECRET)), |_| {});
+    let binding = scene.binding("example_item_set_quantity");
+    let (fence, token) = writing("SK-1001").await;
+    let record_key = key("SK-1001");
+    let with = With {
+        key: Some(&record_key),
+        record: Some(record(&fence, 0)),
+        token: Some(&token),
+        ..With::default()
+    };
+    let refused = |printed: String| {
+        let scene = &scene;
+        async move {
+            scene
+                .stand
+                .control()
+                .set_fault(&Fault::once(FaultKind::Say {
+                    stream: Stream::Stderr,
+                    text: printed,
+                }))
+                .unwrap();
+            let mut prepared = scene.prepare(Posture::Live, Some(fence)).await.unwrap();
+            done(
+                scene
+                    .run(&mut prepared, &binding.act, &set("SK-1001", 99_999), with)
+                    .await,
+            );
+            let refused = failed(
+                scene
+                    .run(&mut prepared, &binding.confirm, &Values::new(), with)
+                    .await,
+            );
+            scene.handle.release(prepared, true).await;
+            refused
+        }
+    };
+    // A short warning and the cause: both lines whole, line breaks kept.
+    let short = refused("warning: the cache is cold\n".to_owned()).await;
+    let said = short.failure.said().unwrap();
+    assert!(said.starts_with("warning: the cache is cold\n"), "{said}");
+    assert!(said.contains("more than a bin holds"), "{said}");
+    // Many warnings first: the cause, the last line, is quoted whole, and
+    // every line quoted is a whole line the program printed.
+    let warning = |n: usize| format!("warning {n}: a refused connection is tried again");
+    let many: String = (0..30).map(|n| format!("{}\n", warning(n))).collect();
+    let long = refused(many.clone()).await;
+    let said = long.failure.said().unwrap();
+    assert!(said.chars().count() <= a2m_core::SAID_LONGEST, "{said}");
+    assert!(said.ends_with("(9999)"), "{said}");
+    let mut lines = said.lines();
+    assert!(
+        lines.next().unwrap().contains("earlier lines left out"),
+        "{said}"
+    );
+    for line in lines {
+        assert!(
+            many.lines().any(|printed| printed == line) || line.contains("more than a bin holds"),
+            "`{line}` is not a whole line the program printed"
+        );
+    }
+    // A secret in a line is redacted, and none of it is left in what is quoted.
+    let secret = refused(format!("warning: token {SECRET} was refused\n")).await;
+    let said = secret.failure.said().unwrap();
+    assert!(said.contains(a2m_core::REDACTED), "{said}");
+    assert!(!holds_part_of(said, SECRET), "{said}");
+}

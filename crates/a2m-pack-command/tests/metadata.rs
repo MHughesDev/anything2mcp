@@ -886,3 +886,56 @@ async fn a_parameter_named_as_a_secret_is_never_drafted_as_a_param() {
         drafted.open_questions
     );
 }
+
+/// Field test 5, findings 28 and 29 (decision 0399): a program that prints
+/// a second version line, and help set out with tabs. The scout starts, reads
+/// every command, and says how many lines of the listing it skipped and why.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_version_line_and_a_listing_set_out_with_tabs_do_not_stop_the_scout() {
+    use example_cli::faults::{Fault, FaultKind};
+
+    let folder = Folder::new("tabs");
+    let stand = Stand::start().unwrap();
+    let registry = registry(&folder, Arc::new(NoSecrets));
+
+    let (report, findings, _) = discover(&stand, &folder, &registry, &[], &NoSecrets).await;
+    let plain = report.unwrap();
+    let names = |findings: &[Finding]| -> Vec<String> {
+        of_kind(findings, "command")
+            .into_iter()
+            .map(|finding| json(finding)["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let expected = names(&findings);
+    assert_eq!(expected.len(), 9, "{expected:?}");
+    assert_eq!(plain.dropped, 0);
+
+    let control = stand.control();
+    control
+        .set_fault(&Fault::until_cleared(FaultKind::TabbedHelp).on("help"))
+        .unwrap();
+    control
+        .set_fault(&Fault::until_cleared(FaultKind::UnnamedHelpLine).on("help"))
+        .unwrap();
+    control
+        .set_fault(&Fault::until_cleared(FaultKind::InterfaceLine))
+        .unwrap();
+    let (report, findings, _) = discover(&stand, &folder, &registry, &[], &NoSecrets).await;
+    let report = report.unwrap();
+    // Every command is read, with its text, though the listing uses tabs and
+    // the version is the first of two lines.
+    assert_eq!(names(&findings), expected);
+    assert_eq!(
+        json(command(&findings, "item show"))["about"],
+        "Show one item."
+    );
+    // The line that holds no name is skipped, counted, and said by reason.
+    assert_eq!(report.dropped, 1);
+    let listing = of_kind(&findings, "command_file")
+        .into_iter()
+        .find(|finding| json(finding)["form"] == "program_help")
+        .expect("a finding that says the skipped line");
+    let said = json(listing);
+    assert_eq!(said["unread"], serde_json::json!({"name_not_plain": 1}));
+    assert_eq!(said["read"], expected.len());
+}

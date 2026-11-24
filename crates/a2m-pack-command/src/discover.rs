@@ -256,10 +256,11 @@ fn plain(word: &str) -> bool {
 }
 
 /// The commands a help text lists: the indented lines under a line that
-/// ends with `ommands:`, each a name, two or more spaces, and what it does.
-pub(crate) fn listed_commands(help: &str) -> (Vec<(String, String)>, u64) {
+/// ends with `ommands:`, each a name, then two or more spaces or a tab, and
+/// what it does. The lines it skips are counted by reason.
+pub(crate) fn listed_commands(help: &str) -> (Vec<(String, String)>, BTreeMap<String, u64>) {
     let mut found = Vec::new();
-    let mut dropped = 0;
+    let mut dropped = BTreeMap::new();
     let mut listing = false;
     for line in help.lines() {
         if line.trim_end().to_ascii_lowercase().ends_with("commands:") && !line.starts_with(' ') {
@@ -274,13 +275,17 @@ pub(crate) fn listed_commands(help: &str) -> (Vec<(String, String)>, u64) {
             continue;
         }
         let entry = line.trim();
-        let (name, about) = entry
-            .split_once("  ")
-            .map_or((entry, ""), |(name, about)| (name, about.trim()));
+        // The name ends at the first run of two spaces or the first tab,
+        // whichever comes first: programs set out a listing either way.
+        let cut = [entry.find("  "), entry.find('\t')]
+            .into_iter()
+            .flatten()
+            .min();
+        let (name, about) = cut.map_or((entry, ""), |at| (&entry[..at], entry[at..].trim()));
         if !name.is_empty() && name.split(' ').all(plain) {
             found.push((name.to_owned(), about.to_owned()));
         } else {
-            dropped += 1;
+            *dropped.entry("name_not_plain".to_owned()).or_insert(0) += 1;
         }
     }
     (found, dropped)
@@ -531,6 +536,46 @@ impl HelpDiscoverer {
         finding.build().map_err(finding_failed)
     }
 
+    /// The finding about a program's own help listing when lines of it were
+    /// skipped: how many were read, how many were not, and why not.
+    fn help_listing_finding(
+        &self,
+        read: usize,
+        unread: BTreeMap<String, u64>,
+        digest: Digest,
+    ) -> Result<Finding, Failure> {
+        let found = CommandFileFound {
+            name: "help".to_owned(),
+            form: "program_help".to_owned(),
+            read: u64::try_from(read).unwrap_or(u64::MAX),
+            unread,
+            program_options: Vec::new(),
+            unlisted: Vec::new(),
+            exported: Vec::new(),
+            version: None,
+        };
+        Finding::about(
+            Subject::File {
+                digest,
+                format: "program_help".to_owned(),
+                part: None,
+            },
+            codes::file_finding_kind(),
+            payload(&found)?,
+            Source::LiveSystem,
+            produced_by(),
+            self.clock.now(),
+        )
+        .level(EvidenceLevel::Discovered)
+        .coverage(Coverage::Partial)
+        .limitation(
+            LimitationCode::NotExercised,
+            "The program's help was read as text. A line of its command listing whose name is not plain words (letters, digits, and `_.:-`) is counted as unread, not interpreted.",
+        )
+        .build()
+        .map_err(finding_failed)
+    }
+
     /// The finding about a PowerShell help file or a module manifest.
     fn powershell_file_finding(
         &self,
@@ -775,7 +820,11 @@ impl HelpDiscoverer {
             // cut out.
             let help = scope.redact.redact(text(&overview, "stdout"));
             let (listed, dropped) = listed_commands(&help);
-            report.dropped += dropped;
+            let skipped: u64 = dropped.values().sum();
+            report.dropped += skipped;
+            if skipped > 0 {
+                out.found(self.help_listing_finding(listed.len(), dropped, digest)?)?;
+            }
             for (name, about) in listed {
                 if scope.deadline.passed() {
                     report.bounds_hit.push("seconds".to_owned());
@@ -956,6 +1005,24 @@ mod tests {
     use super::{listed_commands, usage_of};
 
     #[test]
+    fn a_listing_set_out_with_tabs_is_read_and_a_skipped_line_is_counted_by_reason() {
+        let help = "Commands:\n\titem show\tShow one item.\n  item set\tSet it.\n  item list  List.\n  --odd\tNo.\n";
+        let (commands, dropped) = listed_commands(help);
+        assert_eq!(
+            commands
+                .iter()
+                .map(|(n, a)| (n.as_str(), a.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("item show", "Show one item."),
+                ("item set", "Set it."),
+                ("item list", "List.")
+            ]
+        );
+        assert_eq!(dropped.get("name_not_plain"), Some(&1));
+    }
+
+    #[test]
     fn the_listed_commands_and_a_usage_line_are_read_from_help() {
         let help = "example-cli 2.4.1\n\nUsage: example-cli [--home <dir>] <command> [arguments]\n\nCommands:\n  item show      Show one item.\n  item set       Set the quantity of one item.\n  $(reboot)      Not a name.\n\nOptions:\n  --help         Show this\n";
         let (commands, dropped) = listed_commands(help);
@@ -969,7 +1036,7 @@ mod tests {
                 ),
             ]
         );
-        assert_eq!(dropped, 1);
+        assert_eq!(dropped.get("name_not_plain"), Some(&1));
         let own = "Usage: example-cli item show <sku> [--format <form>]\n\nShow one item.\n";
         assert_eq!(
             usage_of(own, "item show").as_deref(),

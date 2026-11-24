@@ -210,8 +210,19 @@ impl CliDriver {
     /// can match.
     fn said(&self, stderr: &str) -> String {
         let whole = self.redact.redact(stderr.trim());
-        let clean: String = whole.chars().filter(|c| !c.is_control()).collect();
-        shown(&self.redact.redact(&clean))
+        let flat: String = whole.chars().filter(|c| !c.is_control()).collect();
+        let flat_redacted = self.redact.redact(&flat);
+        if flat_redacted != flat {
+            // Taking the control characters out put a secret together that
+            // one of them divided: only the flattened, redacted text is
+            // quoted, cut as before.
+            return shown(&flat_redacted);
+        }
+        let kept: String = whole
+            .chars()
+            .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
+            .collect();
+        whole_lines(&kept, a2m_core::SAID_LONGEST)
     }
 
     fn capture(&self, name: &str, bytes: &[u8]) -> Capture {
@@ -1032,6 +1043,21 @@ impl CliDriver {
         let Ok(text) = std::str::from_utf8(&last.finished.stdout) else {
             return Err(unparsed("it is not UTF-8"));
         };
+        // A read that answers "none" by printing nothing (decision 0399):
+        // the same meaning as a status declared `absent`, and the same two
+        // ways out: the look before a write finds no record, and a read
+        // answers that no record is there.
+        if command.absent_when_empty && !stdout_cut(&last.finished) && text.trim().is_empty() {
+            if step.lookup {
+                return Ok(StepOutcome::Absent(Observed::default()));
+            }
+            return Err(answered(
+                &codes::row::RECORD_ABSENT,
+                format!("The command `{name}` printed nothing, which it declares to mean that it found no record of that name."),
+                "Read the record again; it may have been removed.",
+            )
+            .with_said(self.said(&String::from_utf8_lossy(&last.finished.stderr))));
+        }
         // Redacted before it is read and again after: reading can put a
         // secret together that the program printed in pieces.
         let parsed = output::read(self.redact.as_ref(), text, &command.output)
@@ -1052,10 +1078,30 @@ impl CliDriver {
                     ));
                 }
             },
-            Parsed::Rows(rows) => Values::new().with(
-                "rows",
-                rows.into_iter().map(Value::from).collect::<Vec<Value>>(),
-            ),
+            Parsed::Rows(rows) => {
+                // An operation's list output is read from the field's own
+                // list, one value for each row, a missing value `null`; the
+                // rows stay under `rows` (decision 0399, as the data pack
+                // gives them).
+                // A field named `rows` is the field's list: what the output
+                // form declares comes first.
+                let mut values = Values::new();
+                values.insert(
+                    "rows",
+                    rows.iter()
+                        .cloned()
+                        .map(Value::from)
+                        .collect::<Vec<Value>>(),
+                );
+                for field in command.output.fields() {
+                    let list: Vec<Value> = rows
+                        .iter()
+                        .map(|row| row.get(&field).cloned().unwrap_or(Value::Null))
+                        .collect();
+                    values.insert(field, Value::List(list));
+                }
+                values
+            }
         };
         let assigned_key = command
             .assigns
@@ -1094,6 +1140,46 @@ fn passed(program: Option<&Program>) -> Vec<String> {
     pass
 }
 
+/// The lines of `text` that fit within `longest` characters, whole and in
+/// their order, taken from the end: a program prints its warnings first and
+/// the cause of its failure last. A mark says how many earlier lines are
+/// left out. A last line that is itself longer than the bound is cut, with
+/// `…` after the cut. The text was redacted before it came here, so a line
+/// left out takes no part of a secret with it.
+fn whole_lines(text: &str, longest: usize) -> String {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let length = |text: &str| text.chars().count();
+    let total = lines.iter().map(|line| length(line) + 1).sum::<usize>();
+    if total <= longest + 1 {
+        return lines.join("\n");
+    }
+    let mark = |left_out: usize| format!("({left_out} earlier lines left out)");
+    let room = longest.saturating_sub(length(&mark(lines.len())) + 1);
+    let mut kept: Vec<&str> = Vec::new();
+    let mut used = 0;
+    for line in lines.iter().rev() {
+        let needs = length(line) + usize::from(!kept.is_empty());
+        if used + needs > room {
+            break;
+        }
+        used += needs;
+        kept.push(line);
+    }
+    if kept.is_empty() {
+        // Not one whole line fits: the last is cut, and nothing before it
+        // is quoted.
+        let last = lines.last().copied().unwrap_or_default();
+        return format!("{}…", a2m_core::said_cut(last, room).0);
+    }
+    kept.reverse();
+    let left_out = lines.len() - kept.len();
+    format!("{}\n{}", mark(left_out), kept.join("\n"))
+}
+
 /// The version a finished version command reported, when it ended as
 /// declared and its output matches the declared pattern. `text` is its
 /// standard output, redacted whole: the version is a piece of it, and a
@@ -1107,11 +1193,29 @@ fn reported_version(check: &VersionCheck, finished: &Finished, text: &str) -> Op
     let line = text
         .strip_suffix('\n')
         .map_or(text, |line| line.strip_suffix('\r').unwrap_or(line));
-    pattern::whole(&check.stdout)
-        .ok()?
-        .captures(line)?
-        .name("version")
-        .map(|version| version.as_str().to_owned())
+    let compiled = pattern::whole(&check.stdout).ok()?;
+    let version = |text: &str| {
+        compiled
+            .captures(text)?
+            .name("version")
+            .map(|version| version.as_str().to_owned())
+    };
+    if let Some(found) = version(line) {
+        return Some(found);
+    }
+    // A program that prints more than one line: the pattern is laid over
+    // each line, and the version is the one the lines that match agree on.
+    // Lines that match and disagree are no version (unknown means stop).
+    let mut found: Option<String> = None;
+    for each in text.lines() {
+        if let Some(seen) = version(each) {
+            match &found {
+                Some(earlier) if *earlier != seen => return None,
+                _ => found = Some(seen),
+            }
+        }
+    }
+    found
 }
 
 /// The command a step refers to, with its program, when both belong to the
@@ -1373,5 +1477,22 @@ mod tests {
         let cut = finished("example-tool 2.4\n", 4096, false);
         assert!(stdout_cut(&cut));
         assert_eq!(reported_version(&check, &cut, "example-tool 2.4\n"), None);
+        // A second line of another kind does not hide the version's line;
+        // two lines that match and disagree give no version.
+        let two = "example-tool 2.4\nexample-tool interface 7\n";
+        let tight = VersionCheck {
+            stdout: r"^example-tool (?<version>\d+\.\d+)$".to_owned(),
+            ..check.clone()
+        };
+        assert_eq!(
+            reported_version(&tight, &finished(two, 40, false), two).as_deref(),
+            Some("2.4"),
+            "the first line is the version, the second is another kind of line"
+        );
+        let both = "example-tool 2.4\nexample-tool 7\n";
+        assert_eq!(
+            reported_version(&check, &finished(both, 30, false), both),
+            None
+        );
     }
 }
