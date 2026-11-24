@@ -39,6 +39,8 @@ pub const START_TO_READY: &str = "start_to_ready";
 /// Process start to ready with the vault closed: no key was given, so the
 /// engine serves and runs no job. The floor of the start, before any key is opened.
 pub const START_TO_READY_VAULT_CLOSED: &str = "start_to_ready_vault_closed";
+/// The size of the program's file, stripped and built for release.
+pub const PROGRAM_SIZE: &str = "program_size";
 /// The resident memory of an engine that has served nothing but a status.
 pub const IDLE_MEMORY: &str = "idle_memory";
 
@@ -268,6 +270,7 @@ fn timed(name: &str, took: &[Duration]) -> Result<ScenarioResult, BenchError> {
         baseline: None,
         overhead: None,
         resident_bytes: None,
+        size_bytes: None,
     })
 }
 
@@ -532,6 +535,56 @@ pub async fn idle_memory(
     let mut result = timed(IDLE_MEMORY, &took)?;
     result.resident_bytes = Some(median);
     Ok(Some(result))
+}
+
+/// The size of the program's file, in bytes: the number the 25 MB target of
+/// hypothesis H-28 is held against. `None` when the program is not beside the
+/// harness.
+///
+/// Only a release build is the product's size. The release profile strips and
+/// links the whole program for size (decision 0191); a debug build of it is
+/// several times larger and says nothing about the target, so it is refused
+/// when the harness itself is a debug build, unless the program is named by
+/// `A2M_BENCH_PROGRAM`, in which case the person naming it says what it is.
+///
+/// # Errors
+///
+/// Returns an error if the program's file cannot be read.
+pub fn program_size() -> Result<Option<ScenarioResult>, BenchError> {
+    let named = std::env::var_os("A2M_BENCH_PROGRAM").is_some();
+    if cfg!(debug_assertions) && !named {
+        return Ok(None);
+    }
+    let Some(program) = program() else {
+        return Ok(None);
+    };
+    size_of_file(&program).map(Some)
+}
+
+/// A result that holds the size of one file and no timing.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read.
+pub fn size_of_file(path: &std::path::Path) -> Result<ScenarioResult, BenchError> {
+    let bytes = std::fs::metadata(path)
+        .map_err(|e| operation_error(PROGRAM_SIZE, format!("{}: {e}", path.display())))?
+        .len();
+    Ok(ScenarioResult {
+        name: PROGRAM_SIZE.to_owned(),
+        operation: Stats {
+            count: 1,
+            min_ns: 0,
+            median_ns: 0,
+            p95_ns: 0,
+            p99_ns: 0,
+            max_ns: 0,
+        },
+        baseline: None,
+        overhead: None,
+        resident_bytes: None,
+        size_bytes: Some(bytes),
+    })
 }
 
 /// The overhead of `result` as the harness holds it, for a test's message.

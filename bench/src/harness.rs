@@ -133,6 +133,10 @@ pub struct ScenarioResult {
     /// of its readings, when the scenario reads it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resident_bytes: Option<u64>,
+    /// The size in bytes of the file the scenario measured, when the scenario
+    /// is a size: the program, whose budget is a size and not a time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
 }
 
 /// Runs one scenario: its setup, the warm-up, then the measured iterations.
@@ -177,6 +181,7 @@ pub async fn run_scenario<S: Scenario>(
         operation,
         baseline,
         resident_bytes: None,
+        size_bytes: None,
     })
 }
 

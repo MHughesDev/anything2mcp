@@ -61,3 +61,30 @@ async fn the_engine_as_a_process_starts_and_its_memory_is_read()
     }
     Ok(())
 }
+
+#[test]
+fn a_program_size_is_the_size_of_the_file_and_holds_no_timing()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = std::env::temp_dir().join(format!("a2m-bench-size-{}", std::process::id()));
+    std::fs::write(&path, vec![0_u8; 12_345])?;
+    let result = a2m_bench::measure::size_of_file(&path);
+    std::fs::remove_file(&path)?;
+    let result = result?;
+    assert_eq!(result.name, "program_size");
+    assert_eq!(result.size_bytes, Some(12_345));
+    assert_eq!((result.baseline, result.overhead), (None, None));
+    // A file that is not there is an error, never a size of nothing.
+    assert!(a2m_bench::measure::size_of_file(&path).is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_debug_harness_measures_no_size_because_a_debug_program_is_not_the_product()
+-> Result<(), Box<dyn std::error::Error>> {
+    if cfg!(debug_assertions) && std::env::var_os("A2M_BENCH_PROGRAM").is_none() {
+        let names = ["program_size".to_owned()];
+        let results = run_named(&names, &SMALL, &MonotonicClock::start()).await?;
+        assert!(results.is_empty());
+    }
+    Ok(())
+}

@@ -62,17 +62,55 @@ jobs:
       - name: The real key store holds the root
         if: runner.os != 'Linux'
         run: cargo test -p a2m-vault --locked -- --ignored the_real_key_store_holds_the_root
-      # The harness and its sample scenario; nothing is gated until a budgeted
-      # path is measured (spec section 225).
+      # The harness and its scenarios (spec section 225); the comparison below
+      # gates once a baseline from a quiet runner is stored.
       # The scenarios that start the product's program find it beside the
       # harness; build it first on Linux, where the budgets are measured.
       - name: Build the program the benchmark starts
         if: runner.os == 'Linux'
-        run: cargo build --locked --release -p anything2mcp
+        run: |
+          cargo build --locked --release -p anything2mcp
+          # The target is of the stripped program, as the wheel carries it.
+          strip target/release/anything2mcp
       - name: Benchmark
         run: cargo run --locked --release -p a2m-bench -- run --out bench-results
         env:
           A2M_BENCH_COMMIT: ${{ github.sha }}
+      # The size of the program is the one budget every operating system can
+      # be held to (package F4): the full run above measures it on Linux, where
+      # the program is built first, and here the program is built after the
+      # run, so that no process scenario starts on an operating system whose
+      # numbers nobody has read yet. It is stored beside the run.
+      - name: Build the program whose size is measured
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          cargo build --locked --release -p anything2mcp
+          # The target is of the stripped program, as the wheel carries it;
+          # a Windows program keeps its symbols in a separate file already.
+          if [ "$RUNNER_OS" = macOS ]; then strip target/release/anything2mcp; fi
+      - name: Measure the size of the program
+        if: runner.os != 'Linux'
+        run: cargo run --locked --release -p a2m-bench -- run --out bench-results/size --scenario program_size
+        env:
+          A2M_BENCH_COMMIT: ${{ github.sha }}
+      # The comparison holds the floor of each number to a result stored from a
+      # quiet runner, which is a file a person puts in bench/baseline/ on
+      # purpose: bench/baseline/<os>-<arch>.json (decision 0399). With none
+      # stored the step says so and passes; a budgeted number that rose more
+      # than 10% over its stored floor, or went missing, fails it.
+      - name: Compare the benchmark with the stored baseline
+        shell: bash
+        run: |
+          arch=$(uname -m | sed 's/arm64/aarch64/')
+          case "$RUNNER_OS" in Linux) os=linux;; macOS) os=macos;; *) os=windows; arch=x86_64;; esac
+          baseline="bench/baseline/$os-$arch.json"
+          new=$(ls bench-results/a2m-bench-"$os"-*.json | head -n 1)
+          if [ ! -f "$baseline" ]; then
+            echo "No baseline is stored for $os on $arch; nothing is compared."
+            exit 0
+          fi
+          cargo run --locked --release -p a2m-bench -- compare "$baseline" "$new"
       # Pinned by commit; this is v7.0.2.
       - name: Store the benchmark result
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

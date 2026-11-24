@@ -47,6 +47,7 @@ fn planted(folder: &Path, name: &str, overhead_ns: u64) -> Result<PathBuf, Box<d
             name: "http_operation".to_owned(),
             overhead: Some(Overhead::between(&operation, &baseline)),
             resident_bytes: None,
+            size_bytes: None,
             operation,
             baseline: Some(baseline),
         }],

@@ -9,8 +9,9 @@ use crate::error::BenchError;
 use crate::harness::{Clock, Plan, Scenario, ScenarioResult, run_scenario};
 use crate::measure::{
     COLD_BROWSER_START, HTTP_OPERATION, HttpOperation, IDLE_MEMORY, LIST_TOOLS, ListTools,
-    MOST_BROWSER_ITERATIONS, START_TO_READY, START_TO_READY_VAULT_CLOSED, UI_STEP, UiStep,
-    cold_browser_start, idle_memory, start_to_ready, start_to_ready_vault_closed,
+    MOST_BROWSER_ITERATIONS, PROGRAM_SIZE, START_TO_READY, START_TO_READY_VAULT_CLOSED, UI_STEP,
+    UiStep, cold_browser_start, idle_memory, program_size, start_to_ready,
+    start_to_ready_vault_closed,
 };
 use crate::promotion::{MOST_ITERATIONS, PROMOTION_SPEEDUP, PromotionSpeedup};
 
@@ -27,6 +28,7 @@ pub const NAMES: &[&str] = &[
     START_TO_READY,
     START_TO_READY_VAULT_CLOSED,
     IDLE_MEMORY,
+    PROGRAM_SIZE,
     PROMOTION_SPEEDUP,
 ];
 
@@ -154,8 +156,9 @@ pub async fn run_named(
             HTTP_OPERATION => run_scenario(&HttpOperation, plan, clock).await?,
             UI_STEP => run_scenario(&UiStep, &browser_plan(plan), clock).await?,
             COLD_BROWSER_START => cold_browser_start(&browser_plan(plan), clock).await?,
-            START_TO_READY | START_TO_READY_VAULT_CLOSED | IDLE_MEMORY => {
+            START_TO_READY | START_TO_READY_VAULT_CLOSED | IDLE_MEMORY | PROGRAM_SIZE => {
                 let result = match *name {
+                    PROGRAM_SIZE => program_size()?,
                     START_TO_READY => start_to_ready(plan, clock).await?,
                     START_TO_READY_VAULT_CLOSED => start_to_ready_vault_closed(plan, clock).await?,
                     _ => idle_memory(plan, clock).await?,
@@ -164,7 +167,7 @@ pub async fn run_named(
                     Some(result) => result,
                     None => {
                         eprintln!(
-                            "{name}: not measured; the program `anything2mcp` is not beside the harness (build it, or set A2M_BENCH_PROGRAM) or the system gives no reading"
+                            "{name}: not measured; the program `anything2mcp` is not beside the harness (build it, or set A2M_BENCH_PROGRAM), the harness is not a release build (the size is of a release program), or the system gives no reading"
                         );
                         continue;
                     }

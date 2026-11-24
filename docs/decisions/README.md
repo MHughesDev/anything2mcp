@@ -360,3 +360,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0367 | [`auth.detect` recommends a mode and a provider by fixed rules, and marks it inferred](0367-auth-detect-recommends-a-mode-and-a-provider-by-fixed-rules-and-marks-it-inferred.md) | Accepted (design decision) |
 | 0368 | [`auth.detect`'s questions are in its answer, and the unknowns ledger is the scout's](0368-auth-detects-questions-are-in-its-answer-and-the-unknowns-ledger-is-the-scouts.md) | Accepted (design decision) |
 | 0366 | [A recommendation reads the schemes a description declares and not those its operations require](0366-a-recommendation-reads-the-schemes-a-description-declares-and-not-those-its-operations-require.md) | Accepted (design decision) |
+| 0399 | [The comparison holds the floor of each number, and the program has a size budget](0399-the-comparison-holds-the-floor-of-each-number-and-the-program-has-a-size-budget.md) | Accepted (design decision) |

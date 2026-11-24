@@ -62,6 +62,8 @@ pub enum Metric {
     OverheadMedian,
     /// The resident memory of what the scenario ran, in bytes.
     ResidentMemory,
+    /// The size of the program's file, in bytes.
+    ProgramSize,
 }
 
 impl Metric {
@@ -75,6 +77,29 @@ impl Metric {
             Self::ResidentMemory => result
                 .resident_bytes
                 .map(|bytes| i64::try_from(bytes).unwrap_or(i64::MAX)),
+            Self::ProgramSize => result
+                .size_bytes
+                .map(|bytes| i64::try_from(bytes).unwrap_or(i64::MAX)),
+        }
+    }
+
+    /// The number a comparison holds against a stored one: the floor of what
+    /// the run measured, not its middle (decision 0399).
+    ///
+    /// A time is its fastest iteration, and an overhead is the fastest
+    /// operation less the fastest baseline. Load on a shared machine only ever
+    /// adds time, so the fastest iteration moves far less between two runs of
+    /// the same build than the median does. A memory or a size has one
+    /// reading, which is its own floor.
+    #[must_use]
+    pub fn floor_in(self, result: &ScenarioResult) -> Option<i64> {
+        let nanos = |ns: u64| i64::try_from(ns).unwrap_or(i64::MAX);
+        match self {
+            Self::Median => Some(nanos(result.operation.min_ns)),
+            Self::OverheadMedian => result
+                .baseline
+                .map(|b| nanos(result.operation.min_ns).saturating_sub(nanos(b.min_ns))),
+            Self::ResidentMemory | Self::ProgramSize => self.value_in(result),
         }
     }
 }
@@ -267,6 +292,7 @@ mod tests {
             baseline: None,
             overhead: None,
             resident_bytes: None,
+            size_bytes: None,
         };
         assert_eq!(Metric::ResidentMemory.value_in(&result), None);
         result.resident_bytes = Some(37_000_000);
