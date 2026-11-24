@@ -1103,7 +1103,15 @@ impl Kernel {
             run: None,
             diff_hash: None,
         };
-        let decision = policy.decide_alone(request).await;
+        // The decision about a call of a tool that only reads is part of the
+        // read's record, kept without a disk sync of its own (spec section
+        // 208, Reads); the policy engine syncs any other.
+        let durability = if matches!(def.effect, Effect::OfTool) && effect == EffectClass::Read {
+            a2m_ledger::Durability::Relaxed
+        } else {
+            a2m_ledger::Durability::Synced
+        };
+        let decision = policy.decide_alone_as(request, durability).await;
         Decided {
             id: decision.id,
             allowed: decision.allowed(),

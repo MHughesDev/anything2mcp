@@ -364,6 +364,44 @@ async fn every_decision_is_recorded_and_a_write_waits_for_a_person() {
 }
 
 #[tokio::test]
+async fn only_the_decision_about_a_read_is_recorded_without_a_sync_and_it_is_recorded() {
+    let read = ask(1, Question::UseTool, tool(), EffectClass::Read);
+    let write = ask(1, Question::UseTool, tool(), EffectClass::Write);
+    let bound = Request {
+        diff_hash: Some(diff()),
+        ..read.clone()
+    };
+    // A relaxed commit is asked for and given only for a read bound to no
+    // diff; a decision a write rests on is synced whatever is asked.
+    assert_eq!(
+        Policy::durability_for(&read, Durability::Relaxed),
+        Durability::Relaxed
+    );
+    assert_eq!(
+        Policy::durability_for(&read, Durability::Synced),
+        Durability::Synced
+    );
+    assert_eq!(
+        Policy::durability_for(&write, Durability::Relaxed),
+        Durability::Synced
+    );
+    assert_eq!(
+        Policy::durability_for(&bound, Durability::Relaxed),
+        Durability::Synced
+    );
+
+    // Relaxed or not, the decision commits before its answer is given.
+    let stand = local("decide-relaxed").await;
+    let decided = stand
+        .policy
+        .decide_alone_as(read, Durability::Relaxed)
+        .await;
+    assert_eq!(decided.outcome(), Outcome::Allow);
+    let raw = stand.folder.raw();
+    assert_eq!(count(&raw, "SELECT COUNT(*) FROM decisions"), 1);
+}
+
+#[tokio::test]
 async fn an_approval_is_bound_to_its_diff_and_used_once() {
     let stand = local("approval").await;
     let fence = waiting_run(&stand.store, 1, "a").await;
