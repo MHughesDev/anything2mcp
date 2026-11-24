@@ -2,4 +2,4 @@ test: example_export_file
 kind: offline
 fixture: export_file
 inputs: {}
-expect: {file: "7"}
+expect: {file: "7", size: 32}

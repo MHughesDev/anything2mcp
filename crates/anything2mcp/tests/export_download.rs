@@ -9,10 +9,9 @@
 //! made. The application is asked what it sent, and it sent the file once.
 //! It needs a browser, as the web pack's tests find one.
 //!
-//! The second test holds the other half of the row, that the call returns
-//! the file's name and size. It is ignored: the call's result carries the
-//! value the read-back read, and the name and size the step observed are
-//! in no field the caller sees (see the roadmap row 9.3s).
+//! The second test holds the other half of the row: the call returns the
+//! file's name and size, the outputs the screen's download fills, which the
+//! read-back does not read (no page holds them).
 
 #![allow(
     clippy::unwrap_used,
@@ -186,7 +185,6 @@ async fn a_declared_download_lies_under_the_profile_and_its_bytes_are_in_no_resu
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "9.3s gap: the call's result holds the value the read-back read (`Export ready.`), not the file's name; the name and size the step observed are in no field the caller sees"]
 async fn a_declared_download_comes_back_as_its_name_and_size() {
     let Exported {
         machine,
@@ -203,7 +201,12 @@ async fn a_declared_download_comes_back_as_its_name_and_size() {
         "{}",
         done.json
     );
-    let size = std::fs::metadata(&kept[0]).unwrap().len().to_string();
-    assert!(done.json.to_string().contains(&size), "{}", done.json);
+    let size = std::fs::metadata(&kept[0]).unwrap().len();
+    assert_eq!(
+        done.result()["result"]["size"].as_u64(),
+        Some(size),
+        "{}",
+        done.json
+    );
     world.close().await;
 }

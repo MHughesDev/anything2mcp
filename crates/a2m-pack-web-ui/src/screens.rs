@@ -161,7 +161,8 @@ pub(crate) fn screen_schema() -> JsonSchema {
             "download",
             JsonSchema::object()
                 .required("most_bytes", JsonSchema::int())
-                .optional("into", JsonSchema::name()),
+                .optional("into", JsonSchema::name())
+                .optional("size_into", JsonSchema::name()),
         );
     let rows = JsonSchema::object()
         .required("locate", locate_schema())
@@ -533,9 +534,21 @@ impl Reader {
                     );
                     return None;
                 };
+                let into = stated.text("into").map(str::to_owned);
+                let size_into = stated.text("size_into").map(str::to_owned);
+                if into.is_some() && into == size_into {
+                    self.refuse(
+                        "download_invalid",
+                        &stated.at,
+                        "The download's name and its size are given to the same output.".to_owned(),
+                        "Name one output in `into:` for the file's name and another in `size_into:` for its size.",
+                    );
+                    return None;
+                }
                 Some(DownloadDecl {
                     most_bytes,
-                    into: stated.text("into").map(str::to_owned),
+                    into,
+                    size_into,
                 })
             }
             None => None,

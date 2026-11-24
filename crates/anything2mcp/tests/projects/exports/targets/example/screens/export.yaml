@@ -1,17 +1,11 @@
 # Package 9.3s: the export page once the export is ready, with the one link
-# that offers the file, a download of at most a hundred thousand bytes.
+# that offers the file, a download of at most a hundred thousand bytes. The
+# file's name and size are the engine's: no field of the page holds them,
+# and the read-back reads neither.
 screen: export
 surface: app
 reach: {url: "/cases/export/ready"}
 ready: {visible: {role: heading, name: "Export"}}
-fields:
-  file:
-    type: text
-    control: text
-    read: text
-    locate:
-      - {role: status, name: ""}
-    fingerprint: {section: {role: main, name: ""}}
 actions:
   download:
     locate:
@@ -19,7 +13,7 @@ actions:
     fingerprint: {section: {role: main, name: ""}}
     confirm: {text: {locate: {role: status, name: ""}, equals: "Export downloaded."}}
     commits: true
-    download: {most_bytes: 100000, into: file}
+    download: {most_bytes: 100000, into: file, size_into: size}
 variants:
   not_found:
     when: {visible: {role: heading, name: "Not found"}}

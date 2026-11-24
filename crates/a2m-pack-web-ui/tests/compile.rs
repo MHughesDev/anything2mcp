@@ -367,6 +367,28 @@ fn what_a_screen_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
         |text| text.replacen("handling: absent", "handling: stop", 1),
         "web.read_back_never_absent",
     );
+    // A download whose name and size go to one output, and one that gives
+    // an output the operation does not declare (decision 0999).
+    let downloads = |download: &'static str| {
+        move |text: &str| {
+            text.replacen(
+                "    commits: true\n",
+                &format!("    commits: true\n    download: {download}\n"),
+                1,
+            )
+        }
+    };
+    refused(
+        form,
+        downloads("{most_bytes: 10, into: file, size_into: file}"),
+        "web.download_invalid",
+    );
+    let undeclared = refused(
+        form,
+        downloads("{most_bytes: 10, into: file}"),
+        "web.unknown_field",
+    );
+    assert!(undeclared.message.contains("`file`"), "{undeclared}");
 }
 
 /// The review states where a web tool sends, which the browser holds it to

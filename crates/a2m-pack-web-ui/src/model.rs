@@ -347,6 +347,17 @@ pub(crate) struct DownloadDecl {
     pub most_bytes: u64,
     /// The output that takes the name of the file the engine made.
     pub into: Option<String>,
+    /// The output that takes the size of the file, in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_into: Option<String>,
+}
+
+impl DownloadDecl {
+    /// The outputs the download fills: values of the engine's own making,
+    /// which no read of the page can give (the download record).
+    pub(crate) fn outputs(&self) -> impl Iterator<Item = &str> {
+        self.into.iter().chain(&self.size_into).map(String::as_str)
+    }
 }
 
 /// A dialog of the browser, such as a confirmation before saving, that an

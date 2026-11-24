@@ -5,6 +5,7 @@ commit_points: 1
 inputs: {}
 outputs:
   file: {type: text}
+  size: {type: integer}
 bindings:
   - mode: ui
     verb: submit
@@ -13,4 +14,4 @@ bindings:
     action: download
     read_back: {screen: export}
 description: >
-  Presses the link that offers the export file, which the screen declares as a download of at most a hundred thousand bytes.
+  Presses the link that offers the export file, which the screen declares as a download of at most a hundred thousand bytes, and gives the file's name and size.

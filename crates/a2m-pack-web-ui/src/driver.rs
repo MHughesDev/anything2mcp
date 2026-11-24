@@ -1734,6 +1734,16 @@ impl Session {
                 .values
                 .insert(into.clone(), Value::Text(name.clone()));
         }
+        if let Some(size_into) = &download.size_into {
+            // The size is bounded by `most_bytes`, at most 64 MiB, so it
+            // is always a whole number the value holds.
+            let bytes = i64::try_from(file.bytes).map_err(|_| {
+                StepFailure::unknown(
+                    codes::not_usable("the file's size is too large to give").failure,
+                )
+            })?;
+            observed.values.insert(size_into.clone(), Value::Int(bytes));
+        }
         observed.captures.push(acting(
             vec![
                 Detail::new("step", "download"),
