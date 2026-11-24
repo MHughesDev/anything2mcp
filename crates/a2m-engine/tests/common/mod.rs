@@ -2138,6 +2138,17 @@ pub struct Faults {
     pub outputs_refused: AtomicBool,
     /// The call of this name never answers.
     pub hangs_on: Mutex<Option<&'static str>>,
+    /// When `abort_armed` is set, the calls to `Control` answered before
+    /// the next one never answers, and [`Faults::aborted`] is notified: the
+    /// test then drops the job's future, as a process killed at that point
+    /// would leave it.
+    pub abort_after: AtomicU32,
+    /// Whether `abort_after` applies.
+    pub abort_armed: AtomicBool,
+    /// The calls to `Control` made since the count was last reset.
+    pub calls: AtomicU32,
+    /// Notified when the call after `abort_after` is held.
+    pub aborted: tokio::sync::Notify,
 }
 
 pub struct StoreControl {
@@ -2219,6 +2230,18 @@ impl StoreControl {
     /// else to do, the runtime moves it straight on to the engine's limit.
     /// The clock runs again when the engine gives the call up. A test's
     /// runtime runs on one thread, which is what lets a test stop its clock.
+    /// Counts one call to `Control`. Once `abort_after` calls have been
+    /// answered, with the abort armed, this one never answers.
+    async fn called(&self) {
+        let made = self.faults.calls.fetch_add(1, Ordering::SeqCst);
+        if self.faults.abort_armed.load(Ordering::SeqCst)
+            && made >= self.faults.abort_after.load(Ordering::SeqCst)
+        {
+            self.faults.aborted.notify_one();
+            std::future::pending::<()>().await;
+        }
+    }
+
     async fn hang(&self, call: &'static str) {
         let hangs = *self.faults.hangs_on.lock().unwrap() == Some(call);
         if hangs {
@@ -2270,11 +2293,15 @@ impl StoreControl {
 
 impl Control for StoreControl {
     fn plan<'a>(&'a self, _hash: &'a Digest) -> BoxFuture<'a, Result<Arc<Plan>, Failure>> {
-        Box::pin(async move { Ok(Arc::clone(&self.plan)) })
+        Box::pin(async move {
+            self.called().await;
+            Ok(Arc::clone(&self.plan))
+        })
     }
 
     fn decide<'a>(&'a self, question: &'a GuardQuestion) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             self.hang("decide").await;
             self.questions.lock().unwrap().push(question.clone());
             if self.faults.denied.load(Ordering::SeqCst) {
@@ -2293,6 +2320,7 @@ impl Control for StoreControl {
         want: &'a SessionWant,
     ) -> BoxFuture<'a, Result<SessionLease, Failure>> {
         Box::pin(async move {
+            self.called().await;
             self.wants.lock().unwrap().push(want.clone());
             // No test signs a person in, so every lease is refused as the
             // keeper refuses one for a session that needs a person.
@@ -2311,6 +2339,7 @@ impl Control for StoreControl {
         _sign: ExpirySign,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
+            self.called().await;
             self.expiry_reports.fetch_add(1, Ordering::SeqCst);
         })
     }
@@ -2320,11 +2349,15 @@ impl Control for StoreControl {
         _surface: &'a SurfaceName,
         want: u32,
     ) -> BoxFuture<'a, Result<u32, Failure>> {
-        Box::pin(async move { Ok(want) })
+        Box::pin(async move {
+            self.called().await;
+            Ok(want)
+        })
     }
 
     fn store_preview<'a>(&'a self, preview: &'a Preview) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             let fence = self.fence();
             let preview = preview.clone();
             self.hooks.note("store_preview");
@@ -2340,6 +2373,7 @@ impl Control for StoreControl {
 
     fn approval<'a>(&'a self, _diff: &'a Digest) -> BoxFuture<'a, Result<Clearance, Failure>> {
         Box::pin(async move {
+            self.called().await;
             let fence = self.fence();
             let Some(approval) = *self.approval.lock().unwrap() else {
                 return Ok(Clearance::Waits);
@@ -2366,6 +2400,7 @@ impl Control for StoreControl {
 
     fn lock<'a>(&'a self, record: RecordRef) -> BoxFuture<'a, Result<LockHeld, Failure>> {
         Box::pin(async move {
+            self.called().await;
             let fence = self.fence();
             self.hooks.note("lock");
             self.store
@@ -2381,6 +2416,7 @@ impl Control for StoreControl {
         intents: Vec<RecordIntent>,
     ) -> BoxFuture<'a, Result<Vec<IntentToken>, Failure>> {
         Box::pin(async move {
+            self.called().await;
             self.hang("intend").await;
             if self.faults.intend_refused.swap(false, Ordering::SeqCst) {
                 return Err(failure(
@@ -2424,6 +2460,7 @@ impl Control for StoreControl {
         acted: Acted,
     ) -> BoxFuture<'a, Result<ActedToken, Failure>> {
         Box::pin(async move {
+            self.called().await;
             self.sent.store(true, Ordering::SeqCst);
             self.hang("acted").await;
             if self.faults.acted_refused.load(Ordering::SeqCst) {
@@ -2448,6 +2485,7 @@ impl Control for StoreControl {
         read_back: ReadBack,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             if self.faults.verified_refused.load(Ordering::SeqCst) {
                 return Err(failure(
                     FailureClass::Busy,
@@ -2496,6 +2534,7 @@ impl Control for StoreControl {
         evidence: Option<BlobRef>,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             let fence = self.fence();
             let why = why.clone();
             self.hooks.note(format!("failed:{}", why.class()));
@@ -2513,6 +2552,7 @@ impl Control for StoreControl {
         seen: Reconciled,
     ) -> BoxFuture<'a, Result<Settled, Failure>> {
         Box::pin(async move {
+            self.called().await;
             let fence = self.fence();
             let settled = self
                 .store
@@ -2527,6 +2567,7 @@ impl Control for StoreControl {
 
     fn send<'a>(&'a self, event: EngineEvent) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             let fence = self.fence();
             match &event {
                 EngineEvent::Moved(to) => {
@@ -2577,6 +2618,7 @@ impl Control for StoreControl {
 
     fn evidence<'a>(&'a self, blob: Evidence) -> BoxFuture<'a, Result<BlobRef, Failure>> {
         Box::pin(async move {
+            self.called().await;
             if self.faults.evidence_down.load(Ordering::SeqCst) {
                 return Err(failure(
                     FailureClass::Busy,
@@ -2623,6 +2665,7 @@ impl Control for StoreControl {
 
     fn keep_capture<'a>(&'a self, capture: KeptCapture) -> BoxFuture<'a, Result<BlobRef, Failure>> {
         Box::pin(async move {
+            self.called().await;
             if !self.keeps_captures.load(Ordering::SeqCst) {
                 return Err(failure(
                     FailureClass::Busy,
@@ -2653,6 +2696,7 @@ impl Control for StoreControl {
         evidence: Option<BlobRef>,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             if !self.keeps_acknowledgements.load(Ordering::SeqCst) {
                 return Err(failure(
                     FailureClass::Busy,
@@ -2706,6 +2750,7 @@ impl Control for StoreControl {
         want: u32,
     ) -> BoxFuture<'a, Result<bool, Failure>> {
         Box::pin(async move {
+            self.called().await;
             if self.shadow_rate_refused.load(Ordering::SeqCst) {
                 return Ok(false);
             }
@@ -2719,6 +2764,7 @@ impl Control for StoreControl {
         compared: a2m_engine::ShadowCompared,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             self.hooks.note("shadow");
             self.shadows.lock().unwrap().push(compared.clone());
             // As the action registry's control plane does: the ledger keeps
