@@ -35,9 +35,10 @@ const DESCRIPTION_PATH: &str = "/api/openapi.json";
 /// The file the test writes from the stand's description.
 const DESCRIPTION_FILE: &str = "sources/example-openapi.json";
 
-/// The files a scout of the test application drafts for one read: its
-/// endpoint and its operation.
-const DRAFTED: [&str; 2] = ["endpoints/get_order.yaml", "operations/api_orders_get.yaml"];
+/// The files a scout of the test application drafts for one read: the
+/// pinned description that states its request, and its operation
+/// (decision 0399).
+const DRAFTED: [&str; 2] = ["descriptions/http.yaml", "operations/api_orders_get.yaml"];
 
 /// A register map in the layout the device pack reads, as a vendor of the
 /// imaginary controller publishes one. Synthetic.
@@ -686,7 +687,7 @@ async fn a_powershell_help_file_given_as_a_file_drafts_its_commands_and_starts_n
 
 /// Decision 0298: a description gives one sound read and one whose answer
 /// has a value the pack cannot type. The scout leaves the first in place and
-/// holds the second in `held/`, its endpoint staying in place; the target compiles
+/// holds the second in `held/`, its pinned description staying in place; the target compiles
 /// whole, the sound read is tried with no file deleted by hand, and the held
 /// one is listed by lint and refused by name when tried.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -731,9 +732,10 @@ async fn a_read_with_an_open_question_is_held_and_the_sound_read_is_tried_with_n
         );
         assert!(target.join(file).is_file(), "{file}");
     }
-    // The other read is held. The endpoint made with it holds no question
-    // and names nothing the read defines (the read names the endpoint, not
-    // the other way), so it stays in place.
+    // The other read is held. The pinned description that states its
+    // request holds no question and names nothing the read defines (the
+    // read names the description, not the other way), so it stays in
+    // place (decision 0399).
     let held: Vec<String> = scouted["content"]["drafted"]["held_back"]
         .as_array()
         .unwrap()
@@ -744,9 +746,15 @@ async fn a_read_with_an_open_question_is_held_and_the_sound_read_is_tried_with_n
     assert!(held[0].starts_with("held/operations/"), "{held:?}");
     let endpoint = written
         .iter()
-        .find(|one| one.starts_with("endpoints/") && one.contains("mystery"))
-        .unwrap_or_else(|| panic!("the mystery endpoint in {written:?}"));
+        .find(|one| one.as_str() == "descriptions/http.yaml")
+        .unwrap_or_else(|| panic!("the pinned description in {written:?}"));
     assert!(target.join(endpoint).is_file(), "{endpoint}");
+    assert!(
+        std::fs::read_to_string(target.join(endpoint))
+            .unwrap()
+            .contains("operation_id: \"get_mystery\""),
+        "{endpoint}"
+    );
     assert!(!target.join("held").join(endpoint).exists(), "{endpoint}");
     for file in &held {
         assert!(target.join(file).is_file(), "{file}");

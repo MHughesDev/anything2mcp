@@ -110,6 +110,11 @@ level = "error"
 summary = "No `http` binding names an endpoint whose requests the front end computes or signs."
 
 [[lint_rules]]
+code = "http.endpoint_stated_twice"
+level = "error"
+summary = "No endpoint entry states the operation an `api` binding binds through its pinned description."
+
+[[lint_rules]]
 code = "http.unencrypted_credentials"
 level = "warning"
 summary = "A surface that sends its credentials over an unencrypted link says so, and is reported on every lint."

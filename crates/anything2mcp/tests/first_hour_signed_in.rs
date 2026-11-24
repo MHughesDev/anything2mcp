@@ -54,12 +54,9 @@ const READ: &str = "example_api_orders_get";
 /// Its input: an order the test application holds from its seed.
 const ORDER_INPUT: &str = r#"{"order_id": "A-100"}"#;
 /// The drafted files the hour keeps: the read's operation, the description
-/// it is pinned to in the `api` mode (decision 0399), and its endpoint.
-const KEPT: [&str; 3] = [
-    "descriptions/http.yaml",
-    "endpoints/get_order.yaml",
-    "operations/api_orders_get.yaml",
-];
+/// it is pinned to in the `api` mode, the one place its request is
+/// stated (decision 0399).
+const KEPT: [&str; 2] = ["descriptions/http.yaml", "operations/api_orders_get.yaml"];
 
 /// The sign-in, as the developer's agent declares it: the provider and the
 /// vault reference the token is kept under. No secret is in it.

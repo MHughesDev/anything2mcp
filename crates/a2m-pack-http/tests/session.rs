@@ -684,14 +684,21 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
         written,
         [
             "descriptions/api.yaml",
-            "endpoints/get_account.yaml",
             "endpoints/get_order.yaml",
             "operations/account_get.yaml"
         ]
     );
-    let draft =
-        |name: &str| std::fs::read_to_string(folder.path().join("endpoints").join(name)).unwrap();
-    let read = draft("get_order.yaml");
+    // Each GET is stated once (rule eight, decision 0399): the drafted
+    // read's request in the pinned description, and no endpoint entry for
+    // it; the GET no read is drafted for in its endpoint entry, and not in
+    // the pinned description.
+    assert!(!folder.path().join("endpoints/get_account.yaml").exists());
+    let pinned = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
+    assert!(
+        pinned.contains("path: \"/account\"") && !pinned.contains("/orders/"),
+        "{pinned}"
+    );
+    let read = std::fs::read_to_string(folder.path().join("endpoints/get_order.yaml")).unwrap();
     assert!(
         read.contains("effect: \"read\"") && read.contains("surface: \"api\""),
         "{read}"
@@ -719,7 +726,14 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
     // Drafting the same findings again gives the same bytes.
     let again = Drafter::new(set, &root).draft(&findings).unwrap();
     assert!(again.conflicts.is_empty(), "{again:?}");
-    assert_eq!(draft("get_order.yaml"), read);
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join("endpoints/get_order.yaml")).unwrap(),
+        read
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap(),
+        pinned
+    );
 
     // The describer counts, and keeps the system's own text apart.
     let description = scene.registry.discoverers_for(&SurfaceDescription {
@@ -1031,6 +1045,24 @@ async fn a_drafted_api_read_is_pinned_to_its_description_and_a_changed_one_is_na
     handle.release(prepared, false).await;
     assert!(app.writes().await.unwrap().is_empty());
 
+    // The operation's request is stated once: no endpoint entry was
+    // drafted for it, and one written by hand beside the `api` binding is
+    // refused (rule eight).
+    assert!(!folder.path().join("endpoints/get_order.yaml").exists());
+    std::fs::create_dir_all(folder.path().join("endpoints")).unwrap();
+    std::fs::write(
+        folder.path().join("endpoints/get_order.yaml"),
+        "endpoint: get_order\nsurface: api\nmethod: GET\npath: \"/api/orders/{order_id}\"\neffect: read\nauth: none\nresponse_schema: {type: object}\n",
+    )
+    .unwrap();
+    let problems = compiled(&root).unwrap_err().to_string();
+    assert!(
+        problems.contains("http.endpoint_stated_twice"),
+        "{problems}"
+    );
+    std::fs::remove_file(folder.path().join("endpoints/get_order.yaml")).unwrap();
+    compiled(&root).unwrap();
+
     // An operation the pinned description does not state is refused by
     // name, and so is a pinned description pinned from two texts.
     std::fs::write(
@@ -1091,8 +1123,7 @@ async fn a_read_drafted_from_a_description_takes_null_and_missing_for_an_optiona
     Drafter::new(set, &root).draft(&findings).unwrap();
     // The property is written as possibly null, though the description
     // never says `nullable`.
-    let endpoint =
-        std::fs::read_to_string(folder.path().join("endpoints").join("get_shipment.yaml")).unwrap();
+    let endpoint = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
     assert!(endpoint.contains("nullable"), "{endpoint}");
     let sources = a2m_files::load(&root, set).unwrap();
     let plan = a2m_files::compile(
@@ -1620,7 +1651,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
     let findings = findings_from_handed_file(&app, &base).await;
     let (folder, _, _, report) = draft_into(with_other, &findings);
     assert!(report.open_questions.is_empty(), "{report:?}");
-    let entry = std::fs::read_to_string(folder.path().join("endpoints/get_order.yaml")).unwrap();
+    let entry = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
     assert!(entry.contains("surface: \"api\""), "{entry}");
 
     // Several `http` surfaces: the path the address ends in tells which
@@ -1637,7 +1668,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
     let findings = findings_from_handed_file(&app, &prefixed).await;
     let (folder, _, _, report) = draft_into(two(&format!("{base}/v2")), &findings);
     assert!(report.open_questions.is_empty(), "{report:?}");
-    let entry = std::fs::read_to_string(folder.path().join("endpoints/get_order.yaml")).unwrap();
+    let entry = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
     assert!(entry.contains("surface: \"api\""), "{entry}");
     let (_folder, _, _, report) = draft_into(two(&prefixed), &findings);
     assert!(!report.open_questions.is_empty(), "{report:?}");
@@ -1749,7 +1780,7 @@ async fn an_endpoint_is_tied_to_a_surface_only_when_exactly_one_takes_it() {
     // The only one, at the origin and a trailing slash: taken.
     let slash = with_surfaces(&target, &[("api", &format!("{base}/"))]);
     let (folder, _) = drafted_into(&slash, &findings);
-    assert!(surface_of(&folder, "endpoints/get_orders_id.yaml").contains("surface: \"api\""));
+    assert!(surface_of(&folder, "descriptions/api.yaml").contains("surface: \"api\""));
 }
 
 #[tokio::test]
@@ -1779,7 +1810,7 @@ async fn a_2_0_base_path_that_is_not_the_surfaces_path_leaves_the_surface_open()
         &with_surfaces(&target, &[("api", &format!("{base}/api"))]),
         &findings,
     );
-    assert!(surface_of(&folder, "endpoints/get_orders.yaml").contains("surface: \"api\""));
+    assert!(surface_of(&folder, "descriptions/api.yaml").contains("surface: \"api\""));
 }
 
 #[tokio::test]

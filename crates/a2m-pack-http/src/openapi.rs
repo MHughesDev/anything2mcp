@@ -1463,6 +1463,13 @@ impl DraftingRule for DescribedOperationRule {
                 "Import the description again with the version of the HTTP pack that is enabled.",
             ));
         };
+        // An operation the pinned description states has its request there,
+        // in the endpoint catalog's entry for an `api` read: no endpoint
+        // entry states it a second time (rule eight, decision 0399).
+        if crate::described::pinned_draft(finding, &operation, cx).is_some() {
+            cx.not_drafted(crate::described::PINNED_ELSEWHERE);
+            return Ok(Vec::new());
+        }
         // An operation whose name is another's takes none: its name is an
         // open question, in a file named for its method and path.
         let name = if operation.endpoint_shared {

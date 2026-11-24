@@ -317,12 +317,8 @@ fn tried(report: &Json, proven: bool) -> Vec<String> {
 
 /// The drafted files a scout of the test application writes for the read
 /// this hour is for: its operation, the description it is pinned to in the
-/// `api` mode (decision 0399), and the operation's endpoint entry.
-const KEPT: [&str; 3] = [
-    "descriptions/http.yaml",
-    "endpoints/get_order.yaml",
-    "operations/api_orders_get.yaml",
-];
+/// `api` mode, which is the one place its request is stated (decision 0399).
+const KEPT: [&str; 2] = ["descriptions/http.yaml", "operations/api_orders_get.yaml"];
 
 /// What a scout's report says, checked the same way for every scout of the
 /// test application: what was found, what was drafted, what was proven.
@@ -379,7 +375,12 @@ fn check_report(report: &Json) {
     let left = content["drafted"]["not_drafted"].as_array().unwrap();
     let pickup = left
         .iter()
-        .find(|entry| entry["description"].to_string().contains("/pickup"))
+        .find(|entry| {
+            // The read rule's entry: the pinned description's rule says of
+            // the same finding only that nothing was pinned (decision 0399).
+            entry["description"].to_string().contains("/pickup")
+                && !entry["reason"].to_string().contains("not pinned")
+        })
         .unwrap_or_else(|| panic!("the pickup read is not in not_drafted: {report}"));
     assert!(pickup["finding"].is_string(), "{pickup}");
     assert_eq!(pickup["pack"], "http", "{pickup}");

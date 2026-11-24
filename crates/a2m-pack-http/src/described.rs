@@ -406,10 +406,12 @@ impl FileKind for DescriptionKind {
 }
 
 /// The pinned description an operation of a finding is drafted into, and
-/// its name: only for a read the description marks safe, read with a
-/// digest, with a path this pack can send and an answer it states, on the
-/// one surface that certainly takes it. The description is named after
-/// that surface.
+/// its name: only for a GET the read rule drafts a read for, read with a
+/// digest, on the one surface that certainly takes it. That read binds the
+/// operation in `api`, and the pinned document is the one place its
+/// request is stated: no endpoint entry is drafted for it (rule eight).
+/// Every other operation keeps its endpoint entry. The description is
+/// named after the surface.
 pub(crate) fn pinned_draft(
     finding: &Finding,
     operation: &DescribedOperation,
@@ -417,7 +419,7 @@ pub(crate) fn pinned_draft(
 ) -> Option<(String, DraftDoc)> {
     let digest = operation.digest.as_deref()?;
     let response = operation.response.as_ref()?;
-    if !operation.safe || openapi::template_path_of(&operation.path).is_none() {
+    if cx.target().is_none() || !crate::draft::would_draft(operation) {
         return None;
     }
     let surface = openapi::certain_surface(finding, operation, cx)?;
@@ -506,12 +508,22 @@ impl DraftingRule for PinnedDescriptionRule {
                 "Import the description again with the version of the HTTP pack that is enabled.",
             ));
         };
-        Ok(pinned_draft(finding, &operation, cx)
+        let pinned: Vec<DraftDoc> = pinned_draft(finding, &operation, cx)
             .map(|(_, doc)| doc)
             .into_iter()
-            .collect())
+            .collect();
+        if pinned.is_empty() {
+            cx.not_drafted(NOT_PINNED);
+        }
+        Ok(pinned)
     }
 }
+
+/// Why an operation is not pinned: only a drafted read binds `api`.
+const NOT_PINNED: &str = "No read is drafted in the `api` mode for the operation, so its request is not pinned; where an entry is drafted for it, it is in `endpoints/`.";
+
+/// Why an operation has no endpoint entry: its request is pinned.
+pub(crate) const PINNED_ELSEWHERE: &str = "The operation's request is stated in its pinned description, which its drafted `api` read binds, so no endpoint entry states it again.";
 
 /// The lowering of the `api` mode.
 pub(crate) struct ApiLowering {
@@ -838,5 +850,83 @@ impl Lowering for ApiLowering {
             settle_ms: 0,
             prefer_response: false,
         })
+    }
+}
+
+/// `http.endpoint_stated_twice`: an endpoint entry and the pinned
+/// description an `api` binding names state one operation, on one surface,
+/// by one method and path. Rule eight keeps an operation's request in one
+/// place of the endpoint catalog: an endpoint entry, or a pinned
+/// description's document (decision 0399).
+pub(crate) struct StatedTwice;
+
+/// What states one request: the surface, the method, and the path as a
+/// template of this pack.
+fn request_of(doc: &Located<Doc>, path: Option<String>) -> Option<(String, String, String)> {
+    Some((
+        doc.text("surface")?.to_owned(),
+        doc.text("method")?.to_ascii_uppercase(),
+        path?,
+    ))
+}
+
+impl a2m_files::LintRule for StatedTwice {
+    fn code(&self) -> a2m_core::LintCode {
+        crate::endpoints::code("endpoint_stated_twice")
+    }
+
+    fn level(&self, _mode: a2m_files::CompileMode) -> a2m_files::Level {
+        a2m_files::Level::Error
+    }
+
+    fn summary(&self) -> &str {
+        "No endpoint entry states the operation an `api` binding binds through its pinned description."
+    }
+
+    fn check(&self, view: &a2m_files::ResolvedView<'_>) -> Vec<a2m_files::Diagnostic> {
+        let pinned = view.entries(&DESCRIPTION_KIND, &HTTP_SURFACE);
+        let mut bound = Vec::new();
+        for operation in view.operations() {
+            let bindings = operation.doc().get("bindings");
+            for binding in bindings.map(Located::items).unwrap_or_default() {
+                if binding.text("mode") != Some(API_MODE) {
+                    continue;
+                }
+                let description = binding.text("description");
+                let id = binding.text("operation_id");
+                let found = pinned.iter().find(|doc| {
+                    doc.text("description") == description
+                        && match id {
+                            Some(id) => doc.text("operation_id") == Some(id),
+                            None => {
+                                doc.text("method") == binding.text("method")
+                                    && doc.text("path") == binding.text("path")
+                            }
+                        }
+                });
+                if let Some(request) = found.and_then(|doc| {
+                    request_of(doc, doc.text("path").and_then(openapi::template_path_of))
+                }) {
+                    bound.push(request);
+                }
+            }
+        }
+        view.entries(&crate::endpoints::ENDPOINT_KIND, &HTTP_SURFACE)
+            .iter()
+            .filter(|entry| {
+                request_of(entry, entry.text("path").map(str::to_owned))
+                    .is_some_and(|request| bound.contains(&request))
+            })
+            .map(|entry| {
+                let at = entry.get("path").map_or(&entry.at, |path| &path.at);
+                problem(
+                    "endpoint_stated_twice",
+                    Stage::Lint,
+                    at,
+                    "This endpoint entry states the request of an operation that an `api` binding binds through its pinned description: the operation would be stated in two places.",
+                    "Remove the endpoint entry and keep the `api` binding, or bind the operation in `http` over this entry and remove the `api` binding.",
+                )
+            })
+            .collect()
     }
 }
