@@ -32,7 +32,10 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         .iter()
         .map(|handle| handle.declared().name.to_string())
         .collect();
-    assert_eq!(names, ["web_capture", "web_probe", "web_snapshot"]);
+    assert_eq!(
+        names,
+        ["web_auth", "web_capture", "web_probe", "web_snapshot"]
+    );
     // No discoverer claims more than `discovered`, and none suits a surface
     // that is not reached over http.
     for handle in first.registry.discoverers_for(&Bench::description(address)) {
