@@ -10,6 +10,8 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Added
 
+- A scout of a service with a published description now drafts its reads in the new `api` mode: each binds the operation the description states, by its `operationId`, pinned in `descriptions/` with the digest of the description it was read from. Before the first call of a run, the description is read again where it was served; once it has changed, the call stops as `drift`, `description_changed`, with nothing sent, and the binding stays drifted until it is drafted again and published. An answer the description shapes only by a reference to another file is drafted with a question that says so ([decision 0399](docs/decisions/0399-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)).
+
 - A scout of a command-line program now drafts a read operation for each command a person has declared `effect: read` (with its output) in a `commands/` file, and says why it drafts none for a command nobody declared or one declared a write ([decision 0387](docs/decisions/0387-the-command-pack-drafts-an-operation-only-once-a-person-has-declared-the-commands-effect.md)).
 - Every answer of the approval page that records nothing names its failure code in the `A2M-Failure-Code` header: `request_not_from_page`, `page_not_found`, `prompt_busy`, `presence_failed`, `surface_unavailable`, `change_not_shown_whole`, or the approval desk's own, such as `approval_stale` ([decision 0388](docs/decisions/0388-every-refusal-of-the-approval-page-is-named-and-a-script-is-proven-unable-to-approve.md)).
 
