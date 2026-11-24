@@ -38,7 +38,8 @@ use a2m_vault::KeyStore;
 use crate::engine::{Engine, EngineOptions, action_registry};
 use crate::person::{ProcessTerminal, TerminalSurface};
 pub use parse::COMPLETION_COMMAND;
-use parse::{Globals, Parsed, Step, Stop, Tree};
+pub(crate) use parse::Tree;
+use parse::{Globals, Parsed, Step, Stop};
 pub use process::READY_LINE;
 use serde_json::Value as Json;
 
@@ -345,18 +346,20 @@ async fn take_stdin(steps: &mut [Step]) -> Result<(), Failure> {
 /// a terminal or as an agent. For a host that keeps one engine for several
 /// commands, and for tests.
 pub async fn run_on(engine: &Engine, args: &[String], json: bool, is_agent: bool) -> Finished {
-    let tree = Tree::of(engine.kernel().actions());
+    // The tree is made once for the engine, whose registry is fixed while
+    // it is open.
+    let tree = engine.command_tree();
     match tree.parse(args) {
         Ok(Parsed::Invoke(globals, mut steps, stop)) => {
             let json = json || globals.json;
             if let Err(failure) = take_stdin(&mut steps).await {
-                return stopped(&tree, "", &failure, ExitClass::Malformed, json);
+                return stopped(tree, "", &failure, ExitClass::Malformed, json);
             }
-            let finished = run_steps(engine, &tree, &globals, steps, json, is_agent).await;
-            after_steps(finished, stop.as_ref(), &tree, json)
+            let finished = run_steps(engine, tree, &globals, steps, json, is_agent).await;
+            after_steps(finished, stop.as_ref(), tree, json)
         }
-        Ok(other) => without_engine(&tree, other, json),
-        Err(failure) => stopped(&tree, "", &failure, ExitClass::Malformed, json),
+        Ok(other) => without_engine(tree, other, json),
+        Err(failure) => stopped(tree, "", &failure, ExitClass::Malformed, json),
     }
 }
 
