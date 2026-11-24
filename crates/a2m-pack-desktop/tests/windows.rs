@@ -368,3 +368,26 @@ async fn a_management_class_a_surface_names_stops_by_name_off_windows() {
     );
     assert!(findings.is_empty());
 }
+
+/// On Windows, a namespace of another machine is refused by the driver
+/// itself, before the management service is asked anything: the review
+/// withdraws the binding's statement, and the driver fails closed as well.
+#[cfg(windows)]
+#[tokio::test]
+async fn a_management_namespace_of_another_machine_is_refused_by_the_driver() {
+    let Some(scene) = Scene::with_surface_lines(
+        "management-remote",
+        "    management_class: Example_Counter\n    management_namespace: '//other/root'\n",
+    )
+    .await
+    else {
+        return;
+    };
+    let (said, findings) = discover(&scene, "desktop_management", None).await;
+    let failure = said.unwrap_err();
+    assert_eq!(
+        (failure.class(), failure.code().as_str()),
+        (a2m_core::FailureClass::Policy, "remote_namespace_refused")
+    );
+    assert!(findings.is_empty());
+}

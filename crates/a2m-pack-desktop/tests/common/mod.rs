@@ -191,6 +191,19 @@ impl Scene {
         Self::build(name, true, copy.path()).await
     }
 
+    /// The same, with `lines` added to the surface after its service.
+    pub async fn with_surface_lines(name: &str, lines: &str) -> Option<Self> {
+        let copy = Folder::new("surface-target");
+        let lines = lines.to_owned();
+        fixture_copy(copy.path(), "target.yaml", move |text| {
+            text.replace(
+                "    service: org.example.Desk\n",
+                &format!("    service: org.example.Desk\n{lines}"),
+            )
+        });
+        Self::build(name, true, copy.path()).await
+    }
+
     async fn with(name: &str, application: bool) -> Option<Self> {
         Self::build(name, application, &fixture()).await
     }

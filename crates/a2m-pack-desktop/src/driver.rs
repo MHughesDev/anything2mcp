@@ -1002,6 +1002,12 @@ impl Held {
             .management_namespace
             .clone()
             .unwrap_or_else(|| crate::windows_kinds::DEFAULT_NAMESPACE.to_owned());
+        // Another machine's namespace is never asked, whatever the review
+        // said of the binding's statement: fail closed, here, before the
+        // management service is reached.
+        if crate::lower::names_another_machine(&namespace) {
+            return Err(codes::remote_namespace_refused());
+        }
         let read = crate::backend::wmi::read(namespace.clone(), class.clone())
             .await
             .map_err(|error| unsent(&error, &self.program))?;

@@ -101,6 +101,9 @@ a2m_core::failure_codes! {
         meaning "This pack writes only on Linux, Windows, and macOS in this version. Nothing was sent.",
         next "Run the write on Linux, Windows, or macOS. On this system the pack reads only.",
         passes not_by_itself;
+    REMOTE_NAMESPACE_REFUSED = Policy, "remote_namespace_refused",
+        meaning "The surface's management namespace names another machine (it begins with two separators). The driver asks only this machine's management service, and asks nothing of it.",
+        next "Leave `management_namespace` out, or name a namespace of this machine.";
 }
 
 /// The codes of other crates the driver returns as they are, which the
@@ -137,6 +140,17 @@ pub(crate) fn writes_not_built() -> StepFailure {
             std::env::consts::OS
         ),
         "Run the write on Linux, Windows, or macOS. On this system the pack reads only.",
+    ))
+}
+
+/// A management namespace of another machine, refused by the driver before
+/// the management service is asked anything.
+#[cfg(windows)]
+pub(crate) fn remote_namespace_refused() -> StepFailure {
+    StepFailure::not_sent(failure(
+        &row::REMOTE_NAMESPACE_REFUSED,
+        "The surface's management namespace names another machine; the desktop pack asks only this machine's management service. Nothing was sent.".to_owned(),
+        "Leave `management_namespace` out, or name a namespace of this machine.",
     ))
 }
 
