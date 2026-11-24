@@ -1,0 +1,21 @@
+# The imaginary order events and notices of `example`, over NATS.
+channel: orders.events
+address: ORDERS_EVENTS/example.orders.events
+shape: log
+role: events
+schema: order_event
+key: {field: order_id}
+read_through: [browse, own_subscription]
+consumers: outside
+idempotency: {header: Nats-Msg-Id, broker_dedupe: true, window: 2m}
+wait: {default: 2s, max: 10s}
+limits: {browse_count: 2}
+---
+channel: orders.notices
+address: example.orders.notices
+shape: topic
+role: events
+correlation: {field: headers.correlation_id}
+read_through: own_subscription
+consumers: outside
+wait: {default: 2s, max: 10s}

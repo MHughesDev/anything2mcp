@@ -1,0 +1,18 @@
+operation: example_order_notice_send
+title: Send a notice about an order
+effect: irreversible
+hazard: sends_outside
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+  text: {type: text, description: "The notice"}
+outputs:
+  message_id: {type: broker_text}
+bindings:
+  - mode: stream
+    verb: publish
+    status: verified
+    channel: orders.notices
+    headers: {correlation_id: input.order_id}
+    body: {order_id: input.order_id, text: input.text}
+description: >
+  Sends one notice to whoever is listening. Nothing keeps it.

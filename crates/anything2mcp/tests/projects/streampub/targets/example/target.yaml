@@ -1,0 +1,17 @@
+# The imaginary order messages of `example`, reached through the protocol
+# `nats`, as the stream pack's tests use them. It describes no real system.
+# The address is replaced by the test server's own when a test runs.
+schema_version: 1
+target: example
+title: Example order messages over NATS
+surfaces:
+  broker:
+    kind: broker
+    address: "127.0.0.1:4222"
+    protocol: nats
+    rate: {requests: 50, per_ms: 1000}
+environments:
+  test:
+    kind: test
+    test_records: ["A-100"]
+default_environment: test

@@ -1,0 +1,5 @@
+test: example_order_notice_send
+kind: offline
+fixture: order_notice_send
+inputs: {order_id: "A-100", text: "packed"}
+expect: {}
