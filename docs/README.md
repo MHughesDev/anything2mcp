@@ -15,7 +15,7 @@ The scope, both sides, is one page at the root: [SCOPE.md](../SCOPE.md) says wha
 | [reviews/](reviews/README.md) | The results of design review rounds: what each looked at, what it found, and where each finding went; the [coverage map](reviews/coverage-map.md) of every way a computer's software can be reached is kept here too; the folder's [index](reviews/README.md) lists them | 8 |
 | [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 370 |
 | [hypotheses/](hypotheses/README.md) | The design's bets, each with an alternative and a test; results as they come in | 42 open |
-| [journal/](journal/README.md) | One entry per working session; the newest says where things stand | 13 entries |
+| [journal/](journal/README.md) | One entry per working session; the newest says where things stand | 14 entries |
 | [research/](research/README.md) | Research notes, code reviews, and briefs still to run | 39 |
 | [archive/](archive/README.md) | The first design's consolidated sections and its plans, kept as history; the key from old section numbers to new | 44 documents and 1 image |
 | assets/ | Diagrams | 2 |
