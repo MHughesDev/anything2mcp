@@ -14,7 +14,7 @@ use crate::model::{
     BEFORE_DIGEST, ENTRY_CONTENT, ENTRY_NAME, Expect, FolderChange, FolderSpec, INTENDED_DIGEST,
     LOG_FROM, LogSpec, ROWS, StepSpec, TRUNCATED, field_arg, key_arg,
 };
-use crate::open::{not_allowed, unavailable};
+use crate::open::{not_allowed, not_on_this_machine, unavailable};
 use crate::place::{Folder, Identity};
 use crate::save::{self, SaveJob};
 
@@ -459,6 +459,7 @@ impl Entries {
                                 return Ok(StepOutcome::Done(Observed::default()));
                             }
                             Some(Kind::Folder) => {}
+                            Some(Kind::NotOnThisMachine) => return Err(not_on_this_machine()),
                             Some(_) => {
                                 return Err(StepFailure::not_sent(not_allowed(
                                     "it is a link or a special file, and the file pack removes only a file or an empty folder",
@@ -611,6 +612,7 @@ impl Entries {
 fn must_be_file(entry: Option<&Entry>) -> Result<(), StepFailure> {
     match entry.map(|entry| entry.kind) {
         Some(Kind::File) => Ok(()),
+        Some(Kind::NotOnThisMachine) => Err(not_on_this_machine()),
         Some(_) => Err(StepFailure::not_sent(not_allowed(
             "it is not a regular file, and only a file's content is written or a file renamed",
         ))),
@@ -636,6 +638,9 @@ fn content_of(
     spec: &FolderSpec,
     max: u64,
 ) -> Result<Value, StepFailure> {
+    if entry.kind == Kind::NotOnThisMachine {
+        return Err(not_on_this_machine());
+    }
     if entry.kind != Kind::File {
         return Err(StepFailure::not_sent(not_allowed(
             "it is not a regular file, and only a file's content is read",

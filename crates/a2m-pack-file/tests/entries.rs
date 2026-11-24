@@ -430,6 +430,73 @@ async fn a_folder_lists_its_entries_in_order_and_reads_one_by_its_name() {
     assert!(scene.stand.outside_untouched().unwrap());
 }
 
+/// A file whose bytes are not on this machine is listed by its name, kind,
+/// size, and time, with no digest, and is never read or replaced
+/// (decision 0430). Only Windows lets the stand mark one; elsewhere the
+/// test ends here.
+#[tokio::test]
+async fn a_file_not_on_this_machine_is_listed_without_a_digest_and_never_read_or_replaced() {
+    let scene = Scene::new();
+    let away = Fault::NotOnThisMachine {
+        file: seed::INBOX_NOTE_ONE.to_owned(),
+    };
+    if scene
+        .stand
+        .set_fault(away)
+        .is_err_and(|error| error.is_unsupported())
+    {
+        return;
+    }
+    let list = read(&scene, "example_inbox_list", &Values::new())
+        .await
+        .unwrap();
+    let names = list.get("name").and_then(Value::as_list).unwrap();
+    let at = names
+        .iter()
+        .position(|name| name == &text("note-1.txt"))
+        .unwrap();
+    assert_eq!(
+        list.get("kind").and_then(Value::as_list).unwrap()[at],
+        text("not_on_this_machine")
+    );
+    assert_eq!(
+        list.get("digest").and_then(Value::as_list).unwrap()[at],
+        Value::Null
+    );
+    assert_eq!(
+        list.get("size").and_then(Value::as_list).unwrap()[at],
+        Value::Int(i64::try_from(seed_bytes(seed::INBOX_NOTE_ONE).len()).unwrap())
+    );
+    let refused = (FailureClass::Policy, "file_not_on_this_machine");
+    let failure = read(
+        &scene,
+        "example_inbox_get",
+        &inputs(&[("name", text("note-1.txt"))]),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(code(&failure), refused);
+    let store = store().await;
+    let failure = write(
+        &scene,
+        &store,
+        1,
+        "example_inbox_set",
+        &inputs(&[("name", text("note-1.txt")), ("content", text("Ours.\n"))]),
+        || {},
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(code(&failure), refused);
+    assert_eq!(failure.sent, a2m_provider::Sent::NotSent);
+    scene.stand.clear_faults().unwrap();
+    assert_eq!(
+        scene.stand.bytes(seed::INBOX_NOTE_ONE).unwrap().unwrap(),
+        seed_bytes(seed::INBOX_NOTE_ONE)
+    );
+    assert!(scene.stand.strays().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn a_file_is_created_only_where_no_entry_has_its_name() {
     let scene = Scene::new();

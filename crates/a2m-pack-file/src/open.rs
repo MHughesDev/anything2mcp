@@ -60,6 +60,16 @@ pub(crate) fn unavailable(what: &str) -> Failure {
     )
 }
 
+/// The file's bytes are not on this machine: nothing reads or replaces it,
+/// so that nothing is fetched (decision 0430).
+pub(crate) fn not_on_this_machine() -> StepFailure {
+    stop(
+        &codes::row::FILE_NOT_ON_THIS_MACHINE,
+        "The file is not on this machine: a sync program keeps its bytes elsewhere, and it is neither read nor replaced, so that nothing is fetched.",
+        "In the sync program's own settings, make the file kept on this machine, then try again.",
+    )
+}
+
 pub(crate) fn missing() -> StepFailure {
     stop(
         &codes::row::FILE_MISSING,
