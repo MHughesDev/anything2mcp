@@ -8,6 +8,7 @@ Newest first.
 
 | Date | Entry | In one line |
 | --- | --- | --- |
+| 2026-11-24 | [A gate before every push](2026-11-24-a-gate-before-every-push.md) | CI's Linux checks run here or in sibling sessions before a push; CI keeps its dependencies; 9.1, 8.4a, E4, 4.4 and 3.6's automated half; 119 of 150 |
 | 2026-11-24 | [Many lanes at once](2026-11-24-many-lanes-at-once.md) | Up to twenty workers, one per group of crates; FT4's verified write in a field test; plain names; 81 of 149 |
 | 2026-11-23 | [The design settled for the next lead](2026-11-23-the-design-settled-for-the-next-lead.md) | The holding folder, the secret-named field, and eight decisions that settle stages 1 to 4, with the build order written for a lead that takes over |
 | 2026-11-23 | [The first field test](2026-11-23-the-first-field-test.md) | The owner makes existing software that the project runs itself a testing surface and hands the open questions to the agents; a runner for field tests; the first one, reads of an HTTP service, makes seven findings |
