@@ -25,6 +25,43 @@ const OPERATION: FileKindName = FileKindName::fixed("operation");
 /// Named values of a draft, in order.
 type Pairs = Vec<(String, DraftValue)>;
 
+/// Why the rule drafts no read for a tool: the pack's own sentences, which
+/// quote nothing the server wrote (field test 6, finding 41).
+mod why {
+    pub(super) const NO_TARGET: &str =
+        "The folder has no `target.yaml` yet, so the read has no name to be drafted under.";
+    pub(super) const NAME_NOT_PLAIN: &str = "The tool's name is not a plain name of lowercase letters, digits, and underscores, and an operation's name is made from it.";
+    pub(super) const NOT_READ_ONLY: &str = "The server does not mark the tool read-only. Whether it reads, writes, or does something that cannot be taken back is a person's answer in its mapping entry, and an operation over it is the developer's.";
+    pub(super) const FREE_TEXT: &str = "The tool's whole input is one string, which the server may run as a command, a query, or a prompt. Its read is drafted when the surface's mapping states `free_text: false` for this definition of it and the scout is run again.";
+    pub(super) const NAME_REFUSED: &str =
+        "The operation's name made from the target and the tool is not one an operation may have.";
+    pub(super) const INPUT_SECRET: &str =
+        "A required input is named as a secret's, and a secret is never an input.";
+    pub(super) const INPUT_TYPE: &str = "A required input states no type the rule reads: a string, a whole number, a number, or a truth value.";
+    pub(super) const INPUT_NAME: &str = "A required input's name is not a plain name, and an argument is passed under the server's own name.";
+    pub(super) const NO_OUTPUT: &str =
+        "The tool's output schema states no plain property the rule can make an output of.";
+}
+
+/// Whether a person answered, in the target's mapping, that the server does
+/// not run the one string of this tool, for the definition the finding
+/// reports: an entry of the surface's mapping, outside the holding folder,
+/// with the finding's digest and `free_text: false` (decision 0399).
+fn answered_not_free_text(cx: &DraftContext<'_>, surface: &str, tool: &str, digest: &str) -> bool {
+    cx.existing().is_some_and(|sources| {
+        sources
+            .docs_of(names::MAPPING_KIND.as_str())
+            .filter(|doc| doc.text("surface") == Some(surface))
+            .filter_map(|doc| doc.get("tools"))
+            .flat_map(|tools| tools.entries())
+            .filter(|entry| entry.key.value == tool)
+            .any(|entry| {
+                entry.value.text("digest") == Some(digest)
+                    && entry.value.get("free_text").and_then(|flag| flag.as_bool()) == Some(false)
+            })
+    })
+}
+
 /// A name in the form target files use: lowercase letters, digits, and
 /// underscores, starting with a letter. `None` for a name that is not one
 /// already, since an argument is passed under the server's own name.
@@ -79,21 +116,29 @@ impl DraftingRule for ToolToRead {
                 "Correct the provider that made the finding.",
             )
         })?;
+        let none = |reason: &str| {
+            cx.not_drafted(reason);
+            Ok(Vec::new())
+        };
         let Some(target) = cx.target() else {
-            return Ok(Vec::new());
+            return none(why::NO_TARGET);
         };
         let text = |key: &str| found.get(key).and_then(Json::as_str);
         let (Some(surface), Some(tool)) = (text("surface"), text("tool").and_then(plain)) else {
-            return Ok(Vec::new());
+            return none(why::NAME_NOT_PLAIN);
         };
-        if found.get("read_only").and_then(Json::as_bool) != Some(true)
-            || found.get("free_text").and_then(Json::as_bool) == Some(true)
+        if found.get("read_only").and_then(Json::as_bool) != Some(true) {
+            return none(why::NOT_READ_ONLY);
+        }
+        if found.get("free_text").and_then(Json::as_bool) == Some(true)
+            && !text("digest")
+                .is_some_and(|digest| answered_not_free_text(cx, surface, tool, digest))
         {
-            return Ok(Vec::new());
+            return none(why::FREE_TEXT);
         }
         let name = format!("{}_{tool}", target.as_str());
         if OperationName::new(&name).is_err() {
-            return Ok(Vec::new());
+            return none(why::NAME_REFUSED);
         }
         let schema = found.get("input_schema").unwrap_or(&Json::Null);
         let required: Vec<&str> = schema
@@ -107,6 +152,7 @@ impl DraftingRule for ToolToRead {
         let mut args: Pairs = Vec::new();
         let mut example: Pairs = Vec::new();
         let mut every_example = true;
+        let mut left_out = 0_usize;
         for (property, inner) in schema
             .get("properties")
             .and_then(Json::as_object)
@@ -118,8 +164,9 @@ impl DraftingRule for ToolToRead {
             // read is the developer's where required (decision 0302).
             if named_as_secret(property) {
                 if needed {
-                    return Ok(Vec::new());
+                    return none(why::INPUT_SECRET);
                 }
+                left_out += 1;
                 continue;
             }
             let ty = match kind(inner) {
@@ -130,11 +177,11 @@ impl DraftingRule for ToolToRead {
                 // An optional input of a type the rule cannot read is left
                 // out; a required one leaves the read to the developer.
                 _ if !needed => continue,
-                _ => return Ok(Vec::new()),
+                _ => return none(why::INPUT_TYPE),
             };
             let Some(input) = plain(property) else {
                 if needed {
-                    return Ok(Vec::new());
+                    return none(why::INPUT_NAME);
                 }
                 continue;
             };
@@ -209,8 +256,9 @@ impl DraftingRule for ToolToRead {
             }
         }
         if outputs.is_empty() {
-            return Ok(Vec::new());
+            return none(why::NO_OUTPUT);
         }
+        cx.left_out_as_secret(left_out + secrets.len());
         let mut binding = vec![
             ("mode", DraftValue::text(names::PACK)),
             ("tool", DraftValue::text(tool)),

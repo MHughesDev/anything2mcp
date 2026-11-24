@@ -24,7 +24,10 @@ use crate::json::{
     ToolDefinition, cannot_hold_free_text, canonical, definition_digest, digest_text, fits,
     from_json, parse_digest, to_json, unchecked_keywords,
 };
-use crate::mapping::{CallPayload, LOCAL_ADDRESS, Mapping, Section, SurfaceFields, ToolEntry};
+use crate::mapping::{
+    CallPayload, LOCAL_ADDRESS, Mapping, RESULT_JSON_TEXT, RESULT_TEXT, Section, SurfaceFields,
+    ToolEntry,
+};
 use crate::names;
 
 /// What a connection reaches, as the run's own surface states it.
@@ -631,6 +634,45 @@ fn listed_members(
     Some(values)
 }
 
+/// The members of a result whose text items are JSON (`result: json_text`,
+/// decision 0399). An item whose text is empty, or only spaces, holds
+/// nothing. With `records` named, every item is a row, and an item that is
+/// a JSON list gives each of its elements as a row: the rows are listed
+/// under that name, and no item at all is an empty list, so "none" is told
+/// apart from an answer. Without `records`, the result is the one item that
+/// is an object, or nothing when there is no item.
+///
+/// `None` when an item is not JSON, or, without `records`, when the items
+/// are not one object.
+fn json_text(entry: &ToolEntry, texts: &[String]) -> Option<Json> {
+    let mut items = Vec::new();
+    for text in texts {
+        if text.trim().is_empty() {
+            continue;
+        }
+        items.push(serde_json::from_str::<Json>(text).ok()?);
+    }
+    match entry.records.as_deref() {
+        Some(list) => {
+            let mut rows = Vec::new();
+            for item in items {
+                match item {
+                    Json::Array(inner) => rows.extend(inner),
+                    one => rows.push(one),
+                }
+            }
+            let mut members = serde_json::Map::new();
+            members.insert(list.to_owned(), Json::Array(rows));
+            Some(Json::Object(members))
+        }
+        None => match items.len() {
+            0 => Some(Json::Object(serde_json::Map::new())),
+            1 if items[0].is_object() => items.pop(),
+            _ => None,
+        },
+    }
+}
+
 impl McpDriver {
     /// Turns a tool's result into what the step observed.
     fn observe(
@@ -689,11 +731,21 @@ impl McpDriver {
                     .with_said(self.redact.redact(&clean)))
             };
         }
-        let mut values = if entry.result == "text" {
+        let mut values = if entry.result == RESULT_TEXT {
             // The tool's own words, under one name. They are untrusted text
             // and the operation's field type says so. Nothing else of the
             // result is passed on.
             Values::new().with("text", result.texts.join("\n"))
+        } else if entry.result == RESULT_JSON_TEXT {
+            // The tool's text items are JSON, as the mapping declares: read
+            // as members, and passed on as a structured result's are. Text
+            // that is not JSON is a result the mapping did not foresee.
+            let read = json_text(entry, &result.texts)
+                .ok_or_else(|| doubt(codes::schema_mismatch(tool)))?;
+            let none = serde_json::Map::new();
+            let members = read.as_object().unwrap_or(&none);
+            listed_members(entry, definition.output_schema.as_ref(), members)
+                .ok_or_else(|| doubt(codes::schema_mismatch(tool)))?
         } else {
             let structured = match (&definition.output_schema, &result.structured) {
                 (Some(schema), Some(structured)) if fits(schema, structured).is_ok() => {

@@ -210,7 +210,7 @@ struct Call<'a> {
 fn step(call: Call<'_>, cx: &LowerContext<'_>) -> Option<Step> {
     let section = cx.section_index(&names::MAPPING_KIND, &names::SURFACE_KIND)?;
     let mut certain = call.entry.key.clone();
-    if call.entry.result == "text" {
+    if call.entry.result == crate::mapping::RESULT_TEXT {
         certain.push("text".to_owned());
     }
     let payload = PackPayload::encode(&CallPayload {
@@ -591,7 +591,26 @@ impl Lowering for McpLowering {
             .or_else(|| target.default_timeout_ms("step"))
             .unwrap_or(DEFAULT_TIMEOUT_MS);
         let key_inputs = operation.key().len();
-        let act_args = args_of(binding.field("args"), cx, &mut problems);
+        let mut act_args = args_of(binding.field("args"), cx, &mut problems);
+        // A read belongs to no commit point, so the engine gives its step
+        // no record key: the arguments its mapping names under `key_args`
+        // are filled here, from the operation's key inputs in order, where
+        // the binding states none of its own. So what lint and the offline
+        // test see is what the live call sends (field test 6, finding 38).
+        if !entry.writes() {
+            for (argument, name) in entry.key_args.iter().zip(operation.key()) {
+                if act_args.iter().any(|arg| &arg.name == argument) {
+                    continue;
+                }
+                match cx.expr_at(&format!("input.{name}"), &tool_doc.at, None) {
+                    Ok(value) => act_args.push(StepArg {
+                        name: argument.clone(),
+                        value,
+                    }),
+                    Err(problem) => problems.push(problem),
+                }
+            }
+        }
         problems.extend(place_key_problem(
             &tool_doc.at,
             tool,
@@ -829,7 +848,7 @@ impl LintRule for Rule {
             Self::ToolUnpinned => "A mapped tool states the digest of its definition.",
             Self::ProgramUnpinned => "A local server program states its digest.",
             Self::WriteNoReadback => {
-                "A tool mapped as a write names a mapped read tool, or is mapped as irreversible."
+                "A tool mapped as a write names a mapped read tool whose result has fields, or is mapped as irreversible."
             }
             Self::DiscoveryBound => {
                 "No binding uses a tool of a mapping whose purpose is discovery."
@@ -968,20 +987,26 @@ impl LintRule for Rule {
             Self::WriteNoReadback => tool_entries(mappings)
                 .into_iter()
                 .filter(|(surface, _, entry, _)| {
+                    // A read tool whose result is its text gives a read-back
+                    // no field to compare (field test 6, finding 39).
                     entry.text("effect") == Some("write")
                         && !entry
                             .text("read_back")
                             .and_then(|read| find_tool(mappings, surface, read))
-                            .is_some_and(|found| found.entry.text("effect") == Some("read"))
+                            .is_some_and(|found| {
+                                found.entry.text("effect") == Some("read")
+                                    && found.entry.text("result")
+                                        != Some(crate::mapping::RESULT_TEXT)
+                            })
                 })
                 .map(|(_, tool, _, at)| {
                     problem(
                         at,
                         format!(
-                            "The tool `{}` is mapped as a write and names no mapped read tool that reads back what it wrote.",
+                            "The tool `{}` is mapped as a write and names no mapped read tool that reads back what it wrote with fields: a read tool whose result is `text` gives none.",
                             codes::shown(tool)
                         ),
-                        "Add `read_back:` with a tool of the same mapping whose effect is `read`, or map the tool as `irreversible`.",
+                        "Add `read_back:` with a tool of the same mapping whose effect is `read` and whose result has fields (`structured`, or `json_text` for a tool that answers with JSON as text), or map the tool as `irreversible`.",
                     )
                 })
                 .collect(),

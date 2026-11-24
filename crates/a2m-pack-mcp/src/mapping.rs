@@ -20,6 +20,11 @@ pub(crate) const SECTION_FORMAT: u16 = 1;
 
 /// The revision whose connection starts with the `initialize` handshake.
 pub(crate) const REVISION_HANDSHAKE: &str = "2025-11-25";
+/// The earlier revision with the same handshake, which the pack speaks as a
+/// client: what it uses of the protocol, the handshake, the version header,
+/// `tools/list`, `tools/call`, output schemas, and structured content, is
+/// the same in it (decision 0399).
+pub(crate) const REVISION_HANDSHAKE_EARLIER: &str = "2025-06-18";
 /// The revision with no handshake: every request names it.
 pub(crate) const REVISION_NO_HANDSHAKE: &str = "2026-07-28";
 /// What a local server program's surface writes as its address.
@@ -28,6 +33,14 @@ pub(crate) const LOCAL_ADDRESS: &str = "stdio";
 /// another machine (decision 0188), and the one word it takes.
 pub(crate) const UNENCRYPTED_CREDENTIALS: &str = "unencrypted_credentials";
 pub(crate) const ACCEPTED: &str = "accepted";
+
+/// The result's values are its structured content.
+pub(crate) const RESULT_STRUCTURED: &str = "structured";
+/// The result's value is its text, under one name, `text`.
+pub(crate) const RESULT_TEXT: &str = "text";
+/// The result's text items are JSON, read as its members: one object, or,
+/// under the entry's `records`, one row for each item (decision 0399).
+pub(crate) const RESULT_JSON_TEXT: &str = "json_text";
 
 /// The `mcp` surface kind: its address, and for a local server program the
 /// program by path and digest with its arguments and its environment.
@@ -44,7 +57,11 @@ pub(crate) fn surface_kind_spec() -> SurfaceKindSpec {
             .optional("pass_environment", JsonSchema::list(JsonSchema::text()))
             .optional(
                 "revision",
-                JsonSchema::words(&[REVISION_HANDSHAKE, REVISION_NO_HANDSHAKE]),
+                JsonSchema::words(&[
+                    REVISION_HANDSHAKE,
+                    REVISION_HANDSHAKE_EARLIER,
+                    REVISION_NO_HANDSHAKE,
+                ]),
             )
             .optional(UNENCRYPTED_CREDENTIALS, JsonSchema::words(&[ACCEPTED])),
     )
@@ -196,7 +213,9 @@ pub(crate) struct ToolEntry {
     /// passed on. A member that can hold text and is not named here, or
     /// under `key` or `records`, is left out of what a step returns.
     pub untrusted_fields: Vec<String>,
-    /// `structured` or `text`: where the result's values are.
+    /// `structured`, `text`, or `json_text`: where the result's values
+    /// are. `json_text` reads the result's text items as JSON (decision
+    /// 0399).
     pub result: String,
     /// An error result whose text starts with this means the record is
     /// absent.
@@ -314,7 +333,10 @@ fn tool_schema() -> JsonSchema {
         )
         .optional("read_back", JsonSchema::text())
         .optional("untrusted_fields", JsonSchema::list(JsonSchema::text()))
-        .optional("result", JsonSchema::words(&["structured", "text"]))
+        .optional(
+            "result",
+            JsonSchema::words(&[RESULT_STRUCTURED, RESULT_TEXT, RESULT_JSON_TEXT]),
+        )
         .optional("absent_error", JsonSchema::text())
         .optional("records", JsonSchema::text())
         .optional("key", JsonSchema::list(JsonSchema::text()))
@@ -374,7 +396,7 @@ pub(crate) fn tool_entry(entry: &Located<Doc>) -> ToolEntry {
         effect: text("effect").unwrap_or_else(|| "write".to_owned()),
         read_back: text("read_back"),
         untrusted_fields: texts(entry.get("untrusted_fields")),
-        result: text("result").unwrap_or_else(|| "structured".to_owned()),
+        result: text("result").unwrap_or_else(|| RESULT_STRUCTURED.to_owned()),
         absent_error: text("absent_error"),
         records: text("records"),
         key: texts(entry.get("key")),

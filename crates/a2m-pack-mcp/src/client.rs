@@ -1,6 +1,7 @@
 //! The pack's own small MCP client: JSON-RPC 2.0 over a stream, in the two
-//! forms the protocol has. With the handshake (revision 2025-11-25) a
-//! connection starts with `initialize`; without it (revision 2026-07-28)
+//! forms the protocol has. With the handshake (revision 2025-11-25, or the
+//! earlier 2025-06-18) a connection starts with `initialize`; without it
+//! (revision 2026-07-28)
 //! every request names the revision. It lists tools with cursors, calls one
 //! tool, and cancels a call it stops waiting for.
 //!
@@ -20,7 +21,7 @@ use tokio::sync::oneshot;
 
 use crate::codes;
 use crate::json::ToolDefinition;
-use crate::mapping::{REVISION_HANDSHAKE, REVISION_NO_HANDSHAKE};
+use crate::mapping::{REVISION_HANDSHAKE, REVISION_HANDSHAKE_EARLIER, REVISION_NO_HANDSHAKE};
 
 /// The `_meta` key under which a request with no handshake names its
 /// revision. Verified against the specification's text in research note 18.
@@ -42,22 +43,28 @@ const MAX_PAGES: usize = 200;
 pub(crate) enum Revision {
     /// 2025-11-25: `initialize`, then `notifications/initialized`.
     Handshake,
+    /// 2025-06-18: the same handshake, asking for the earlier revision. A
+    /// server's own error for a call's bad input may come as the protocol
+    /// error -32602 in it, which is a stop as a changed tool, never a
+    /// retry (decision 0399).
+    HandshakeEarlier,
     /// 2026-07-28: no handshake; every request names the revision.
     NoHandshake,
 }
 
 impl Revision {
     pub(crate) fn of(text: Option<&str>) -> Self {
-        if text == Some(REVISION_NO_HANDSHAKE) {
-            Self::NoHandshake
-        } else {
-            Self::Handshake
+        match text {
+            Some(REVISION_NO_HANDSHAKE) => Self::NoHandshake,
+            Some(REVISION_HANDSHAKE_EARLIER) => Self::HandshakeEarlier,
+            _ => Self::Handshake,
         }
     }
 
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Handshake => REVISION_HANDSHAKE,
+            Self::HandshakeEarlier => REVISION_HANDSHAKE_EARLIER,
             Self::NoHandshake => REVISION_NO_HANDSHAKE,
         }
     }
@@ -703,7 +710,7 @@ impl Client {
             server: None,
             notice_declared: false,
         };
-        if revision == Revision::Handshake {
+        if revision != Revision::NoHandshake {
             let result = client
                 .request(
                     "initialize",

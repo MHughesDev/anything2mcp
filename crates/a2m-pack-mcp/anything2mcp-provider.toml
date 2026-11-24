@@ -155,7 +155,7 @@ summary = "A local server program states its digest."
 [[lint_rules]]
 code = "mcp.write_no_readback"
 level = "error"
-summary = "A tool mapped as a write names a mapped read tool, or is mapped as irreversible."
+summary = "A tool mapped as a write names a mapped read tool whose result has fields, or is mapped as irreversible."
 
 [[lint_rules]]
 code = "mcp.discovery_bound"

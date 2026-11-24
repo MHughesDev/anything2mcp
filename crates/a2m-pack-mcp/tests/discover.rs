@@ -385,6 +385,97 @@ async fn the_stands_tool_list_drafts_reads_that_read_what_it_stores() {
     assert!(control.writes().unwrap().is_empty());
     assert_eq!(control.calls_to("orders_report").unwrap(), 1);
     assert_eq!(control.request_count("tools/call").unwrap(), 1);
+
+    // Field test 6, finding 41: every tool the read rule drafts nothing
+    // from is listed with the rule's own reason, never with none.
+    let first = Drafter::new(registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(&kept.0)
+        .unwrap();
+    assert!(!first.not_drafted.is_empty());
+    for left in &first.not_drafted {
+        assert!(!left.reason.is_empty(), "{left:?}");
+    }
+    let reasons: Vec<&str> = first
+        .not_drafted
+        .iter()
+        .map(|left| left.reason.as_str())
+        .collect();
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.contains("not mark the tool read-only")),
+        "{reasons:#?}"
+    );
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.contains("`free_text: false`")),
+        "{reasons:#?}"
+    );
+
+    // Decision 0399: once a person answers in the mapping that the server
+    // does not run `orders_get`'s one string, for the definition listed,
+    // the scout run again drafts its read, and the read reads what the
+    // stand stores.
+    let get = kept
+        .0
+        .iter()
+        .map(found)
+        .find(|tool| tool["tool"] == "orders_get")
+        .unwrap();
+    let digest = get["digest"].as_str().unwrap();
+    let mapping = root.join("mappings").join("orders.yaml");
+    let mut text = std::fs::read_to_string(&mapping).unwrap();
+    text.push_str(&format!(
+        "---\nsurface: orders\ntools:\n  orders_get:\n    digest: \"{digest}\"\n    effect: read\n    absent_error: \"There is no order\"\n    free_text: false\n"
+    ));
+    std::fs::write(&mapping, text).unwrap();
+    let again = Drafter::new(registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(&kept.0)
+        .unwrap();
+    let written: Vec<&str> = again
+        .written
+        .iter()
+        .map(a2m_files::RelPath::as_str)
+        .collect();
+    assert!(
+        written.contains(&"operations/orders_orders_get.yaml"),
+        "{written:?}"
+    );
+    let drafted = common::compile(&registry, &root)
+        .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
+        .plan;
+    let surface = common::surface(&drafted, "orders", Some(&stand.url()));
+    let (handle, mut prepared) = prepare(
+        &registry,
+        &drafted,
+        &surface,
+        fence_of(9),
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
+    let get = steps(&drafted, "example_orders_get").act;
+    let args = Values::new().with("order_id", "A-100");
+    let outcome = handle
+        .act(
+            &mut prepared,
+            &get,
+            &input(&args, None, None, None),
+            a2m_provider::Authority::Read,
+        )
+        .await
+        .unwrap();
+    handle.release(prepared, false).await;
+    let a2m_provider::StepOutcome::Done(observed) = outcome else {
+        panic!("A-100 is held");
+    };
+    assert_eq!(
+        observed.values.get("status"),
+        Some(&a2m_core::Value::from("draft"))
+    );
+    assert_eq!(control.calls_to("orders_get").unwrap(), 1);
 }
 
 /// A tool list that names secrets (decision 0302): a tool whose input and
