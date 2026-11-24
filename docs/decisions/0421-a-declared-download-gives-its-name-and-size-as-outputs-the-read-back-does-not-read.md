@@ -1,4 +1,4 @@
-# 0999. A declared download gives its name and size as outputs, which the read-back does not read
+# 0421. A declared download gives its name and size as outputs, which the read-back does not read
 
 **Status:** Accepted. Design decision, made by the worker on package 9.3s under the lead's brief. The owner had not read this record when it was written. It amends point 5 of [decision 0362](0362-a-step-that-declares-a-download-lifts-the-refusal-of-downloads-for-itself-alone-into-a-folder-of-the-profile.md) and changes no public interface: the provider contract, the engine, and the compiled target are as they were.
 

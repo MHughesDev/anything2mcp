@@ -412,4 +412,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0418 | [The publish page lists the surfaces first, and marks each new address where it lists it](0418-the-publish-page-lists-the-surfaces-first-and-marks-each-new-address-where-it-lists-it.md) | Accepted (design decision) |
 | 0419 | [A declared download is written beside the downloads folder, and moved in once whole](0419-a-declared-download-is-written-beside-the-downloads-folder-and-moved-in-once-whole.md) | Accepted (design decision) |
 | 0420 | [The API description says which actions have a client method](0420-the-api-description-says-which-actions-have-a-client-method.md) | Accepted (design decision) |
-| 0999 | [A declared download gives its name and size as outputs, which the read-back does not read](0999-a-declared-download-gives-its-name-and-size-as-outputs-the-read-back-does-not-read.md) | Accepted (design decision) |
+| 0421 | [A declared download gives its name and size as outputs, which the read-back does not read](0421-a-declared-download-gives-its-name-and-size-as-outputs-the-read-back-does-not-read.md) | Accepted (design decision) |

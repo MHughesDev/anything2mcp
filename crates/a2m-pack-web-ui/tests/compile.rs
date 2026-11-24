@@ -368,7 +368,7 @@ fn what_a_screen_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
         "web.read_back_never_absent",
     );
     // A download whose name and size go to one output, and one that gives
-    // an output the operation does not declare (decision 0999).
+    // an output the operation does not declare (decision 0421).
     let downloads = |download: &'static str| {
         move |text: &str| {
             text.replacen(
