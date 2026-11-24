@@ -1,4 +1,4 @@
-# 0999. The publish page lists the surfaces first, and marks each new address where it lists it
+# 0418. The publish page lists the surfaces first, and marks each new address where it lists it
 
 **Status:** Accepted. Design decision, made by the worker who built the page half of package 9.3u, under the lead's brief. The owner had not read this record when it was merged.
 
