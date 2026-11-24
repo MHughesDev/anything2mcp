@@ -141,6 +141,69 @@ async fn one_renewal_also_under_real_parallelism() {
     assert_eq!((world.fake.refreshes(), world.fake.sign_ins()), (1, 1));
 }
 
+/// Two engines over one store: two keepers, each with its own waiters, meet
+/// one expired session at once. The store's compare-and-set on the
+/// session's state and epoch lets one of them start the renewal; the other
+/// waits for it, and every run of both is given the one renewed epoch. A
+/// keeper hears of its own renewal at once, and of the other engine's at
+/// its next tick, which wakes every waiting call to read the store again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_engines_over_one_store_make_one_renewal() {
+    let world = World::new(STORED_RENEWING).await;
+    let other = world.second_engine();
+    let key = account_key("robot");
+    let entry = fake_entry();
+    world
+        .keeper
+        .lease(request(&key, &entry, Wait::DEFAULT))
+        .await
+        .unwrap();
+    assert_eq!(world.fake.sign_ins(), 1);
+
+    world.clock.advance(2 * HOUR);
+    world.fake.hold_renewals();
+    let runs: Vec<_> = (0..10)
+        .map(|at| {
+            let keeper = if at % 2 == 0 {
+                world.keeper.clone()
+            } else {
+                other.clone()
+            };
+            let req = request(&key, &entry, Wait::DEFAULT);
+            tokio::spawn(async move { keeper.lease(req).await })
+        })
+        .collect();
+    until(|| world.keeper.waiting() + other.waiting() == 10 && world.fake.refreshes() == 1).await;
+    world.fake.release_renewals();
+    let (mine, theirs): (Vec<_>, Vec<_>) = runs
+        .into_iter()
+        .enumerate()
+        .partition(|(at, _)| at % 2 == 0);
+    for (_, run) in mine {
+        assert_eq!(run.await.unwrap().unwrap().epoch(), 2);
+    }
+    // The other engine's tick, as its tending task makes it.
+    other.tick().await;
+    for (_, run) in theirs {
+        let lease = tokio::time::timeout(Duration::from_secs(30), run)
+            .await
+            .expect("a run of one engine waited past the tick for the other's renewal")
+            .unwrap()
+            .unwrap();
+        assert_eq!(lease.epoch(), 2);
+    }
+    assert_eq!((world.fake.refreshes(), world.fake.sign_ins()), (1, 1));
+    let kinds = world.kinds(&key).await;
+    assert_eq!(kinds.iter().filter(|kind| **kind == "renewed").count(), 1);
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| **kind == "renewal_started")
+            .count(),
+        1
+    );
+}
+
 #[tokio::test]
 async fn ten_reports_of_one_sign_cause_one_check_and_a_stale_report_changes_nothing() {
     let world = World::new(STORED_RENEWING).await;

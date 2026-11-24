@@ -200,6 +200,8 @@ pub(super) struct Options {
     /// The auth provider `example_login`, which the hand-built plan names,
     /// is registered: a provider that needs the person (`super::probe`).
     pub(super) login: bool,
+    /// One more pack a test brings, registered beside the others.
+    pub(super) extra_pack: Option<Arc<dyn a2m_provider::Pack>>,
 }
 
 impl Options {
@@ -242,6 +244,7 @@ impl Default for Options {
             before_open: None,
             notices: false,
             login: false,
+            extra_pack: None,
         }
     }
 }
@@ -313,6 +316,9 @@ pub(super) async fn world(options: Options) -> World {
     let login_pack = super::probe::LoginPack(Arc::clone(&logins));
     if options.login {
         builder.add_pack(&login_pack);
+    }
+    if let Some(extra) = &options.extra_pack {
+        builder.add_pack(extra.as_ref());
     }
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");

@@ -736,6 +736,33 @@ impl World {
         }
     }
 
+    /// A second engine over the same store: a keeper and its worker of its
+    /// own, sharing only the store's rows, the clock, the key store, and
+    /// the world outside (the system, the person, the probe). What two
+    /// keepers know of each other is what the store's compare-and-set on
+    /// the session's state and epoch tells them.
+    pub(super) fn second_engine(&self) -> Keeper {
+        let store = SessionStore::new(self.ledger.clone());
+        let credentials = StoredCredentials::new(store.clone(), Arc::clone(&self.vault));
+        let providers = ProviderSet::neutral()
+            .with(Arc::clone(&self.fake) as Arc<dyn AuthProvider>)
+            .unwrap();
+        let worker = Arc::new(KeeperWorker::new(
+            providers.clone(),
+            Arc::clone(&self.vault),
+            Arc::new(credentials),
+            self.clock.clone(),
+        ));
+        let work = Arc::new(Relay::new(InProcessWork::new(
+            Arc::clone(&worker),
+            self.person.clone(),
+            self.probe.clone(),
+        ))) as Arc<dyn KeeperWork>;
+        Keeper::builder(store, providers, work, self.clock.clone())
+            .local_worker(worker)
+            .build()
+    }
+
     pub(super) async fn store_credential(&self, key: &SessionKey, name: &str, value: &str) {
         self.credentials
             .put(

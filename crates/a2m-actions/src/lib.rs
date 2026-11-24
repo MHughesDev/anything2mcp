@@ -105,6 +105,7 @@ mod tests {
     mod pass_two;
     mod probe;
     mod reach;
+    mod renewal;
     mod runs;
     mod second;
     mod watches;
