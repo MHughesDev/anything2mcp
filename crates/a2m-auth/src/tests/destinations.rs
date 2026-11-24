@@ -441,11 +441,25 @@ async fn a_store_from_before_the_mark_opens_and_its_sessions_count_as_made_under
     let (_, published) = fake_drafted_and_published();
     signed_in_under(&world, &key, &published).await;
 
-    // What an engine before migration 0027 left: no column, and no record
-    // of the migration.
+    // What an engine before migration 0027 left: no column, no record of
+    // the migration, and none of the migrations after it, which an engine
+    // that old never had. A store that holds a later migration without an
+    // earlier one is refused, rightly, so each later migration is undone
+    // here too; one added after 0028 fails the count below until it is.
     let raw = world.raw();
+    let latest: i64 = raw
+        .query_row("SELECT MAX(number) FROM schema_migrations", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        latest, 28,
+        "a migration after 0028 exists: undo it here as well"
+    );
     raw.execute_batch(
         "BEGIN IMMEDIATE;
+         DROP TABLE actions_drift_marks;
+         DELETE FROM schema_migrations WHERE number = 28;
          ALTER TABLE sessions DROP COLUMN signed_in_under;
          DELETE FROM schema_migrations WHERE number = 27;
          COMMIT;",
