@@ -1043,7 +1043,7 @@ impl CliDriver {
         let Ok(text) = std::str::from_utf8(&last.finished.stdout) else {
             return Err(unparsed("it is not UTF-8"));
         };
-        // A read that answers "none" by printing nothing (decision 0399):
+        // A read that answers "none" by printing nothing (decision 0364):
         // the same meaning as a status declared `absent`, and the same two
         // ways out: the look before a write finds no record, and a read
         // answers that no record is there.
@@ -1081,7 +1081,7 @@ impl CliDriver {
             Parsed::Rows(rows) => {
                 // An operation's list output is read from the field's own
                 // list, one value for each row, a missing value `null`; the
-                // rows stay under `rows` (decision 0399, as the data pack
+                // rows stay under `rows` (decision 0364, as the data pack
                 // gives them).
                 // A field named `rows` is the field's list: what the output
                 // form declares comes first.

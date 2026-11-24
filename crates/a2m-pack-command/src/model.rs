@@ -187,12 +187,12 @@ pub struct Command {
     pub assigns: Option<String>,
     /// Whether a command that printed nothing but white space found no
     /// record, as a status the program does not use would say it
-    /// (decision 0399). Only a read declares it. Left out of the text when
+    /// (decision 0364). Only a read declares it. Left out of the text when
     /// it is not declared.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub absent_when_empty: bool,
     /// The servers the program reaches that are the target's own system,
-    /// where the records are kept (decision 0399). A declaration, shown with
+    /// where the records are kept (decision 0364). A declaration, shown with
     /// the command; it does not make a write `irreversible`. Left out of the
     /// text when none is declared.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -338,7 +338,7 @@ pub enum Output {
         /// Where the records are in a document that holds more: the keys to
         /// follow, from the document down, to the list of records (or the
         /// record). Whatever else the document holds is not read. Empty when
-        /// the document is the record or the list (decision 0399). Left out
+        /// the document is the record or the list (decision 0364). Left out
         /// of the text when empty.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         at: Vec<String>,

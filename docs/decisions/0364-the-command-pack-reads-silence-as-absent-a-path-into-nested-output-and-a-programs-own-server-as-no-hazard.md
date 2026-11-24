@@ -1,4 +1,4 @@
-# 0399. The command pack reads silence as absent, a path into nested output, and a program's own server as no hazard
+# 0364. The command pack reads silence as absent, a path into nested output, and a program's own server as no hazard
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), from the findings 27 to 34 of [field test 5](../reviews/field-tests.md). The owner had not read this record when it was merged. The number is a placeholder that the lead renumbers on merge.
 
