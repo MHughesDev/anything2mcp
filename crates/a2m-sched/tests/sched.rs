@@ -380,6 +380,10 @@ async fn a_lost_lease_is_fenced_and_quarantined_before_anyone_else_gets_the_run(
     let again = stand.claim_one(one).await;
     assert_eq!(again.job, reconcile);
     assert_eq!(again.requirements.kind, JobKind::Reconcile);
+    // A reconcile after a lost lease ends by reading the verified records
+    // again, in its own lease (decision 0399).
+    assert!(again.requirements.verify_after_loss);
+    assert!(!lease.requirements.verify_after_loss);
     assert_eq!(again.run, Some(run));
     assert!(again.epoch > lease.epoch);
     // Under its new number the reconcile job confirms the quarantined lock.
@@ -1118,6 +1122,8 @@ async fn a_stopped_job_is_reconciled_when_the_ledger_holds_a_record_in_doubt() {
     );
     let again = stand.claim_one(one).await;
     assert_eq!(again.requirements.kind, JobKind::Reconcile);
+    // No lease was lost: the reconcile has no check after a loss to make.
+    assert!(!again.requirements.verify_after_loss);
     assert_eq!(again.run, Some(run));
 
     // A run with no intent stored is not reconciled on the same report.

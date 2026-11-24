@@ -608,6 +608,7 @@ fn requirements(run: &RunRow, kind: JobKind, exclusive: Vec<ResourceKey>) -> Job
         exclusive,
         max_step: Duration::from_secs(30),
         writes: run.effect != EffectClass::Read,
+        verify_after_loss: false,
     }
 }
 
@@ -829,6 +830,7 @@ handler!(
                     exclusive,
                     max_step: Duration::from_secs(30),
                     writes: effect != EffectClass::Read,
+                    verify_after_loss: false,
                 },
                 run,
                 priority: Priority::Interactive,
@@ -2196,6 +2198,7 @@ pub(crate) async fn submit_trial_kept(
                 exclusive: Vec::new(),
                 max_step: Duration::from_secs(30),
                 writes: false,
+                verify_after_loss: false,
             },
             run,
             priority: Priority::Interactive,
@@ -2359,6 +2362,7 @@ pub(crate) async fn submit_discovery(
                 exclusive: Vec::new(),
                 max_step: Duration::from_secs(30),
                 writes: false,
+                verify_after_loss: false,
             },
             run,
             priority: Priority::Interactive,

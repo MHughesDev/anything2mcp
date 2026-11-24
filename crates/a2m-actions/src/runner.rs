@@ -896,6 +896,16 @@ impl Kernel {
             InProcessControl::new(self.clone(), fence, lease.lease_ref(), row, plan, caller)
                 .with_discovery_files(handed);
         let outcome = engine.run_job(&job, &control).await;
+        // The check after a lost runner is the reconcile's own last part,
+        // in its lease, while the heartbeats go on: the run has one live
+        // job throughout, and a resume waits for it as for the reconcile
+        // (decision 0399).
+        if kind == JobKind::Reconcile
+            && lease.requirements.verify_after_loss
+            && matches!(outcome, JobOutcome::Settled { .. })
+        {
+            self.verify_after_loss(&engine, &job, &control, fence).await;
+        }
         beat.abort();
         let _ = beat.await;
 
@@ -968,6 +978,87 @@ impl Kernel {
             },
         };
         Ok(end)
+    }
+
+    /// After a lost lease, at the end of the reconcile that settled the
+    /// run: every record the ledger holds as verified is read once more,
+    /// through the same control and under the same lease, and a record that
+    /// no longer reads as it was written is kept as late evidence of the
+    /// run (spec section 223). It changes no state of the run or of a
+    /// record. What it came to is one event of the run; a check that could
+    /// not be carried through says so there, and the reconcile ends as it
+    /// would have without it (decision 0399).
+    async fn verify_after_loss(
+        &self,
+        engine: &Engine,
+        reconciled: &JobSpec,
+        control: &InProcessControl,
+        fence: a2m_ledger::Fence,
+    ) {
+        let Ok(store) = self.store() else {
+            return;
+        };
+        let run = fence.run;
+        let Ok(row) = store.read(move |tx| tx.ledger().run(run)).await else {
+            return;
+        };
+        let snapshot = match self.snapshot(&row).await {
+            Ok(snapshot) => snapshot,
+            Err(failure) => {
+                self.note_verify(fence, self.not_finished(&failure)).await;
+                return;
+            }
+        };
+        let mut job = reconciled.clone();
+        job.kind = JobKind::VerifyAfterLoss;
+        job.snapshot = snapshot;
+        let payload = match engine.run_job(&job, control).await {
+            JobOutcome::Settled { .. } => json!({"verify_after_loss": "read"}),
+            JobOutcome::Left(failure)
+            | JobOutcome::Stopped(failure)
+            | JobOutcome::Finished {
+                failure: Some(failure),
+                ..
+            }
+            | JobOutcome::Rests {
+                failure: Some(failure),
+                ..
+            } => self.not_finished(&failure),
+            // The engine gives a check back with no failure only when the
+            // lease is ending, or the run asks for something first.
+            _ => json!({"verify_after_loss": "not_finished"}),
+        };
+        self.note_verify(fence, payload).await;
+    }
+
+    /// The note of a check after a lost runner that could not be carried
+    /// through, with the failure that ended it, redacted.
+    fn not_finished(&self, failure: &Failure) -> Json {
+        let failure = self.redact().redact_failure(failure);
+        json!({
+            "verify_after_loss": "not_finished",
+            "class": failure.class().as_str(),
+            "code": failure.code().as_str(),
+            "message": failure.message(),
+        })
+    }
+
+    /// Records, as one event of the run, that the check after a lost
+    /// runner was made, or why it could not be carried through.
+    async fn note_verify(&self, fence: a2m_ledger::Fence, payload: Json) {
+        let Ok(store) = self.store() else {
+            return;
+        };
+        // Best effort: the check changes nothing, and a note that cannot be
+        // stored leaves the reconcile as it ended.
+        let _ = store
+            .write(Durability::Relaxed, move |tx| {
+                tx.ledger()
+                    .append_event(&fence, EventKind::Need, &payload, None)
+                    .map(|_| ())
+            })
+            .await;
+        self.run_changed();
     }
 
     /// The state of the session of each surface of the plan that is signed

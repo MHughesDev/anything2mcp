@@ -1267,9 +1267,14 @@ fn queue_reconcile(
     settings: &SchedSettings,
     after: &Job,
     available_at: Timestamp,
+    lost: bool,
 ) -> Result<JobId, Failure> {
     let mut requirements = after.requirements.clone();
     requirements.kind = JobKind::Reconcile;
+    // A reconcile after a lost lease ends by reading the verified records
+    // once more; one that follows such a reconcile keeps that duty until a
+    // reconcile settles (decision 0399).
+    requirements.verify_after_loss |= lost;
     let id = insert_job(
         tx,
         &NewJob {
@@ -1506,7 +1511,7 @@ pub(crate) fn finish(
                     reconcile_wait(settings, reconciles_in_a_row(tx, run)?)
                 };
                 let at = plus(tx.now(), wait);
-                ended.reconcile = Some(queue_reconcile(tx, settings, &job, at)?);
+                ended.reconcile = Some(queue_reconcile(tx, settings, &job, at, false)?);
             }
         }
         JobEnd::LeaseEnding => {
@@ -1634,7 +1639,7 @@ pub(crate) fn sweep(
                 _ => 0,
             };
             let wait = quarantine.max(reconcile_wait(settings, before));
-            let id = queue_reconcile(tx, settings, &job, plus(now, wait))?;
+            let id = queue_reconcile(tx, settings, &job, plus(now, wait), true)?;
             swept.reconcile.push(id);
         } else {
             swept.freed |= drop_holds(tx, job.id)?;

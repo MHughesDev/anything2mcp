@@ -449,6 +449,14 @@ pub struct JobRequirements {
     pub max_step: Duration,
     /// Whether the job may write to the system.
     pub writes: bool,
+    /// Set by the scheduler on the reconcile it queues after a lost lease,
+    /// and kept on each reconcile that follows it: once its reconcile has
+    /// settled, the job reads again every record the ledger holds as
+    /// verified, within the same lease (decision 0399). A job made by a
+    /// caller leaves it `false`; one stored before the field existed reads
+    /// as `false`.
+    #[serde(default)]
+    pub verify_after_loss: bool,
 }
 
 /// A run to admit, with its first job.

@@ -316,6 +316,7 @@ pub fn requirements(writes: bool) -> JobRequirements {
         exclusive: Vec::new(),
         max_step: Duration::from_secs(10),
         writes,
+        verify_after_loss: false,
     }
 }
 
