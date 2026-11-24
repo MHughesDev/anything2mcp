@@ -1,5 +1,5 @@
 -- owner: a2m-actions
--- The drift a canary or a run found (spec section 217, decision 0399): the
+-- The drift a canary or a run found (spec section 217, decision 0380): the
 -- knowledge that no longer fits the system, held until a canary's pass
 -- through it vouches for it again. Written by `a2m-actions` when the engine
 -- reports a binding's health, and read by the runner when it fills a job,

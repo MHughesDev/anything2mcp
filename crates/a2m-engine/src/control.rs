@@ -212,7 +212,7 @@ pub enum EngineEvent {
         failure: Option<(FailureClass, FailureCode)>,
         /// After a drift, the knowledge it was seen in; after a canary's
         /// pass, everything the pass relied on, which it vouches for again
-        /// (decision 0399). Empty when nothing can be named.
+        /// (decision 0380). Empty when nothing can be named.
         knowledge: Vec<crate::DriftKnowledge>,
     },
     /// The finished step trace of this attempt, with its signature.

@@ -1,5 +1,5 @@
 //! The drift marks a canary or a run leaves, in `actions_drift_marks`
-//! (decision 0399): kept when the engine reports a binding that drifted,
+//! (decision 0380): kept when the engine reports a binding that drifted,
 //! lifted when a canary's pass vouches for the same knowledge, and read by
 //! the runner into a job's conditions, so that every binding the drifted
 //! knowledge stops is refused before anything is sent.

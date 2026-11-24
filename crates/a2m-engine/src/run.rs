@@ -175,7 +175,7 @@ pub(crate) struct Run<'a> {
     /// every surface: what a shadow read's cost is counted from.
     pub granted: std::sync::atomic::AtomicU64,
     /// The step the last `drift` of this job was seen at, until the pass
-    /// that saw it reports it (decision 0399).
+    /// that saw it reports it (decision 0380).
     pub drift_step: Option<Step>,
 }
 
@@ -1064,7 +1064,7 @@ impl<'a> Run<'a> {
             let artifacts = self.keep_captures(&cx, &result).await;
             self.traced(&cx, &result, took, artifacts);
             // The step a drift was seen at names the knowledge that no
-            // longer fits (decision 0399).
+            // longer fits (decision 0380).
             if let Err(failure) = &result
                 && failure.failure.class() == FailureClass::Drift
             {

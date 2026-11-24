@@ -1,6 +1,6 @@
-# 0399. A run stopped before anything was planned is validated again when resumed
+# 0381. A run stopped before anything was planned is validated again when resumed
 
-**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged. (Its number is a placeholder beside the drift-mark record of the same number, [A drift marks the knowledge it was seen in](0399-a-drift-marks-the-knowledge-it-was-seen-in-and-stops-every-binding-that-relies-on-it.md); the lead renumbers both.)
+**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged. (Its number is a placeholder beside the drift-mark record of the same number, [A drift marks the knowledge it was seen in](0380-a-drift-marks-the-knowledge-it-was-seen-in-and-stops-every-binding-that-relies-on-it.md); the lead renumbers both.)
 
 **Date:** 2026-11-24
 

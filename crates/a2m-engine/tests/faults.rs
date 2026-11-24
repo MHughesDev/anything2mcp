@@ -570,7 +570,7 @@ async fn a_surface_its_driver_says_is_unavailable_starts_nothing_and_names_the_d
 
 /// A write the edge stopped at its preview, before anything was planned, is
 /// validated again when it is resumed: its preview stores its records, a
-/// person approves it, and it writes once (decision 0399, the state rule).
+/// person approves it, and it writes once (decision 0381, the state rule).
 #[tokio::test]
 async fn a_write_stopped_at_its_preview_is_resumed_and_writes_once() {
     let scene = Scene::new(ITEM_UPSERT, |_| {}).await;

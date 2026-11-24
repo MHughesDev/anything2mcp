@@ -1,4 +1,4 @@
-//! Package 9.1, the engine's half (decision 0399): a drift a canary sees
+//! Package 9.1, the engine's half (decision 0380): a drift a canary sees
 //! at a step names the pack entry the step refers to; that entry stops
 //! every binding of the plan that refers to it, a write among them, before
 //! anything is sent; a canary is never stopped by a drift, since it is the

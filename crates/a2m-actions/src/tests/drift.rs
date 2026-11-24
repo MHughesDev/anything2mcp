@@ -1,4 +1,4 @@
-//! Package 9.1 through the kernel (decision 0399): the test application's
+//! Package 9.1 through the kernel (decision 0380): the test application's
 //! order screen is changed on purpose; a canary, the check of a watch of
 //! the read that goes through that screen, catches it; the write through
 //! the same screen is then refused before anything reaches the system, and

@@ -946,7 +946,7 @@ async fn read_operation(
             {
                 Ok(values) => {
                     // A canary's pass vouches again for everything the
-                    // binding relied on (decision 0399).
+                    // binding relied on (decision 0380).
                     if run.job.kind == JobKind::Canary {
                         run.tell(EngineEvent::BindingHealth {
                             operation: found.name.clone(),

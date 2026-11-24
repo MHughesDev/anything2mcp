@@ -354,7 +354,7 @@ impl Engine {
         // So is a run stopped before anything was planned, such as a write
         // a drift or an edge block stopped at its preview: resumed, it is
         // validated again, and its preview stores its records (decision
-        // 0399, the state rule).
+        // 0381, the state rule).
         let unplanned = job.snapshot.as_ref().is_some_and(|snapshot| {
             snapshot.state == RunState::Stopped
                 && snapshot.diff.is_none()

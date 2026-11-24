@@ -1,5 +1,5 @@
 //! Which knowledge a drift was seen in, and which bindings of a plan it
-//! stops (decision 0399).
+//! stops (decision 0380).
 //!
 //! A canary, or any run, that fails with `drift` at a step names the pack
 //! entry the step refers to: in the web pack a screen, in another pack the

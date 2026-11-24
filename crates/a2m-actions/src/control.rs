@@ -883,7 +883,7 @@ impl Control for InProcessControl {
                 } => {
                     // The sign is kept as a run event, and the knowledge it
                     // names as a drift mark of the target: kept after a
-                    // drift, lifted after a canary's pass (decision 0399).
+                    // drift, lifted after a canary's pass (decision 0380).
                     // Both in one transaction, synced, so a drift that was
                     // seen is never lost before the next job is filled.
                     let payload = json!({

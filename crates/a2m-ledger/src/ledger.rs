@@ -1515,7 +1515,7 @@ impl Ledger<'_, '_> {
         // drift or an edge block stopped at its preview, goes back to
         // `validating` when it is resumed, so its records can be planned;
         // one with a planned record or a stored diff never does (decision
-        // 0399, the state rule).
+        // 0381, the state rule).
         let replans = run.state == RunState::Stopped
             && to == RunState::Validating
             && run.diff_hash.is_none()

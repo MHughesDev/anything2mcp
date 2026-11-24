@@ -877,7 +877,7 @@ impl Kernel {
         };
         let health = self.health();
         let sessions = self.session_conditions(&row, &plan).await;
-        // The bindings a drift mark of the target stops (decision 0399). A
+        // The bindings a drift mark of the target stops (decision 0380). A
         // store that cannot say ends the job here: nothing is run on a
         // guess that nothing drifted.
         let drifted = {
