@@ -1,4 +1,4 @@
-# 0399. A scan with nothing recorded says absent of a log that has lost nothing from its front
+# 0356. A scan with nothing recorded says absent of a log that has lost nothing from its front
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), in package J3. The owner had not read this record when it was merged.
 
