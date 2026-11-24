@@ -101,6 +101,7 @@ mod tests {
     mod kernel;
     mod keys;
     mod net;
+    mod others;
     mod pass_two;
     mod probe;
     mod reach;
