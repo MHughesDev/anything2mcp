@@ -888,7 +888,14 @@ impl Kernel {
                 .read(move |tx| crate::drift::stopped(tx, workspace, &compiled_target))
                 .await?
         };
+        // With too little room for evidence, a run keeps the lowest capture
+        // level, whatever the settings say (spec section 224).
+        let short_of_space = health
+            .reasons
+            .iter()
+            .any(|reason| reason.part == crate::health::Part::EvidenceSpace);
         let capture = |key: &str| match self.settings().text(key) {
+            _ if short_of_space => CaptureLevel::Minimal,
             Some("full") => CaptureLevel::Full,
             Some("standard") => CaptureLevel::Standard,
             _ => CaptureLevel::Minimal,

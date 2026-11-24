@@ -207,6 +207,8 @@ pub(crate) struct Inner {
     local: bool,
     health: Mutex<Health>,
     fixed: Vec<Impaired>,
+    /// How the room left for evidence is measured.
+    free_space: Mutex<Arc<dyn crate::space::FreeSpace>>,
     /// The protected settings whose value is not the one in force. Any
     /// one of them stops the kernel; `config.show` marks each.
     pub(crate) not_in_force: Vec<crate::bounds::NotInForce>,
@@ -520,6 +522,7 @@ impl Kernel {
                 local,
                 health: Mutex::new(Health::of(Vec::new())),
                 fixed,
+                free_space: Mutex::new(Arc::new(crate::space::VolumeFreeSpace)),
                 not_in_force,
                 places: crate::project::Places::of_process(),
                 compiled_targets: Mutex::new(BTreeMap::new()),
@@ -617,6 +620,12 @@ impl Kernel {
                 });
             }
         }
+        if let Some(failure) = self.evidence_space_short() {
+            reasons.push(Impaired {
+                part: Part::EvidenceSpace,
+                failure,
+            });
+        }
         let health = Health::of(reasons);
         let before = {
             let mut held = lock(&inner.health);
@@ -634,6 +643,31 @@ impl Kernel {
                 .await;
         }
         health
+    }
+
+    /// Why the evidence store has too little room, when it has less free
+    /// than `store.free_space_floor`; `None` when it has enough, or when
+    /// the room cannot be measured.
+    fn evidence_space_short(&self) -> Option<Failure> {
+        let floor = u64::try_from(self.inner.settings.int("store.free_space_floor")?).ok()?;
+        let measure = Arc::clone(&*lock(&self.inner.free_space));
+        let free = measure.free_bytes(&self.inner.paths.blobs)?;
+        (free < floor).then(|| {
+            codes::busy(
+                a2m_ledger::codes::STORAGE_FULL,
+                format!(
+                    "The evidence store has {free} bytes free, below the floor of {floor} set by `store.free_space_floor`, so no write can be proven."
+                ),
+                "Free space on the disk that holds the data directory; the engine notices by itself when there is room.",
+            )
+        })
+    }
+
+    /// Measures the room left for evidence through `measure` from now on,
+    /// as a test that cannot fill a disk does.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn measure_free_space_with(&self, measure: Arc<dyn crate::space::FreeSpace>) {
+        *lock(&self.inner.free_space) = measure;
     }
 
     /// Writes one entry to the audit log, when there is a store to write

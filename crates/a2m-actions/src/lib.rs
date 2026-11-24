@@ -45,6 +45,7 @@ mod render;
 mod runner;
 pub mod settings;
 mod signals;
+mod space;
 mod tools;
 
 /// An idempotency key, as the store keeps it (decision 0160).
@@ -82,6 +83,7 @@ pub use project::PROJECT_SETTINGS_DIFFER;
 pub use registry::{ActionRegistry, CATALOG_FORMAT, Catalog, CatalogEntry, CatalogField};
 pub use runner::RunnerLoop;
 pub use settings::{Settings, Sources};
+pub use space::{FreeSpace, VolumeFreeSpace};
 
 /// The crate under its own name, so that the tests below read as the crates
 /// above this one will write them.

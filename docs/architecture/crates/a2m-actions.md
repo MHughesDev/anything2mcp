@@ -383,12 +383,12 @@ The `Response` is the same structure for every face: `ok`, `action`, `result`, `
 | Telemetry | `a2m-telemetry` | Logs to standard error only | `ok` |
 | Store and migrations | `a2m-ledger` | Half-migrated, corrupt, or unreachable | `stopped` |
 | Vault | `a2m-vault` | No session can be restored or saved; no evidence can be sealed, so nothing can be marked verified | `degraded` |
-| Evidence space | `a2m-ledger` | Under the configured free-space floor | `degraded` |
+| Evidence space | `a2m-actions` (`space.rs`) | Fewer bytes free on the disk that holds the evidence blobs than `store.free_space_floor`, measured at every `recheck` through a `FreeSpace` (the volume's own count on Linux and macOS; not measured on Windows yet). Writes stop and a run's capture level is `minimal`, whatever the settings say; the reason's code is the store's `storage_full` | `degraded` |
 | Policy set | `a2m-policy` | The previous valid version stays in force; with none at all every decision denies | `stopped` if none |
 | Compiled targets | `a2m-ledger` | A compiled target that fails its hash check is unavailable alone | `ok` |
 | Keeper, scheduler, engine | `a2m-auth`, `a2m-sched`, `a2m-engine` | Not expected to fail; a failure is `stopped` | |
 
-The kernel is always returned, so that the front door can answer `engine.status` and `doctor.run` with the reason instead of failing to start. Opening is two calls, `prepare` and `open`, because the provider registry is built between them from the redactor and telemetry the first one makes. The evidence-space row is not built. The state is re-evaluated whenever a part reports a change, and a move to a lower state is an event in the audit log.
+The kernel is always returned, so that the front door can answer `engine.status` and `doctor.run` with the reason instead of failing to start. Opening is two calls, `prepare` and `open`, because the provider registry is built between them from the redactor and telemetry the first one makes. The state is re-evaluated whenever a part reports a change, and a move to a lower state is an event in the audit log.
 
 Before anything else on open, the store's runs left `running` under a lease nobody holds are set to `stopped` with `possible_commit` / `runner_lost` ([spec section 222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md)). Their reconcile is a job like any other. Not built at open: today such a run is stopped by the scheduler's sweep once its lease has ended, so an engine started within the lease of one that was killed sees the run as `running` until then.
 
@@ -579,7 +579,7 @@ The crate's own codes are declared once, each with its class, meaning, next step
 | No action reaches `ApprovalDesk` | The kernel holds no desk: it is moved to the person surface. `no_action_can_approve`; the write test approves at the desk and through nothing else |
 | The four faces of an action share its name and its schema | `every_action_has_all_four_faces_and_they_share_its_name`. The parity test through live faces belongs to the role crates |
 | Nothing leaves `dispatch` without passing `Redact` | `a_planted_secret_appears_in_no_result`, through the dispatcher |
-| A write never runs in `degraded` or `stopped` | `a_stopped_store_serves_status_and_nothing_else`, `without_a_key_store_the_kernel_is_degraded_and_writes_nothing` |
+| A write never runs in `degraded` or `stopped` | `a_stopped_store_serves_status_and_nothing_else`, `without_a_key_store_the_kernel_is_degraded_and_writes_nothing`, `a_key_store_that_stops_after_the_start_degrades_the_kernel_until_it_answers_again`, `an_evidence_store_with_no_room_degrades_the_kernel_to_minimal_reads_until_there_is_room` |
 | The registry equals the action catalog, in names, roles, and listing | `the_registry_holds_exactly_the_actions_of_the_catalog`, which reads the catalog document |
 | An empty file is a complete configuration; a layer that may only tighten never loosens; every value names its layer | `tests/settings.rs` |
 | The scout never obtains a write token, and no step that saves reaches a system | `a_scout_drafts_reads_by_rule_tries_them_and_never_writes`, which asks the stand's driver what reached it; `a_scout_identifies_reports_the_same_twice_and_writes_nothing`, which asks the test application |
@@ -630,7 +630,7 @@ The crate's own codes are declared once, each with its class, meaning, next step
 ## Build order
 
 1. Done: `ActionDef`, `ActionRegistry::build`, and the catalog test. Every action of the catalog is defined as data; one that is not built answers `input` / `action_not_built`.
-2. Done: `Kernel::prepare` and `Kernel::open` with the store, the vault, policy, the keeper, the scheduler, and the engine; the runner loop; `InProcessControl`; the three health states; `Paths`; the settings loader (package 1.4a). Not built: the evidence-space check; the keeper's work for a runner on another machine. A session's probe is built ([decision 0353](../../decisions/0353-a-session-is-probed-by-a-keeper-job-run-through-the-engine-in-a-slot-kept-for-it.md)).
+2. Done: `Kernel::prepare` and `Kernel::open` with the store, the vault, policy, the keeper, the scheduler, and the engine; the runner loop; `InProcessControl`; the three health states; `Paths`; the settings loader (package 1.4a). Built later (package 9.3d): the evidence-space check. Not built: the keeper's work for a runner on another machine. A session's probe is built ([decision 0353](../../decisions/0353-a-session-is-probed-by-a-keeper-job-run-through-the-engine-in-a-slot-kept-for-it.md)).
 3. Done: the dispatcher with validation, the health check, the decision, the person need, and redaction; every face as data (`command_faces`, `mcp_tools`, `rest_routes`, `sdk_methods`, `McpResultFace`). Not built: the live parity test, which needs the role crates; the untrusted mark; large results as blobs.
 4. Done: `decide` in the dispatcher and at guard, the approval check and `consume` in the transaction of `begin_writes`, `PersonSurface`, `ApprovalDesk` with its preview and a decline that ends the run, the vault and policy rows of health.
 5. Not built: the keeper's work as a scheduled job, and bearer tokens and API keys in `verify_caller`.
