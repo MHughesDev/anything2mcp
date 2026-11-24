@@ -1,4 +1,4 @@
-# 0999. The watching tab records from the browser's network events, and keeps each screen without its values
+# 0411. The watching tab records from the browser's network events, and keeps each screen without its values
 
 **Status:** Accepted. Design decision, made by the worker who built package E2c, under the lead's brief. The owner had not read this record when it was merged. It adds to a public interface of [`a2m-pack-web-browser`](../architecture/crates/a2m-pack-web-browser.md), the `Observer`, and to the provider contract's `CapturedRequest`, as [decision 0392](0392-a-page-that-reads-by-a-method-that-may-write-is-learned-from-a-persons-watched-use-and-read-through-an-asserted-request.md), point 2, says it must.
 
