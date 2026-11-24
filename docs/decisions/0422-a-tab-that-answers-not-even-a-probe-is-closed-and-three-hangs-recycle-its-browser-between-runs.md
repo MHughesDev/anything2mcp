@@ -1,4 +1,4 @@
-# 0999. A tab that answers not even a probe is closed, and three hangs recycle its browser between runs
+# 0422. A tab that answers not even a probe is closed, and three hangs recycle its browser between runs
 
 **Status:** Accepted. Design decision, made by the worker on package 9.3f under the lead's brief. The owner had not read this record when it was written. It adds two settings and one field to the browser engine's interface, all additions: `BrowserSettings::hangs_before_recycle` and `hang_probe`, with the named defaults `HANGS_BEFORE_RECYCLE` and `HANG_PROBE`, and `OpenBrowser::hangs`.
 

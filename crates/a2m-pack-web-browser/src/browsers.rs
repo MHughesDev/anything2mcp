@@ -49,14 +49,14 @@ pub const DOWNLOADS_FOLDER: &str = "downloads";
 pub const BROWSER_KIND: &str = "browser";
 
 /// How many hangs of its tabs a browser takes before it is recycled, when
-/// the settings say nothing else (decision 0999). A tab hangs when its
+/// the settings say nothing else (decision 0422). A tab hangs when its
 /// page gives no answer to a call by the call's deadline, nor to the probe
 /// after it ([`BrowserSettings::hang_probe`]).
 pub const HANGS_BEFORE_RECYCLE: u32 = 3;
 
 /// How long a tab whose call went unanswered is given to answer a probe
 /// before it is called hung and closed, when the settings say nothing else
-/// (decision 0999).
+/// (decision 0422).
 pub const HANG_PROBE: Duration = Duration::from_secs(5);
 
 /// The version of the DevTools protocol the engine speaks.
