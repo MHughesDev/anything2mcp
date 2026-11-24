@@ -1,0 +1,15 @@
+# The imaginary order-entry system `example`, used through its published
+# description. It describes no real product. The address is the one the
+# built-in test application listens on when started by hand; a test gives the
+# surface the address of the application it started.
+schema_version: 1
+target: example
+title: Example order entry
+surfaces:
+  http:
+    kind: http
+    base: "http://127.0.0.1:4010"
+environments:
+  test:
+    kind: test
+default_environment: test

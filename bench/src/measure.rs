@@ -25,11 +25,16 @@ use crate::harness::{Clock, Overhead, Plan, Scenario, ScenarioResult};
 use crate::promotion::{Folder, MEASURED, Machine, fail};
 use crate::scenarios::Stand;
 use crate::stats::Stats;
+use serde_json::json;
 
 /// Listing the published tools.
 pub const LIST_TOOLS: &str = "list_tools";
 /// A read through the request binding, set against the same request made directly.
 pub const HTTP_OPERATION: &str = "http_operation";
+/// A read through a `page_http` binding, set against the request the page makes, made directly.
+pub const PAGE_HTTP_OPERATION: &str = "page_http_operation";
+/// A read through an `api` binding, set against the same request made directly.
+pub const API_OPERATION: &str = "api_operation";
 /// A read through the interface binding on a warm tab, set against the page's own request.
 pub const UI_STEP: &str = "ui_step";
 /// The first read on an engine that has not started a browser.
@@ -239,6 +244,264 @@ impl Stand {
             .app()
             .http()
             .get(self.app().url(&page_path()))
+            .send()
+            .await
+            .map_err(|e| operation_error(scenario, e))?;
+        let status = response.status();
+        let body = response
+            .bytes()
+            .await
+            .map_err(|e| operation_error(scenario, e))?;
+        if status.is_success() && !body.is_empty() {
+            Ok(())
+        } else {
+            Err(operation_error(
+                scenario,
+                format!(
+                    "the application answered {status} with {} bytes",
+                    body.len()
+                ),
+            ))
+        }
+    }
+}
+
+// ---- a read through the `page_http` and `api` modes ------------------------
+
+/// The project of the `page_http` read: an order's totals, which the order's
+/// summary page asks the application for by itself.
+const PAGE_HTTP_PROJECT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/projects/pagehttp");
+/// The project of the `api` read: a line item, bound to the description the
+/// application publishes, pinned by its digest.
+const API_PROJECT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/projects/api");
+/// The tool of the `page_http` project.
+pub const PAGE_HTTP_TOOL: &str = "example_order_totals_get";
+/// The tool of the `api` project.
+pub const API_TOOL: &str = "example_line_item_get";
+/// The order the `page_http` read asks the totals of.
+pub const TOTALS_ORDER: &str = "A-100";
+
+/// What one read through a bound mode gave, and what the application heard
+/// of it.
+#[derive(Debug, Clone)]
+pub struct ReadOnce {
+    /// What the tool completed with.
+    pub value: Value,
+    /// The requests the application heard while the read ran, in order.
+    pub heard: Vec<String>,
+}
+
+fn totals_input() -> Value {
+    json!({"order_id": TOTALS_ORDER})
+}
+
+fn item_input() -> Value {
+    json!({"order_id": MEASURED.0, "item_code": MEASURED.1})
+}
+
+/// Opens an engine over `project` and the application at `address`,
+/// publishes, and reads once, as an agent.
+async fn bound_read(
+    stand: &Stand,
+    scenario: &str,
+    project: &str,
+    tool: &str,
+    input: &Value,
+) -> Result<(Machine, ReadOnce), BenchError> {
+    let address = stand.app().url("");
+    let machine =
+        Machine::open_project(address.trim_end_matches('/'), std::path::Path::new(project)).await?;
+    machine.publish().await?;
+    let before = stand.app().seen().await.map_err(fail)?;
+    let value = machine.read_tool(scenario, tool, input).await?;
+    let heard = stand
+        .app()
+        .seen()
+        .await
+        .map_err(fail)?
+        .into_iter()
+        .skip(before.len())
+        .collect();
+    Ok((machine, ReadOnce { value, heard }))
+}
+
+/// Reads an order's totals through the `page_http` mode once, against a new
+/// test application.
+///
+/// # Errors
+///
+/// Returns an error if the application, the engine, or the read failed.
+pub async fn page_http_read_once(stand: &Stand) -> Result<ReadOnce, BenchError> {
+    let (_machine, read) = bound_read(
+        stand,
+        PAGE_HTTP_OPERATION,
+        PAGE_HTTP_PROJECT,
+        PAGE_HTTP_TOOL,
+        &totals_input(),
+    )
+    .await?;
+    Ok(read)
+}
+
+/// Reads a line item through the `api` mode once, against the test
+/// application of `stand`.
+///
+/// # Errors
+///
+/// Returns an error if the application, the engine, or the read failed.
+pub async fn api_read_once(stand: &Stand) -> Result<ReadOnce, BenchError> {
+    let (_machine, read) =
+        bound_read(stand, API_OPERATION, API_PROJECT, API_TOOL, &item_input()).await?;
+    Ok(read)
+}
+
+/// What a scenario of a bound mode holds.
+pub struct Bound {
+    stand: Stand,
+    machine: Machine,
+    tool: &'static str,
+    input: Value,
+    reference: Value,
+}
+
+async fn bound(
+    scenario: &str,
+    project: &str,
+    tool: &'static str,
+    input: Value,
+    reached: impl Fn(&[String]) -> bool,
+) -> Result<Bound, BenchError> {
+    let stand = Stand::start(scenario).await?;
+    // The application's totals are slow by design (case 4); that time is the
+    // test stand's, never the product's, so it is taken out of the read.
+    stand.app().set_slow_ms(0).await.map_err(fail)?;
+    let (machine, read) = bound_read(&stand, scenario, project, tool, &input).await?;
+    if !reached(&read.heard) {
+        return Err(fail(format!(
+            "the read did not reach the application by the mode the scenario measures: it heard {:?}",
+            read.heard
+        )));
+    }
+    Ok(Bound {
+        stand,
+        machine,
+        tool,
+        input,
+        reference: read.value,
+    })
+}
+
+async fn bound_again(scenario: &str, state: &Bound) -> Result<(), BenchError> {
+    let read = state
+        .machine
+        .read_tool(scenario, state.tool, &state.input)
+        .await?;
+    if read == state.reference {
+        Ok(())
+    } else {
+        Err(operation_error(
+            scenario,
+            format!("a read returned {read}, not {}", state.reference),
+        ))
+    }
+}
+
+/// A read from inside the order's summary page, through the `page_http`
+/// mode, against the request the page makes, sent straight to the
+/// application.
+///
+/// The difference holds the product's own time and the warm page's: the
+/// command, the policy check, the ledger, the page opened in the browser, and
+/// the request sent from inside it. The browser's own work in drawing the page
+/// is in it, as for `ui_step`, so it is an upper bound.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PageHttpOperation;
+
+impl Scenario for PageHttpOperation {
+    type State = Bound;
+
+    fn name(&self) -> &str {
+        PAGE_HTTP_OPERATION
+    }
+
+    async fn setup(&self) -> Result<Bound, BenchError> {
+        let page = format!("GET /orders/{TOTALS_ORDER}/summary");
+        let request = format!("GET /api/orders/{TOTALS_ORDER}/totals");
+        bound(
+            PAGE_HTTP_OPERATION,
+            PAGE_HTTP_PROJECT,
+            PAGE_HTTP_TOOL,
+            totals_input(),
+            move |heard| heard.contains(&page) && heard.contains(&request),
+        )
+        .await
+    }
+
+    async fn operation(&self, state: &Bound) -> Result<(), BenchError> {
+        bound_again(PAGE_HTTP_OPERATION, state).await
+    }
+
+    fn baseline(&self, state: &Bound) -> Option<impl Future<Output = Result<(), BenchError>>> {
+        Some(state.stand.read_totals_directly(PAGE_HTTP_OPERATION))
+    }
+}
+
+/// A read through the `api` mode, bound to the application's published
+/// description, against the same request made straight to the application.
+///
+/// The difference holds the description's second read, once a pass, which
+/// decision 0389 left unmeasured.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ApiOperation;
+
+impl Scenario for ApiOperation {
+    type State = Bound;
+
+    fn name(&self) -> &str {
+        API_OPERATION
+    }
+
+    async fn setup(&self) -> Result<Bound, BenchError> {
+        let item = format!("GET /api/orders/{}/items/{}", MEASURED.0, MEASURED.1);
+        let page = format!("GET {}", page_path());
+        bound(
+            API_OPERATION,
+            API_PROJECT,
+            API_TOOL,
+            item_input(),
+            move |heard| {
+                heard.contains(&item)
+                    && heard.iter().any(|line| line == "GET /api/openapi.json")
+                    && !heard.contains(&page)
+            },
+        )
+        .await
+    }
+
+    async fn operation(&self, state: &Bound) -> Result<(), BenchError> {
+        bound_again(API_OPERATION, state).await
+    }
+
+    fn baseline(&self, state: &Bound) -> Option<impl Future<Output = Result<(), BenchError>>> {
+        Some(state.stand.read_directly(API_OPERATION))
+    }
+}
+
+impl Stand {
+    /// Reads the seeded order's totals straight from the application.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error, naming the scenario, if the request failed or the
+    /// application did not answer with a body.
+    pub async fn read_totals_directly(&self, scenario: &str) -> Result<(), BenchError> {
+        let response = self
+            .app()
+            .http()
+            .get(
+                self.app()
+                    .url(&format!("/api/orders/{TOTALS_ORDER}/totals")),
+            )
             .send()
             .await
             .map_err(|e| operation_error(scenario, e))?;
