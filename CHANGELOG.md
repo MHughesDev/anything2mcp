@@ -10,6 +10,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Added
 
+- The guidance file an agent reads now names every step of the first hour, from `anything2mcp init` to `tool.call`, and points to the desktop page; a test holds every page the guidance file and the failure table name to the pages `docs.get` serves.
 - Section 604 now says how a person backs up one machine: stop the engine, copy the whole data folder, and to restore, put the copy back whole with the engine stopped. A run the copy shows stopped mid-write is reconciled on resume, so a write made after the copy was taken is found and not sent again; this, and that a store written by the version before opens and migrates, are now tested.
 - The whole definition of a tool is bounded text: a field description of an input, an enum member or label, or a text default of more than 1,024 characters, or one that holds a control, bidirectional, or invisible character (a newline and a tab are allowed), does not compile (`kernel.field_text_unbounded`), and a definition of more than 8,192 characters in all does not either (`kernel.definition_unbounded`; [decision 0325](docs/decisions/0325-what-a-browser-can-reach-and-what-a-tools-definition-may-hold.md)).
 - The HTTP pack now has a test that holds it to refusing, unsent, an idempotency token, a version read, or an anti-forgery token that holds a control character or a byte outside printable ASCII, so a stored value cannot split a request's headers.
