@@ -30,17 +30,17 @@ A package is one branch and one pull request. When it merges, its row changes to
 | # | Milestone | What a developer can do when it is reached | Version | State on 2026-11-18 |
 | --- | --- | --- | --- | --- |
 | 0 | Foundations | Nothing a developer uses yet. The workspace, the checks, the test application, the core types, and the contracts exist | 0.0 | Reached, except package 0.2p, which is the owner's |
-| 1 | The first read | Read one value from a web application through a command or an MCP client, the same way every time, with a trace | | In progress: 1.1, 1.2, 1.4, 1.4a, and 1.5 done |
-| 2 | The signed-in read | The same, on a system that needs a sign-in, with the session kept alive and no secret anywhere it should not be | | In progress: 2.1, 2.2, and 2.3 done; the others partly built |
-| 3 | Verified writes | Enter a spreadsheet into a web application: previewed, approved, read back, resumable without duplicates. The first usable product | 0.1 | In progress: 3.1, 3.2, 3.8, 3.9 done |
-| 4 | Anything, proven once | Do the same reads over a command-line program, with no change to the kernel | | In progress: D1, D2 done |
-| 5 | The scout | Point at a system and get a report: what was found, what was drafted, which reads already work | 0.2 | In progress: E1 done; E6 withdrawn |
-| 6 | Fast paths | The same operations over direct requests, proven equal to the interface and many times faster | | In progress: 4.1, 4.2, 4.3, and 4.4 done |
-| 7 | The developer's first hour | One install by pip, crates.io, or npm; from an address to published read tools in minutes | 0.3 | In progress: F1, F2 done |
-| 8 | More kinds | Databases, files, queues, and simulated devices, each through its own pack | 0.4 to 0.6 | In progress: the four test stands, K2, K3 done |
-| 9 | A server | Many users, each acting as themselves, with grants, toolsets, and runners | 0.7 to 0.8 | In progress: none done; package 6.3 partly built |
-| 10 | Breadth | Desktop applications, upstream MCP servers, and the hard cases of web interfaces | 0.9 | In progress: 8.1, 8.2 done |
-| 11 | Hardening | Real systems tried with the owner; an outside security review; every failure a tested one | 1.0 | Not started |
+| 1 | The first read | Read one value from a web application through a command or an MCP client, the same way every time, with a trace | | 8 of 10 done. 1.8 and 1.9 are ready: the two clauses of the exit test that [the exit-test report](../journal/2026-11-24-the-exit-tests-of-the-finished-phases.md) found unmet |
+| 2 | The signed-in read | The same, on a system that needs a sign-in, with the session kept alive and no secret anywhere it should not be | | Reached: 7 of 7 done, and the exit test passes ([the exit-test report](../journal/2026-11-24-the-exit-tests-of-the-finished-phases.md)) |
+| 3 | Verified writes | Enter a spreadsheet into a web application: previewed, approved, read back, resumable without duplicates. The first usable product | 0.1 | 9 of 11 done. 3.6 waits on the owner's run of the prompts on macOS and Windows, and R1 on the release |
+| 4 | Anything, proven once | Do the same reads over a command-line program, with no change to the kernel | | Reached: 5 of 5 done. No exit test is stated beyond the rows |
+| 5 | The scout | Point at a system and get a report: what was found, what was drafted, which reads already work | 0.2 | 2 of 9 done (E1, E4); E6 withdrawn. E2a and E7 are ready |
+| 6 | Fast paths | The same operations over direct requests, proven equal to the interface and many times faster | | Reached: 6 of 6 done, and the exit test passes, measured ([the exit-test report](../journal/2026-11-24-the-exit-tests-of-the-finished-phases.md)) |
+| 7 | The developer's first hour | One install by pip, crates.io, or npm; from an address to published read tools in minutes | 0.3 | 4 of 10 done (F1 to F4) |
+| 8 | More kinds | Databases, files, queues, and simulated devices, each through its own pack | 0.4 to 0.6 | Reached: 13 of 13 done. No exit test is stated beyond the rows |
+| 9 | A server | Many users, each acting as themselves, with grants, toolsets, and runners | 0.7 to 0.8 | 1 of 9 done (6.3). Held until after the first release ([decision 0390](../decisions/0390-the-open-questions-of-2026-11-24-are-settled-by-the-lead-and-the-first-release-is-what-progress-counts-toward.md)) |
+| 10 | Breadth | Desktop applications, upstream MCP servers, and the hard cases of web interfaces | 0.9 | 6 of 7 done. 8.3 is left |
+| 11 | Hardening | Real systems tried with the owner; an outside security review; every failure a tested one | 1.0 | 1 of 10 done (9.1). 9.1a and 9.1b are ready |
 
 ## Milestone 0: foundations
 
