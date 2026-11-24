@@ -363,7 +363,7 @@ Not produced yet: `busy`, `session_in_use`, the per-session parallelism of secti
 
 ## Open points
 
-- **After a restart, a due renewal is started before the saved state is restored** ([decision 0374](../../decisions/0374-a-sessions-mark-that-it-was-made-under-drafts-is-kept-in-its-record.md), consequences). A lease that finds a valid session's credentials due moves it to `renewing` before it looks whether this process holds them, so a silent renewal finds nothing to refresh and the session waits for its person. Fail closed; restoring first would spare the person a sign-in.
+- Settled: a renewal whose runner holds nothing at the session's epoch, after a restart or because another engine over the same store signed the session in, opens the saved state on that runner before its silent or light rung ([decision 0999](../../decisions/0999-a-renewal-opens-the-saved-state-first-when-its-runner-holds-nothing.md)). For a home runner other than the local engine, which is not built, the keeper cannot see what the runner holds.
 - How reliably a fresh engine-owned profile signs in silently through the device's account. Research brief 30; hypothesis H-05.
 - Settled: there is no `SignInSurface` type. The worker is handed an `AskPerson`, and a pack's provider holds its own pack's handles (record 0085).
 - Where the authorization response of `oauth_authorization_code` is received on a server, where no loopback address reaches the person's browser: the console's address, most likely. Here it is whatever `AskPerson::return_address` gives.

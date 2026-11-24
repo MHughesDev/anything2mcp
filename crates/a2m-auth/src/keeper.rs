@@ -1588,6 +1588,16 @@ impl Inner {
         let (count, mark) = self.counted(row, &entry).await?;
         let count = count.about(mark);
 
+        // The silent and light rungs renew from the credentials the runner
+        // holds. A runner that holds none at this epoch, after a restart or
+        // because another engine over the same store signed the session in,
+        // opens them from the saved state first, as a call does after a
+        // restart. Without them those rungs would want the person for
+        // credentials that are saved and still the session's.
+        if (needs.silent_renewal || needs.light_prompt) && !self.reopen(row, &entry).await? {
+            return Ok(());
+        }
+
         if needs.silent_renewal {
             match self.perform(row, &entry, Work::Renew(Rung::Silent)).await {
                 held @ WorkOutcome::Held { .. } => {
@@ -1691,6 +1701,46 @@ impl Inner {
                 self.expire_counted(row, "outcome_unknown", attempts).await
             }
             WorkOutcome::Ended => self.expire_counted(row, "renewal_failed", count).await,
+        }
+    }
+
+    /// Before a renewal: opens the session's saved state on this keeper's
+    /// own runner when that runner does not hold the session's credentials
+    /// at `row`'s epoch. `false` when the session was renewed or ended while
+    /// the state opened, so the renewal has nothing left to do. Saved state
+    /// that is missing or does not open leaves the ladder as it was: its
+    /// rungs that need credentials want the person.
+    async fn reopen(&self, row: &SessionRow, entry: &Arc<AuthEntry>) -> Result<bool, Failure> {
+        let Some(worker) = &self.local else {
+            return Ok(true);
+        };
+        if worker.holds(row.id, row.epoch) {
+            return Ok(true);
+        }
+        let Some(sealed) = self.store.saved(row.id).await? else {
+            return Ok(true);
+        };
+        match self.perform(row, entry, Work::Restore(sealed)).await {
+            WorkOutcome::Held { .. } => {
+                let event = SessionEvent {
+                    session: row.id,
+                    at: self.now(),
+                    kind: EventKind::Restored,
+                    state: row.state,
+                    epoch: row.epoch,
+                    cause: "renewal".to_owned(),
+                    run: None,
+                    decided: None,
+                };
+                if self.store.note(None, None, false, event).await? {
+                    Ok(true)
+                } else {
+                    self.forget(row, row.epoch).await;
+                    Ok(false)
+                }
+            }
+            WorkOutcome::Ended => Ok(false),
+            _ => Ok(true),
         }
     }
 
