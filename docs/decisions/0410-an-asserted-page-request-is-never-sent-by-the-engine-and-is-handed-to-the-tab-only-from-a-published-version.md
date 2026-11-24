@@ -1,4 +1,4 @@
-# 0999. An asserted page request is never sent by the engine, and is handed to the tab only from a published version
+# 0410. An asserted page request is never sent by the engine, and is handed to the tab only from a published version
 
 **Status:** Accepted. Design decision, made by the worker who built package E7c, under the lead's brief. The owner had not read this record when it was merged.
 
