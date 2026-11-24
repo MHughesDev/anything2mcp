@@ -34,7 +34,7 @@ const READABLE_FORMATS: &[u16] = &[COMPILED_TARGET_FORMAT];
 
 /// What every encoded compiled target starts with, before its format number
 /// and a line end. It keeps the compiled target's old name, `plan`: the
-/// bytes, and so every hash, stay those an older build wrote (decision 0999).
+/// bytes, and so every hash, stay those an older build wrote (decision 0402).
 const ENVELOPE: &[u8] = b"anything2mcp-plan ";
 
 vocabulary! {

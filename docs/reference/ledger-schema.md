@@ -299,7 +299,7 @@ As built by migrations `0009`, `0011`, `0014`, and `0028`, which `a2m-actions` o
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `workspace_id`, `target`, `plan_hash` | id, text, text | Primary key: one published version of a target is its compiled target, named by the compiled target's hash. The columns `plan_hash` and `plan` keep the compiled target's old name, so that a store an older build wrote still opens ([decision 0999](../decisions/0999-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md)) |
+| `workspace_id`, `target`, `plan_hash` | id, text, text | Primary key: one published version of a target is its compiled target, named by the compiled target's hash. The columns `plan_hash` and `plan` keep the compiled target's old name, so that a store an older build wrote still opens ([decision 0402](../decisions/0402-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md)) |
 | `version` | text | The version the compiled target's header states |
 | `plan` | bytes | The compiled target's canonical bytes |
 | `published_by`, `published_at` | text, ts | Who published it, and when |

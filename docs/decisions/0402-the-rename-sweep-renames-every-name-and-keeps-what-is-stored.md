@@ -1,6 +1,6 @@
-# 0999. The rename sweep renames every name, and keeps what is stored
+# 0402. The rename sweep renames every name, and keeps what is stored
 
-**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), in package N0. The owner had not read this record when it was merged. The number 0999 is a placeholder the lead renumbers on merge.
+**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), in package N0. The owner had not read this record when it was merged. The number 0402 is a placeholder the lead renumbers on merge.
 
 **Date:** 2026-11-24
 

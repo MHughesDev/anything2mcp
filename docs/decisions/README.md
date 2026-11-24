@@ -393,4 +393,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0399 | [The desktop pack writes on Windows and macOS through a closed list of its own on each](0399-the-desktop-pack-writes-on-windows-and-macos-through-a-closed-list-of-its-own-on-each.md) | Accepted (design decision) |
 | 0400 | [A capture ends as a scout does](0400-a-capture-ends-as-a-scout-does.md) | Accepted (design decision) |
 | 0401 | [The steps between a proven read and a publish are one action](0401-the-steps-between-a-proven-read-and-a-publish-are-one-action.md) | Accepted (design decision) |
-| 0999 | [The rename sweep renames every name, and keeps what is stored](0999-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md) | Accepted (design decision) |
+| 0402 | [The rename sweep renames every name, and keeps what is stored](0402-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md) | Accepted (design decision) |

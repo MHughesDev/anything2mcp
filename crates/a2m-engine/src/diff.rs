@@ -202,7 +202,7 @@ pub struct Diff {
     pub tool: OperationName,
     /// The tool's version: the hash of the compiled target.
     /// Stored under the compiled target's old name, `plan`, so that what an
-    /// older build wrote still reads (decision 0999).
+    /// older build wrote still reads (decision 0402).
     #[serde(rename = "plan")]
     pub compiled_target: Digest,
     /// The target.

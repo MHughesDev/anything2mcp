@@ -53,7 +53,7 @@ impl Attr {
             Self::Operation(_) => "a2m.operation",
             Self::Target(_) => "a2m.target",
             // The compiled target keeps its old key, which traces and logs
-            // already written carry (decision 0999).
+            // already written carry (decision 0402).
             Self::CompiledTarget(_) => "a2m.plan",
             Self::Mode(_) => "a2m.mode",
             Self::StepKind(_) => "a2m.step.kind",

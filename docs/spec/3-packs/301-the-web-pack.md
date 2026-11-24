@@ -173,7 +173,7 @@ support_tier: full
 | Field | Meaning |
 | --- | --- |
 | `detect` | Rules that name the platform, with a confidence. No match is `unknown_platform` |
-| `ready` | The platform's own readiness rule, used by the condition `{profile_ready: true}`. Optional: `server_postback_forms` states none, because its platform's own test is a call into the framework's script object, which would name the framework ([decision 0999](../../decisions/0999-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md)) |
+| `ready` | The platform's own readiness rule, used by the condition `{profile_ready: true}`. Optional: `server_postback_forms` states none, because its platform's own test is a call into the framework's script object, which would name the framework ([decision 0402](../../decisions/0402-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md)) |
 | `locators` | The locator priority, and the identifier patterns the linter rejects (`web_generated_id`) |
 | `input_commit` | How a text control's value is committed in the page: `blur` (put in, then the focus taken away, so the control says it changed), `enter` (put in, then Enter), `blur_then_wait_ready` (put in, the focus taken away, then a wait for the page to draw the form again, the value read from the control drawn anew; a page that does not is `commit_not_redrawn`), or `type_then_blur` (typed key by key, then the focus taken away). Any other word does not load |
 | `frames` | Whether frames are declared or found |
