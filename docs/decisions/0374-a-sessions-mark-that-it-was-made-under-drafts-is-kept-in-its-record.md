@@ -1,4 +1,4 @@
-# 0399. A session's mark that it was made under drafts is kept in its record, and a record that does not say reads as drafted
+# 0374. A session's mark that it was made under drafts is kept in its record, and a record that does not say reads as drafted
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), from finding 7 of the [sessions-and-secrets review](../reviews/sessions-and-secrets-review-2026-11-24.md). The owner had not read this record when it was merged. The number 0399 is a placeholder the lead renumbers on merge.
 

@@ -375,7 +375,7 @@ async fn signed_in_under(world: &World, key: &crate::SessionKey, entry: &Arc<Aut
 }
 
 /// The mark that a session was made under drafts is the session's record's
-/// (decision 0399): a restart between the person's sign-in under drafts and
+/// (decision 0374): a restart between the person's sign-in under drafts and
 /// a run under a published version that finds it run out does not let the
 /// keeper renew it without its person. The provider renews by signing in
 /// again, which needs nothing held in memory, so its count of sign-ins is

@@ -1,6 +1,6 @@
 -- owner: a2m-auth
 -- Whether a session's last sign-in was declared by a published version or by
--- the target's drafts (decision 0399). A session made under drafts is never
+-- the target's drafts (decision 0374). A session made under drafts is never
 -- renewed without its person, under the drafts or under a published version,
 -- and the mark is kept with the session so that a restart does not forget
 -- it. `published` or `drafts`. Null in a row kept before this migration,

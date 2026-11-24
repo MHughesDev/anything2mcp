@@ -90,7 +90,7 @@ fn row(row: &Row) -> Result<SessionRow, Failure> {
             .transpose()?,
         // Only the word `published` reads as published. Null, as in a row
         // kept before migration 0027, and any word this engine does not
-        // know, read as made under drafts: fail closed (decision 0399).
+        // know, read as made under drafts: fail closed (decision 0374).
         made_under_drafts: row.opt_text(19)? != Some(PUBLISHED),
     })
 }

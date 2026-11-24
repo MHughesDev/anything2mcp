@@ -40,7 +40,7 @@ zeroize.workspace = true
 [dev-dependencies]
 axum.workspace = true
 # The test of a store kept before migration 0027 takes the mark's column out
-# of a store file, as such a store was (decision 0399).
+# of a store file, as such a store was (decision 0374).
 rusqlite.workspace = true
 
 [lints]

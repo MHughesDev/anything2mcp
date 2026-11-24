@@ -1570,7 +1570,7 @@ impl Inner {
         // A session signed in on a drafts' word, or one whose entry is a
         // drafts', is never renewed without its person (decision 0248). The
         // mark is the record's, so it holds across a restart, and a record
-        // that does not say reads as drafted (decision 0399).
+        // that does not say reads as drafted (decision 0374).
         if !entry.surfaces.from_published || row.made_under_drafts {
             self.fail(
                 row.id,

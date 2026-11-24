@@ -68,7 +68,7 @@ pub struct SessionRow {
     /// Whether the last sign-in was declared by the target's drafts rather
     /// than by a published version. Such a session is never renewed without
     /// its person (decision 0248). Kept in the record, so that a restart
-    /// does not forget it (decision 0399); a record that does not say, as
+    /// does not forget it (decision 0374); a record that does not say, as
     /// one kept before the mark was, reads as made under drafts.
     pub made_under_drafts: bool,
 }
