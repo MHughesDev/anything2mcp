@@ -5033,6 +5033,18 @@
             "compiled_target_hash": {
              "type": "string"
             },
+            "held": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "held_cut": {
+             "type": "boolean"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -5085,7 +5097,9 @@
            "required": [
             "target",
             "ok",
-            "problems"
+            "problems",
+            "held",
+            "held_cut"
            ],
            "type": "object"
           },
@@ -5133,6 +5147,18 @@
             "compiled_target_hash": {
              "type": "string"
             },
+            "held": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "held_cut": {
+             "type": "boolean"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -5185,7 +5211,9 @@
            "required": [
             "target",
             "ok",
-            "problems"
+            "problems",
+            "held",
+            "held_cut"
            ],
            "type": "object"
           },
@@ -7603,6 +7631,17 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "drafted_by": {
+          "type": "string"
+         },
+         "identity_mode": {
+          "enum": [
+           "per_user_token",
+           "per_user_session",
+           "per_user_device",
+           "service_account"
+          ]
+         },
          "max_effect": {
           "enum": [
            "read",
@@ -7610,8 +7649,20 @@
            "irreversible"
           ]
          },
+         "reviewer": {
+          "type": "string"
+         },
          "scope": {
           "type": "string"
+         },
+         "tests": {
+          "items": {
+           "additionalProperties": {},
+           "properties": {},
+           "required": [],
+           "type": "object"
+          },
+          "type": "array"
          },
          "who": {
           "type": "string"
@@ -7650,38 +7701,111 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "changed": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
-               "type": "string"
-              },
-              "when": {
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "version",
+              "changed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -7722,38 +7846,111 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "changed": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
-               "type": "string"
-              },
-              "when": {
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "version",
+              "changed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -7784,7 +7981,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Grant a principal or a group the use of tools up to an effect class.",
+    "summary": "Grant a principal or a group the use of tools up to an effect class. A person's act, published as a new version of the policy set.",
     "x-action": "grant.add"
    }
   },
@@ -7839,8 +8036,17 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "grants": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -7867,9 +8073,35 @@
               "when"
              ],
              "type": "object"
+            },
+            "role_grants": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "roles": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "second_admin_publish": {
+             "type": "boolean"
             }
            },
-           "required": [],
+           "required": [
+            "grants",
+            "role_grants",
+            "roles",
+            "second_admin_publish"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -7911,8 +8143,17 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "grants": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -7939,9 +8180,35 @@
               "when"
              ],
              "type": "object"
+            },
+            "role_grants": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "roles": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "second_admin_publish": {
+             "type": "boolean"
             }
            },
-           "required": [],
+           "required": [
+            "grants",
+            "role_grants",
+            "roles",
+            "second_admin_publish"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -7973,7 +8240,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "The grants of the workspace.",
+    "summary": "The grants, the grants of roles, and who holds which role, in the set in force.",
     "x-action": "grant.list"
    }
   },
@@ -7999,8 +8266,30 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "drafted_by": {
+          "type": "string"
+         },
+         "max_effect": {
+          "enum": [
+           "read",
+           "write",
+           "irreversible"
+          ]
+         },
+         "reviewer": {
+          "type": "string"
+         },
          "scope": {
           "type": "string"
+         },
+         "tests": {
+          "items": {
+           "additionalProperties": {},
+           "properties": {},
+           "required": [],
+           "type": "object"
+          },
+          "type": "array"
          },
          "who": {
           "type": "string"
@@ -8038,38 +8327,111 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "changed": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
-               "type": "string"
-              },
-              "when": {
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "version",
+              "changed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -8110,38 +8472,111 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "changed": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
-               "type": "string"
-              },
-              "when": {
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "version",
+              "changed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -8172,7 +8607,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Remove a grant.",
+    "summary": "Remove a grant. A person's act, published as a new version of the policy set.",
     "x-action": "grant.remove"
    }
   },
@@ -8534,6 +8969,229 @@
     },
     "summary": "Stop, or release, a target, a workspace, or the whole system. Releasing needs a person present.",
     "x-action": "killswitch.set"
+   }
+  },
+  "/api/v1/actions/net.current": {
+   "post": {
+    "operationId": "net_current",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+       }
+      }
+     },
+     "required": false
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "can_be_named": {
+             "type": "boolean"
+            },
+            "interface": {
+             "type": "string"
+            },
+            "left_out": {},
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "stated": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "stated",
+            "left_out",
+            "can_be_named"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "can_be_named": {
+             "type": "boolean"
+            },
+            "interface": {
+             "type": "string"
+            },
+            "left_out": {},
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "stated": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "stated",
+            "left_out",
+            "can_be_named"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Which facts of the network this machine is on were read, to recognize it again, and which were left out and why. Shows no digest and no address. Sends nothing.",
+    "x-action": "net.current"
    }
   },
   "/api/v1/actions/net.interfaces": {
@@ -12120,7 +12778,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Why a past call was allowed or denied: the decision, the policy version, and the rules that made it.",
+    "summary": "Why a past call was allowed or denied: the decision, the policy version, and the rules that made it. For an auditor or an administrator.",
     "x-action": "policy.explain"
    }
   },
@@ -12146,7 +12804,13 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "drafted_by": {
+          "type": "string"
+         },
          "file": {
+          "type": "string"
+         },
+         "reviewer": {
           "type": "string"
          }
         },
@@ -12181,38 +12845,111 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "changed": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
-               "type": "string"
-              },
-              "when": {
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "version",
+              "changed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -12253,38 +12990,111 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "changed": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
-               "type": "string"
-              },
-              "when": {
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "version",
+              "changed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -12315,7 +13125,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Publish a policy set after its own tests pass.",
+    "summary": "Publish a policy file after its own tests pass. A person's act; where the set in force asks for a second administrator, the reviewer proves presence of their own.",
     "x-action": "policy.publish"
    }
   },
@@ -12376,8 +13186,17 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "failed": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -12404,9 +13223,19 @@
               "when"
              ],
              "type": "object"
+            },
+            "ok": {
+             "type": "boolean"
+            },
+            "passed": {
+             "type": "integer"
             }
            },
-           "required": [],
+           "required": [
+            "ok",
+            "passed",
+            "failed"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -12448,8 +13277,17 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "failed": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -12476,9 +13314,19 @@
               "when"
              ],
              "type": "object"
+            },
+            "ok": {
+             "type": "boolean"
+            },
+            "passed": {
+             "type": "integer"
             }
            },
-           "required": [],
+           "required": [
+            "ok",
+            "passed",
+            "failed"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -12510,8 +13358,654 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Run a policy set's decision table and report each failure.",
+    "summary": "Run a policy file's decision table against its own layers and report each failure. Publishes nothing.",
     "x-action": "policy.test"
+   }
+  },
+  "/api/v1/actions/policy.tools_allowed": {
+   "post": {
+    "operationId": "policy_tools_allowed",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "principal": {
+          "type": "string"
+         },
+         "toolset": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "principal"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "tools": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "tools"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "tools": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "tools"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Which published tools a principal may use, through a toolset where one is named. Records no decision.",
+    "x-action": "policy.tools_allowed"
+   }
+  },
+  "/api/v1/actions/policy.versions": {
+   "post": {
+    "operationId": "policy_versions",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+       }
+      }
+     },
+     "required": false
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "versions": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "versions"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "versions": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "versions"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "The history of published policy versions, oldest first, and which is in force.",
+    "x-action": "policy.versions"
+   }
+  },
+  "/api/v1/actions/policy.who_can": {
+   "post": {
+    "operationId": "policy_who_can",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "candidates": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
+         "tool": {
+          "type": "string"
+         },
+         "toolset": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tool",
+         "candidates"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "who": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "who"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "who": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "who"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Which of the principals named may use one published tool, through a toolset where one is named. Records no decision.",
+    "x-action": "policy.who_can"
    }
   },
   "/api/v1/actions/provider.describe": {
@@ -14014,6 +15508,1039 @@
     },
     "summary": "Submit a target's drafts for a person's review. Publishing itself is a person's act.",
     "x-action": "publish.request"
+   }
+  },
+  "/api/v1/actions/reach.list": {
+   "post": {
+    "operationId": "reach_list",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+       }
+      }
+     },
+     "required": false
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "reaches": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "in_force": {
+                "type": "boolean"
+               },
+               "label": {
+                "type": "string"
+               },
+               "look": {
+                "items": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "send": {
+                "items": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "stated": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               }
+              },
+              "required": [
+               "label",
+               "stated",
+               "in_force",
+               "look",
+               "send"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "reaches"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "reaches": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "in_force": {
+                "type": "boolean"
+               },
+               "label": {
+                "type": "string"
+               },
+               "look": {
+                "items": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "send": {
+                "items": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "stated": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               }
+              },
+              "required": [
+               "label",
+               "stated",
+               "in_force",
+               "look",
+               "send"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            }
+           },
+           "required": [
+            "reaches"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "The reaches a person has named: each label, the names of the facts it states, whether it is in force on the network this machine is on now, and the entries the person wrote. Shows no digest.",
+    "x-action": "reach.list"
+   }
+  },
+  "/api/v1/actions/reach.name": {
+   "post": {
+    "operationId": "reach_name",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "label": {
+          "type": "string"
+         },
+         "look": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
+         "send": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         }
+        },
+        "required": [
+         "label"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": false,
+             "properties": {
+              "in_force": {
+               "type": "boolean"
+              },
+              "label": {
+               "type": "string"
+              },
+              "look": {
+               "items": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "send": {
+               "items": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "stated": {
+               "items": {
+                "type": "string"
+               },
+               "type": "array"
+              }
+             },
+             "required": [
+              "label",
+              "stated",
+              "in_force",
+              "look",
+              "send"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": false,
+             "properties": {
+              "in_force": {
+               "type": "boolean"
+              },
+              "label": {
+               "type": "string"
+              },
+              "look": {
+               "items": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "send": {
+               "items": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "stated": {
+               "items": {
+                "type": "string"
+               },
+               "type": "array"
+              }
+             },
+             "required": [
+              "label",
+              "stated",
+              "in_force",
+              "look",
+              "send"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "A person names the network this machine is on now, with the destinations that may be looked at and sent to, and the gateway names the person chooses. The network is read from the machine, never taken from the input. A person's act, never an agent's.",
+    "x-action": "reach.name"
+   }
+  },
+  "/api/v1/actions/reach.withdraw": {
+   "post": {
+    "operationId": "reach_withdraw",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "label": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "label"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": false,
+             "properties": {
+              "label": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "withdrawn": {
+               "type": "boolean"
+              }
+             },
+             "required": [
+              "label",
+              "withdrawn"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": false,
+             "properties": {
+              "label": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "withdrawn": {
+               "type": "boolean"
+              }
+             },
+             "required": [
+              "label",
+              "withdrawn"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "A person forgets one reach by its label.",
+    "x-action": "reach.withdraw"
    }
   },
   "/api/v1/actions/run.cancel": {
@@ -16391,6 +18918,7 @@
            "compared.not_covered",
            "drafted.written",
            "drafted.held_back",
+           "drafted.not_drafted",
            "drafted.conflicts",
            "drafted.refused",
            "checked.problems",
@@ -19327,6 +21855,12 @@
          "address": {
           "type": "string"
          },
+         "fields": {
+          "additionalProperties": {},
+          "properties": {},
+          "required": [],
+          "type": "object"
+         },
          "kind": {
           "type": "string"
          },
@@ -20940,10 +23474,16 @@
              "required": [],
              "type": "object"
             },
+            "available": {
+             "type": "boolean"
+            },
             "compiled_target_hash": {
              "type": "string"
             },
             "description": {
+             "type": "string"
+            },
+            "description_by": {
              "type": "string"
             },
             "effect": {
@@ -21003,6 +23543,25 @@
             "title": {
              "type": "string"
             },
+            "unavailable": {
+             "additionalProperties": false,
+             "properties": {
+              "knowledge": {
+               "type": "string"
+              },
+              "marked_at": {
+               "type": "integer"
+              },
+              "reason": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "reason",
+              "knowledge"
+             ],
+             "type": "object"
+            },
             "version": {
              "type": "string"
             }
@@ -21017,9 +23576,11 @@
             "compiled_target_hash",
             "title",
             "description",
+            "description_by",
             "input_schema",
             "output_schema",
-            "annotations"
+            "annotations",
+            "available"
            ],
            "type": "object"
           },
@@ -21070,10 +23631,16 @@
              "required": [],
              "type": "object"
             },
+            "available": {
+             "type": "boolean"
+            },
             "compiled_target_hash": {
              "type": "string"
             },
             "description": {
+             "type": "string"
+            },
+            "description_by": {
              "type": "string"
             },
             "effect": {
@@ -21133,6 +23700,25 @@
             "title": {
              "type": "string"
             },
+            "unavailable": {
+             "additionalProperties": false,
+             "properties": {
+              "knowledge": {
+               "type": "string"
+              },
+              "marked_at": {
+               "type": "integer"
+              },
+              "reason": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "reason",
+              "knowledge"
+             ],
+             "type": "object"
+            },
             "version": {
              "type": "string"
             }
@@ -21147,9 +23733,11 @@
             "compiled_target_hash",
             "title",
             "description",
+            "description_by",
             "input_schema",
             "output_schema",
-            "annotations"
+            "annotations",
+            "available"
            ],
            "type": "object"
           },
@@ -21308,10 +23896,16 @@
                 "required": [],
                 "type": "object"
                },
+               "available": {
+                "type": "boolean"
+               },
                "compiled_target_hash": {
                 "type": "string"
                },
                "description": {
+                "type": "string"
+               },
+               "description_by": {
                 "type": "string"
                },
                "effect": {
@@ -21344,6 +23938,25 @@
                "title": {
                 "type": "string"
                },
+               "unavailable": {
+                "additionalProperties": false,
+                "properties": {
+                 "knowledge": {
+                  "type": "string"
+                 },
+                 "marked_at": {
+                  "type": "integer"
+                 },
+                 "reason": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "reason",
+                 "knowledge"
+                ],
+                "type": "object"
+               },
                "version": {
                 "type": "string"
                }
@@ -21354,7 +23967,8 @@
                "version",
                "kind",
                "effect",
-               "description"
+               "description",
+               "available"
               ],
               "type": "object"
              },
@@ -21452,10 +24066,16 @@
                 "required": [],
                 "type": "object"
                },
+               "available": {
+                "type": "boolean"
+               },
                "compiled_target_hash": {
                 "type": "string"
                },
                "description": {
+                "type": "string"
+               },
+               "description_by": {
                 "type": "string"
                },
                "effect": {
@@ -21488,6 +24108,25 @@
                "title": {
                 "type": "string"
                },
+               "unavailable": {
+                "additionalProperties": false,
+                "properties": {
+                 "knowledge": {
+                  "type": "string"
+                 },
+                 "marked_at": {
+                  "type": "integer"
+                 },
+                 "reason": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "reason",
+                 "knowledge"
+                ],
+                "type": "object"
+               },
                "version": {
                 "type": "string"
                }
@@ -21498,7 +24137,8 @@
                "version",
                "kind",
                "effect",
-               "description"
+               "description",
+               "available"
               ],
               "type": "object"
              },
@@ -21544,7 +24184,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Find operations and pipelines of the published targets by words or module. Returns names, one-line descriptions, and effects; call tool.describe for a schema.",
+    "summary": "Find operations and pipelines of the published targets by words or module. Returns names, one-line descriptions, effects, and whether each can be called now; call tool.describe for a schema.",
     "x-action": "tool.search"
    }
   },
@@ -21570,19 +24210,60 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "drafted_by": {
+          "type": "string"
+         },
+         "identity_mode": {
+          "enum": [
+           "per_user_token",
+           "per_user_session",
+           "per_user_device",
+           "service_account"
+          ]
+         },
+         "max_effect": {
+          "enum": [
+           "read",
+           "write",
+           "irreversible"
+          ]
+         },
          "name": {
           "type": "string"
+         },
+         "reviewer": {
+          "type": "string"
+         },
+         "tests": {
+          "items": {
+           "additionalProperties": {},
+           "properties": {},
+           "required": [],
+           "type": "object"
+          },
+          "type": "array"
          },
          "tools": {
           "items": {
            "type": "string"
           },
           "type": "array"
+         },
+         "who": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
+         "writes_without_person": {
+          "type": "boolean"
          }
         },
         "required": [
          "name",
-         "tools"
+         "who",
+         "tools",
+         "max_effect"
         ],
         "type": "object"
        }
@@ -21612,38 +24293,111 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "changed": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
-               "type": "string"
-              },
-              "when": {
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "version",
+              "changed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -21684,38 +24438,111 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "changed": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
-               "type": "string"
-              },
-              "when": {
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "version",
+              "changed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -21746,7 +24573,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Create a toolset: which tools, which version, which identity mode.",
+    "summary": "Create a toolset: who may connect, which tools it selects, the highest effect class and the identity mode of its runs. A toolset only narrows what grants allow. A person's act, published as a new version of the policy set.",
     "x-action": "toolset.create"
    }
   },
@@ -21771,7 +24598,11 @@
       "application/json": {
        "schema": {
         "additionalProperties": false,
-        "properties": {},
+        "properties": {
+         "name": {
+          "type": "string"
+         }
+        },
         "required": [],
         "type": "object"
        }
@@ -21801,7 +24632,7 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
             "next": {
              "additionalProperties": false,
@@ -21829,9 +24660,20 @@
               "when"
              ],
              "type": "object"
+            },
+            "toolsets": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
             }
            },
-           "required": [],
+           "required": [
+            "toolsets"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -21873,7 +24715,7 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
             "next": {
              "additionalProperties": false,
@@ -21901,9 +24743,20 @@
               "when"
              ],
              "type": "object"
+            },
+            "toolsets": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
             }
            },
-           "required": [],
+           "required": [
+            "toolsets"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -21935,13 +24788,13 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "The toolsets of the workspace.",
+    "summary": "The toolsets in force, each with the published tools it selects.",
     "x-action": "toolset.list"
    }
   },
-  "/api/v1/actions/toolset.update": {
+  "/api/v1/actions/toolset.remove": {
    "post": {
-    "operationId": "toolset_update",
+    "operationId": "toolset_remove",
     "parameters": [
      {
       "description": "Makes a repeated write the same write.",
@@ -21961,12 +24814,21 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "drafted_by": {
+          "type": "string"
+         },
          "name": {
           "type": "string"
          },
-         "tools": {
+         "reviewer": {
+          "type": "string"
+         },
+         "tests": {
           "items": {
-           "type": "string"
+           "additionalProperties": {},
+           "properties": {},
+           "required": [],
+           "type": "object"
           },
           "type": "array"
          }
@@ -22002,38 +24864,111 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "changed": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
-               "type": "string"
-              },
-              "when": {
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "version",
+              "changed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -22074,38 +25009,111 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "changed": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
-               "type": "string"
-              },
-              "when": {
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "version",
+              "changed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -22136,7 +25144,393 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Change a toolset.",
+    "summary": "Remove a toolset. A person's act, published as a new version of the policy set.",
+    "x-action": "toolset.remove"
+   }
+  },
+  "/api/v1/actions/toolset.update": {
+   "post": {
+    "operationId": "toolset_update",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "drafted_by": {
+          "type": "string"
+         },
+         "identity_mode": {
+          "enum": [
+           "per_user_token",
+           "per_user_session",
+           "per_user_device",
+           "service_account"
+          ]
+         },
+         "max_effect": {
+          "enum": [
+           "read",
+           "write",
+           "irreversible"
+          ]
+         },
+         "name": {
+          "type": "string"
+         },
+         "reviewer": {
+          "type": "string"
+         },
+         "tests": {
+          "items": {
+           "additionalProperties": {},
+           "properties": {},
+           "required": [],
+           "type": "object"
+          },
+          "type": "array"
+         },
+         "tools": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
+         "who": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
+         "writes_without_person": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "name"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": false,
+             "properties": {
+              "changed": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "version": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "version",
+              "changed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": false,
+             "properties": {
+              "changed": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "version": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "version",
+              "changed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Change the fields given of a toolset. A person's act, published as a new version of the policy set.",
     "x-action": "toolset.update"
    }
   },
@@ -29623,10 +33017,16 @@
                 "required": [],
                 "type": "object"
                },
+               "available": {
+                "type": "boolean"
+               },
                "compiled_target_hash": {
                 "type": "string"
                },
                "description": {
+                "type": "string"
+               },
+               "description_by": {
                 "type": "string"
                },
                "effect": {
@@ -29659,6 +33059,25 @@
                "title": {
                 "type": "string"
                },
+               "unavailable": {
+                "additionalProperties": false,
+                "properties": {
+                 "knowledge": {
+                  "type": "string"
+                 },
+                 "marked_at": {
+                  "type": "integer"
+                 },
+                 "reason": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "reason",
+                 "knowledge"
+                ],
+                "type": "object"
+               },
                "version": {
                 "type": "string"
                }
@@ -29669,7 +33088,8 @@
                "version",
                "kind",
                "effect",
-               "description"
+               "description",
+               "available"
               ],
               "type": "object"
              },
@@ -29767,10 +33187,16 @@
                 "required": [],
                 "type": "object"
                },
+               "available": {
+                "type": "boolean"
+               },
                "compiled_target_hash": {
                 "type": "string"
                },
                "description": {
+                "type": "string"
+               },
+               "description_by": {
                 "type": "string"
                },
                "effect": {
@@ -29803,6 +33229,25 @@
                "title": {
                 "type": "string"
                },
+               "unavailable": {
+                "additionalProperties": false,
+                "properties": {
+                 "knowledge": {
+                  "type": "string"
+                 },
+                 "marked_at": {
+                  "type": "integer"
+                 },
+                 "reason": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "reason",
+                 "knowledge"
+                ],
+                "type": "object"
+               },
                "version": {
                 "type": "string"
                }
@@ -29813,7 +33258,8 @@
                "version",
                "kind",
                "effect",
-               "description"
+               "description",
+               "available"
               ],
               "type": "object"
              },
@@ -29859,7 +33305,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Find operations and pipelines of the published targets by words or module. Returns names, one-line descriptions, and effects; call tool.describe for a schema.",
+    "summary": "Find operations and pipelines of the published targets by words or module. Returns names, one-line descriptions, effects, and whether each can be called now; call tool.describe for a schema.",
     "x-action": "tool.search"
    }
   }

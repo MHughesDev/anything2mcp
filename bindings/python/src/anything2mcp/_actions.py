@@ -57,6 +57,7 @@ ACTIONS = (
     "grant.list",
     "grant.remove",
     "killswitch.set",
+    "net.current",
     "net.interfaces",
     "net.listeners",
     "net.neighbours",
@@ -69,11 +70,17 @@ ACTIONS = (
     "policy.explain",
     "policy.publish",
     "policy.test",
+    "policy.tools_allowed",
+    "policy.versions",
+    "policy.who_can",
     "provider.describe",
     "provider.disable",
     "provider.enable",
     "provider.list",
     "publish.request",
+    "reach.list",
+    "reach.name",
+    "reach.withdraw",
     "run.cancel",
     "run.get",
     "run.list",
@@ -107,6 +114,7 @@ ACTIONS = (
     "tool.search",
     "toolset.create",
     "toolset.list",
+    "toolset.remove",
     "toolset.update",
     "trace.export",
     "trace.show",
@@ -685,9 +693,14 @@ class Actions:
         max_effect: Literal["read", "write", "irreversible"],
         scope: str,
         who: str,
+        drafted_by: Optional[str] = None,
+        identity_mode: Optional[Literal["per_user_token", "per_user_session", "per_user_device", "service_account"]] = None,
+        reviewer: Optional[str] = None,
+        tests: Optional[List[Dict[str, Any]]] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Grant a principal or a group the use of tools up to an effect class.
+        """Grant a principal or a group the use of tools up to an effect class. A
+        person's act, published as a new version of the policy set.
 
         The engine action is ``grant.add``.
         """
@@ -697,12 +710,17 @@ class Actions:
                 "max_effect": max_effect,
                 "scope": scope,
                 "who": who,
+                "drafted_by": drafted_by,
+                "identity_mode": identity_mode,
+                "reviewer": reviewer,
+                "tests": tests,
             },
             idempotency_key,
         )
 
     def grant_list(self, *, idempotency_key: Optional[str] = None) -> "Response":
-        """The grants of the workspace.
+        """The grants, the grants of roles, and who holds which role, in the set in
+        force.
 
         The engine action is ``grant.list``.
         """
@@ -713,9 +731,14 @@ class Actions:
         *,
         scope: str,
         who: str,
+        drafted_by: Optional[str] = None,
+        max_effect: Optional[Literal["read", "write", "irreversible"]] = None,
+        reviewer: Optional[str] = None,
+        tests: Optional[List[Dict[str, Any]]] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Remove a grant.
+        """Remove a grant. A person's act, published as a new version of the policy
+        set.
 
         The engine action is ``grant.remove``.
         """
@@ -724,6 +747,10 @@ class Actions:
             {
                 "scope": scope,
                 "who": who,
+                "drafted_by": drafted_by,
+                "max_effect": max_effect,
+                "reviewer": reviewer,
+                "tests": tests,
             },
             idempotency_key,
         )
@@ -750,6 +777,15 @@ class Actions:
             },
             idempotency_key,
         )
+
+    def net_current(self, *, idempotency_key: Optional[str] = None) -> "Response":
+        """Which facts of the network this machine is on were read, to recognize it
+        again, and which were left out and why. Shows no digest and no address.
+        Sends nothing.
+
+        The engine action is ``net.current``.
+        """
+        return self._action("net.current", {}, idempotency_key)
 
     def net_interfaces(self, *, idempotency_key: Optional[str] = None) -> "Response":
         """This machine's network interfaces and their addresses, read from the
@@ -839,7 +875,7 @@ class Actions:
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """Why a past call was allowed or denied: the decision, the policy version,
-        and the rules that made it.
+        and the rules that made it. For an auditor or an administrator.
 
         The engine action is ``policy.explain``.
         """
@@ -849,13 +885,25 @@ class Actions:
         self,
         *,
         file: str,
+        drafted_by: Optional[str] = None,
+        reviewer: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Publish a policy set after its own tests pass.
+        """Publish a policy file after its own tests pass. A person's act; where
+        the set in force asks for a second administrator, the reviewer proves
+        presence of their own.
 
         The engine action is ``policy.publish``.
         """
-        return self._action("policy.publish", {"file": file}, idempotency_key)
+        return self._action(
+            "policy.publish",
+            {
+                "file": file,
+                "drafted_by": drafted_by,
+                "reviewer": reviewer,
+            },
+            idempotency_key,
+        )
 
     def policy_test(
         self,
@@ -863,11 +911,64 @@ class Actions:
         file: str,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Run a policy set's decision table and report each failure.
+        """Run a policy file's decision table against its own layers and report
+        each failure. Publishes nothing.
 
         The engine action is ``policy.test``.
         """
         return self._action("policy.test", {"file": file}, idempotency_key)
+
+    def policy_tools_allowed(
+        self,
+        *,
+        principal: str,
+        toolset: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Which published tools a principal may use, through a toolset where one
+        is named. Records no decision.
+
+        The engine action is ``policy.tools_allowed``.
+        """
+        return self._action(
+            "policy.tools_allowed",
+            {
+                "principal": principal,
+                "toolset": toolset,
+            },
+            idempotency_key,
+        )
+
+    def policy_versions(self, *, idempotency_key: Optional[str] = None) -> "Response":
+        """The history of published policy versions, oldest first, and which is in
+        force.
+
+        The engine action is ``policy.versions``.
+        """
+        return self._action("policy.versions", {}, idempotency_key)
+
+    def policy_who_can(
+        self,
+        *,
+        candidates: List[str],
+        tool: str,
+        toolset: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Which of the principals named may use one published tool, through a
+        toolset where one is named. Records no decision.
+
+        The engine action is ``policy.who_can``.
+        """
+        return self._action(
+            "policy.who_can",
+            {
+                "candidates": candidates,
+                "tool": tool,
+                "toolset": toolset,
+            },
+            idempotency_key,
+        )
 
     def provider_describe(
         self,
@@ -941,6 +1042,52 @@ class Actions:
             },
             idempotency_key,
         )
+
+    def reach_list(self, *, idempotency_key: Optional[str] = None) -> "Response":
+        """The reaches a person has named: each label, the names of the facts it
+        states, whether it is in force on the network this machine is on now,
+        and the entries the person wrote. Shows no digest.
+
+        The engine action is ``reach.list``.
+        """
+        return self._action("reach.list", {}, idempotency_key)
+
+    def reach_name(
+        self,
+        *,
+        label: str,
+        look: Optional[List[str]] = None,
+        send: Optional[List[str]] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """A person names the network this machine is on now, with the destinations
+        that may be looked at and sent to, and the gateway names the person
+        chooses. The network is read from the machine, never taken from the
+        input. A person's act, never an agent's.
+
+        The engine action is ``reach.name``.
+        """
+        return self._action(
+            "reach.name",
+            {
+                "label": label,
+                "look": look,
+                "send": send,
+            },
+            idempotency_key,
+        )
+
+    def reach_withdraw(
+        self,
+        *,
+        label: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """A person forgets one reach by its label.
+
+        The engine action is ``reach.withdraw``.
+        """
+        return self._action("reach.withdraw", {"label": label}, idempotency_key)
 
     def run_cancel(
         self,
@@ -1093,7 +1240,7 @@ class Actions:
         target: str,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        part: Optional[Literal["surfaces", "found", "compared.differs", "compared.would_draft", "compared.not_covered", "drafted.written", "drafted.held_back", "drafted.conflicts", "drafted.refused", "checked.problems", "checked.tools", "tried.tools", "tried.left_out", "open", "not_looked_at"]] = None,
+        part: Optional[Literal["surfaces", "found", "compared.differs", "compared.would_draft", "compared.not_covered", "drafted.written", "drafted.held_back", "drafted.not_drafted", "drafted.conflicts", "drafted.refused", "checked.problems", "checked.tools", "tried.tools", "tried.left_out", "open", "not_looked_at"]] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """The last scout's report on a target: found, drafted, proven, open, and
@@ -1326,6 +1473,7 @@ class Actions:
         *,
         name: str,
         address: Optional[str] = None,
+        fields: Optional[Dict[str, Any]] = None,
         kind: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
@@ -1339,6 +1487,7 @@ class Actions:
             {
                 "name": name,
                 "address": address,
+                "fields": fields,
                 "kind": kind,
             },
             idempotency_key,
@@ -1476,8 +1625,8 @@ class Actions:
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """Find operations and pipelines of the published targets by words or
-        module. Returns names, one-line descriptions, and effects; call
-        tool.describe for a schema.
+        module. Returns names, one-line descriptions, effects, and whether each
+        can be called now; call tool.describe for a schema.
 
         The engine action is ``tool.search``.
         """
@@ -1498,38 +1647,93 @@ class Actions:
     def toolset_create(
         self,
         *,
+        max_effect: Literal["read", "write", "irreversible"],
         name: str,
         tools: List[str],
+        who: List[str],
+        drafted_by: Optional[str] = None,
+        identity_mode: Optional[Literal["per_user_token", "per_user_session", "per_user_device", "service_account"]] = None,
+        reviewer: Optional[str] = None,
+        tests: Optional[List[Dict[str, Any]]] = None,
+        writes_without_person: Optional[bool] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Create a toolset: which tools, which version, which identity mode.
+        """Create a toolset: who may connect, which tools it selects, the highest
+        effect class and the identity mode of its runs. A toolset only narrows
+        what grants allow. A person's act, published as a new version of the
+        policy set.
 
         The engine action is ``toolset.create``.
         """
         return self._action(
             "toolset.create",
             {
+                "max_effect": max_effect,
                 "name": name,
                 "tools": tools,
+                "who": who,
+                "drafted_by": drafted_by,
+                "identity_mode": identity_mode,
+                "reviewer": reviewer,
+                "tests": tests,
+                "writes_without_person": writes_without_person,
             },
             idempotency_key,
         )
 
-    def toolset_list(self, *, idempotency_key: Optional[str] = None) -> "Response":
-        """The toolsets of the workspace.
+    def toolset_list(
+        self,
+        *,
+        name: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """The toolsets in force, each with the published tools it selects.
 
         The engine action is ``toolset.list``.
         """
-        return self._action("toolset.list", {}, idempotency_key)
+        return self._action("toolset.list", {"name": name}, idempotency_key)
+
+    def toolset_remove(
+        self,
+        *,
+        name: str,
+        drafted_by: Optional[str] = None,
+        reviewer: Optional[str] = None,
+        tests: Optional[List[Dict[str, Any]]] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Remove a toolset. A person's act, published as a new version of the
+        policy set.
+
+        The engine action is ``toolset.remove``.
+        """
+        return self._action(
+            "toolset.remove",
+            {
+                "name": name,
+                "drafted_by": drafted_by,
+                "reviewer": reviewer,
+                "tests": tests,
+            },
+            idempotency_key,
+        )
 
     def toolset_update(
         self,
         *,
         name: str,
+        drafted_by: Optional[str] = None,
+        identity_mode: Optional[Literal["per_user_token", "per_user_session", "per_user_device", "service_account"]] = None,
+        max_effect: Optional[Literal["read", "write", "irreversible"]] = None,
+        reviewer: Optional[str] = None,
+        tests: Optional[List[Dict[str, Any]]] = None,
         tools: Optional[List[str]] = None,
+        who: Optional[List[str]] = None,
+        writes_without_person: Optional[bool] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Change a toolset.
+        """Change the fields given of a toolset. A person's act, published as a new
+        version of the policy set.
 
         The engine action is ``toolset.update``.
         """
@@ -1537,7 +1741,14 @@ class Actions:
             "toolset.update",
             {
                 "name": name,
+                "drafted_by": drafted_by,
+                "identity_mode": identity_mode,
+                "max_effect": max_effect,
+                "reviewer": reviewer,
+                "tests": tests,
                 "tools": tools,
+                "who": who,
+                "writes_without_person": writes_without_person,
             },
             idempotency_key,
         )

@@ -6,7 +6,8 @@ from the action registry, so a method written from it cannot name an action
 the engine lacks. ``tools/openapi.json`` is a saved copy (see
 ``tools/fetch_openapi.py``). This script reads it and writes
 ``src/anything2mcp/_actions.py``: one method per action, named as the action
-names it with the dot as an underscore (``tool.call`` is ``tool_call``),
+names it with the dot as an underscore (``tool.call`` is ``tool_call``,
+``policy.tools_allowed`` is ``policy_tools_allowed``),
 with keyword-only, typed inputs taken from the request schema and a
 docstring taken from the operation's summary.
 
@@ -24,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import keyword
+import re
 import sys
 import textwrap
 from pathlib import Path
@@ -42,8 +44,20 @@ class GenerateError(Exception):
     than guess what an input is."""
 
 
+#: The form of an action's name: a noun and a verb, each one or more words
+#: of lower-case letters and digits joined by single underscores
+#: (``policy.tools_allowed``). Every name of this form has a method name in
+#: both clients; any other stops the generators (decision 0999).
+ACTION_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*\Z")
+
+
 def method_name(action: str) -> str:
-    """``tool.call`` is ``tool_call``: noun and verb, joined by an underscore."""
+    """``tool.call`` is ``tool_call``: noun and verb, joined by an underscore,
+    and an underscore inside either stays (``policy.tools_allowed`` is
+    ``policy_tools_allowed``). The Node generator joins the same words in
+    camel case (decision 0999)."""
+    if not ACTION_NAME.match(action):
+        raise GenerateError(f"action `{action}` has no valid method name")
     name = action.replace(".", "_")
     if not name.isidentifier() or keyword.iskeyword(name):
         raise GenerateError(f"action `{action}` has no valid method name")

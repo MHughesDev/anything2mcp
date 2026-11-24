@@ -13,7 +13,7 @@ How a version of Anything2MCP is numbered, built, and published. The design behi
 ## Before a release
 
 1. `main` is green on all three operating systems.
-2. The version is set in all places (`Cargo.toml`, `bindings/python/pyproject.toml`, and the npm launcher's `package.json` with its optional dependencies), and `python3 tools/docs_audit.py` reports no findings.
+2. The version is set in all places (`Cargo.toml`, `bindings/python/pyproject.toml`, and the npm launcher's `package.json` with its optional dependencies), and `python3 tools/docs_audit.py` reports no findings. The engine's OpenAPI document carries the version, so the saved copy is fetched again from the built program and both clients regenerated ([bindings/README.md](bindings/README.md)); CI fails until it is.
 3. [CHANGELOG.md](CHANGELOG.md) has a section for the version, with the date, and "Unreleased" is empty again.
 4. Anything the release promises is proven by a test that ran in CI on the commit being released.
 

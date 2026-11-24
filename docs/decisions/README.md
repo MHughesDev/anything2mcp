@@ -396,3 +396,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0402 | [The rename sweep renames every name, and keeps what is stored](0402-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md) | Accepted (design decision) |
 | 0403 | [A renewal opens the saved state first when its runner holds nothing](0403-a-renewal-opens-the-saved-state-first-when-its-runner-holds-nothing.md) | Accepted (design decision) |
 | 0404 | [One closed shape of a body in the provider contract, and the stricter refusal where the two copies differed](0404-one-closed-shape-of-a-body-in-the-provider-contract-and-the-stricter-refusal-where-the-two-copies-differed.md) | Accepted (design decision) |
+| 0999 | [A method name is the action's words, joined in each language's way](0999-a-method-name-is-the-actions-words-joined-in-each-languages-way.md) | Accepted (design decision) |

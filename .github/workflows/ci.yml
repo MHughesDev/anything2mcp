@@ -289,6 +289,14 @@ jobs:
         run: |
           python bindings/python/tools/generate_actions.py --check
           node bindings/npm/scripts/generate-actions.js --check
+      # The generators read a saved copy of the engine's OpenAPI document;
+      # this holds the copy to what the program built here serves, so it
+      # cannot drift from the product (decision 0999). On Linux and macOS,
+      # where the clients' tests already start a real engine.
+      - name: Check the saved OpenAPI document is the one the built engine serves
+        if: runner.os != 'Windows'
+        working-directory: bindings/python
+        run: python tools/fetch_openapi.py --binary "$GITHUB_WORKSPACE/target/release/anything2mcp$EXE" --check
       - name: Test the npm packages and the Node client, against a fake engine and the built one
         working-directory: bindings/npm
         env:
