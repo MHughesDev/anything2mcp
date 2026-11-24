@@ -35,6 +35,8 @@
 mod child;
 #[cfg(target_os = "macos")]
 mod mac;
+#[cfg(any(windows, target_os = "macos", test))]
+mod seat;
 #[cfg(not(any(windows, target_os = "macos")))]
 mod session;
 #[cfg(windows)]
