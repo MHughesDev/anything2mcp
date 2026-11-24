@@ -124,7 +124,7 @@ pub struct JobRequirements {
 
 pub struct RunnerOffer { pub runner: RunnerId, pub workspace: WorkspaceId, pub targets: Vec<TargetName>, pub modes: Vec<Mode>, pub os: Option<OsName>, pub owner: Option<PrincipalId>, pub protocol: u32 }
 pub struct RunnerTerms { pub heartbeat: Duration, pub lease: Duration, pub protocol: u32 }
-pub struct Slots { pub total: u32, pub per_mode: BTreeMap<Mode, u32>, pub keeper: u32 } // keeper: slots only a session_keepalive job takes, before an ordinary one (decision 0399)
+pub struct Slots { pub total: u32, pub per_mode: BTreeMap<Mode, u32>, pub keeper: u32 } // keeper: slots only a session_keepalive job takes, before an ordinary one (decision 0353)
 
 pub struct JobLease {
     pub job: JobId, pub run: Option<RunId>, pub epoch: Epoch,    // only ever increases, per run

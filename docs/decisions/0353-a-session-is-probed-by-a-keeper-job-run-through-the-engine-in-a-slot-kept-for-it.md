@@ -1,4 +1,4 @@
-# 0399. A session is probed by a keeper job run through the engine, in a slot kept for it
+# 0353. A session is probed by a keeper job run through the engine, in a slot kept for it
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
 

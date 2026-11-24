@@ -1,4 +1,4 @@
-# 0399. A read that waits for a sign-in, as built, and a surface added with its own fields
+# 0354. A read that waits for a sign-in, as built, and a surface added with its own fields
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
 
