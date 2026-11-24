@@ -1,4 +1,4 @@
-# 0999. A request whose answer is being read is closed by the read alone
+# 0415. A request whose answer is being read is closed by the read alone
 
 **Status:** Accepted. Design decision, made by the worker who found the fault, under the lead's brief. The owner had not read this record when it was merged. It amends point 4 of [decision 0411](0411-the-watching-tab-records-from-the-browsers-network-events-and-keeps-each-screen-without-its-values.md) and changes no public interface.
 
