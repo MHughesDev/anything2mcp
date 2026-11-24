@@ -121,7 +121,7 @@ S2: 1. Write the rule for which drafted reads are reported as ready: passed a tr
 
 | # | Package | What it builds | Proof |
 | --- | --- | --- | --- |
-| ~~1.6~~ | ~~Reading a page~~ (done, [decision 0399](../decisions/0399-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md)) | The rest of the read verbs, locators, wait conditions, and widget drivers for reading | The Phase 1 cases of the test application pass on three systems |
+| ~~1.6~~ | ~~Reading a page~~ (done, [decision 0350](../decisions/0350-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md)) | The rest of the read verbs, locators, wait conditions, and widget drivers for reading | The Phase 1 cases of the test application pass on three systems |
 | 2.3 | The sign-in window | A visible window of the engine's own browser where the person signs in | A person signs in to the test application once; a read then works |
 | 2.4, 2.5, 2.6 | Sessions | Expiry in `page_http`; the keeper told when a sign-in is the person's own; single sign-on | The roadmap's proofs for each |
 | E2 | Capture and inference | `screen.snapshot`, `capture.start`, `capture.stop`, `endpoints.infer` | The test application's cases for capture and inference |

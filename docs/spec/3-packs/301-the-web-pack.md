@@ -192,7 +192,7 @@ One driver per kind of control. The control names are shared with the desktop pa
 | `number`, `currency`, `measurement` | As text, formatted by the field type | Input value, normalized |
 | `select` | Choose by stored code | Selected code |
 | `combobox`, `autocomplete` | Open, type to filter, choose the option whose code or exact label matches | Selected code, or the label map |
-| `date`, `datetime`, `time` | Type in the field's declared format; fall back to the picker. As built, for `date`: the text rule, in the form the browser's date field takes (`2026-12-01`); the picker, `datetime`, and `time` are not built ([decision 0399](../../decisions/0399-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md)) | Value, normalized to the field's time-zone rule |
+| `date`, `datetime`, `time` | Type in the field's declared format; fall back to the picker. As built, for `date`: the text rule, in the form the browser's date field takes (`2026-12-01`); the picker, `datetime`, and `time` are not built ([decision 0350](../../decisions/0350-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md)) | Value, normalized to the field's time-zone rule |
 | `checkbox`, `toggle` | Set to the target state only if different | Live checked state, never the attribute |
 | `radio` | Choose by stored code: the field's `options` give the label of each code's radio button inside the group its locators find; a code the options do not list is refused before anything is sent | Checked option, as its code |
 | `slider` | Keyboard steps to the value | Current value |

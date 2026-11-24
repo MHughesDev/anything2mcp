@@ -350,7 +350,7 @@ pub(crate) enum Handling {
     /// The application refused; the run stops.
     Stop,
     /// A question the page asks of the action just performed, which the
-    /// variant's `with` action answers by agreeing (decision 0399).
+    /// variant's `with` action answers by agreeing (decision 0350).
     Confirm,
     /// A state in the way, such as a notice over the form, which the
     /// variant's `with` action closes.
