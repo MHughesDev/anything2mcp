@@ -1,21 +1,45 @@
 //! A small relay between the engine and a test stand, so that a test can
 //! hold back the answer to a write after the stand stored it, and kill the
 //! caller while it waits: the one fault the stand's own control interface
-//! cannot make. It names no real system.
+//! cannot make; and change the reads that follow a write, so that a
+//! session can end, or an edge can block, between a write and its
+//! read-back. It names no real system.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
+/// What the relay does to a read it changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Alteration {
+    /// The read goes to the stand without its `Authorization` header, so
+    /// that the stand's own guard refuses it, as it refuses a session that
+    /// has ended.
+    StripAuthorization,
+    /// The read goes to this path of the stand instead, such as the
+    /// stand's `/edge/blocked`.
+    Divert(String),
+}
+
+/// Which reads the relay changes, and from when.
+#[derive(Debug, Default)]
+struct ReadRule {
+    alteration: Option<Alteration>,
+    /// Whether the rule applies now; until then it waits for a write to
+    /// pass.
+    armed: bool,
+}
+
 /// A relay on its own port, stopped when dropped.
 pub struct Proxy {
     base: String,
     hold: Arc<AtomicBool>,
     stored: Arc<Notify>,
+    reads: Arc<Mutex<ReadRule>>,
     server: JoinHandle<()>,
 }
 
@@ -31,7 +55,8 @@ impl Proxy {
         let address = listener.local_addr().unwrap();
         let hold = Arc::new(AtomicBool::new(false));
         let stored = Arc::new(Notify::new());
-        let (mode, told) = (Arc::clone(&hold), Arc::clone(&stored));
+        let reads = Arc::new(Mutex::new(ReadRule::default()));
+        let (mode, told, rule) = (Arc::clone(&hold), Arc::clone(&stored), Arc::clone(&reads));
         let server = tokio::spawn(async move {
             while let Ok((client, _)) = listener.accept().await {
                 tokio::spawn(relay(
@@ -39,6 +64,7 @@ impl Proxy {
                     upstream.clone(),
                     Arc::clone(&mode),
                     Arc::clone(&told),
+                    Arc::clone(&rule),
                 ));
             }
         });
@@ -46,6 +72,7 @@ impl Proxy {
             base: format!("http://{address}"),
             hold,
             stored,
+            reads,
             server,
         }
     }
@@ -66,6 +93,21 @@ impl Proxy {
     /// then held.
     pub async fn stored(&self) {
         self.stored.notified().await;
+    }
+
+    /// Every read is changed as `alteration` says, from now, or once the
+    /// next write has passed when `after_a_write`; until
+    /// [`Proxy::pass_reads`].
+    pub fn alter_reads(&self, alteration: Alteration, after_a_write: bool) {
+        *self.reads.lock().unwrap() = ReadRule {
+            alteration: Some(alteration),
+            armed: !after_a_write,
+        };
+    }
+
+    /// Reads pass unchanged again.
+    pub fn pass_reads(&self) {
+        *self.reads.lock().unwrap() = ReadRule::default();
     }
 }
 
@@ -118,19 +160,37 @@ async fn relay(
     upstream: String,
     hold: Arc<AtomicBool>,
     stored: Arc<Notify>,
+    reads: Arc<Mutex<ReadRule>>,
 ) {
     let Some((head, body)) = read_request(&mut client).await else {
         return;
     };
     let is_write = !(head.starts_with("GET ") || head.starts_with("HEAD "));
+    let alteration = {
+        let rule = reads.lock().unwrap();
+        if !is_write && rule.armed {
+            rule.alteration.clone()
+        } else {
+            None
+        }
+    };
     // One request for each connection, so the answer ends where the
     // stand closes.
-    let mut lines: Vec<&str> = head
+    let mut lines: Vec<String> = head
         .trim_end()
         .lines()
         .filter(|line| !line.to_ascii_lowercase().starts_with("connection:"))
+        .filter(|line| {
+            alteration != Some(Alteration::StripAuthorization)
+                || !line.to_ascii_lowercase().starts_with("authorization:")
+        })
+        .map(str::to_owned)
         .collect();
-    lines.push("connection: close");
+    if let (Some(Alteration::Divert(path)), Some(first)) = (&alteration, lines.first_mut()) {
+        let method = first.split(' ').next().unwrap_or("GET").to_owned();
+        *first = format!("{method} {path} HTTP/1.1");
+    }
+    lines.push("connection: close".to_owned());
     let mut request = lines.join("\r\n").into_bytes();
     request.extend_from_slice(b"\r\n\r\n");
     request.extend_from_slice(&body);
@@ -144,6 +204,12 @@ async fn relay(
     let mut answer = Vec::new();
     if stand.read_to_end(&mut answer).await.is_err() {
         return;
+    }
+    if is_write {
+        let mut rule = reads.lock().unwrap();
+        if rule.alteration.is_some() {
+            rule.armed = true;
+        }
     }
     if is_write && hold.swap(false, Ordering::SeqCst) {
         stored.notify_one();
