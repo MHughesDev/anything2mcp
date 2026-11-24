@@ -24,8 +24,8 @@ use a2m_core::{AccountName, Digest, EffectClass, Failure, Identity, Secret, Step
 use a2m_pack_web_browser::{
     ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, DialogAnswer, Dispatch,
     Element, Input, Key, Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey,
-    Query, RawValue, ReadWhat, Reason, RequestShape, SafeRequests, Snapshot, SnapshotLimits,
-    Visibility, looks_like_an_action, path_by_structure, plain_segment,
+    Query, RawValue, ReadWhat, Reason, RequestShape, Snapshot, SnapshotLimits, Visibility,
+    looks_like_an_action, path_by_structure, plain_segment,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -43,6 +43,7 @@ use crate::model::{
     Action, Cond, Field, Fingerprint, GotoStep, Handling, InvokeStep, Locator, PAYLOAD_FORMAT,
     ReadStep, Rows, Screen, ScreenSection, Segment, SetStep, SurfaceFields, TabKind, WaitStep,
 };
+use crate::requests::AssertedReads;
 use crate::screens::{PACK, SCREEN_KIND};
 use widgets::Chosen;
 
@@ -281,6 +282,9 @@ struct Session {
     /// How a text control is committed, as the surface's platform profile
     /// states it; `None` sets a text control by the rule of no profile.
     commit: Option<InputCommit>,
+    /// The surface's asserted reads, and whether the observing tab was
+    /// handed them.
+    asserted: AssertedReads,
 }
 
 /// The origin of a `web` surface: a scheme, a host, and perhaps a port.
@@ -671,7 +675,7 @@ impl Session {
         if let Some(acting) = &self.acting {
             refused.extend(acting.blocked());
         }
-        refusal(&refused, what)
+        refusal(&refused, what, &self.asserted)
     }
 
     /// The tab the steps act in now: the acting tab only after a `goto`
@@ -744,8 +748,14 @@ const LEFT_THE_PAGE: &[&str] = &["POPUP", "DOWNLOAD"];
 /// change the system, which an observing tab failed, is `policy`,
 /// `page_write_refused`: what was read is not read where the page may
 /// write, and a read that needs such a request cannot be made (decision
-/// 0195). `None` when it refused nothing.
-pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
+/// 0195). When an asserted read of the surface names the request's method
+/// and path, the next step names that page request (decision 0394, point
+/// 4). `None` when it refused nothing.
+pub(crate) fn refusal(
+    refused: &[RequestShape],
+    what: &str,
+    asserted: &AssertedReads,
+) -> Option<Failure> {
     let first = refused.first()?;
     let address = Address::new(&first.address).ok();
     let place = shown(&address.as_ref().map(Address::origin).unwrap_or_default());
@@ -775,13 +785,16 @@ pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
             "Look at the page; a window or a download a step expects is declared on it, which this version cannot do yet.",
         )
     } else {
-        // The path by structure: a segment that may be a token is not
-        // shown.
-        let path = address
+        let sent = address
             .as_ref()
             .and_then(|address| address.as_str().strip_prefix(&address.origin()))
-            .map(path_by_structure)
             .unwrap_or_default();
+        // The path by structure: a segment that may be a token is not
+        // shown.
+        let path = path_by_structure(sent);
+        let next = asserted.next_step(&first.method, sent).unwrap_or_else(|| {
+            "Look at what the page does when it loads. A read of a page that writes by itself cannot be made by the web pack; if the request only reads, a person may say so with a page request marked `read_asserted: true`, and otherwise read the record another way.".to_owned()
+        });
         fail(
             &codes::row::PAGE_WRITE_REFUSED,
             format!(
@@ -789,7 +802,7 @@ pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
                 shown(&first.method),
                 shown(&format!("{place}{path}")),
             ),
-            "Look at what the page does when it loads. A read of a page that writes by itself cannot be made by the web pack; read the record another way.",
+            &next,
         )
     })
 }
@@ -2386,12 +2399,19 @@ impl UiDriver {
 
         // Every session looks through an observing tab, in which the
         // browser fails every request of its page whose method could change
-        // the system, and none is marked safe. A read never runs anywhere
-        // else, in any posture (decision 0195).
+        // the system, but the asserted reads of a published version, live or
+        // in an environment of kind `test` (decision 0394, point 4). A read
+        // never runs anywhere else, in any posture (decision 0195).
+        let asserted = AssertedReads::of(cx)?;
         let looking = self
             .browsers
             .observer()
-            .observing_tab(&profile, &environment, &SafeRequests::default(), &origins)
+            .observing_tab(
+                &profile,
+                &environment,
+                &asserted.safe_requests(&origin),
+                &origins,
+            )
             .await
             .map_err(|error| browser_failure(&error, "the opening of a tab"))?;
         let may_act = matches!(
@@ -2452,6 +2472,7 @@ impl UiDriver {
             staging: self.browsers.staging_folder(),
             posture: cx.posture,
             commit,
+            asserted,
         })
     }
 }

@@ -1,0 +1,14 @@
+# The open cases, whose rows the page's own script asks for with
+# `POST /api/cases/rows/search` as it loads.
+screen: cases
+surface: app
+reach: {url: "/cases/rows-by-post"}
+ready: {visible: {text: "Loaded."}}
+rows:
+  locate:
+    - {role: table, name: "Cases"}
+  fingerprint: {section: {role: main, name: ""}}
+  header: ["Case", "Title", "Status"]
+  columns:
+    case_ids: {header: "Case", type: identifier}
+    statuses: {header: "Status", type: identifier}

@@ -1,0 +1,14 @@
+# A page whose script sends a write as soon as it loads, to a path no page
+# request asserts.
+screen: activity
+surface: app
+reach: {url: "/traps/on-load"}
+ready: {visible: {role: heading, name: "Recent activity"}}
+fields:
+  note:
+    type: untrusted_text
+    control: text
+    read: text
+    locate:
+      - {text: "Nothing to show."}
+    fingerprint: {section: {role: main, name: ""}}
