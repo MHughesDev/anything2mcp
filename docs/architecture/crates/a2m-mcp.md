@@ -108,7 +108,7 @@ One service serves both, with no session for either. Both are served because a s
 
 **The protocol layer.** One module of this crate answers the methods: `initialize` and `ping` of the handshake revision, `server/discover` of the stateless revision, and `tools/list` and `tools/call` in both. It builds each result in the shape its revision wants, and answers a tool call whose caller asked for progress as a stream of events. It is about 300 lines over `serde_json`, and names no outside protocol library ([decision 0130](../../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md)). Everything this crate promises is in the list of messages below, which is tested with raw messages; that list is what let the SDK be replaced in one step, with every test passing unchanged.
 
-**In front of it.** The endpoint checks, in order: the `Host`, the HTTP method, the content types, the caller, the size of the body, that the body is JSON, that it is one request or one notification, the revision it names and that its headers agree, and the shape of a tool call. It answers a notification itself, with status 202. Each refusal of a message is a JSON-RPC error whose `data` holds the failure's class, code, message, and fix.
+**In front of it.** The endpoint checks, in order: the `Host`, the `Origin` (none passes on; one that is not the listener's own, `http://` and a served name with the port the `Host` names, is 403 before the body is read and before the caller is looked at), the HTTP method, the content types, the caller, the size of the body, that the body is JSON, that it is one request or one notification, the revision it names and that its headers agree, and the shape of a tool call. It answers a notification itself, with status 202. Each refusal of a message is a JSON-RPC error whose `data` holds the failure's class, code, message, and fix.
 
 **On the way out.** Every text of every message passes the kernel's redactor as the message leaves. The dispatcher has already redacted a result; this pass covers what the protocol layer writes itself, such as an error that quotes a tool's name, and the id and progress token it echoes.
 
@@ -146,6 +146,7 @@ Each line is a test with raw messages. "H" is the handshake revision, "M" the ne
 | `notifications/cancelled` on stdio, or the stream closed on HTTP | Stop, and send nothing more for that request. Other requests are still answered |
 | `resources/read`, `prompts/list`, `prompts/get`, tasks, elicitation | Not built. Their lines are added by the packages that build them |
 | A request over HTTP with a foreign `Host`, or none | Be refused with status 403 before it is read |
+| A request over HTTP with an `Origin` that is not the listener's own, `null`, or malformed | Be refused with status 403 before it is read and before its caller is checked |
 | A request over HTTP that is not a `POST` | Be refused with status 405 |
 | A request over HTTP that is not `application/json`, or whose caller does not accept both `application/json` and `text/event-stream` | Be refused with status 415, or 406 |
 | A request of the stateless revision over HTTP with no `MCP-Protocol-Version` header | Answer status 400 with -32020 |

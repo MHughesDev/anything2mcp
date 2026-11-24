@@ -201,6 +201,155 @@ async fn http_refuses_before_it_reads_and_what_is_not_well_formed_never_reaches_
     assert_eq!(service.dispatched(), 0);
 }
 
+/// A body of one chunk that says when it is first polled.
+struct OneChunk {
+    seen: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    bytes: Option<String>,
+}
+
+impl futures_core::Stream for OneChunk {
+    type Item = Result<axum::body::Bytes, std::convert::Infallible>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.seen.store(true, std::sync::atomic::Ordering::SeqCst);
+        std::task::Poll::Ready(self.bytes.take().map(|b| Ok(axum::body::Bytes::from(b))))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_with_another_origin_is_refused_before_its_body_or_its_credential() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let world = World::ready().await;
+    let service = world.service("use", McpSettings::local());
+    let ping = h(1, "ping", json!({})).to_string();
+
+    // One POST whose body reports when the door first asks for it. The
+    // caller is a peer the kernel would let in, so only the `Origin` can
+    // be what refuses.
+    async fn post(
+        service: &crate::McpService,
+        host: &str,
+        origin: Option<&str>,
+        peer: bool,
+        body: &str,
+    ) -> (u16, bool, String) {
+        let read = Arc::new(AtomicBool::new(false));
+        let seen = read.clone();
+        let bytes = body.to_owned();
+        let stream = OneChunk {
+            seen,
+            bytes: Some(bytes),
+        };
+        let mut request = axum::http::Request::post("/mcp/use")
+            .header("host", host)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream");
+        if let Some(origin) = origin {
+            request = request.header("origin", origin);
+        }
+        let mut request = request.body(axum::body::Body::from_stream(stream)).unwrap();
+        if peer {
+            request.extensions_mut().insert(super::world::peer());
+        }
+        let response = service.handle(request).await;
+        let status = response.status().as_u16();
+        let text = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (
+            status,
+            read.load(Ordering::SeqCst),
+            String::from_utf8_lossy(&text).into_owned(),
+        )
+    }
+
+    // Another site, another port, https, another name, `null`, text that
+    // is no origin, and two origins: each is 403 with the body unread,
+    // though the body is not JSON and the caller is one that would pass.
+    for (host, origin) in [
+        ("localhost:8731", "https://example.invalid"),
+        ("localhost:8731", "http://example.invalid:8731"),
+        ("localhost:8731", "http://localhost:9"),
+        ("localhost:8731", "http://localhost"),
+        ("localhost", "http://localhost:8731"),
+        ("localhost:8731", "https://localhost:8731"),
+        ("localhost:8731", "http://localhost.example.invalid:8731"),
+        ("localhost:8731", "null"),
+        ("localhost:8731", ""),
+        ("localhost:8731", "not an origin"),
+        ("localhost:8731", "http://"),
+        ("localhost:8731", "http://localhost:80x"),
+        ("localhost:8731", "http://localhost:8731/path"),
+        ("localhost:8731", "http://[::1"),
+    ] {
+        let (status, read, text) = post(&service, host, Some(origin), true, "{not json").await;
+        assert_eq!(status, 403, "{host} {origin}");
+        assert!(!read, "{host} {origin}: the body was read");
+        assert!(text.contains("Origin"), "{host} {origin}: {text}");
+    }
+    // The same with no caller named: the answer is the `Origin`'s 403, not
+    // the 401 of the credential check, so that check was not reached.
+    let (status, read, text) = post(
+        &service,
+        "localhost:8731",
+        Some("https://example.invalid"),
+        false,
+        &ping,
+    )
+    .await;
+    assert_eq!((status, read), (403, false));
+    assert!(!text.contains("caller_missing"));
+    // Two `Origin` headers are refused too, though each alone is the
+    // listener's own.
+    let mut request = axum::http::Request::post("/mcp/use")
+        .header("host", "localhost:8731")
+        .header("origin", "http://localhost:8731")
+        .header("origin", "http://localhost:8731")
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .body(axum::body::Body::from("{not json"))
+        .unwrap();
+    request.extensions_mut().insert(super::world::peer());
+    assert_eq!(service.handle(request).await.status().as_u16(), 403);
+
+    // With no `Origin` the request reaches the credential check: a caller
+    // the channel did not name is 401, and one it named is served.
+    let (status, read, text) = post(&service, "localhost:8731", None, false, &ping).await;
+    assert_eq!((status, read), (401, false));
+    assert!(text.contains("caller_missing"));
+    let (status, read, _) = post(&service, "localhost:8731", None, true, &ping).await;
+    assert_eq!((status, read), (200, true));
+
+    // With the listener's own origin, in each form it serves, the request
+    // is served.
+    for (host, origin) in [
+        ("localhost:8731", "http://localhost:8731"),
+        ("localhost:8731", "http://127.0.0.1:8731"),
+        ("127.0.0.1:8731", "http://LOCALHOST:8731"),
+        ("[::1]:8731", "http://[::1]:8731"),
+        ("localhost", "http://localhost"),
+    ] {
+        let (status, read, _) = post(&service, host, Some(origin), true, &ping).await;
+        assert_eq!((status, read), (200, true), "{host} {origin}");
+    }
+    // An own origin is not enough without the credential.
+    let (status, _, text) = post(
+        &service,
+        "localhost:8731",
+        Some("http://localhost:8731"),
+        false,
+        &ping,
+    )
+    .await;
+    assert_eq!(status, 401);
+    assert!(text.contains("caller_missing"));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn http_carries_no_session_and_its_headers_must_agree_with_the_body() {
     let world = World::ready().await;

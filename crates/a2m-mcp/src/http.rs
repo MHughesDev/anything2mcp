@@ -1,7 +1,7 @@
 //! The endpoint over HTTP: what is checked before a message is served,
 //! and how an answer leaves.
 //!
-//! In order: the `Host`, the HTTP method, the content types, the caller,
+//! In order: the `Host`, the `Origin`, the HTTP method, the content types, the caller,
 //! the size of the body, that the body is JSON, that it is one request or
 //! one notification, the revision it names, and the shape of a tool call.
 //! Each is answered here, with a JSON-RPC error and a named failure. A
@@ -22,7 +22,7 @@ use a2m_actions::{BuiltInToolset, Caller, CallerCredential, FrontDoor, Kernel, P
 use a2m_core::{Failure, Redact, Secret};
 use a2m_policy::ToolsetName;
 use axum::body::{Body, Bytes};
-use axum::http::header::{ACCEPT, ALLOW, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HOST};
+use axum::http::header::{ACCEPT, ALLOW, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HOST, ORIGIN};
 use axum::http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
 use serde_json::{Value as Json, json};
 use tokio::sync::mpsc;
@@ -209,6 +209,15 @@ impl McpService {
             return Answer::Plain(
                 StatusCode::FORBIDDEN,
                 "The Host of this request is not served.",
+            );
+        }
+        if !origin_allowed(&parts.headers, &settings.allowed_hosts) {
+            // A web page's script sent this (a cross-origin request, or a
+            // name rebound to this address). Nothing is read and no
+            // credential is looked at.
+            return Answer::Plain(
+                StatusCode::FORBIDDEN,
+                "The Origin of this request is not served.",
             );
         }
         if parts.method != Method::POST {
@@ -536,6 +545,65 @@ fn host_allowed(headers: &HeaderMap, allowed: &[String]) -> bool {
     allowed
         .iter()
         .any(|entry| entry.eq_ignore_ascii_case(&host) || entry.eq_ignore_ascii_case(name))
+}
+
+/// Splits a `Host` value or the authority of an `Origin` into its lowercase
+/// name and its port, if it names one. An IPv6 literal keeps no brackets.
+fn name_and_port(authority: &str) -> Option<(String, Option<String>)> {
+    let authority = authority.to_ascii_lowercase();
+    let (name, port) = match authority.strip_prefix('[') {
+        Some(rest) => {
+            let (inner, after) = rest.split_once(']')?;
+            (inner.to_owned(), after.strip_prefix(':'))
+        }
+        None => match authority.rsplit_once(':') {
+            Some((name, port)) => (name.to_owned(), Some(port)),
+            None => (authority.clone(), None),
+        },
+    };
+    let port = match port {
+        Some(port) if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) => {
+            return None;
+        }
+        Some(port) => Some(port.trim_start_matches('0').to_owned()),
+        None => None,
+    };
+    (!name.is_empty()).then_some((name, port))
+}
+
+/// Whether the request's `Origin`, if it has one, is this listener's own:
+/// `http://` and a name this endpoint serves, with the port the request's
+/// own `Host` names (none on both sides means the default port), so
+/// `http://localhost:8731` and `http://127.0.0.1:8731` count when the
+/// request was sent to port 8731, and `https://`, another name, another
+/// port, `null`, and anything that does not parse do not. A request with
+/// no `Origin` is not a browser's cross-origin request and passes to the
+/// credential check. More than one `Origin` is refused.
+fn origin_allowed(headers: &HeaderMap, allowed: &[String]) -> bool {
+    let mut given = headers.get_all(ORIGIN).iter();
+    let Some(origin) = given.next() else {
+        return true;
+    };
+    if given.next().is_some() {
+        return false;
+    }
+    let Some(authority) = origin.to_str().ok().and_then(|text| {
+        text.strip_prefix("http://")
+            .or_else(|| text.strip_prefix("HTTP://"))
+    }) else {
+        return false;
+    };
+    let Some((name, port)) = name_and_port(authority) else {
+        return false;
+    };
+    let host = headers
+        .get(HOST)
+        .and_then(|value| value.to_str().ok())
+        .and_then(name_and_port);
+    allowed
+        .iter()
+        .any(|entry| entry.eq_ignore_ascii_case(&name))
+        && host.is_some_and(|(_, host_port)| host_port == port)
 }
 
 /// Whether the header `name` lists every one of `types`.
