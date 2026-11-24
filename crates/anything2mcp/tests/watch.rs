@@ -26,17 +26,13 @@ use a2m_core::{Failure, Timestamp};
 use a2m_policy::PresenceCheck;
 use a2m_telemetry::{Clock, ManualClock, SystemClock};
 use anything2mcp::{Engine, EngineOptions};
+use common::tending::{CHECK_WAIT, PASS_STEP, may_step, next_due_after};
 use common::{Machine, World};
 use example_app::harness::TestApp;
 use serde_json::{Value as Json, json};
 
 const PLACEHOLDER: &str = "http://127.0.0.1:4010";
 const ITEM_GET: &str = "example_line_item_get";
-
-/// How many passes of tending a test waits through for a check to end
-/// before it fails by name: thirty seconds of the engine's clock, half an
-/// interval, so that no check of the next due time is waited for.
-const PASSES: u32 = 300;
 
 /// A person surface with a page for a person's act, as the engine's own
 /// page is: it keeps what each page shows, and the test presses there.
@@ -216,14 +212,28 @@ impl Watching {
 
     /// Moves the clock by `by` and tends until every watch of `ids` has
     /// made `checks` checks and waits for the next. Between two passes the
-    /// clock moves on by a tenth of a second, as it would while a check's
-    /// requests wait for their budget, which refills by the store's clock.
+    /// clock moves on by [`PASS_STEP`], never as far as the next due time of
+    /// any of them (see `common::tending`); the wait is bounded by
+    /// [`CHECK_WAIT`] of real time.
     async fn checked(&self, by: Duration, ids: &[&str], checks: u64) {
+        let mut before = Vec::new();
+        for id in ids {
+            before.push(self.watch(id).await);
+        }
         self.clock.advance(by);
-        for pass in 0..PASSES {
-            if pass > 0 {
-                self.clock.advance(Duration::from_millis(100));
+        let now = self.clock.now().as_unix_millis();
+        let next = before
+            .iter()
+            .map(|watch| next_due_after(watch, now))
+            .min()
+            .unwrap();
+        let started = std::time::Instant::now();
+        let mut first = true;
+        while started.elapsed() < CHECK_WAIT {
+            if !first && may_step(self.clock.now().as_unix_millis(), next) {
+                self.clock.advance(PASS_STEP);
             }
+            first = false;
             self.world.engine.kernel().tend().await;
             let mut done = true;
             for id in ids {
@@ -239,7 +249,7 @@ impl Watching {
         for id in ids {
             stood.push(self.watch(id).await);
         }
-        panic!("the checks never ended: {stood:?}");
+        panic!("the checks never ended in {CHECK_WAIT:?}: {stood:?}");
     }
 }
 
@@ -369,12 +379,17 @@ async fn a_watch_ends_at_the_first_check_on_which_its_condition_holds_of_what_th
 
     // The stand's record changes, outside the product, to nine.
     changed_by_the_stand(&app, "L-101", 9).await;
+    let before = watching.watch(&id).await;
     watching.clock.advance(Duration::from_secs(60));
+    let next = next_due_after(&before, watching.clock.now().as_unix_millis());
     let mut ended = Json::Null;
-    for pass in 0..PASSES {
-        if pass > 0 {
-            watching.clock.advance(Duration::from_millis(100));
+    let started = std::time::Instant::now();
+    let mut first = true;
+    while started.elapsed() < CHECK_WAIT {
+        if !first && may_step(watching.clock.now().as_unix_millis(), next) {
+            watching.clock.advance(PASS_STEP);
         }
+        first = false;
         watching.world.engine.kernel().tend().await;
         ended = watching.watch(&id).await;
         if ended["state"] == "ended" {
