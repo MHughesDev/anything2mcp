@@ -1,0 +1,5 @@
+test: example_heater_limit_set
+kind: offline
+fixture: heater_limit_set
+inputs: {limit: 40}
+expect: {limit: 40}

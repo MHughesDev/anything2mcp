@@ -1,0 +1,90 @@
+device_map: controller.main
+surface: controller
+model: example-controller
+firmware: ["2.4.0", "2.4.1"]
+identify:
+  reads: [vendor, model, firmware_version, serial]
+pace: {min_gap: 1ms, reply_within: 2s, max_rate: 500/s}
+registers:
+  pump_speed_measured:
+    address: {table: input, offset: 30}
+    data: u16
+    scale: "0.1"
+    type: pump_speed_rpm
+    access: read
+  pump_speed_setpoint:
+    address: {table: holding, offset: 100}
+    data: u16
+    scale: "0.1"
+    type: pump_speed_rpm
+    access: read_write
+    range: {min: "0", max: "1450"}
+    hazard: physical
+    confirm_by: {register: pump_speed_measured, within: "25", settle: 5s}
+  dosing_rate:
+    address: {table: holding, offset: 101}
+    data: u16
+    scale: "0.01"
+    type: dosing_rate_lpm
+    access: read_write
+    range: {min: "0", max: "100"}
+    hazard: none
+  heater_power_limit:
+    address: {table: holding, offset: 102}
+    data: u16
+    type: integer
+    access: read_write
+    range: {min: 0, max: 100}
+    hazard: none
+  batch_target:
+    address: {table: holding, offset: 104}
+    data: u32
+    word_order: low_first
+    type: integer
+    access: read_write
+    range: {min: 0, max: 1000000}
+    hazard: none
+  inlet_valve:
+    address: {table: coil, offset: 4}
+    data: bit
+    type: valve_state
+    access: read_write
+    hazard: physical
+  fault_reset:
+    address: {table: coil, offset: 8}
+    data: bit
+    access: write
+    hazard: device_function
+  pump_running:
+    address: {table: discrete, offset: 0}
+    data: bit
+    access: read
+  fault_latch:
+    address: {table: input, offset: 7}
+    data: u16
+    access: read
+    read_effect: clears          # reading it resets it; never used for read-back
+  temperature:
+    address: {table: input, offset: 31}
+    data: i16
+    scale: "0.1"
+    type: temperature_c
+    access: read
+  uptime_ticks:
+    address: {table: input, offset: 32}
+    data: u32
+    access: read
+  model_text:
+    address: {table: input, offset: 109}
+    data: text
+    words: 9
+    access: read
+  # An address the device does not have, to show a refusal.
+  absent_point:
+    address: {table: holding, offset: 500}
+    data: u16
+    access: read
+safe_state:
+  operation: example_pump_stop
+  holds: {pump_speed_setpoint: "0", inlet_valve: "0"}
+on_link_loss: {device_reverts_to_safe_state: true, after: 2s}

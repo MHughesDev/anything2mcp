@@ -45,8 +45,8 @@ fn a_registry_with_only_the_device_pack_builds_and_its_digest_is_stable() {
     let verbs: Vec<&str> = set.verbs(&mode).iter().map(|verb| verb.as_str()).collect();
     assert_eq!(verbs, ["read", "submit", "update"]);
     assert_eq!(set.file_kinds().count(), 1);
-    // From an identity, the start of a map; from a published map, a map
-    // and its reads.
+    // From an identity, nothing, and the reason why; from a published map,
+    // a map and its reads.
     assert_eq!(set.drafting_rules().count(), 3);
     let codes: Vec<String> = set.lint_codes().into_iter().map(|(code, _)| code).collect();
     for rule in [

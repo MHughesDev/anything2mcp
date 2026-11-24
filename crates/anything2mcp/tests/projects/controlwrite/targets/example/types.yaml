@@ -1,0 +1,14 @@
+types:
+  # The kernel's measurement units are a closed list of lengths and weights,
+  # so a speed, a rate, and a temperature are exact numbers with their
+  # places. The scale from a raw value is the map's, beside `data`.
+  pump_speed_rpm: {base: decimal, places: 1}
+  # The device keeps the dosing rate in steps of 0.05; a rate is compared
+  # to one place.
+  dosing_rate_lpm: {base: decimal, places: 1}
+  temperature_c: {base: decimal, places: 1}
+  # What a device says about itself is the device's text.
+  device_text: {base: text, untrusted: true}
+  valve_state:
+    base: choice
+    codes: {"0": "closed", "1": "open"}

@@ -4,8 +4,8 @@
 //! A read is not always without effect on a device, so nothing here reads
 //! a register and nothing scans addresses. The first protocol offers no
 //! listing of a device's own objects, so identification is all there is to
-//! observe. The drafting rule turns what the device reported into the start
-//! of a map: its model, its firmware version, and no register.
+//! observe. The drafting rule drafts no map from it: a map comes from the
+//! device's published register map (field test 8, finding 52).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use a2m_core::{
     Coverage, EvidenceLevel, FailsAs, Failure, FileKindName, Finding, FindingKind, PackPayload,
     ProducedBy, Source, Step, Subject, Value, Values,
 };
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath};
+use a2m_files::{DraftContext, DraftDoc, DraftingRule};
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
     DiscoveryScope, FindingSink, SandboxPort, StepInput, StepOutcome, SurfaceDescription,
@@ -192,23 +192,13 @@ impl Describer for IdentityDescriber {
     }
 }
 
-/// A name made from a device's own word for its model: lowercase letters,
-/// digits, and underscores, starting with a letter.
-fn map_name(model: &str) -> Option<String> {
-    let mut name = String::new();
-    for character in model.chars() {
-        let character = character.to_ascii_lowercase();
-        if character.is_ascii_lowercase() || character.is_ascii_digit() {
-            name.push(character);
-        } else if !name.ends_with('_') && !name.is_empty() {
-            name.push('_');
-        }
-    }
-    let name = name.trim_end_matches('_').to_owned();
-    (name.starts_with(|first: char| first.is_ascii_lowercase()) && name.len() <= 48).then_some(name)
-}
-
-/// From an identity finding to the start of a map.
+/// From an identity finding to nothing: the rule that says why.
+///
+/// A device on the first protocol lists no register, so what it reported
+/// gives a map with no register: nothing to try, and a second map beside
+/// the one the device's documentation gives (field test 8, finding 52). The
+/// rule drafts no file and says so; the identity stays in the finding, and
+/// the describer shows it.
 pub(crate) struct MapFromIdentity {
     names: Arc<Names>,
 }
@@ -228,56 +218,14 @@ impl DraftingRule for MapFromIdentity {
         self.names.register_kind.clone()
     }
 
-    /// Drafts a map with the model and the firmware version the device
-    /// reported, and no register: the device listed none. It writes no
-    /// range, no hazard, no safe state, and no unit.
-    fn draft(&self, finding: &Finding, _cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
-        let reported = reported(finding)?;
-        let (Some(model), Some(firmware)) =
-            (reported.get("model"), reported.get("firmware_version"))
-        else {
-            return Err(unreadable("it states no model or no firmware version"));
-        };
-        let name = map_name(model)
-            .ok_or_else(|| unreadable("the model it states gives no name for a map"))?;
-        let reads = reported
-            .keys()
-            .map(|field| DraftValue::text(field))
-            .collect();
-        Ok(vec![DraftDoc {
-            path: RelPath::new(&format!("registers/{name}.yaml"))?,
-            body: DraftValue::map(vec![
-                ("device_map", DraftValue::text(&name)),
-                ("model", DraftValue::text(model)),
-                (
-                    "firmware",
-                    DraftValue::List(vec![DraftValue::text(firmware)]),
-                ),
-                (
-                    "identify",
-                    DraftValue::map(vec![("reads", DraftValue::List(reads))]),
-                ),
-                ("registers", DraftValue::Map(Vec::new())),
-            ]),
-        }])
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::map_name;
-
-    #[test]
-    fn a_map_is_named_from_the_models_own_word() {
-        assert_eq!(
-            map_name("example-controller").as_deref(),
-            Some("example_controller")
+    /// Drafts nothing, and says why in the pack's own words: no word the
+    /// device reported is in the reason.
+    fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
+        // A finding that cannot be read is still refused as one.
+        reported(finding)?;
+        cx.not_drafted(
+            "The device identified itself and lists no register, so no map is drafted from it: put the device's published register map in the project's `sources` folder and run the scout again, and the map and a read of each register are drafted from that.",
         );
-        assert_eq!(
-            map_name("Example  Pump/2").as_deref(),
-            Some("example_pump_2")
-        );
-        assert_eq!(map_name("2000"), None);
-        assert_eq!(map_name("--"), None);
+        Ok(Vec::new())
     }
 }
