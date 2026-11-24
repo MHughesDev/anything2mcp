@@ -244,7 +244,7 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0243 | [The machine reads its own network state, and sends nothing](0243-the-machine-reads-its-own-network-state-and-sends-nothing.md) | Accepted (design decision) |
 | 0247 | [A watch keeps only digests, and its due times come from the store's clock](0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md) | Accepted (design decision) |
 | 0241 | [Protected settings loosen only from an administrator's file, and every key says whether it is built](0241-protected-settings-loosen-only-from-an-administrators-file-and-every-key-says-whether-it-is-built.md) | Accepted (design decision) |
-| 0244 | [The desktop pack reads macOS applications, and every act proves the record again](0244-the-desktop-pack-reads-macos-applications-and-proves-the-record-before-every-act.md) | Accepted (design decision) |
+| 0244 | [The desktop pack reads macOS applications, and every act proves the record again](0244-the-desktop-pack-reads-macos-applications-and-proves-the-record-before-every-act.md) | Accepted (design decision; point 1's window key superseded by 0409) |
 | 0246 | [The file pack reads folders, settings files, and growing files, and writes the first two](0246-the-file-pack-reads-folders-settings-files-and-growing-files.md) | Accepted (design decision) |
 | 0245 | [A web application is signed in to through its own sign-in page, with a credential stored for the person](0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md) | Accepted (design decision) |
 | 0253 | [The key derivation is compiled for speed in every build](0253-the-key-derivation-is-compiled-for-speed-in-every-build.md) | Accepted (design decision) |
@@ -395,3 +395,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0401 | [The steps between a proven read and a publish are one action](0401-the-steps-between-a-proven-read-and-a-publish-are-one-action.md) | Accepted (design decision) |
 | 0402 | [The rename sweep renames every name, and keeps what is stored](0402-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md) | Accepted (design decision) |
 | 0403 | [A renewal opens the saved state first when its runner holds nothing](0403-a-renewal-opens-the-saved-state-first-when-its-runner-holds-nothing.md) | Accepted (design decision) |
+| 0409 | [A macOS window keeps its key for as long as it is listed](0409-a-macos-window-keeps-its-key-for-as-long-as-it-is-listed.md) | Accepted (design decision; supersedes 0244 in part) |
