@@ -347,6 +347,8 @@ struct RawPoints {
     source_reader: Vec<String>,
     #[serde(default)]
     widget_driver: Vec<String>,
+    #[serde(default)]
+    traffic_capture: Vec<SurfaceKind>,
 }
 
 /// The extension points a provider fills. Nothing else can be registered.
@@ -362,6 +364,10 @@ pub struct Points {
     pub source_reader: BTreeSet<String>,
     /// The widget drivers it brings. No trait exists for these yet.
     pub widget_driver: BTreeSet<String>,
+    /// The surface kinds whose traffic it captures, through the one
+    /// [`crate::CaptureSource`] it registers (decision 0399). Empty: it
+    /// offers no capture and is asked for none.
+    pub traffic_capture: BTreeSet<SurfaceKind>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1165,6 +1171,7 @@ impl Manifest {
             auth_provider: raw.points.auth_provider.into_iter().collect(),
             source_reader: raw.points.source_reader.into_iter().collect(),
             widget_driver: raw.points.widget_driver.into_iter().collect(),
+            traffic_capture: raw.points.traffic_capture.into_iter().collect(),
         };
 
         // Effects.

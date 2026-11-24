@@ -489,12 +489,12 @@ impl Core {
 
 /// What follows the origin of an address: its path and its query. The
 /// host is the surface's own, and a host's name is not an action.
-fn after_origin(address: &str) -> &str {
+pub(crate) fn after_origin(address: &str) -> &str {
     let rest = address.split_once("://").map_or(address, |(_, rest)| rest);
     rest.find(['/', '?', '#']).map_or("", |at| &rest[at..])
 }
 
-fn looks_like_an_action_refused(how: &str) -> Failure {
+pub(crate) fn looks_like_an_action_refused(how: &str) -> Failure {
     Failure::new(
         FailureClass::Policy,
         codes::ADDRESS_LOOKS_LIKE_AN_ACTION,

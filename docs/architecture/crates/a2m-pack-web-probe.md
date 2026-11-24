@@ -101,7 +101,8 @@ As built.
 pub fn pack(shared: SharedBrowsers) -> WebProbePack;
 /// The one call the product crate makes: `add_to(&mut builder, shared.clone())`.
 pub fn add_to(builder: &mut RegistryBuilder, shared: SharedBrowsers);
-impl Pack for WebProbePack { /* registers web_probe, web_snapshot, web_capture, each with the describer */ }
+impl Pack for WebProbePack { /* registers web_probe, web_snapshot, web_capture, web_auth, each with the describer,
+                                and the capture source of `points.traffic_capture = ["web"]` (decision 0399) */ }
 
 pub const PACK: &str = "web_probe";            // the provider's name
 pub const SURFACE_KIND: &str = "web";
@@ -154,7 +155,7 @@ What the kernel gives this crate, as built:
 | `a2m-pack-web-ui`, through stored findings only | Snapshot findings, for its drafting rules and screen matching |
 | `a2m-pack-http`, through stored findings only | Endpoint findings, for its drafting rule |
 
-It uses the base's `Observer`, `Look`, `Snapshot`, the list of what an observing tab refused, and the page's own GET exchanges an observing tab recorded (`ObserveTab::exchanges`); the redactor on everything it finds. The base's platform profiles are not built.
+It uses the base's `Observer`, `Look`, `Snapshot`, the list of what an observing tab refused, and the page's own GET exchanges an observing tab recorded, which it reads through the provider contract's traffic capture (`take_capture` over the tab as a `TrafficCapture`, with the discovery's redactor; [decision 0399](../../decisions/0399-traffic-capture-is-a-capability-of-the-provider-contract-that-yields-structure-only.md)), so that what reaches endpoint inference is the contract's `CapturedRequest` and has passed its check; the redactor on everything it finds. The base's platform profiles are not built.
 
 ## State
 
@@ -206,6 +207,7 @@ Run on Linux only. The crate has no code that differs by operating system.
 1. Done, package 2.6: `web_auth`, against case 13's sign-in variants (`each_sign_in_variant_of_case_13_is_classified_and_nothing_is_sent`); the application is sent no form and no code. The recommendation it feeds is `a2m-auth`'s and `auth.detect`'s ([decision 0367](../../decisions/0367-auth-detect-recommends-a-mode-and-a-provider-by-fixed-rules-and-marks-it-inferred.md)), proven through the product by `crates/anything2mcp/tests/sign_in_detect.rs`; a move to another origin is recommended as `sso_oidc`, because the page cannot show a `SAMLRequest` form post.
 2. Done, package E2: the manifest and registration; `web_probe`; `web_snapshot` with links followed within the bounds.
 3. Done in part: `web_capture` of documents, refused requests, and the GET requests a page's own scripts make to its origin ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)), and endpoint inference with tier one and tier two, inside it. Done: screen matching's first half in `web_snapshot`, pages whose paths differ in one segment and whose tables and labelled values are the same given as one `screen` finding with a placeholder and `pages`; the names of a description list's terms and of the definitions a page labels are kept outside a record. Done: request matching in `web_capture`, `matched_requests` ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)). Not built: request shapes; a request's dependencies; scenario steps; cases 5 and 22.
+3a. Done ([decision 0399](../../decisions/0399-traffic-capture-is-a-capability-of-the-provider-contract-that-yields-structure-only.md)): the pack offers traffic capture of `web` surfaces as a capability of the provider contract: its manifest declares `points.traffic_capture`, it registers a `CaptureSource` that opens an observing tab on the surface's own address and records before the page loads, and `web_capture` reads its tab's requests through `take_capture`. A request the contract's check withholds is a `not_exercised` limitation of its page. Test: `a_capture_of_a_pages_own_requests_yields_structure_and_no_planted_secret`. No action handler opens the capture yet.
 4. Not built: dependencies between requests and the front-end logic mark.
 5. Not built: the watching tab and the capture of a person's own use, which need a visible window in the base.
 6. Not built: platform profiles and the support tier, which are data of the base.

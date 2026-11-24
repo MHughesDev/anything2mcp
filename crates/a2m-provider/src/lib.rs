@@ -23,6 +23,7 @@
 //! `docs/reference/technical-reference.md`: layers 1 to 4.
 
 mod action;
+mod capture;
 pub mod codes;
 pub mod decompiler;
 mod discover;
@@ -43,6 +44,11 @@ mod supervisor;
 pub use a2m_auth::BoxFuture;
 
 pub use action::{ActionContext, ProviderAction};
+pub use capture::{
+    CAPTURE_PLACEHOLDER, CaptureHandle, CaptureSource, CapturedRequest, CapturedTraffic, Capturing,
+    FIELD_KINDS, LONGEST_CAPTURED_WORD, LONGEST_HEX_RUN, MOST_CAPTURED_DIGITS, TrafficCapture,
+    is_captured_word, kept_by_structure, take_capture,
+};
 pub use discover::{
     DescribeForm, Describer, Description, Discoverer, DiscovererHandle, DiscoveryReport,
     DiscoveryScope, FindingSink, SandboxPort, SurfaceDescription,

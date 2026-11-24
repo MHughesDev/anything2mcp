@@ -21,6 +21,7 @@ use a2m_sources::{ReaderName, SourceReader};
 use a2m_telemetry::Telemetry;
 
 use crate::action::ProviderAction;
+use crate::capture::CaptureHandle;
 use crate::codes;
 use crate::discover::{DiscovererHandle, SurfaceDescription};
 use crate::driver::{ChoiceReason, Driver, DriverHandle, HandleFacts, ProviderChoice};
@@ -594,6 +595,7 @@ impl RegistryBuilder {
         let mut auth_providers = Vec::new();
         let mut actions = BTreeMap::new();
         let mut discoverers = Vec::new();
+        let mut captures = Vec::new();
         let mut problems: Vec<RegistryProblem> = unnamed
             .iter()
             .map(|refused| RegistryProblem {
@@ -708,6 +710,24 @@ impl RegistryBuilder {
                     });
                 }
             }
+            if let Some(source) = collected.capture {
+                let kinds: Vec<SurfaceKind> = one
+                    .manifest
+                    .points
+                    .traffic_capture
+                    .iter()
+                    .cloned()
+                    .collect();
+                for kind in &kinds {
+                    names.push(format!("capture:{kind}"));
+                }
+                captures.push(CaptureHandle {
+                    provider: name.clone(),
+                    kinds,
+                    source,
+                    redact: Arc::clone(&host.redact),
+                });
+            }
             for provider in collected.auth_providers {
                 names.push(format!("auth:{}", provider.name().as_str()));
                 auth_providers.push(provider);
@@ -800,6 +820,7 @@ impl RegistryBuilder {
                 auth_providers,
                 actions,
                 discoverers,
+                captures,
                 compiler,
                 choices: settings.mode_providers,
                 host,
@@ -842,6 +863,7 @@ struct Inner {
     auth_providers: Vec<Arc<dyn AuthProvider>>,
     actions: BTreeMap<ActionName, (Arc<dyn ProviderAction>, EffectClass)>,
     discoverers: Vec<DiscovererHandle>,
+    captures: Vec<CaptureHandle>,
     compiler: CompilerSet,
     choices: BTreeMap<Mode, ProviderName>,
     host: HostServices,
@@ -1150,6 +1172,20 @@ impl Registry {
             .discoverers
             .iter()
             .filter(|handle| handle.suits(surface))
+            .cloned()
+            .collect()
+    }
+
+    /// The traffic captures offered for a kind of surface, in order of
+    /// provider: only those of packs whose manifest declares the kind under
+    /// `points.traffic_capture` (decision 0399). A pack that declares none
+    /// is never asked.
+    #[must_use]
+    pub fn captures_for(&self, kind: &SurfaceKind) -> Vec<CaptureHandle> {
+        self.inner
+            .captures
+            .iter()
+            .filter(|handle| handle.kinds.contains(kind))
             .cloned()
             .collect()
     }

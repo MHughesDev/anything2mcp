@@ -167,6 +167,13 @@ A discovery is handed files by name ([decision 0263](../decisions/0263-a-person-
 - **`DiscovererDecl::files`** lists the names under which a discoverer reads a file a person hands a discovery, from the manifest's `files`; empty by default. Each is lowercase letters, digits, and underscores, starting with a letter, at most 32 bytes.
 - **`Registry::files_taken`** gives every name that the discoverers suiting a surface declare.
 
+Traffic capture is a capability a pack may offer ([decision 0399](../decisions/0399-traffic-capture-is-a-capability-of-the-provider-contract-that-yields-structure-only.md)):
+
+- **`points.traffic_capture`** in a manifest lists the surface kinds whose traffic the pack captures; empty by default, and a pack that lists none is asked nothing. **`Registrar::traffic_capture`** takes the pack's one **`CaptureSource`**; registering one with no kind listed is `policy`/`effect_not_declared`.
+- **`CaptureSource::open(surface, deadline)`** gives a **`TrafficCapture`**: `start` begins recording, and `take_recorded(until)` gives what was recorded since the last take as **`CapturedTraffic`**: the **`CapturedRequest`**s, oldest first, and how many were `dropped`, `awaited`, and `withheld`. A `CapturedRequest` is structure only: `method`, `origin`, `path` (a segment that is not kept is `{value}`, **`CAPTURE_PLACEHOLDER`**), the `query`'s names and `query_left_out`, `credential_headers` and `set_headers` by name and `headers_left_out`, `status`, `media_type`, and `fields`, each name with one of **`FIELD_KINDS`**, and `names_withheld`.
+- **`take_capture(capture, until, redact)`** is the one way a yield is read: it applies **`kept_by_structure`**, which withholds a request whose method or origin holds a secret or is not of its form, and holds every path segment, name of a query's parameter or a header, and part of a field's name to **`is_captured_word`**: at most **`LONGEST_CAPTURED_WORD`** (32) characters of ASCII letters, digits, `_`, `-`, and `.`, at most **`MOST_CAPTURED_DIGITS`** (3) digits, and no run of hexadecimal digits longer than **`LONGEST_HEX_RUN`** (15). A segment that fails, or holds a secret, is `{value}`; such a name is dropped, and the request says one was left out.
+- **`Registry::captures_for(kind)`** gives a **`CaptureHandle`** for each pack whose manifest lists the kind. **`CaptureHandle::open`** refuses a surface of another kind, `policy`/`effect_not_declared`, before the pack is asked, and gives a **`Capturing`**, whose `take` is `take_capture` with the host's redactor.
+
 ## Verbs by mode
 
 | Verb | `ui` | `page_http` | `http` | `api` | `site_tools` | `mcp` | `desktop` |
