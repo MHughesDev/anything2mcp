@@ -1,4 +1,4 @@
-# 0399. The decompiling engine is a discoverer of the provider contract that starts only a pinned program and reads one form
+# 0343. The decompiling engine is a discoverer of the provider contract that starts only a pinned program and reads one form
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged. Builds point 4 of [decision 0276](0276-what-the-scout-may-learn-from-a-program-itself-and-by-which-means.md), package X6, after [H-48](../hypotheses/H-48-result.md) left the engine as written.
 
