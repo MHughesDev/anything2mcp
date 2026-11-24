@@ -60,7 +60,7 @@ pub enum Metric {
     Median,
     /// The median time of the operation beyond the baseline's median.
     OverheadMedian,
-    /// Resident memory. No scenario can report it yet, so it is never measured.
+    /// The resident memory of what the scenario ran, in bytes.
     ResidentMemory,
 }
 
@@ -72,7 +72,9 @@ impl Metric {
         match self {
             Self::Median => Some(i64::try_from(result.operation.median_ns).unwrap_or(i64::MAX)),
             Self::OverheadMedian => result.overhead.map(|o| o.median_ns),
-            Self::ResidentMemory => None,
+            Self::ResidentMemory => result
+                .resident_bytes
+                .map(|bytes| i64::try_from(bytes).unwrap_or(i64::MAX)),
         }
     }
 }
@@ -252,6 +254,28 @@ mod tests {
         let covered: BTreeSet<&str> = file.budgets.iter().map(|b| b.path.as_str()).collect();
         let rows: BTreeSet<&str> = table.iter().map(|(path, _)| path.as_str()).collect();
         assert_eq!(covered, rows);
+    }
+
+    #[test]
+    fn memory_is_read_from_the_result_and_a_time_is_not_taken_for_it() {
+        use crate::harness::ScenarioResult;
+        use crate::stats::Stats;
+        let operation = Stats::from_nanos(&[1, 2, 3]).unwrap();
+        let mut result = ScenarioResult {
+            name: "idle_memory".to_owned(),
+            operation,
+            baseline: None,
+            overhead: None,
+            resident_bytes: None,
+        };
+        assert_eq!(Metric::ResidentMemory.value_in(&result), None);
+        result.resident_bytes = Some(37_000_000);
+        assert_eq!(Metric::ResidentMemory.value_in(&result), Some(37_000_000));
+        let limit = Limit {
+            value: 50,
+            unit: Unit::Mb,
+        };
+        assert!(37_000_000 < limit.amount());
     }
 
     #[test]

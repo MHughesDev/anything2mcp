@@ -46,6 +46,7 @@ fn planted(folder: &Path, name: &str, overhead_ns: u64) -> Result<PathBuf, Box<d
         vec![ScenarioResult {
             name: "http_operation".to_owned(),
             overhead: Some(Overhead::between(&operation, &baseline)),
+            resident_bytes: None,
             operation,
             baseline: Some(baseline),
         }],
@@ -72,9 +73,18 @@ fn run_writes_one_result_file_that_compares_clean_with_itself() -> Outcome {
     );
     let shown = String::from_utf8_lossy(&ran.stdout);
     assert!(shown.contains("direct_read"), "{shown}");
-    // Nothing budgeted exists yet, and the run says so for every budget.
-    assert!(shown.contains("not measured"), "{shown}");
-    assert!(!shown.contains("within the target"), "{shown}");
+    // A budget with no scenario is said to be not measured, never passed;
+    // the split of a call has none, and the budgeted scenarios that ran have a standing.
+    let split = shown
+        .lines()
+        .find(|line| line.starts_with("call_overhead"))
+        .ok_or("no row for the split of a call")?;
+    assert!(split.contains("not measured"), "{split}");
+    let listing = shown
+        .lines()
+        .find(|line| line.starts_with("list_tools") && line.contains("target"))
+        .ok_or("no standing for listing tools")?;
+    assert!(!listing.contains("not measured"), "{listing}");
 
     let mut files = Vec::new();
     for entry in std::fs::read_dir(&folder)? {

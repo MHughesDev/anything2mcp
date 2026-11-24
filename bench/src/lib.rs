@@ -23,6 +23,7 @@ pub mod cli;
 pub mod compare;
 pub mod error;
 pub mod harness;
+pub mod measure;
 pub mod promotion;
 pub mod report;
 pub mod scenarios;

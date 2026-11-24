@@ -194,6 +194,15 @@ impl RunReport {
                     ""
                 );
             }
+            if let Some(bytes) = scenario.resident_bytes {
+                let _ = writeln!(
+                    out,
+                    "{:<28} {:>7} {} KB resident",
+                    "  idle memory",
+                    "",
+                    micros(i128::from(bytes))
+                );
+            }
         }
         out
     }
@@ -260,10 +269,12 @@ mod tests {
                     operation: baseline,
                     baseline: None,
                     overhead: None,
+                    resident_bytes: None,
                 },
                 ScenarioResult {
                     name: "http_operation".to_owned(),
                     overhead: Some(Overhead::between(&operation, &baseline)),
+                    resident_bytes: None,
                     operation,
                     baseline: Some(baseline),
                 },

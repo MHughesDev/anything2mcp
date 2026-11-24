@@ -129,6 +129,10 @@ pub struct ScenarioResult {
     pub baseline: Option<Stats>,
     /// The difference, when the scenario has a baseline.
     pub overhead: Option<Overhead>,
+    /// The resident memory, in bytes, of what the scenario ran, by the median
+    /// of its readings, when the scenario reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resident_bytes: Option<u64>,
 }
 
 /// Runs one scenario: its setup, the warm-up, then the measured iterations.
@@ -172,6 +176,7 @@ pub async fn run_scenario<S: Scenario>(
         overhead: baseline.as_ref().map(|b| Overhead::between(&operation, b)),
         operation,
         baseline,
+        resident_bytes: None,
     })
 }
 

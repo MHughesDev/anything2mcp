@@ -58,7 +58,7 @@ pub const REQUIRED_FACTOR: u64 = 10;
 pub const MOST_ITERATIONS: u32 = 40;
 
 /// The tool the scenario calls.
-const TOOL: &str = "example_line_item_get";
+pub(crate) const TOOL: &str = "example_line_item_get";
 
 /// The address the project's files give the application; the scenario
 /// replaces it with the address of the application it started.
@@ -121,9 +121,9 @@ const EVIDENCE: [(&str, &str); 6] = [
 ];
 
 /// The input every iteration reads.
-const MEASURED: (&str, &str) = ("A-100", "L-101");
+pub(crate) const MEASURED: (&str, &str) = ("A-100", "L-101");
 
-fn fail(message: impl std::fmt::Display) -> BenchError {
+pub(crate) fn fail(message: impl std::fmt::Display) -> BenchError {
     BenchError::setup(PROMOTION_SPEEDUP, message)
 }
 
@@ -175,10 +175,10 @@ impl PersonSurface for Person {
 }
 
 /// A folder under the system's temporary folder, removed when dropped.
-struct Folder(PathBuf);
+pub(crate) struct Folder(pub(crate) PathBuf);
 
 impl Folder {
-    fn new(name: &str) -> Result<Self, BenchError> {
+    pub(crate) fn new(name: &str) -> Result<Self, BenchError> {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let path = std::env::temp_dir().join(format!(
             "a2m-{name}-{}-{}",
@@ -218,14 +218,14 @@ fn copy_project(from: &Path, to: &Path, address: &str) -> Result<(), BenchError>
 }
 
 /// One machine: a home, a project of target files, and an open engine.
-struct Machine {
+pub(crate) struct Machine {
     engine: Engine,
     _home: Folder,
     project: Folder,
 }
 
 impl Machine {
-    async fn open(address: &str) -> Result<Self, BenchError> {
+    pub(crate) async fn open(address: &str) -> Result<Self, BenchError> {
         let home = Folder::new("benchhome")?;
         let project = Folder::new("benchproject")?;
         copy_project(Path::new(PROJECT), &project.0, address)?;
@@ -244,7 +244,13 @@ impl Machine {
         );
         options.project = Some(project.0.clone());
         // The browser keeps its profile in a folder of the home, so the store is on disk.
-        options.place = StorePlace::Disk;
+        // `A2M_BENCH_MEMORY_STORE` keeps the ledger in memory, to see how much
+        // of a call is the durable store; a run made so is never recorded.
+        options.place = if std::env::var_os("A2M_BENCH_MEMORY_STORE").is_some() {
+            StorePlace::Memory
+        } else {
+            StorePlace::Disk
+        };
         options.key_store = Some(Arc::new(MemoryKeyStore::new()));
         let engine = Engine::open(options).await.map_err(fail)?;
         if let Some(problem) = engine.runner_problem() {
@@ -261,7 +267,7 @@ impl Machine {
 
     /// Runs one command line as an agent or as a person, and gives the
     /// `result` of its JSON answer.
-    async fn run(&self, args: &[&str], as_agent: bool) -> Result<Value, BenchError> {
+    pub(crate) async fn run(&self, args: &[&str], as_agent: bool) -> Result<Value, BenchError> {
         let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
         let finished = run_on(&self.engine, &args, true, as_agent).await;
         let json: Value = serde_json::from_str(finished.stdout.trim()).map_err(|e| {
@@ -276,7 +282,11 @@ impl Machine {
     }
 
     /// Calls the tool for one line item, as an agent, in production.
-    async fn read(&self, scenario: &str, input: (&str, &str)) -> Result<Value, BenchError> {
+    pub(crate) async fn read(
+        &self,
+        scenario: &str,
+        input: (&str, &str),
+    ) -> Result<Value, BenchError> {
         let text = json!({"order_id": input.0, "item_code": input.1}).to_string();
         let args: Vec<String> = [
             "tool",
@@ -303,7 +313,7 @@ impl Machine {
         Ok(answer["result"].clone())
     }
 
-    async fn publish(&self) -> Result<(), BenchError> {
+    pub(crate) async fn publish(&self) -> Result<(), BenchError> {
         let linted = self.run(&["draft", "lint", "example"], true).await?;
         if linted["ok"] != true {
             return Err(fail(format!("the draft did not lint: {linted}")));
@@ -315,6 +325,16 @@ impl Machine {
     /// The request binding is added to the operation in shadow, with the
     /// surface and the endpoint it reads, as a person adds one.
     fn add_shadow_binding(&self, address: &str) -> Result<(), BenchError> {
+        self.add_request_binding(address, "shadow")
+    }
+
+    /// The same edit with the binding's status named: `shadow` for the
+    /// promotion scenario, `verified` for a measure of the request mode alone.
+    pub(crate) fn add_request_binding(
+        &self,
+        address: &str,
+        status: &str,
+    ) -> Result<(), BenchError> {
         let target = self.project.0.join("targets").join("example");
         let file = target.join("target.yaml");
         let text = std::fs::read_to_string(&file).map_err(fail)?;
@@ -339,7 +359,10 @@ impl Machine {
         let text = std::fs::read_to_string(&operations).map_err(fail)?;
         let with_shadow = text.replace(
             "    screen: line_item\n",
-            &format!("    screen: line_item\n{SHADOW_BINDING}"),
+            &format!(
+                "    screen: line_item\n{}",
+                SHADOW_BINDING.replace("status: shadow", &format!("status: {status}"))
+            ),
         );
         if with_shadow == text {
             return Err(fail("the operation has no interface binding to shadow"));
