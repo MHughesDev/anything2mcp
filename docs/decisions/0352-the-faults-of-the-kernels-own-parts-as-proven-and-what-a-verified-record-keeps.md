@@ -1,4 +1,4 @@
-# 0399. The faults of the kernel's own parts as proven, and what a verified record keeps
+# 0352. The faults of the kernel's own parts as proven, and what a verified record keeps
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), in packages 3.10 and 3.7. The owner had not read this record when it was merged.
 

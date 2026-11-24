@@ -35,7 +35,7 @@ It must never: read or write a target system; decide whether something may happe
 | Concern | Who | How |
 | --- | --- | --- |
 | The connection, the single SQLite writer, the readers, durability per commit | `a2m-ledger` | `Store::write` and `Store::read`, which run a closure on the store's own thread and hand it a `Tx` |
-| The migration that creates a table | `a2m-ledger` holds the file, in `crates/a2m-ledger/migrations/`; the owner writes it | A file named `NNNN-<crate>-<what>.sql` whose first line is `-- owner: a2m-<crate>`. The build script lists the folder, so adding a migration is adding one file. One numbered sequence, each file applied once, in its own transaction, with its checksum kept. A store that holds a later migration without an earlier one, or what a migration makes without the row that records it, is half migrated and refused, `store_version_unsupported` ([decision 0399](../../decisions/0399-the-faults-of-the-kernels-own-parts-as-proven-and-what-a-verified-record-keeps.md)) |
+| The migration that creates a table | `a2m-ledger` holds the file, in `crates/a2m-ledger/migrations/`; the owner writes it | A file named `NNNN-<crate>-<what>.sql` whose first line is `-- owner: a2m-<crate>`. The build script lists the folder, so adding a migration is adding one file. One numbered sequence, each file applied once, in its own transaction, with its checksum kept. A store that holds a later migration without an earlier one, or what a migration makes without the row that records it, is half migrated and refused, `store_version_unsupported` ([decision 0352](../../decisions/0352-the-faults-of-the-kernels-own-parts-as-proven-and-what-a-verified-record-keeps.md)) |
 | The queries on a table, its row types, its state rules | The owning crate | Plain functions in that crate that take `&mut Tx` and run fixed statements through `tx.tables(Owner::X)` |
 | Holding a crate to its own tables | `a2m-ledger` | The database's authorizer. A statement run through `tx.tables(Owner::X)` is refused, when it is prepared, if it names a table another crate's migration created, the database's own tables, or anything but reading and writing rows: `unknown_variant`, `table_not_owned` |
 | Atomicity across owners | The caller that began the transaction | Two crates' functions called in one closure commit together or not at all |
@@ -194,7 +194,7 @@ impl CallerKey { pub fn new(text: &str) -> Result<CallerKey, Failure>; pub fn as
 pub struct CallerKeyRow { pub request: Digest, pub run: Option<RunId>, pub held_at: Timestamp }
 pub struct RecordRef { pub run: RunId, pub step_seq: u32, pub record_seq: u32 }
 pub enum WriteClearance { Approval(ApprovalId), PreApproved(DecisionId) }
-pub struct ReadBack { pub digest: Digest, pub after: Option<BlobRef>, pub evidence: BlobRef, pub outputs: Option<BlobRef> }  // outputs: what the read-back showed, kept in place of the `acted` outputs; None keeps those (decision 0399)
+pub struct ReadBack { pub digest: Digest, pub after: Option<BlobRef>, pub evidence: BlobRef, pub outputs: Option<BlobRef> }  // outputs: what the read-back showed, kept in place of the `acted` outputs; None keeps those (decision 0352)
 pub enum Reconciled {
     Landed { read: ReadBack, acted: Acted },  // the outputs and assigned key the read found, kept with the record
     NotLanded { evidence: BlobRef },          // a record goes back to `planned` only on a read that was made
