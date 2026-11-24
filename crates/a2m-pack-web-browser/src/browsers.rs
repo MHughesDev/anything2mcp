@@ -48,6 +48,17 @@ pub const DOWNLOADS_FOLDER: &str = "downloads";
 /// The kind of subsystem a browser is, as the supervisor counts it.
 pub const BROWSER_KIND: &str = "browser";
 
+/// How many hangs of its tabs a browser takes before it is recycled, when
+/// the settings say nothing else (decision 0999). A tab hangs when its
+/// page gives no answer to a call by the call's deadline, nor to the probe
+/// after it ([`BrowserSettings::hang_probe`]).
+pub const HANGS_BEFORE_RECYCLE: u32 = 3;
+
+/// How long a tab whose call went unanswered is given to answer a probe
+/// before it is called hung and closed, when the settings say nothing else
+/// (decision 0999).
+pub const HANG_PROBE: Duration = Duration::from_secs(5);
+
 /// The version of the DevTools protocol the engine speaks.
 const PROTOCOL_VERSION: &str = "1.3";
 
@@ -84,6 +95,16 @@ pub struct BrowserSettings {
     pub max_message_bytes: usize,
     /// The longest text one read may return, in characters.
     pub max_read_chars: usize,
+    /// How many hangs of its tabs a browser takes before it is recycled:
+    /// closed and started afresh, at the next open that finds no tab of it
+    /// held, which is between two runs and never inside one. A count of 0
+    /// is taken as 1. [`HANGS_BEFORE_RECYCLE`] by default.
+    pub hangs_before_recycle: u32,
+    /// How long a tab of the engine's whose call went unanswered by its
+    /// deadline is given to answer a probe that asks the page for nothing
+    /// but an answer. A tab that gives none is hung: it is closed, and the
+    /// hang is counted against its browser. [`HANG_PROBE`] by default.
+    pub hang_probe: Duration,
     /// Test equipment only: starts the browser without its sandbox, for a
     /// machine whose tests run as the superuser. It exists only in a test
     /// build, and nothing in the product can set it.
@@ -124,6 +145,8 @@ impl Default for BrowserSettings {
             call_deadline: Duration::from_secs(30),
             max_message_bytes: 64 * 1024 * 1024,
             max_read_chars: 1024 * 1024,
+            hangs_before_recycle: HANGS_BEFORE_RECYCLE,
+            hang_probe: HANG_PROBE,
             #[cfg(any(test, feature = "test-support"))]
             without_sandbox: false,
             #[cfg(any(test, feature = "test-support"))]
@@ -262,6 +285,8 @@ pub struct OpenBrowser {
     pub tabs: usize,
     /// How many acting tabs it has opened since it started.
     pub runs: u64,
+    /// How many of its tabs hung and were closed since it started.
+    pub hangs: u64,
     /// What it is doing.
     pub health: BrowserHealth,
 }
@@ -275,6 +300,9 @@ pub(crate) struct BrowserInner {
     verified: bool,
     pub(crate) tabs: AtomicUsize,
     runs: AtomicU64,
+    /// How many of its tabs hung and were closed: past the count the
+    /// settings give, the browser is recycled between runs.
+    pub(crate) hangs: AtomicU64,
     /// The open tabs, by the browser's name for each, so that what the
     /// browser itself refuses can be reported by the tab it concerns.
     pages: Mutex<BTreeMap<String, Weak<Page>>>,
@@ -384,6 +412,14 @@ impl BrowserInner {
         }
     }
 
+    /// Whether the browser is due to be recycled: its tabs hung as often
+    /// as the settings allow, and no tab of it is held, so that no run is
+    /// using it.
+    fn due_for_recycling(&self, settings: &BrowserSettings) -> bool {
+        let limit = u64::from(settings.hangs_before_recycle.max(1));
+        self.hangs.load(Ordering::SeqCst) >= limit && self.tabs.load(Ordering::SeqCst) == 0
+    }
+
     fn health(&self) -> BrowserHealth {
         if self.client.closed().is_some() {
             BrowserHealth::Exited
@@ -416,6 +452,31 @@ impl Shared {
         self.open
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Ends a browser that is no longer recorded among the open ones: asks
+    /// it to close, so that it writes its session to its data directory,
+    /// waits for its end up to the close deadline, then has the supervisor
+    /// end and reap its whole process group.
+    async fn end(&self, browser: &BrowserInner) -> Cleanup {
+        if browser.client.closed().is_none() {
+            let deadline = Deadline::after(self.settings.close_deadline);
+            let mut ended = browser.client.subscribe(None);
+            if browser
+                .client
+                .call(None, &CloseBrowser {}, deadline)
+                .await
+                .is_ok()
+            {
+                // The end of the pipe is the end of the browser.
+                let _ = tokio::time::timeout_at(deadline.at(), async {
+                    while ended.recv().await.is_some() {}
+                })
+                .await;
+            }
+        }
+        browser.client.close();
+        self.supervisor.stop(browser.subsystem).await
     }
 
     /// Finishes the stop of every browser whose launch was dropped, and
@@ -812,7 +873,10 @@ impl Browsers {
     }
 
     /// The profile's browser, started on first use. A browser whose
-    /// process has ended is stopped, cleaned up, and started afresh.
+    /// process has ended is stopped, cleaned up, and started afresh; so is
+    /// one whose tabs hung [`BrowserSettings::hangs_before_recycle`] times,
+    /// once no tab of it is held: it is closed as [`Self::close`] closes
+    /// it, between two runs and never inside one.
     ///
     /// # Errors
     ///
@@ -854,7 +918,9 @@ impl Browsers {
         if let Some(existing) = existing {
             // A browser in the background is used again; a window never is,
             // and one is never used for a run in the background.
-            if existing.health() != BrowserHealth::Exited && !window && !existing.window {
+            let exited = existing.health() == BrowserHealth::Exited;
+            let due = existing.due_for_recycling(&shared.settings);
+            if !exited && !due && !window && !existing.window {
                 return Ok(Browser {
                     inner: existing,
                     shared: Arc::clone(shared),
@@ -862,8 +928,14 @@ impl Browsers {
                 });
             }
             shared.open().remove(profile);
-            existing.client.close();
-            shared.supervisor.stop(existing.subsystem).await;
+            if exited {
+                existing.client.close();
+                shared.supervisor.stop(existing.subsystem).await;
+            } else {
+                // A browser that still answers is asked to close, so that it
+                // writes what it keeps to its data directory first.
+                shared.end(&existing).await;
+            }
         }
         let failed = |reason| BrowserError::LaunchFailed(reason);
         let screen = if window {
@@ -1046,6 +1118,7 @@ impl Browsers {
             verified: link.verified || reviewed,
             tabs: AtomicUsize::new(0),
             runs: AtomicU64::new(0),
+            hangs: AtomicU64::new(0),
             pages: Mutex::new(BTreeMap::new()),
             held: Mutex::new(Held::default()),
             windows: Mutex::new(BTreeMap::new()),
@@ -1104,6 +1177,7 @@ impl Browsers {
                 verified: browser.verified,
                 tabs: browser.tabs.load(Ordering::SeqCst),
                 runs: browser.runs.load(Ordering::SeqCst),
+                hangs: browser.hangs.load(Ordering::SeqCst),
                 health: browser.health(),
             })
             .collect()
@@ -1119,24 +1193,7 @@ impl Browsers {
         let Some(browser) = shared.open().remove(profile) else {
             return Cleanup::complete();
         };
-        if browser.client.closed().is_none() {
-            let deadline = Deadline::after(shared.settings.close_deadline);
-            let mut ended = browser.client.subscribe(None);
-            if browser
-                .client
-                .call(None, &CloseBrowser {}, deadline)
-                .await
-                .is_ok()
-            {
-                // The end of the pipe is the end of the browser.
-                let _ = tokio::time::timeout_at(deadline.at(), async {
-                    while ended.recv().await.is_some() {}
-                })
-                .await;
-            }
-        }
-        browser.client.close();
-        shared.supervisor.stop(browser.subsystem).await
+        shared.end(&browser).await
     }
 
     /// Closes every browser. What could not be cleaned up is listed.

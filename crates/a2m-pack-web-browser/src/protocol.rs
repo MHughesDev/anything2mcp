@@ -863,6 +863,13 @@ command!(HandleDialog<'_>, "Page.handleJavaScriptDialog" => Nothing);
 pub(crate) struct RuntimeEnable {}
 command!(RuntimeEnable, "Runtime.enable" => Nothing);
 
+/// Ends the script that runs in the page now, or the next one. The browser
+/// interrupts the page for it, so a page whose own script never returns
+/// takes it.
+#[derive(Debug, Serialize)]
+pub(crate) struct TerminateExecution {}
+command!(TerminateExecution, "Runtime.terminateExecution" => Nothing);
+
 /// One argument of a call: a plain value. An element is passed as `this`,
 /// through `object_id`, not as an argument.
 #[derive(Debug, Serialize)]

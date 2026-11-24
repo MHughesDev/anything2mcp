@@ -9,6 +9,9 @@
 //!   upgrade, so no socket stays open.
 //! - `/traps/links`: links that look like actions, one by its address and one by its
 //!   name, each of which writes when followed with `GET`.
+//! - `/traps/hangs`: a page whose own script, run as its document is parsed,
+//!   never returns. It writes nothing; the page never finishes and answers
+//!   nothing after, for the proof that a hung tab is closed.
 
 use axum::Router;
 use axum::extract::{Path, State};
@@ -25,6 +28,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/traps/worker.js", get(worker_script))
         .route("/traps/socket", get(socket_page))
         .route("/traps/links", get(links))
+        .route("/traps/hangs", get(hangs))
         .route("/traps/write/{*name}", any(write))
 }
 
@@ -40,6 +44,13 @@ async fn on_load() -> Html<String> {
         "Recent activity",
         "<h1>Recent activity</h1>\n<p>Nothing to show.</p>\n<script>\n\
          fetch(\"/traps/write/on-load\", {method: \"POST\"});\n</script>",
+    )
+}
+
+async fn hangs() -> Html<String> {
+    page(
+        "Report",
+        "<h1>Report</h1>\n<p>Preparing.</p>\n<script>\nfor (;;) {}\n</script>\n<p>Ready.</p>",
     )
 }
 

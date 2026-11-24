@@ -65,8 +65,8 @@ pub use a2m_provider::Deadline;
 
 pub use browsers::{
     Address, BROWSER_KIND, Browser, BrowserHealth, BrowserSettings, BrowserState, Browsers,
-    DIGESTS_SETTING, DOWNLOADS_FOLDER, Observer, OpenBrowser, PROFILE_ROOT, ProfileKey,
-    STAGING_FOLDER, SharedBrowsers, StateCookie, Visibility,
+    DIGESTS_SETTING, DOWNLOADS_FOLDER, HANG_PROBE, HANGS_BEFORE_RECYCLE, Observer, OpenBrowser,
+    PROFILE_ROOT, ProfileKey, STAGING_FOLDER, SharedBrowsers, StateCookie, Visibility,
 };
 pub use capture::captured;
 pub use error::{BrowserError, Dispatch, LaunchReason, Reason, RequestShape, codes};
