@@ -705,6 +705,56 @@ async fn a_driver_that_panics_in_a_read_is_named_and_the_engine_goes_on() {
     assert!(completed(&outcome), "{outcome:?}");
 }
 
+/// A context a driver panicked in is never used again: it is given back
+/// once, said to be poisoned, and handed to no later step; the next call
+/// prepares a new one (section 224).
+#[tokio::test]
+async fn a_context_a_driver_panicked_in_is_released_poisoned_and_never_handed_out_again() {
+    let scene = Scene::new(ORDER_GET, |_| {}).await;
+    *scene.pin.lock().unwrap() = Some(Mode::new(FIRST_MODE).unwrap());
+    *scene.hooks.panics_on.lock().unwrap() = Some("get_order".to_owned());
+    let outcome = scene.work(JobKind::Execute, ORDER_GET, order()).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::UnknownVariant, "driver_panicked".to_owned())
+    );
+    let panicked_in = {
+        let acted = scene.hooks.acted_in.lock().unwrap();
+        assert_eq!(acted.len(), 1, "{acted:?}");
+        acted[0].1
+    };
+    assert_eq!(scene.hooks.contexts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *scene.hooks.released.lock().unwrap(),
+        [(panicked_in, true)],
+        "the context the driver panicked in is given back once, poisoned"
+    );
+
+    // The next call is handed a context prepared for it, never that one.
+    *scene.hooks.panics_on.lock().unwrap() = None;
+    scene.another_run(ORDER_GET).await;
+    let outcome = scene.work(JobKind::Execute, ORDER_GET, order()).await;
+    assert!(completed(&outcome), "{outcome:?}");
+    assert_eq!(scene.hooks.contexts.load(Ordering::SeqCst), 2);
+    let acted = scene.hooks.acted_in.lock().unwrap().clone();
+    assert!(acted.len() >= 2, "{acted:?}");
+    assert!(
+        acted[1..]
+            .iter()
+            .all(|(_, context)| *context != panicked_in),
+        "a later step was handed the context the driver panicked in: {acted:?}"
+    );
+    let released = scene.hooks.released.lock().unwrap().clone();
+    assert_eq!(
+        released
+            .iter()
+            .filter(|(context, _)| *context == panicked_in)
+            .count(),
+        1,
+        "{released:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_driver_that_panics_in_a_save_leaves_the_record_in_doubt() {
     let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
