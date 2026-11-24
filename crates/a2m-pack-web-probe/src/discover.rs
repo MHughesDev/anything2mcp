@@ -982,6 +982,15 @@ impl WebCapture {
                     "A parameter of the path template rests on variance alone: the segment differed between otherwise identical requests.".to_owned(),
                 ));
             }
+            if endpoint.keeps_a_short_number() {
+                limitations.push((
+                    LimitationCode::Sampled,
+                    format!(
+                        "A number of fewer than {} digits in the path is kept as written: a short number is a parameter only where requests showed it varying.",
+                        crate::infer::LEAST_DIGITS
+                    ),
+                ));
+            }
             if endpoint.response.as_ref().is_some_and(Shape::has_optional) {
                 limitations.push((
                     LimitationCode::Sampled,

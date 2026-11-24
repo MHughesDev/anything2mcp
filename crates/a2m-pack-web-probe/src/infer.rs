@@ -2,8 +2,9 @@
 //! templates in two tiers.
 //!
 //! Tier one makes a segment a parameter only when its form says it is an
-//! identifier: a number, a universally unique identifier, a long
-//! hexadecimal string, or a date. Tier two makes a parameter of a segment
+//! identifier: a number of at least four digits, a universally unique
+//! identifier, a long hexadecimal string, or a date. A shorter number stays
+//! literal unless tier two finds it varying (decision 0322). Tier two makes a parameter of a segment
 //! that varied between otherwise identical requests, and only when the
 //! caller asks: it rests on variance alone, so an endpoint with one such
 //! segment is `inferred`, whatever answered.
@@ -243,6 +244,16 @@ impl Endpoint {
         })
     }
 
+    /// Whether a segment of the template is a number of fewer than
+    /// [`LEAST_DIGITS`] digits, kept literal because nothing showed it
+    /// varying.
+    #[must_use]
+    pub fn keeps_a_short_number(&self) -> bool {
+        self.segments
+            .iter()
+            .any(|segment| matches!(segment, Segment::Literal(text) if is_short_number(text)))
+    }
+
     /// Whether any segment is a parameter.
     #[must_use]
     pub fn has_parameter(&self) -> bool {
@@ -341,12 +352,70 @@ impl Endpoint {
     }
 }
 
+/// The fewest digits a run of digits has to be a parameter by its form
+/// alone. A starting value for the first test to tune, not a measured
+/// figure (decision 0322 point 4).
+pub const LEAST_DIGITS: usize = 4;
+
+/// Whether a segment is a number shorter than [`LEAST_DIGITS`].
+fn is_short_number(segment: &str) -> bool {
+    type_of_text(segment) == "integer" && segment.trim_start_matches('-').len() < LEAST_DIGITS
+}
+
 /// The type of a segment that is an identifier by its form, if it is one.
-fn identifier_type(segment: &str) -> Option<&'static str> {
+/// A number of fewer than [`LEAST_DIGITS`] digits is not one.
+pub fn identifier_type(segment: &str) -> Option<&'static str> {
+    if is_short_number(segment) {
+        return None;
+    }
     match type_of_text(segment) {
         kind @ ("integer" | "uuid" | "hex" | "date") => Some(kind),
         _ => None,
     }
+}
+
+/// Whether a segment is a plain word: letters, with digits, hyphens, and
+/// underscores after them. A number and an identifier are not.
+fn is_word(segment: &str) -> bool {
+    segment
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic())
+        && segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && type_of_text(segment) == "text"
+}
+
+/// Whether the two literals that differ at `place` between endpoints
+/// `first` and `second` are both words that some other endpoint of the
+/// capture uses as a literal in the same place: after the same segments, of
+/// the same origin, and in a path of another length or another method. Two
+/// words that the capture elsewhere treats as fixed names are siblings, not
+/// the values of one parameter (decision 0322 point 5).
+fn literal_siblings(endpoints: &[Endpoint], first: usize, second: usize, place: usize) -> bool {
+    let (Segment::Literal(a), Segment::Literal(b)) = (
+        &endpoints[first].segments[place],
+        &endpoints[second].segments[place],
+    ) else {
+        return false;
+    };
+    if !is_word(a) || !is_word(b) {
+        return false;
+    }
+    let elsewhere = |word: &str| {
+        endpoints.iter().enumerate().any(|(at, other)| {
+            at != first
+                && at != second
+                && other.origin == endpoints[first].origin
+                && other.segments.len() > place
+                && (other.segments.len() != endpoints[first].segments.len()
+                    || other.method != endpoints[first].method)
+                && other.segments[..place] == endpoints[first].segments[..place]
+                && matches!(&other.segments[place], Segment::Literal(text) if text == word)
+        })
+    };
+    elsewhere(a) && elsewhere(b)
 }
 
 fn digest_of(text: &str) -> a2m_core::Digest {
@@ -537,7 +606,9 @@ pub fn infer_endpoints(exchanges: &[Exchange], tier_two: bool) -> Vec<Endpoint> 
                     let Some(place) = place else {
                         continue;
                     };
-                    if !answers_alike(one, other) {
+                    if !answers_alike(one, other)
+                        || literal_siblings(&endpoints, first, second, place)
+                    {
                         continue;
                     }
                     let mut other = endpoints.remove(second);
@@ -704,4 +775,12 @@ pub fn matched_requests(exchanges: &[Exchange]) -> Vec<MatchedRequests> {
         .collect();
     out.sort_by_key(|group| group.members.iter().min().copied());
     out
+}
+
+/// Whether a text is an identifier by its form alone, as a key of an
+/// object: a number of any length, a universally unique identifier, a long
+/// hexadecimal string, or a date. The length rule of a path segment does
+/// not apply: a dictionary keyed by `1` and `2` is a dictionary.
+pub(crate) fn is_identifier_by_form(text: &str) -> bool {
+    matches!(type_of_text(text), "integer" | "uuid" | "hex" | "date")
 }

@@ -151,7 +151,7 @@ async fn scouting_the_test_application_gives_its_screens_and_endpoints_the_same_
     assert_eq!(found["response"]["type"], "list");
     assert_eq!(
         found["response"]["items"]["fields"]["order_id"],
-        json!({"type": "text"})
+        json!({"type": "text", "seen_in_all": 3})
     );
     assert_eq!(orders.derived_from().len(), 1);
     assert_eq!(

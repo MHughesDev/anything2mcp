@@ -139,12 +139,12 @@ fn a_text_is_typed_by_its_form_and_a_shape_holds_no_value() {
         json!({
             "type": "object",
             "fields": {
-                "lines": {"type": "list", "items": {"type": "object", "fields": {
+                "lines": {"type": "list", "seen_in_all": 2, "items": {"type": "object", "fields": {
                     "code": {"type": "text"}, "quantity": {"type": "integer"}}}},
                 "note": {"type": "text", "optional": true},
-                "order_id": {"type": "text"},
+                "order_id": {"type": "text", "seen_in_all": 2},
                 "shipped_on": {"type": "date", "optional": true},
-                "total": {"type": ["decimal", "integer"]},
+                "total": {"type": ["decimal", "integer"], "seen_in_all": 2},
             },
         })
     );
@@ -480,4 +480,82 @@ fn pages_of_one_screen_are_matched_only_when_one_segment_differs_and_nothing_els
         matched(&[(origin, "/A-1", &lines), (origin, "/B-2", &lines)])[0].pattern,
         "/{key}"
     );
+}
+
+#[test]
+fn a_field_seen_in_every_answer_is_counted_and_never_required() {
+    let one = Shape::of(&json!({"id": 1, "note": "a"}));
+    let two = Shape::of(&json!({"id": 2}));
+    let three = Shape::of(&json!({"id": 3, "note": "b"}));
+    let merged = one.merged(&two).merged(&three);
+    let json = merged.to_json();
+    assert_eq!(json["fields"]["id"]["seen_in_all"], 3);
+    assert_eq!(json["fields"]["note"]["optional"], true);
+    assert!(json["fields"]["note"].get("seen_in_all").is_none());
+    assert!(!json.to_string().contains("required"));
+}
+
+#[test]
+fn a_short_number_in_a_path_stays_literal_unless_it_varies_or_has_four_digits() {
+    let page = |n: &str| get(&format!("/api/items/page/{n}"), json!({"rows": []}));
+    let alone = infer_endpoints(&[page("2"), page("2")], false);
+    assert_eq!(alone[0].template(), "/api/items/page/2");
+    assert!(alone[0].keeps_a_short_number());
+    // Without tier two a second value is another endpoint, not a parameter.
+    let apart = infer_endpoints(&[page("2"), page("3")], false);
+    assert_eq!(apart.len(), 2);
+    // Where it varies and tier two is asked, it is a parameter.
+    let varied = infer_endpoints(&[page("2"), page("3")], true);
+    assert_eq!(varied.len(), 1);
+    assert_eq!(varied[0].template(), "/api/items/page/{p1}");
+    assert!(!varied[0].keeps_a_short_number());
+    assert_eq!(
+        varied[0].found()["template"]["parameters"][0]["values_seen"],
+        2
+    );
+    // Four digits are a parameter by form.
+    let long = infer_endpoints(&[page("2024")], false);
+    assert_eq!(long[0].template(), "/api/items/page/{p1}");
+    assert!(!long[0].keeps_a_short_number());
+}
+
+#[test]
+fn two_words_the_capture_uses_as_fixed_names_are_not_one_parameter() {
+    let answer = json!({"rows": []});
+    let words = [
+        get("/api/reports/summary", answer.clone()),
+        get("/api/reports/daily", answer.clone()),
+        get("/api/reports/summary/export", json!({"link": "x"})),
+        get("/api/reports/daily/export", json!({"link": "x"})),
+    ];
+    let kept = infer_endpoints(&words, true);
+    assert!(kept.iter().any(|e| e.template() == "/api/reports/summary"));
+    assert!(kept.iter().any(|e| e.template() == "/api/reports/daily"));
+    // Names with no such use elsewhere are values of one parameter.
+    let people = [
+        get("/api/people/alice", answer.clone()),
+        get("/api/people/bob", answer),
+    ];
+    let joined = infer_endpoints(&people, true);
+    assert_eq!(joined.len(), 1);
+    assert_eq!(joined[0].template(), "/api/people/{p1}");
+}
+
+#[test]
+fn an_object_keyed_by_identifiers_is_one_map_whatever_its_size() {
+    let small = Shape::of(&json!({"by_id": {"1": {"n": 1}, "2": {"n": 2}}}));
+    assert_eq!(
+        small.to_json()["fields"]["by_id"],
+        json!({"type": "map", "items": {"type": "object", "fields": {"n": {"type": "integer", "seen_in_all": 2}}}})
+    );
+    let mut many = serde_json::Map::new();
+    for id in 0..100 {
+        many.insert(id.to_string(), json!(id));
+    }
+    let big = Shape::of(&serde_json::Value::Object(many));
+    assert_eq!(
+        big.to_json(),
+        json!({"type": "map", "items": {"type": "integer"}})
+    );
+    assert!(!big.withheld());
 }
