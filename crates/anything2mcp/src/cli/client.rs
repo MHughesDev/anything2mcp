@@ -351,7 +351,7 @@ pub(crate) struct Asking<'a> {
 /// succeeds with that answer and a warning that says how it was learned.
 /// An engine that still answers did not take the stop: the command fails
 /// with `busy`/`engine_running`, and running it again asks again
-/// (decision 0399).
+/// (decision 0382).
 async fn stop_answer_lost(paths: &Paths) -> Result<Answered, Failure> {
     let connector = Connector::new(paths, program_version()?, ClientLabel::CommandLine)?;
     match connector.connect().await {

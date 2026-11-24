@@ -1,4 +1,4 @@
-# 0399. The engine stops once its answer to `engine.stop` is handed over, and a lost one is no write in doubt
+# 0382. The engine stops once its answer to `engine.stop` is handed over, and a lost one is no write in doubt
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
 

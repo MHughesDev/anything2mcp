@@ -387,7 +387,7 @@ async fn stop_engine(
     response.result = Some(json!({"stopping": true}));
     response.exit = ExitClass::Succeeded;
     // The answer is the last on its connection, and the stop is asked only
-    // once it has been handed over whole (decision 0399).
+    // once it has been handed over whole (decision 0382).
     let (mut parts, _) = render(&response).into_parts();
     // The body is sent as it comes; any length the rendered one had is not
     // this body's.
@@ -409,7 +409,7 @@ async fn stop_engine(
 /// flushes before it closes the connection, or once the connection ended
 /// without it. So the channel never stops taking requests before the
 /// answer that says it is stopping is on its way, whatever the timing
-/// (decision 0399).
+/// (decision 0382).
 struct AskOnceAnswered {
     answer: Option<Bytes>,
     ask: StopAsk,
