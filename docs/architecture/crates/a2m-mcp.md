@@ -192,6 +192,7 @@ A toolset's list is the same for every caller connected to it; rights are checke
 | Kept blobs: traces, diffs, snapshots, files | A reference in the result, never inlined. Resource links and `resources/read` are not built |
 | `warnings` of a success | `_meta`, under `anything2mcp/warnings`. The output schemas take no key for them |
 | a published tool in a list | its `_meta`, under `anything2mcp/target`, `anything2mcp/version`, and `anything2mcp/description_by` (`rule` or `builder`, who wrote the description; decision 0307, point 6); a control tool has none. The same for every client |
+| a published tool a drift stopped (`available: false` from `tool.search`) | listed all the same, its schema unchanged; its description begins with the fixed sentence "Unavailable: the system changed and this tool was stopped until its target is repaired." and its `_meta` carries `anything2mcp/unavailable`: the reason, the knowledge marked, and when ([decision 0396](../../decisions/0396-a-tool-stopped-by-a-drift-is-listed-and-marked-never-left-out.md)) |
 | `error` | `isError`, and one text item: the class, code, message, fix, and whether a retry is safe, as one JSON object. No structured content |
 | Text from the target | Inside fields marked untrusted, already cut and stripped by the dispatcher |
 

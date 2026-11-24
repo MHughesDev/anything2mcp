@@ -25,7 +25,7 @@ Three questions had no answer. Which tools a drift affects, when a canary is a r
 
 ## What this does not do yet
 
-- A tool stopped by a mark is not shown as unavailable in `tool.list` or in the engine's health; it is refused when called. Section 604 names drift alerts in the health view.
+- A tool stopped by a mark is not shown as unavailable in `tool.list` or in the engine's health; it is refused when called. Section 604 names drift alerts in the health view. (Since built for the listings by package 9.1a, [decision 0396](0396-a-tool-stopped-by-a-drift-is-listed-and-marked-never-left-out.md); the health view still does not show it.)
 - A write's own drift (at its preview or before its save) stops the run but leaves no mark: only a read reports `BindingHealth` today.
 - `drifting` (a field matched by a locator that is not the first of its list) is not reported: it needs the pack to say which locator matched.
 - Canaries on a schedule of their own (section 403, "after publishing") are not built: a watch is the canary.

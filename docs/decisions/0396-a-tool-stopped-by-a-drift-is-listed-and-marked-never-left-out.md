@@ -1,6 +1,6 @@
 # 0396. A tool stopped by a drift is listed and marked, never left out
 
-**Status:** Accepted. Design decision, made by the design architect. The owner had not read this record when it was merged. Nothing in it is built.
+**Status:** Accepted. Design decision, made by the design architect. The owner had not read this record when it was merged. Built by package 9.1a: `crates/a2m-actions/src/drift.rs` (`unavailable`), `tool.search` and `tool.describe`, and the tool list of `a2m-mcp`. A mark that cannot be read makes every tool of its target unavailable, naming no knowledge and no time.
 
 **Date:** 2026-11-24
 
