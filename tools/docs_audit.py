@@ -274,8 +274,12 @@ def main():
     ids = re.findall(r"^\| (H-\d+) \|", register, re.M)
     if len(ids) != len(set(ids)):
         note("hypotheses", "a hypothesis number is used twice in the register")
-    for row in re.findall(r"^\| (H-\d+) \|.*\| ([a-z]+) \|$", register, re.M):
-        if row[1] not in ("open", "supported", "refuted", "changed"):
+    # The status is the last cell of a row, one word alone: a cell that holds
+    # more is flagged, so that no row escapes the checks below.
+    rows = [(m.group(1), m.group(2).rsplit("|", 2)[-2].strip())
+            for m in re.finditer(r"^\| (H-\d+) \|(.*)$", register, re.M)]
+    for row in rows:
+        if row[1] not in ("open", "partly", "supported", "refuted", "changed"):
             note("hypotheses", f"{row[0]} has an unknown status: {row[1]}")
         if row[1] != "open" and not any(k.startswith(f"docs/hypotheses/{row[0]}-") for k in md):
             note("hypotheses", f"{row[0]} is marked {row[1]} but has no result file")
