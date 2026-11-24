@@ -33,12 +33,16 @@ use crate::name::ProviderName;
 /// What stands in a captured path for a segment that is not kept.
 pub const CAPTURE_PLACEHOLDER: &str = "{value}";
 
-/// The longest name a capture keeps: of a query's parameter, a header, or
-/// one part of a field's name.
-pub const LONGEST_CAPTURED_NAME: usize = 48;
+/// The longest word a capture keeps: a path segment, a name of a query's
+/// parameter or a header, or one part of a field's name.
+pub const LONGEST_CAPTURED_WORD: usize = 32;
 
-/// The longest path segment a capture keeps as text.
-pub const LONGEST_CAPTURED_SEGMENT: usize = 64;
+/// The most ASCII digits a kept word holds: `v2`, `oauth2`, and `s3` are
+/// words; an identifier, a date, or a token is not.
+pub const MOST_CAPTURED_DIGITS: usize = 3;
+
+/// The longest run of hexadecimal digits a kept word holds.
+pub const LONGEST_HEX_RUN: usize = 15;
 
 /// The kinds a captured field may have.
 pub const FIELD_KINDS: [&str; 8] = [
@@ -163,7 +167,7 @@ fn kept_request(raw: CapturedRequest, redact: &dyn Redact) -> Option<CapturedReq
     query_left_out |= cut;
     let mut query = Vec::new();
     for name in raw.query {
-        if is_captured_name(&name) && clean(&name) && !query.contains(&name) {
+        if is_captured_word(&name) && clean(&name) && !query.contains(&name) {
             query.push(name);
         } else if !query.contains(&name) {
             query_left_out = true;
@@ -174,7 +178,7 @@ fn kept_request(raw: CapturedRequest, redact: &dyn Redact) -> Option<CapturedReq
         let mut out = Vec::new();
         for name in names {
             let lower = name.to_ascii_lowercase();
-            if is_captured_name(&lower) && clean(&lower) {
+            if is_captured_word(&lower) && clean(&lower) {
                 if !out.contains(&lower) {
                     out.push(lower);
                 }
@@ -237,7 +241,9 @@ fn kept_path(path: &str, redact: &dyn Redact) -> (String, bool) {
         if segment.is_empty() {
             continue;
         }
-        if (is_segment(segment) || is_placeholder(segment)) && !redact.contains_secret(segment) {
+        if (is_captured_word(segment) || is_placeholder(segment))
+            && !redact.contains_secret(segment)
+        {
             out.push_str(segment);
         } else {
             out.push_str(CAPTURE_PLACEHOLDER);
@@ -263,41 +269,51 @@ fn is_origin(text: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':' | b'[' | b']'))
 }
 
-fn is_segment(text: &str) -> bool {
-    text.len() <= LONGEST_CAPTURED_SEGMENT
-        && !text.bytes().all(|b| b == b'.')
-        && text
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~'))
-}
-
 fn is_placeholder(text: &str) -> bool {
     text.strip_prefix('{')
         .and_then(|inner| inner.strip_suffix('}'))
         .is_some_and(|inner| {
             !inner.is_empty()
-                && inner.len() <= LONGEST_CAPTURED_NAME
+                && inner.len() <= LONGEST_CAPTURED_WORD
                 && inner
                     .bytes()
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
         })
 }
 
-/// A name a capture keeps: ASCII letters, digits, `_`, `-`, and `.`, at
-/// most [`LONGEST_CAPTURED_NAME`].
+/// A word a capture keeps, the one rule for a path segment, a name of a
+/// query's parameter or a header, and each part of a field's name: ASCII
+/// letters, digits, `_`, `-`, and `.`, not dots only, at most
+/// [`LONGEST_CAPTURED_WORD`], with at most [`MOST_CAPTURED_DIGITS`] digits
+/// in all and no run of hexadecimal digits longer than
+/// [`LONGEST_HEX_RUN`]. It is a floor of form: a value that looks like a
+/// word, such as a short code, still passes it.
 #[must_use]
-pub fn is_captured_name(text: &str) -> bool {
-    (1..=LONGEST_CAPTURED_NAME).contains(&text.len())
+pub fn is_captured_word(text: &str) -> bool {
+    let mut hex_run = 0;
+    let mut longest_hex = 0;
+    for b in text.bytes() {
+        hex_run = if b.is_ascii_hexdigit() {
+            hex_run + 1
+        } else {
+            0
+        };
+        longest_hex = longest_hex.max(hex_run);
+    }
+    (1..=LONGEST_CAPTURED_WORD).contains(&text.len())
+        && !text.bytes().all(|b| b == b'.')
         && text
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+        && text.bytes().filter(u8::is_ascii_digit).count() <= MOST_CAPTURED_DIGITS
+        && longest_hex <= LONGEST_HEX_RUN
 }
 
 fn is_field_name(text: &str) -> bool {
     !text.is_empty()
         && text
             .split('.')
-            .all(|part| part == "[]" || is_captured_name(part))
+            .all(|part| part == "[]" || is_captured_word(part))
 }
 
 fn is_media_type(text: &str) -> bool {

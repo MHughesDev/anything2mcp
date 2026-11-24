@@ -22,7 +22,7 @@ use a2m_core::{
 use a2m_provider::{
     BoxFuture, CAPTURE_PLACEHOLDER, CaptureSource, CapturedRequest, CapturedTraffic, Deadline,
     Pack, PackContext, ProviderSettings, Registrar, RegistryBuilder, Roots, SurfaceRef,
-    TrafficCapture, codes, kept_by_structure,
+    TrafficCapture, codes, is_captured_word, kept_by_structure,
 };
 use common::{Folder, OneSecret, host_with};
 
@@ -132,19 +132,19 @@ fn a_capture_keeps_structure_and_no_secret_whatever_the_pack_yields() {
     assert_eq!(again.requests, kept.requests);
 }
 
-/// A capture that hands over the careless yield.
-struct Careless;
+/// A capture that hands over what its function yields.
+struct Careless(fn() -> CapturedTraffic);
 
 impl TrafficCapture for Careless {
     fn start(&self) {}
 
     fn take_recorded<'a>(&'a self, _until: Deadline) -> BoxFuture<'a, CapturedTraffic> {
-        Box::pin(async { careless() })
+        Box::pin(async { (self.0)() })
     }
 }
 
 /// A capture source that counts how often it is asked.
-struct Counted(Arc<AtomicUsize>);
+struct Counted(Arc<AtomicUsize>, fn() -> CapturedTraffic);
 
 impl CaptureSource for Counted {
     fn open<'a>(
@@ -153,7 +153,8 @@ impl CaptureSource for Counted {
         _deadline: Deadline,
     ) -> BoxFuture<'a, Result<Box<dyn TrafficCapture>, Failure>> {
         self.0.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async { Ok(Box::new(Careless) as Box<dyn TrafficCapture>) })
+        let yields = self.1;
+        Box::pin(async move { Ok(Box::new(Careless(yields)) as Box<dyn TrafficCapture>) })
     }
 }
 
@@ -163,6 +164,7 @@ struct Bare {
     manifest: &'static str,
     registers: bool,
     asked: Arc<AtomicUsize>,
+    yields: fn() -> CapturedTraffic,
 }
 
 impl Bare {
@@ -175,7 +177,13 @@ impl Bare {
             manifest: Box::leak(text.into_boxed_str()),
             registers,
             asked: Arc::new(AtomicUsize::new(0)),
+            yields: careless,
         }
+    }
+
+    fn yielding(mut self, yields: fn() -> CapturedTraffic) -> Self {
+        self.yields = yields;
+        self
     }
 }
 
@@ -186,7 +194,7 @@ impl Pack for Bare {
 
     fn register(&self, _cx: &PackContext, to: &mut Registrar<'_>) -> Result<(), Failure> {
         if self.registers {
-            to.traffic_capture(Arc::new(Counted(Arc::clone(&self.asked))))?;
+            to.traffic_capture(Arc::new(Counted(Arc::clone(&self.asked), self.yields)))?;
         }
         Ok(())
     }
@@ -264,4 +272,114 @@ async fn a_pack_that_declares_no_capture_is_never_asked() {
     assert_eq!(offers.asked.load(Ordering::SeqCst), 1);
     assert_eq!(sneaks.asked.load(Ordering::SeqCst), 0);
     assert_eq!(quiet.asked.load(Ordering::SeqCst), 0);
+}
+
+/// A UUID, a base-62 token of 24 characters, and a hexadecimal token, none
+/// of which the redactor knows.
+const UUID: &str = "3f2b8c1e-9a4d-4e7b-b6c5-0d1e2f3a4b5c";
+const BASE62: &str = "k3JqP9xR2mWvT7bYcN5dLs8F";
+const HEX: &str = "a3f09c7e5b21d4e8f6a7";
+
+/// What a pack yields that failed to flag identifiers as values: in path
+/// segments, a query's name, and the keys of an answer's map.
+fn id_shaped() -> CapturedTraffic {
+    let mut fields = BTreeMap::new();
+    fields.insert("orders".to_owned(), "object".to_owned());
+    fields.insert("8812.name".to_owned(), "string".to_owned());
+    fields.insert("8813.name".to_owned(), "string".to_owned());
+    CapturedTraffic {
+        requests: vec![CapturedRequest {
+            method: "GET".to_owned(),
+            origin: "http://127.0.0.1:8080".to_owned(),
+            path: format!("/api/v2/users/{UUID}/sessions/{BASE62}/orders/100245"),
+            query: vec!["view".to_owned(), HEX.to_owned()],
+            credential_headers: vec!["authorization".to_owned()],
+            set_headers: vec![format!("x-{HEX}")],
+            status: 200,
+            media_type: "application/json".to_owned(),
+            fields: Some(fields),
+            ..CapturedRequest::default()
+        }],
+        ..CapturedTraffic::default()
+    }
+}
+
+#[tokio::test]
+async fn identifiers_a_pack_failed_to_flag_are_not_kept_as_structure() {
+    let ids = Bare::new("ids", "\"web\"", true).yielding(id_shaped);
+    let folder = Folder::new("capture-ids");
+    let mut builder = RegistryBuilder::new(
+        ProviderSettings::default(),
+        // The redactor knows none of them: the rule of form alone holds.
+        host_with(&folder, Roots::none(), Arc::new(OneSecret(WORD_SECRET))),
+    );
+    builder.add_pack(&ids);
+    let (registry, problems) = builder.build();
+    assert!(problems.is_empty(), "{problems:?}");
+    let handle = registry
+        .captures_for(&SurfaceKind::new("web").unwrap())
+        .remove(0);
+    let capturing = handle
+        .open(&surface("web"), Deadline::after(Duration::from_secs(5)))
+        .await
+        .unwrap();
+    let taken = capturing
+        .take(Deadline::after(Duration::from_secs(5)))
+        .await;
+    let text = all_text(&taken);
+    for planted in [UUID, BASE62, HEX, "100245", "8812", "8813"] {
+        assert!(!text.contains(planted), "{planted} in {text}");
+    }
+    assert_eq!(taken.requests.len(), 1);
+    let one = &taken.requests[0];
+    assert_eq!(
+        one.path,
+        format!(
+            "/api/v2/users/{CAPTURE_PLACEHOLDER}/sessions/{CAPTURE_PLACEHOLDER}/orders/{CAPTURE_PLACEHOLDER}"
+        )
+    );
+    assert_eq!(one.query, vec!["view".to_owned()]);
+    assert!(one.query_left_out);
+    assert_eq!(one.credential_headers, vec!["authorization".to_owned()]);
+    assert!(one.set_headers.is_empty());
+    assert!(one.headers_left_out);
+    assert_eq!(
+        one.fields
+            .as_ref()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec!["orders".to_owned()]
+    );
+    assert!(one.names_withheld);
+    assert_eq!(ids.asked.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_kept_word_has_few_digits_and_no_long_hexadecimal_run() {
+    for word in [
+        "v2",
+        "oauth2",
+        "s3",
+        "A-100",
+        "orders",
+        "x-csrf-token",
+        "items",
+    ] {
+        assert!(is_captured_word(word), "{word}");
+    }
+    for value in [
+        UUID,
+        BASE62,
+        HEX,
+        "100245",
+        "2026-11-24",
+        "deadbeefdeadbeef",
+        "a-name-that-is-longer-than-thirty-two",
+        "..",
+        "",
+    ] {
+        assert!(!is_captured_word(value), "{value}");
+    }
 }

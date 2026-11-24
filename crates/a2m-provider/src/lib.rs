@@ -46,8 +46,8 @@ pub use a2m_auth::BoxFuture;
 pub use action::{ActionContext, ProviderAction};
 pub use capture::{
     CAPTURE_PLACEHOLDER, CaptureHandle, CaptureSource, CapturedRequest, CapturedTraffic, Capturing,
-    FIELD_KINDS, LONGEST_CAPTURED_NAME, LONGEST_CAPTURED_SEGMENT, TrafficCapture, is_captured_name,
-    kept_by_structure, take_capture,
+    FIELD_KINDS, LONGEST_CAPTURED_WORD, LONGEST_HEX_RUN, MOST_CAPTURED_DIGITS, TrafficCapture,
+    is_captured_word, kept_by_structure, take_capture,
 };
 pub use discover::{
     DescribeForm, Describer, Description, Discoverer, DiscovererHandle, DiscoveryReport,
