@@ -459,10 +459,19 @@ impl DeclaredProgram {
 
     /// Whether `path` is on a network share (`\\server\share\tool.exe`).
     /// The file behind such a path belongs to another machine, so a plan
-    /// names one only with the digest its bytes must have.
+    /// names one only with the digest its bytes must have. The verbatim
+    /// form of a local drive (`\\?\C:\tool.exe`, which Windows gives
+    /// back for a canonical path) is not a share; the verbatim form of a
+    /// share (`\\?\UNC\server\share\tool.exe`) is.
     #[must_use]
     pub fn is_share_path(path: &str) -> bool {
-        path.starts_with("\\\\") && Self::is_absolute_path(path)
+        if !(path.starts_with("\\\\") && Self::is_absolute_path(path)) {
+            return false;
+        }
+        let local_verbatim = path.strip_prefix("\\\\?\\").is_some_and(|rest| {
+            matches!(rest.as_bytes(), [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic())
+        });
+        !local_verbatim
     }
 }
 
@@ -2472,6 +2481,12 @@ mod tests {
         ));
         let share = "\\\\server\\share\\example-tool.exe";
         assert!(DeclaredProgram::is_share_path(share));
+        // The verbatim form of a local drive, which canonicalizing a path on
+        // Windows gives, is local; the verbatim form of a share is not.
+        assert!(!DeclaredProgram::is_share_path("\\\\?\\C:\\tool\\node.exe"));
+        assert!(DeclaredProgram::is_share_path(
+            "\\\\?\\UNC\\server\\share\\node.exe"
+        ));
         assert!(!DeclaredProgram::is_share_path(
             "/opt/example/bin/example-tool"
         ));

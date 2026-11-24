@@ -453,6 +453,13 @@ fn node_pair() -> Option<(Pair, Option<Folder>)> {
             .path()
             .join(format!("node{}", std::env::consts::EXE_SUFFIX));
         std::fs::copy(&found, &copy).unwrap();
+        // The copy keeps the mode of the runner's file, which may be open
+        // to a group: make it the user's own and closed to others.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         (copy, Some(folder))
     };
     let pair = Pair {
