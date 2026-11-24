@@ -257,7 +257,7 @@ The packs' own packages: after each field test, close what it found, a stand cas
 | # | Package | What it builds | Proof |
 | --- | --- | --- | --- |
 | ~~8.4~~, done | ~~The remaining widget drivers~~ | ~~Every custom control of case 10, set and read back~~ | ~~Every control of the test application is set and read back~~ |
-| 8.4a | Platform profiles as data | `profiles/`, their loader | A profile that does not fit does not load |
+| ~~8.4a~~, done | ~~Platform profiles as data~~ | ~~`profiles/`, their loader~~ | ~~A profile that does not fit does not load~~ |
 | ~~8.5~~, done | ~~Edge cases of web interfaces~~ | ~~The web pack's half of cases 22 to 27~~ | ~~Every hard case of the test application passes~~ |
 | ~~8.2a~~, done | ~~Tools a site publishes~~ | ~~A mode of the web pack~~ | ~~A page registers a tool and it is called~~ |
 | ~~K4~~, done | ~~Firmware~~ | ~~Inspection as discovery; the update operation~~ | ~~An update without a recovery path cannot be published~~ |
