@@ -1054,6 +1054,68 @@ async fn decisions_versions_and_switches_survive_a_restart_and_can_be_explained(
 }
 
 #[tokio::test]
+async fn a_new_version_that_fails_to_load_leaves_the_previous_one_in_force() {
+    // Section 224: a new policy version that fails to load is not used; the
+    // previous version stays in force and goes on deciding.
+    let stand = local("previous").await;
+    let PolicyHealth::Ok { version: before } = health(&stand.store, &stand.policy).await else {
+        panic!("no valid set")
+    };
+    let raw = stand.folder.raw();
+    let versions = count(&raw, "SELECT COUNT(*) FROM policy_versions");
+
+    // A rule whose condition does not compile, and a rule whose test fails:
+    // neither set is stored.
+    let mut broken = BuiltIn::local(person(1), workspace()).layers().clone();
+    broken.pre_approvals.push(PreApproval {
+        name: "does_not_compile".to_owned(),
+        who: Subject::Principal(person(1)),
+        scope: Scope::Pattern("example_order_*".to_owned()),
+        max_records: 5,
+        condition: Some("environment == (".to_owned()),
+    });
+    let present = PublishProof {
+        presence: Some(PresenceCheck::OsPrompt),
+    };
+    let refused = publish(&stand, broken, present).await.unwrap_err();
+    assert_eq!(refused.class(), FailureClass::Input, "{refused:?}");
+    let mut failing = BuiltIn::local(person(1), workspace()).layers().clone();
+    failing.grants.clear();
+    failing.tests.push(PolicyTest {
+        name: "the person reads".to_owned(),
+        request: ask(1, Question::UseTool, tool(), EffectClass::Read),
+        expect: Answer::Allow,
+    });
+    let refused = publish(&stand, failing, PublishProof::default())
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), &POLICY_TESTS_FAILED);
+    assert_eq!(
+        count(&raw, "SELECT COUNT(*) FROM policy_versions"),
+        versions
+    );
+
+    // The previous version decides, as before: the person reads, a stranger
+    // does not.
+    assert_eq!(
+        health(&stand.store, &stand.policy).await,
+        PolicyHealth::Ok { version: before }
+    );
+    let read = stand
+        .policy
+        .decide_alone(ask(1, Question::UseTool, tool(), EffectClass::Read))
+        .await;
+    assert_eq!(read.answer, Answer::Allow);
+    assert_eq!(read.version, Some(before));
+    let stranger = stand
+        .policy
+        .decide_alone(ask(2, Question::UseTool, tool(), EffectClass::Read))
+        .await;
+    assert_eq!(stranger.answer, Answer::Deny);
+    assert_eq!(stranger.version, Some(before));
+}
+
+#[tokio::test]
 async fn with_no_valid_set_every_decision_is_a_recorded_denial() {
     let stand = local("invalid").await;
     // Another program writes a newest version that cannot be read.
