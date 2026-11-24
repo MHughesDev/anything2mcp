@@ -513,3 +513,172 @@ async fn a_client_whose_settings_variables_differ_from_the_engines_is_told_by_na
     assert_eq!(started(&machine).len(), 1, "{}", log(&machine));
     stop(&machine).await;
 }
+
+const UPSERT: &str = "example_line_item_upsert";
+const WRITE: &str = r#"{"order_id": "A-102", "item_code": "L-300", "description": "New rail", "quantity": 3, "length_in": "12' 6 1/2\""}"#;
+
+/// The person approves, at the desk, the diff they were shown.
+async fn approve(world: &common::World, run: &str) {
+    let run_id: a2m_core::RunId = run.parse().unwrap();
+    let asked = world.surface.last_ask();
+    assert_eq!(asked.run, run_id);
+    let person = world
+        .engine
+        .caller(a2m_actions::FrontDoor::Command, false)
+        .principal
+        .principal()
+        .clone();
+    let proof = a2m_actions::PresenceProof::new(
+        a2m_policy::PresenceCheck::OsPrompt,
+        person.id,
+        world.clock.now(),
+    );
+    world
+        .surface
+        .desk()
+        .approve(
+            run_id,
+            asked.diff_hash,
+            person,
+            a2m_policy::Channel::LocalPrompt,
+            proof,
+        )
+        .await
+        .unwrap();
+}
+
+/// Kills a process with no warning: it is given no chance to close.
+fn kill_hard(process: u32) {
+    let id = process.to_string();
+    #[cfg(unix)]
+    let status = Command::new("kill").args(["-KILL", &id]).status().unwrap();
+    #[cfg(windows)]
+    let status = Command::new("taskkill")
+        .args(["/F", "/PID", &id])
+        .status()
+        .unwrap();
+    assert!(status.success(), "{process} was not killed");
+}
+
+/// A machine whose engine, started on demand by a command that resumes an
+/// approved write, was killed with no warning while the write was in
+/// flight: the system stored it, and its answer was held back. Gives the
+/// relay, the machine, the run, and the killed engine's process.
+async fn killed_with_a_write_in_flight(
+    app: &TestApp,
+) -> (common::proxy::Proxy, Machine, String, u32) {
+    let proxy = common::proxy::Proxy::start(&app.url("")).await;
+    let machine = Machine::new("orders", &[(PLACEHOLDER, proxy.url())]).with_passphrase();
+    let world = machine.open().await;
+    let published = world.person(&["version", "publish", "example"]).await;
+    assert_eq!(published.finished.code, 0, "{:?}", published.finished);
+    let rested = world
+        .agent(&["tool", "call", UPSERT, "--input", WRITE])
+        .await;
+    assert_eq!(
+        rested.result()["status"],
+        "needs_approval",
+        "{:?}",
+        rested.finished
+    );
+    let run = rested.result()["run_id"].as_str().unwrap().to_owned();
+    approve(&world, &run).await;
+    world.close().await;
+
+    // No engine runs. A command starts one and resumes the write through
+    // it; the system stores the write, and its answer is held back.
+    proxy.hold_next_write();
+    let resume = starting(&machine, &["run", "resume", &run])
+        .spawn()
+        .unwrap();
+    proxy.stored().await;
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
+    let first = started(&machine);
+    assert_eq!(first.len(), 1, "{}", log(&machine));
+
+    // The engine is killed with no warning. The command that waited on it
+    // ends without saying the write is safe to send again.
+    kill_hard(first[0]);
+    let ended = tokio::task::spawn_blocking(move || resume.wait_with_output().unwrap())
+        .await
+        .unwrap();
+    assert_ne!(ended.status.code(), Some(0), "{ended:?}");
+
+    // The killed engine's lock is not held: the operating system let go of
+    // it with the process.
+    let paths = paths(&machine);
+    let give_up = tokio::time::Instant::now() + PATIENCE;
+    while EngineLock::held(&paths).unwrap() {
+        assert!(
+            tokio::time::Instant::now() < give_up,
+            "the killed engine's lock is still held"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    (proxy, machine, run, first[0])
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_started_engine_killed_with_no_warning_is_replaced_by_the_next_command_and_its_write_is_made_once()
+ {
+    use a2m_telemetry::{Clock, ManualClock, SystemClock};
+    let app = TestApp::start().await.unwrap();
+    let (_proxy, machine, run, killed) = killed_with_a_write_in_flight(&app).await;
+
+    // The next command on the same data folder starts a new engine, and
+    // that engine answers it.
+    let next = output(starting(&machine, &READ)).await;
+    assert_read(&next, "Example Customer One");
+    let processes = started(&machine);
+    assert_eq!(processes.len(), 2, "{}", log(&machine));
+    assert_ne!(processes[1], killed);
+    assert!(EngineLock::held(&paths(&machine)).unwrap());
+    // The new engine reads the run the killed one left, and sends nothing.
+    let left = output(starting(&machine, &["run", "get", &run])).await;
+    assert_eq!(left.status.code(), Some(0), "{left:?}");
+    assert_ne!(object(&left)["result"]["status"], "completed");
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
+    stop(&machine).await;
+
+    // Once the killed engine's lease has run out, which in one process
+    // takes at least ten minutes, and its quarantine has passed, resuming
+    // reconciles the record first, finds the write, and completes the run
+    // without writing again. The clock is moved, not waited for.
+    let later = std::sync::Arc::new(ManualClock::starting_at(
+        a2m_core::Timestamp::from_unix_millis(
+            SystemClock::new().now().as_unix_millis() + 1_200_000,
+        ),
+    ));
+    let world = machine
+        .open_at(Some(
+            std::sync::Arc::clone(&later) as std::sync::Arc<dyn Clock>
+        ))
+        .await;
+    world.engine.kernel().tend().await;
+    later.advance(Duration::from_secs(120));
+    world.engine.kernel().tend().await;
+    let done = world.agent(&["run", "resume", &run]).await;
+    assert_eq!(done.result()["status"], "completed", "{:?}", done.finished);
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
+    let trace = world.ok(&["trace", "show", &run]).await;
+    let intents = trace["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["kind"] == "intent")
+        .count();
+    assert_eq!(intents, 1, "{trace}");
+    world.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "in one process a job's lease lasts at least ten minutes, and nothing at the start of the next engine declares the killed process's lease lost although the new engine holds the lock, so the run stays `running` until the lease runs out (package 9.3i; the fix is in a2m-sched and a2m-actions)"]
+async fn the_engine_after_a_killed_one_resumes_its_run_at_once() {
+    let app = TestApp::start().await.unwrap();
+    let (_proxy, machine, run, _) = killed_with_a_write_in_flight(&app).await;
+    let done = output(starting(&machine, &["run", "resume", &run])).await;
+    assert_eq!(done.status.code(), Some(0), "{done:?}");
+    assert_eq!(object(&done)["result"]["status"], "completed");
+    assert_eq!(app.write_count("A-102", "L-300").await.unwrap(), 1);
+    stop(&machine).await;
+}
