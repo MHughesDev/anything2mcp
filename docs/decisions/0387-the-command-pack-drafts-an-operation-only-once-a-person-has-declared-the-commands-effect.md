@@ -1,4 +1,4 @@
-# 0399. The command pack drafts an operation only once a person has declared the command's effect
+# 0387. The command pack drafts an operation only once a person has declared the command's effect
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md) by the lead. The owner had not read this record when it was merged.
 

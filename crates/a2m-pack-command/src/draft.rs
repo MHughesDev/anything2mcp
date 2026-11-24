@@ -420,7 +420,7 @@ fn declared<'a>(cx: &DraftContext<'a>, listed: &str) -> Option<(&'a str, &'a Loc
 }
 
 /// The drafting rule from `command` findings to read operations, over the
-/// commands a person has declared `effect: read` (decision 0399). The help
+/// commands a person has declared `effect: read` (decision 0387). The help
 /// does not say what a command does, so nothing is drafted for a command
 /// whose effect nobody declared, and nothing for one declared a write; the
 /// effect is the person's word, never inferred from a name.

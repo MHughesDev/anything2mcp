@@ -10,7 +10,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Added
 
-- A scout of a command-line program now drafts a read operation for each command a person has declared `effect: read` (with its output) in a `commands/` file, and says why it drafts none for a command nobody declared or one declared a write ([decision 0399](docs/decisions/0399-the-command-pack-drafts-an-operation-only-once-a-person-has-declared-the-commands-effect.md)).
+- A scout of a command-line program now drafts a read operation for each command a person has declared `effect: read` (with its output) in a `commands/` file, and says why it drafts none for a command nobody declared or one declared a write ([decision 0387](docs/decisions/0387-the-command-pack-drafts-an-operation-only-once-a-person-has-declared-the-commands-effect.md)).
 
 - A web surface that names a platform profile now has its text fields committed as the profile says: typed key by key on `controlled_inputs`, so a page that keeps only what its key handlers saw takes the value; the focus taken away on `plain`; and on `aspnet_webforms`, the change posted and the form waited for until the page draws it again, the value read from the redrawn field. A page that does not draw the form again stops as `commit_not_redrawn`, with what became of the value unknown ([decision 0385](docs/decisions/0385-the-set-step-commits-a-text-control-as-the-surfaces-platform-profile-says.md)).
 - A write stopped at its preview, by a changed screen or by the site's edge, can now be resumed once the cause is gone: `run.resume` previews it again and asks for approval, where before it failed as `ledger_state_unexpected`.
