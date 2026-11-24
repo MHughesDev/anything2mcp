@@ -105,6 +105,7 @@ async fn rule_2_a_record_is_verified_only_with_a_matching_read_back_and_evidence
                 digest: intended("something else"),
                 after: None,
                 evidence: proof,
+                outputs: None,
             };
             tx.ledger().mark_verified(&acted, read).map(|()| acted)
         })
@@ -139,6 +140,7 @@ async fn rule_2_a_record_is_verified_only_with_a_matching_read_back_and_evidence
                 digest: intended("a"),
                 after: None,
                 evidence: nothing,
+                outputs: None,
             };
             tx.ledger().settle(
                 &fence,
@@ -160,6 +162,7 @@ async fn rule_2_a_record_is_verified_only_with_a_matching_read_back_and_evidence
                 digest: intended("a"),
                 after: Some(proof),
                 evidence: proof,
+                outputs: None,
             };
             tx.ledger().settle(
                 &fence,
@@ -643,6 +646,7 @@ async fn rule_5_a_sent_write_stays_in_doubt_whatever_it_failed_with() {
                 digest: intended("a"),
                 after: None,
                 evidence: proof,
+                outputs: None,
             };
             let acted = Acted {
                 assigned_key: Some("example-key-7".to_owned()),
@@ -804,6 +808,7 @@ async fn rule_7_two_runs_cannot_both_hold_the_lock_on_one_record() {
                 digest: intended("shared"),
                 after: None,
                 evidence: proof,
+                outputs: None,
             };
             tx.ledger().settle(
                 &holder,

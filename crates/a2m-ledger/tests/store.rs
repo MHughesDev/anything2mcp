@@ -200,6 +200,13 @@ async fn a_half_migrated_store_is_refused_and_left_as_it_was() {
 async fn a_damaged_database_file_fails_the_integrity_check_at_start() {
     let folder = Folder::new("damaged");
     drop(open_with(Some(folder.path()), key_store()).await);
+    // Everything the store wrote is moved from its log into the file, so
+    // that the file holds the whole database whenever the store's own
+    // threads finish closing.
+    let raw = folder.raw();
+    raw.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+        .unwrap();
+    drop(raw);
     let file = folder.path().join(a2m_ledger::DATABASE_FILE_NAME);
     let mut bytes = std::fs::read(&file).unwrap();
     // The first page, the file's header, is left whole; every byte of the
@@ -468,9 +475,11 @@ async fn after_a_restart_everything_is_there_and_a_run_stopped_mid_write_is_foun
     let (store, vault) = open_with(Some(folder.path()), Arc::clone(&keys)).await;
     let fence = running(&store, 1, &["done", "mid", "todo"]).await;
     let proof = evidence(&store, "the values read back").await;
+    let given = evidence(&store, "the outputs the read-back showed").await;
 
     // One record is written and verified; the second has its intent stored
-    // when the process ends.
+    // when the process ends. The verified record's outputs are those its
+    // read-back showed, in place of those stored with its `acted` mark.
     lock(&store, fence, 0).await.unwrap();
     let token = intent(&store, fence, 0, "done").await.unwrap();
     store
@@ -479,13 +488,14 @@ async fn after_a_restart_everything_is_there_and_a_run_stopped_mid_write_is_foun
                 token,
                 Acted {
                     assigned_key: Some("SO-1001".to_owned()),
-                    outputs: None,
+                    outputs: Some(proof),
                 },
             )?;
             let read = ReadBack {
                 digest: intended("done"),
                 after: Some(proof),
                 evidence: proof,
+                outputs: Some(given),
             };
             tx.ledger().mark_verified(&acted, read)
         })
@@ -516,6 +526,12 @@ async fn after_a_restart_everything_is_there_and_a_run_stopped_mid_write_is_foun
         .await
         .unwrap();
     assert_eq!(events, events_before);
+    let records = store
+        .read(move |tx| tx.ledger().records(fence.run))
+        .await
+        .unwrap();
+    assert_eq!(records[0].state, RecordState::Verified);
+    assert_eq!(records[0].outputs, Some(given));
 
     let records = store
         .read(move |tx| tx.ledger().records(fence.run))
@@ -586,6 +602,7 @@ async fn the_state_rebuilt_from_events_is_the_current_state() {
                 digest: intended("a"),
                 after: None,
                 evidence: proof,
+                outputs: None,
             };
             tx.ledger().mark_verified(&acted, read)?;
             tx.ledger().append_event(
@@ -723,6 +740,36 @@ async fn a_read_runs_without_records_and_a_run_completes_only_when_every_record_
             .unwrap_err();
         assert_eq!(refused.code(), &codes::LEDGER_STATE_UNEXPECTED, "{to}");
     }
+
+    // A stopped run stopped again by a later lease takes the new failure,
+    // so that it never shows the one before.
+    let fence = running(&store, 1, &["b"]).await;
+    let first = a2m_core::Failure::new(
+        FailureClass::PossibleCommit,
+        codes::RUNNER_LOST,
+        "The lease ended.",
+        "Reconcile.",
+    );
+    let second = a2m_core::Failure::new(
+        FailureClass::Busy,
+        codes::STORE_UNAVAILABLE,
+        "The store is closed.",
+        "Try again.",
+    );
+    let run = store
+        .write(Durability::Synced, move |tx| {
+            let mut ledger = tx.ledger();
+            ledger.set_state(&fence, RunState::Stopped, Some(&first))?;
+            ledger.set_state(&fence, RunState::Stopped, Some(&second))?;
+            ledger.run(fence.run)
+        })
+        .await
+        .unwrap();
+    assert_eq!(run.state, RunState::Stopped);
+    assert_eq!(
+        run.failure,
+        Some((FailureClass::Busy, codes::STORE_UNAVAILABLE))
+    );
 }
 
 // ---- blobs ----

@@ -2102,6 +2102,7 @@ async fn reconcile(
                         digest: seen.digest(),
                         after: Some(after),
                         evidence,
+                        outputs: None,
                     },
                     acted: Acted {
                         assigned_key,
@@ -2416,6 +2417,7 @@ async fn keyless_found(
             digest: seen.digest(),
             after: Some(after),
             evidence,
+            outputs: None,
         },
         acted: Acted {
             assigned_key: record
@@ -3006,17 +3008,9 @@ async fn commit_point(
     let evidence = read_evidence(run, record, raw.as_ref(), seen.as_ref()).await?;
     let seen = seen.unwrap_or_default();
     let after = store(run, BlobKind::Values, encode_values(&kept(run, &seen))?).await?;
-    run.control
-        .verified(
-            &acted,
-            ReadBack {
-                digest: seen.digest(),
-                after: Some(after),
-                evidence,
-            },
-        )
-        .await?;
-    record.state = RecordState::Verified;
+    // What the record gives the steps after it: what its steps observed and
+    // what the read-back showed. It is stored with `verified`, so that a
+    // resume hands back the same outputs as this run (package 3.7).
     let mut observed = record.known.clone();
     for (name, value) in all.values {
         observed.insert(name, value);
@@ -3026,6 +3020,23 @@ async fn commit_point(
             observed.insert(name, value);
         }
     }
+    let outputs = if observed.is_empty() {
+        None
+    } else {
+        Some(store(run, BlobKind::Values, encode_values(&kept(run, &observed))?).await?)
+    };
+    run.control
+        .verified(
+            &acted,
+            ReadBack {
+                digest: seen.digest(),
+                after: Some(after),
+                evidence,
+                outputs,
+            },
+        )
+        .await?;
+    record.state = RecordState::Verified;
     record.outputs = outputs_of(loaded, found, &observed)?;
     Ok(())
 }

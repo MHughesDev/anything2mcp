@@ -562,6 +562,10 @@ pub struct ReadBack {
     pub after: Option<BlobRef>,
     /// The evidence of the read.
     pub evidence: BlobRef,
+    /// The record's outputs as the read-back showed them, kept in place of
+    /// those stored with its `acted` mark, so that a resume hands back what
+    /// the verified record gave. `None` keeps those stored with the mark.
+    pub outputs: Option<BlobRef>,
 }
 
 /// What reading a record in doubt showed (spec section 208, "Resume,
@@ -751,7 +755,9 @@ fn may_move(from: RunState, to: RunState) -> bool {
         ),
         NeedsInput => matches!(to, Running | Stopped | Failed | Cancelled),
         NeedsLogin => matches!(to, Running | Validating | Stopped | Failed | Cancelled),
-        Stopped => matches!(to, Running | Failed | Cancelled),
+        // A stopped run takes a new failure when a later lease ends it
+        // again for another reason, so that it never shows a stale one.
+        Stopped => matches!(to, Running | Stopped | Failed | Cancelled),
         Rejected | Expired | Completed | Failed | Cancelled => false,
     }
 }
@@ -2685,11 +2691,13 @@ impl Ledger<'_, '_> {
             read_back.after.into(),
             read_back.evidence.into(),
             self.tx.now().into(),
+            read_back.outputs.into(),
         ]);
         self.tx.exec(
             "UPDATE run_records
              SET state = 'verified', read_back_hash = ?4, after_ref = ?5, evidence_ref = ?6,
-                 verified_at = ?7, failure_class = NULL, failure_code = NULL
+                 verified_at = ?7, failure_class = NULL, failure_code = NULL,
+                 outputs_ref = COALESCE(?8, outputs_ref)
              WHERE run_id = ?1 AND step_seq = ?2 AND record_seq = ?3",
             &params,
         )?;

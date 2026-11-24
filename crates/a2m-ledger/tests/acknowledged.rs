@@ -155,6 +155,7 @@ async fn a_record_ends_on_an_acknowledgement_and_its_run_completes() {
                 digest: intended("b"),
                 after: None,
                 evidence: proof,
+                outputs: None,
             },
         )
         .await
@@ -234,6 +235,7 @@ async fn an_acknowledgement_is_refused_where_the_diff_or_the_record_does_not_all
                 digest: intended("a"),
                 after: None,
                 evidence: answer,
+                outputs: None,
             },
         )
         .await
@@ -519,6 +521,7 @@ async fn only_the_attempt_that_may_have_landed_holds_what_it_recorded() {
                 digest: intended("a"),
                 after: None,
                 evidence: read,
+                outputs: None,
             },
         )
         .await

@@ -1085,10 +1085,14 @@ impl InProcessControl {
             .store()?
             .write(Durability::Synced, move |tx| {
                 let mut ledger = tx.ledger();
-                let state = ledger.run(run)?.state;
+                let row = ledger.run(run)?;
+                let state = row.state;
                 // A run that ended while the job was in hand, declined at
-                // the desk or cancelled, stays as it ended.
-                if state == to || state.is_final() {
+                // the desk or cancelled, stays as it ended. A stopped run
+                // stopped again for another reason takes the new failure.
+                let same_failure = row.failure.as_ref().map(|(class, code)| (*class, code))
+                    == why.as_ref().map(|why| (why.class(), why.code()));
+                if (state == to && (to != RunState::Stopped || same_failure)) || state.is_final() {
                     return Ok(());
                 }
                 ledger.set_state(&fence, to, why.as_ref())
