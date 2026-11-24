@@ -107,7 +107,20 @@ pub struct ActSurface {
     /// The notices its pack registers for what its own fields state
     /// (decision 0193).
     pub notices: Vec<crate::PreviewNotice>,
+    /// The environments, by name as in `addresses`, in which it leads to
+    /// a place no person registered for the target (spec section 502,
+    /// rule 2; decision 0413): the page marks each such address where it
+    /// lists it, in the words of [`NEW_PLACE`].
+    pub new_in: Vec<String>,
+    /// Whether `address` is at such a place: what the page marks when
+    /// `addresses` is empty.
+    pub new_here: bool,
 }
+
+/// What the page says beside an address no person registered for the
+/// target, where it lists the surfaces (decision 0413).
+pub const NEW_PLACE: &str =
+    "a new address: no person registered it for this target, and publishing registers it";
 
 /// One warning the compiler gave for a version a person is asked to
 /// publish (audit finding AC-1).
@@ -536,6 +549,12 @@ impl Kernel {
                         })
                         .collect(),
                     notices: surface.notices,
+                    new_in: surface
+                        .new_in
+                        .iter()
+                        .map(|environment| redact.redact(environment))
+                        .collect(),
+                    new_here: surface.new_here,
                 })
                 .collect(),
             warnings: publish
@@ -716,11 +735,16 @@ impl Kernel {
         let mut details = self
             .first_to_act(&target, &compiled.compiled_target)
             .await?;
+        // The places no person registered for the target: the page marks
+        // each where it lists the surfaces, and names them among its lines.
+        let unregistered = self
+            .unregistered_origins(&target, &compiled.compiled_target)
+            .await?;
         // Where each surface leads, its notices, and the warnings are
         // handed apart, in `PersonActAsk::surfaces` and `warnings`, and not
         // also as lines: a page prints them once (decision 0199). What each
         // tool and each sign-in does is the typed review (decision 0264).
-        let mut shown = publish_shown(self, &compiled);
+        let mut shown = publish_shown(self, &compiled, &unregistered);
         shown.review = Some(self.review_shown(&target, &compiled)?);
         if implied_production
             && compiled
@@ -743,9 +767,6 @@ impl Kernel {
         details.splice(0..0, proved);
         // An address no person registered for the target is named first:
         // pressing registers it (spec section 502, rule 2).
-        let unregistered = self
-            .unregistered_origins(&target, &compiled.compiled_target)
-            .await?;
         if !unregistered.is_empty() {
             details.insert(
                 0,
@@ -1101,7 +1122,11 @@ pub(crate) struct Performed(
 /// Each surface of a compiled version with where it leads in each
 /// environment and the notices its pack registers, and every warning of the
 /// compile: what a person who publishes is told (audit finding AC-1).
-fn publish_shown(kernel: &Kernel, compiled: &a2m_files::Compiled) -> PublishShown {
+fn publish_shown(
+    kernel: &Kernel,
+    compiled: &a2m_files::Compiled,
+    unregistered: &[String],
+) -> PublishShown {
     let compiled_target = &compiled.compiled_target;
     let set = kernel.providers().compiler_set();
     let default = compiled_target
@@ -1129,12 +1154,20 @@ fn publish_shown(kernel: &Kernel, compiled: &a2m_files::Compiled) -> PublishShow
                 .iter()
                 .find(|environment| Some(&environment.name) == default.as_ref())
                 .map_or(surface.address.clone(), at);
+            let new = |address: &str| unregistered.contains(&crate::origins::origin_of(address));
+            let new_in = addresses
+                .iter()
+                .filter(|(_, address)| new(address))
+                .map(|(environment, _)| environment.clone())
+                .collect();
             ActSurface {
                 name: surface.name.to_string(),
                 kind: surface.kind.to_string(),
+                new_here: new(&address),
                 address,
                 addresses,
                 notices: crate::person::notices_of(set, surface),
+                new_in,
             }
         })
         .collect();

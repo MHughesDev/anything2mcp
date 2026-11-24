@@ -1150,6 +1150,8 @@ fn the_publish_page_shows_where_each_surface_leads_its_notices_and_every_warning
                 ),
             ],
             notices: vec![notice],
+            new_in: vec!["live".to_owned()],
+            new_here: false,
         },
         ActSurface {
             name: "files".to_owned(),
@@ -1157,6 +1159,8 @@ fn the_publish_page_shows_where_each_surface_leads_its_notices_and_every_warning
             address: "prices".to_owned(),
             addresses: Vec::new(),
             notices: Vec::new(),
+            new_in: Vec::new(),
+            new_here: false,
         },
     ];
     let warnings = [ActWarning {
@@ -1164,10 +1168,13 @@ fn the_publish_page_shows_where_each_surface_leads_its_notices_and_every_warning
         message: "target.yaml: The surface `api` accepts \"credentials\" over <http>.".to_owned(),
     }];
     let page = version_html(&surfaces, &warnings);
+    // An address no person registered is marked where it is listed, and
+    // no other.
     assert!(
-        page.contains("<code>api</code>, a surface of the kind <code>http</code>, leads to <code>http://203.0.113.7/&lt;b&gt;orders&lt;/b&gt;</code> in the environment <code>test</code>; <code>https://orders.example.com/\\u{202e}gro</code> in the environment <code>live</code>."),
+        page.contains(&format!("<code>api</code>, a surface of the kind <code>http</code>, leads to <code>http://203.0.113.7/&lt;b&gt;orders&lt;/b&gt;</code> in the environment <code>test</code>; <code>https://orders.example.com/\\u{{202e}}gro</code> in the environment <code>live</code> <strong class=\"new-place\">({})</strong>.", a2m_actions::NEW_PLACE)),
         "{page}"
     );
+    assert_eq!(page.matches("class=\"new-place\"").count(), 1, "{page}");
     assert!(!page.contains('\u{202e}'), "{page}");
     assert!(
         page.contains("<code>files</code>, a surface of the kind <code>file</code>, leads to <code>prices</code>.</li>"),
