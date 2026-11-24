@@ -1030,6 +1030,251 @@ async fn without_a_key_store_the_kernel_is_degraded_and_writes_nothing() {
     world.kernel.close(CloseReason::Asked).await;
 }
 
+/// A key store that answers until it is switched off, as one that is
+/// locked or stopped after the engine started would.
+struct Switchable {
+    inner: MemoryKeyStore,
+    down: std::sync::atomic::AtomicBool,
+}
+
+impl Switchable {
+    fn set_down(&self, down: bool) {
+        self.down.store(down, Ordering::SeqCst);
+    }
+
+    fn is_down(&self) -> bool {
+        self.down.load(Ordering::SeqCst)
+    }
+}
+
+impl KeyStore for Switchable {
+    fn describe(&self) -> a2m_vault::StoreDescription {
+        self.inner.describe()
+    }
+
+    fn wrap<'a>(
+        &'a self,
+        key: &'a a2m_vault::KeyMaterial,
+        bound_to: &'a a2m_vault::Binding,
+    ) -> VaultFuture<'a, Result<a2m_vault::Wrapped, Failure>> {
+        Box::pin(async move {
+            if self.is_down() {
+                Err(unreachable_store())
+            } else {
+                self.inner.wrap(key, bound_to).await
+            }
+        })
+    }
+
+    fn unwrap<'a>(
+        &'a self,
+        wrapped: &'a a2m_vault::Wrapped,
+        bound_to: &'a a2m_vault::Binding,
+    ) -> VaultFuture<'a, Result<a2m_vault::KeyMaterial, Failure>> {
+        Box::pin(async move {
+            if self.is_down() {
+                Err(unreachable_store())
+            } else {
+                self.inner.unwrap(wrapped, bound_to).await
+            }
+        })
+    }
+
+    fn health(&self) -> VaultFuture<'_, a2m_vault::StoreHealth> {
+        Box::pin(async move {
+            if self.is_down() {
+                a2m_vault::StoreHealth::Unreachable
+            } else {
+                self.inner.health().await
+            }
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_key_store_that_stops_after_the_start_degrades_the_kernel_until_it_answers_again() {
+    let store = Arc::new(Switchable {
+        inner: MemoryKeyStore::with_random(Counted::new()),
+        down: std::sync::atomic::AtomicBool::new(false),
+    });
+    let world = World::ready_with(Options {
+        key_store: Arc::clone(&store) as Arc<dyn KeyStore>,
+        ..Options::default()
+    })
+    .await;
+    // One read while the key store answers: the workspace's key that seals
+    // a run's trace is opened and held in memory, as it is in an engine
+    // that has run anything since its start.
+    let warm = world
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
+        .await;
+    assert!(warm.ok, "{:?}", warm.error);
+
+    // The key store stops answering after the start.
+    store.set_down(true);
+    let health = world.kernel.recheck().await;
+    assert_eq!(health.state, HealthState::Degraded, "{health:?}");
+    assert!(health.cause().contains("vault"), "{}", health.cause());
+    let status = world.ok("engine.status", json!({})).await;
+    assert_eq!(status["state"], "degraded");
+    assert_eq!(status["reasons"][0]["part"], "vault");
+    assert_eq!(status["reasons"][0]["code"], "key_store_unreachable");
+
+    // A write is refused before anything runs, and the test application
+    // is asked what it stored: nothing.
+    let refused = world.call("tool.call", an_upsert()).await;
+    let error = refused.error.unwrap_or_else(|| panic!("the write ran"));
+    assert_eq!(
+        (error.class, error.code.as_str()),
+        (FailureClass::Busy, "engine_degraded")
+    );
+    assert!(error.message.contains("degraded"), "{}", error.message);
+    assert!(world.app.writes().await.unwrap().is_empty());
+
+    // A read that needs no secret runs.
+    let read = world
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
+        .await;
+    assert!(read.ok, "{:?}", read.error);
+    assert_eq!(read.result.unwrap()["result"]["order_id"], "A-100");
+
+    // Switched on again, the next look finds the kernel healthy, with no
+    // restart.
+    store.set_down(false);
+    let health = world.kernel.recheck().await;
+    assert_eq!(health.state, HealthState::Ok, "{health:?}");
+    assert_eq!(world.ok("engine.status", json!({})).await["state"], "ok");
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "a read's trace is sealed under the workspace's key, and a kernel that has opened no key since its start needs the key store to seal it: the first read after the key store stops is refused `key_store_unreachable`, where section 224 says a degraded kernel takes reads (package 9.3h)"]
+async fn a_key_store_that_stops_before_any_read_still_lets_a_read_run() {
+    let store = Arc::new(Switchable {
+        inner: MemoryKeyStore::with_random(Counted::new()),
+        down: std::sync::atomic::AtomicBool::new(false),
+    });
+    let world = World::ready_with(Options {
+        key_store: Arc::clone(&store) as Arc<dyn KeyStore>,
+        ..Options::default()
+    })
+    .await;
+    store.set_down(true);
+    assert_eq!(world.kernel.recheck().await.state, HealthState::Degraded);
+    let read = world
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
+        .await;
+    assert!(read.ok, "{:?}", read.error);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// The room a test says the evidence store's disk has.
+struct Room(std::sync::atomic::AtomicU64);
+
+impl a2m_actions::FreeSpace for Room {
+    fn free_bytes(&self, _folder: &Path) -> Option<u64> {
+        Some(self.0.load(Ordering::SeqCst))
+    }
+}
+
+/// The captures a run kept: its events that tie a capture to it.
+async fn kept_captures(world: &World, response: &Response) -> Vec<Json> {
+    let run: a2m_core::RunId = response.result.as_ref().unwrap()["run_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    world
+        .kernel
+        .store()
+        .unwrap()
+        .read(move |tx| tx.ledger().events(run, 0, u32::MAX))
+        .await
+        .unwrap()
+        .iter()
+        .filter(|event| event.kind == a2m_ledger::EventKind::Need)
+        .map(|event| serde_json::from_str::<Json>(&event.payload).unwrap_or(Json::Null))
+        .filter(|payload| payload.get("capture").is_some())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_evidence_store_with_no_room_degrades_the_kernel_to_minimal_reads_until_there_is_room() {
+    // Reads keep every exchange, and a read of an order captures the
+    // application's answer.
+    let world = World::ready_with(Options::with_user_settings(
+        "[evidence]\ncapture = \"full\"\n",
+    ))
+    .await;
+    world.hooks.tells_acting.store(true, Ordering::SeqCst);
+    let room = Arc::new(Room(std::sync::atomic::AtomicU64::new(u64::MAX)));
+    world
+        .kernel
+        .measure_free_space_with(Arc::clone(&room) as Arc<dyn a2m_actions::FreeSpace>);
+    let read = || {
+        world.call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
+    };
+    assert_eq!(world.kernel.recheck().await.state, HealthState::Ok);
+    let roomy = read().await;
+    assert!(roomy.ok, "{:?}", roomy.error);
+    assert!(
+        kept_captures(&world, &roomy)
+            .await
+            .iter()
+            .any(|capture| capture["capture"] == "response"),
+        "with room, the read keeps its capture"
+    );
+
+    // Less free than the floor, the default of one gibibyte.
+    room.0.store(1_000, Ordering::SeqCst);
+    let health = world.kernel.recheck().await;
+    assert_eq!(health.state, HealthState::Degraded, "{health:?}");
+    let status = world.ok("engine.status", json!({})).await;
+    assert_eq!(status["state"], "degraded");
+    assert_eq!(status["reasons"][0]["part"], "evidence_space");
+    assert_eq!(status["reasons"][0]["code"], "storage_full");
+
+    // A read runs, and keeps nothing above the lowest capture level.
+    let short = read().await;
+    assert!(short.ok, "{:?}", short.error);
+    assert_eq!(
+        short.result.as_ref().unwrap()["result"]["order_id"],
+        "A-100"
+    );
+    let kept = kept_captures(&world, &short).await;
+    assert!(kept.is_empty(), "{kept:?}");
+
+    // A write is refused before a run is made, and the test application
+    // is asked what it stored: nothing.
+    let refused = world.call("tool.call", an_upsert()).await;
+    let error = refused.error.unwrap_or_else(|| panic!("the write ran"));
+    assert_eq!(
+        (error.class, error.code.as_str()),
+        (FailureClass::Busy, "engine_degraded")
+    );
+    assert!(error.message.contains("degraded"), "{}", error.message);
+    assert!(refused.result.is_none());
+    assert!(world.app.writes().await.unwrap().is_empty());
+
+    // With room again, the next look finds the kernel healthy.
+    room.0.store(u64::MAX, Ordering::SeqCst);
+    assert_eq!(world.kernel.recheck().await.state, HealthState::Ok);
+    assert_eq!(world.ok("engine.status", json!({})).await["state"], "ok");
+    world.kernel.close(CloseReason::Asked).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_planted_secret_appears_in_no_result() {
     let world = World::ready().await;

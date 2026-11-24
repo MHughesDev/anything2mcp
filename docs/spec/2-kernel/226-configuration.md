@@ -148,7 +148,7 @@ Each table gives the key, its type or values, its default on one machine, its sc
 | --- | --- | --- | --- | --- |
 | `store.database` (not built) | A SQLite path, or a Postgres address with a secret reference | One SQLite file in the data directory | I | no |
 | `store.blobs` (not built) | A directory, or an object store address | The data directory | I | no |
-| `store.free_space_floor` (not built) | Bytes | A draft: 1 GiB; below it the kernel is to be `degraded` ([section 224](224-when-the-engine-itself-fails.md)). No free space is checked yet | I | no |
+| `store.free_space_floor` | Bytes | A draft: 1 GiB; with fewer bytes free on the disk that holds the evidence blobs, the kernel is `degraded` with the part `evidence_space`: writes stop and reads keep the lowest capture level ([section 224](224-when-the-engine-itself-fails.md)). Measured on Linux and macOS; not yet on Windows, where no free space is checked | I | no |
 | `vault.backend` | `os_keystore`; `passphrase`, which derives the root key from the passphrase the engine is started with, of at least 16 bytes, in the environment variable `A2M_VAULT_PASSPHRASE`; or an external secrets manager by reference | `os_keystore` where the build has an operating-system key store (Windows, macOS); `passphrase` where it has none (Linux) ([decision 0220](../../decisions/0220-a-first-run-on-linux-needs-no-administrators-file.md)) | I | no |
 | `vault.root_key` (not built) | A key reference | The key store's own | I | no |
 | `files.allowed_roots` | The word `<project>`, which stands for any folder that holds a project file, and full paths of folders | `<project>` | U | yes |

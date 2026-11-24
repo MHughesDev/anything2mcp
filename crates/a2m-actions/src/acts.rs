@@ -741,6 +741,24 @@ impl Kernel {
             crate::evidence::lines(self, caller, &target, &compiled.compiled_target, &gates)
                 .await?;
         details.splice(0..0, proved);
+        // An address no person registered for the target is named first:
+        // pressing registers it (spec section 502, rule 2).
+        let unregistered = self
+            .unregistered_origins(&target, &compiled.compiled_target)
+            .await?;
+        if !unregistered.is_empty() {
+            details.insert(
+                0,
+                format!(
+                    "New address: the drafts reach {}, which no person registered for this target. Publishing registers it.",
+                    unregistered
+                        .iter()
+                        .map(|place| format!("`{place}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+        }
         details.extend(gates.lines());
         Ok((input, details, shown, Vec::new()))
     }

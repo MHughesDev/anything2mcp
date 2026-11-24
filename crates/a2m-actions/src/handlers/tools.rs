@@ -119,7 +119,7 @@ handler!(
         let page: Vec<Json> = tools.into_iter().skip(offset).take(limit).collect();
         let complete = unreadable.is_empty() && offset + page.len() >= total;
         let mut output = Output::ok(json!({"tools": page, "total": total, "complete": complete}));
-        for target in unreadable {
+        for (target, _) in unreadable {
             output = output.warn(format!(
                 "The compiled target of the target `{target}` cannot be read, so its tools are not listed. Publish it again from its sources."
             ));
