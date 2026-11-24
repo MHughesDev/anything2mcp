@@ -246,9 +246,10 @@ async fn a_changed_screen_is_drift_and_what_has_no_rule_stops() {
         .find(|section| section.pack == "web")
         .unwrap();
     let text = String::from_utf8(section.payload.as_bytes().to_vec()).unwrap();
-    let other: serde_json::Value =
-        serde_json::from_str(&text.replace(r#""control":"number""#, r#""control":"slider""#))
-            .unwrap();
+    let other: serde_json::Value = serde_json::from_str(
+        &text.replace(r#""control":"number""#, r#""control":"signature_pad""#),
+    )
+    .unwrap();
     section.payload = PackPayload::encode(&other).unwrap();
     let unknown = read_with(&mut scene, plan).await.unwrap_err();
     assert_eq!(

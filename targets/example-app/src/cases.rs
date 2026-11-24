@@ -20,6 +20,14 @@
 //!   second, and every fourth press asks in the browser's own dialog.
 //! - `/cases/notice` (case 11): a form with "Send report", under a notice that
 //!   covers it until "Close notice" is pressed.
+//! - `/cases/controls` (case 10): the custom controls of one form, "Shipment
+//!   options": a dropdown that filters and loads its options late, a second
+//!   that takes the label as the value, a date and time field, a time field,
+//!   a date field a person can only pick, a slider, a file input, a
+//!   rich-text editor, a switch, tabs, an accordion, a tree, and a grid
+//!   whose counts are edited in place. "Save options" tells the application
+//!   what the page holds, as one `saved` event of JSON, from the page's own
+//!   state and never from the controls it shows.
 //! - `/cases/frame` (case 12): a form inside a frame (`/cases/frame/inner`), and
 //!   beside it a control inside an open shadow tree.
 
@@ -48,6 +56,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/cases/grid", get(grid))
         .route("/cases/confirm", get(confirm))
         .route("/cases/notice", get(notice))
+        .route("/cases/controls", get(controls))
         .route("/cases/frame", get(frame))
         .route("/cases/frame/inner", get(frame_inner))
 }
@@ -303,6 +312,14 @@ async fn notice() -> Html<String> {
              }});\n\
              </script>"
         ),
+    )
+}
+
+/// The page of case 10: its markup and script are in `controls.html`.
+async fn controls() -> Html<String> {
+    page(
+        "Shipment options",
+        &include_str!("controls.html").replace("/*TELL*/", TELL),
     )
 }
 

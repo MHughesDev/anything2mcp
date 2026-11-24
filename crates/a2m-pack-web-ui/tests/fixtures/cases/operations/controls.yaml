@@ -1,0 +1,147 @@
+operation: example_options_submit
+title: Set the options of a shipment
+effect: irreversible
+commit_points: 1
+inputs:
+  carrier: {type: text, description: "The carrier's code: nw, sl, or ee"}
+  destination: {type: text, description: "The destination, by its name"}
+  pickup: {type: text, description: "When it is picked up, as 2026-12-01T09:30"}
+  cutoff: {type: text, description: "The cutoff time, as 17:30"}
+  level: {type: text, description: "The handling level, from 0 to 10"}
+  notes: {type: text, description: "Handling notes"}
+  insured: {type: boolean, description: "Whether it is insured"}
+  section: {type: text, description: "The section shown: overview, handling, or history"}
+  panel: {type: text, description: "The part opened: billing or customs"}
+  location: {type: text, description: "Where it is kept, as a path such as Warehouse/North/Bay 1"}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: controls
+    fields:
+      carrier: input.carrier
+      destination: input.destination
+      pickup: input.pickup
+      cutoff: input.cutoff
+      level: input.level
+      notes: input.notes
+      insured: input.insured
+      section: input.section
+      panel: input.panel
+      location: input.location
+    action: save
+description: >
+  Sets each custom control of the shipment page and saves.
+---
+operation: example_options_read
+title: Read the options of a shipment
+effect: read
+inputs: {}
+outputs:
+  carrier: {type: text}
+  destination: {type: text}
+  pickup: {type: text}
+  cutoff: {type: text}
+  level: {type: text}
+  notes: {type: text}
+  insured: {type: boolean}
+  section: {type: text}
+  panel: {type: text}
+  location: {type: text}
+bindings:
+  - mode: ui
+    verb: read
+    status: shadow
+    screen: controls
+description: >
+  Reads each custom control of the shipment page as it shows.
+---
+operation: example_attachment_submit
+title: Attach a file to a shipment
+effect: irreversible
+commit_points: 1
+inputs:
+  attachment: {type: text, description: "The name of a file in the staging folder"}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: controls
+    fields:
+      attachment: input.attachment
+    action: save
+description: >
+  Gives the file input a file of the staging folder and saves.
+---
+operation: example_attachment_read
+title: Read the attachment of a shipment
+effect: read
+inputs: {}
+outputs:
+  attachment: {type: text}
+bindings:
+  - mode: ui
+    verb: read
+    status: shadow
+    screen: controls
+description: >
+  Reads the name the file input shows.
+---
+operation: example_parcel_count_submit
+title: Count the parcels of a row
+effect: irreversible
+commit_points: 1
+inputs:
+  parcel: {type: text, description: "The key of the row: its SKU, such as P-100"}
+  count: {type: text, description: "How many"}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: controls
+    fields:
+      count: input.count
+    rows:
+      count: input.parcel
+    action: save
+description: >
+  Edits the count of one row of the grid, found by its key, and saves.
+---
+operation: example_parcel_count_read
+title: Read the count of a row
+effect: read
+key: parcel
+inputs:
+  parcel: {type: text, description: "The key of the row: its SKU, such as P-100"}
+outputs:
+  count: {type: text}
+bindings:
+  - mode: ui
+    verb: read
+    status: shadow
+    screen: controls
+    rows:
+      count: input.parcel
+description: >
+  Reads the count of one row of the grid, found by its key.
+---
+operation: example_picker_submit
+title: Set the date a person can only pick
+effect: irreversible
+commit_points: 1
+inputs:
+  picker: {type: text, description: "The date, as 2026-12-01"}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: controls
+    fields:
+      picker: input.picker
+    action: save
+description: >
+  Tries to set a date field that takes no typing.

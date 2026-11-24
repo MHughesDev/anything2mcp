@@ -51,6 +51,9 @@ const DEFAULT_TIMEOUT_MS: u32 = 30_000;
 
 /// The name of the argument of a `set` step.
 pub(crate) const VALUE_ARG: &str = "value";
+/// What the name of a grid field's row key argument starts with, followed by
+/// the field's name.
+pub(crate) const ROW_ARG: &str = "row.";
 /// What the name of a `goto` step's argument starts with.
 pub(crate) const REACH_ARG: &str = "reach.";
 
@@ -69,10 +72,13 @@ impl UiLowering {
             schema: JsonSchema::object()
                 .required("screen", JsonSchema::name())
                 .optional("fields", JsonSchema::map_of(JsonSchema::expression()))
+                .optional("rows", JsonSchema::map_of(JsonSchema::expression()))
                 .optional("action", JsonSchema::name())
                 .optional(
                     "read_back",
-                    JsonSchema::object().required("screen", JsonSchema::name()),
+                    JsonSchema::object()
+                        .required("screen", JsonSchema::name())
+                        .optional("rows", JsonSchema::map_of(JsonSchema::expression())),
                 ),
             verbs: READ_VERBS
                 .iter()
@@ -224,8 +230,9 @@ impl<'a> Lower<'a, '_> {
     /// The `read` step: one value for each output of the operation, from
     /// the screen's field of the same name, or, for a list, from the column
     /// of that name of the screen's table.
-    fn read(&mut self, found: &Found<'_>) -> Step {
+    fn read(&mut self, found: &Found<'_>, binding: &Located<Doc>) -> Step {
         let mut payload = ReadStep::default();
+        let mut args = Vec::new();
         for output in self.cx.operation().outputs() {
             let listed = matches!(output.ty, ValueType::List(_));
             let known = if listed {
@@ -265,6 +272,18 @@ impl<'a> Lower<'a, '_> {
                 output: output.name.clone(),
                 from: output.name.clone(),
             };
+            if !listed
+                && found
+                    .screen
+                    .fields
+                    .get(&output.name)
+                    .is_some_and(|field| field.control == "grid")
+            {
+                match self.row_key(&output.name, found, binding) {
+                    Some(arg) => args.push(arg),
+                    None => continue,
+                }
+            }
             if listed {
                 payload.columns.push(item);
             } else {
@@ -272,8 +291,92 @@ impl<'a> Lower<'a, '_> {
             }
         }
         let mut step = self.step(READ, found, FailsAs::from(&codes::row::LOCATOR_NOT_FOUND));
+        step.args = args;
         step.payload = self.encoded(&payload, found.at);
         step
+    }
+
+    /// The argument that carries the key of the row a grid field is read
+    /// or set in: the expression the binding's `rows` gives under the
+    /// field's name, which must be text or a whole number.
+    fn row_key(
+        &mut self,
+        name: &str,
+        found: &Found<'_>,
+        binding: &Located<Doc>,
+    ) -> Option<StepArg> {
+        let Some(entry) = binding
+            .get("rows")
+            .map(Located::entries)
+            .unwrap_or_default()
+            .iter()
+            .find(|entry| entry.key.value == name)
+        else {
+            self.refuse(
+                "row_missing",
+                Stage::Resolve,
+                &binding.at,
+                format!(
+                    "The field `{name}` of the screen `{}` is a cell of a grid, and the binding does not say which row.",
+                    found.name
+                ),
+                "Add `rows:` with the field's name and an expression for the key of the row, which is the text its first cell shows.",
+            );
+            return None;
+        };
+        let index = match self.cx.expr(&entry.value, None) {
+            Ok(index) => index,
+            Err(wrong) => {
+                self.problems.push(wrong);
+                return None;
+            }
+        };
+        let fits = self
+            .cx
+            .expr_type(index)
+            .is_some_and(|ty| matches!(ty, ValueType::Text | ValueType::Choice | ValueType::Int));
+        if !fits {
+            self.refuse(
+                "value_type",
+                Stage::TypeCheck,
+                &entry.value.at,
+                format!("The key of the row for the field `{name}` is not text, a code, or a whole number."),
+                "Give the key a field type that is one of those.",
+            );
+            return None;
+        }
+        Some(StepArg {
+            name: format!("{ROW_ARG}{name}"),
+            value: index,
+        })
+    }
+
+    /// A `rows` entry that names a field that is not a grid cell, or none.
+    fn stray_rows(&mut self, found: &Found<'_>, binding: &Located<Doc>) {
+        for entry in binding
+            .get("rows")
+            .map(Located::entries)
+            .unwrap_or_default()
+        {
+            let grid = found
+                .screen
+                .fields
+                .get(&entry.key.value)
+                .is_some_and(|field| field.control == "grid");
+            if !grid {
+                self.refuse(
+                    "rows_not_fitting",
+                    Stage::Resolve,
+                    &entry.key.at,
+                    format!(
+                        "`rows` names `{}`, which is not a `grid` field of the screen `{}`.",
+                        shown(&entry.key.value),
+                        found.name
+                    ),
+                    "Name only the grid cells a binding sets or reads.",
+                );
+            }
+        }
     }
 
     /// One `set` step for each entry of the binding's `fields`, in the
@@ -308,7 +411,7 @@ impl<'a> Lower<'a, '_> {
                 }
             };
             let fits = self.cx.expr_type(index).is_some_and(|ty| {
-                if field.control == "checkbox" {
+                if field.control == "checkbox" || field.control == "toggle" {
                     ty == ValueType::Bool
                 } else {
                     matches!(
@@ -323,7 +426,7 @@ impl<'a> Lower<'a, '_> {
                     Stage::TypeCheck,
                     &entry.value.at,
                     format!(
-                        "The value for the field `{name}` cannot be given to a `{}` control: a `checkbox` takes a truth value, and every other control this version operates takes text, a code, a whole number, or an exact number.",
+                        "The value for the field `{name}` cannot be given to a `{}` control: a `checkbox` and a `toggle` take a truth value, and every other control takes text, a code, a whole number, or an exact number.",
                         shown(&field.control)
                     ),
                     "Give a value of such a type. Formatting a date or a quantity for a control is not built yet.",
@@ -334,6 +437,12 @@ impl<'a> Lower<'a, '_> {
                 name: VALUE_ARG.to_owned(),
                 value: index,
             }];
+            if field.control == "grid" {
+                match self.row_key(name, found, binding) {
+                    Some(arg) => step.args.push(arg),
+                    None => continue,
+                }
+            }
             step.payload = self.encoded(
                 &SetStep {
                     field: name.clone(),
@@ -562,16 +671,18 @@ impl Lowering for UiLowering {
             // A read of one record may find none, when the screen declares
             // how that looks; a list answers with the rows there are.
             let lookup = binding.verb.as_str() == "read" && found.screen.can_be_absent();
+            lower.stray_rows(&found, binding.doc);
             let mut steps = vec![
                 lower.goto(&found, TabKind::Observe),
                 lower.wait(&found, false),
-                lower.read(&found),
+                lower.read(&found, binding.doc),
             ];
             for step in &mut steps {
                 step.lookup = lookup;
             }
             lowered.act = steps;
         } else {
+            lower.stray_rows(&found, binding.doc);
             let mut act = vec![lower.goto(&found, TabKind::Act), lower.wait(&found, true)];
             act.extend(lower.sets(&found, binding.doc));
             act.extend(lower.invoke(&found, binding.doc));
@@ -594,10 +705,11 @@ impl Lowering for UiLowering {
                 // The read-back is a new visit, in a tab that cannot
                 // write: it, and the preview and the freshness check that
                 // run it on their own, are reads.
+                lower.stray_rows(&reader, read_back);
                 let mut steps = vec![
                     lower.goto(&reader, TabKind::Observe),
                     lower.wait(&reader, false),
-                    lower.read(&reader),
+                    lower.read(&reader, read_back),
                 ];
                 for step in &mut steps {
                     step.lookup = true;

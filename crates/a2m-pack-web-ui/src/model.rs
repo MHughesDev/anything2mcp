@@ -312,6 +312,11 @@ pub(crate) struct Field {
     /// that label inside it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub options: BTreeMap<String, String>,
+    /// For a `grid`: the place of the field's cell among the cells of a
+    /// row, counted from zero. The field's locators find the grid; the row
+    /// is the one whose first cell shows the key the binding gives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
 }
 
 /// One action of a screen.

@@ -35,12 +35,15 @@ use a2m_provider::{
 use a2m_telemetry::{Acting, Detail};
 
 use crate::codes::{self, shown};
-use crate::lower::{GOTO, INVOKE, REACH_ARG, READ, SET, VALUE_ARG, WAIT};
+use crate::lower::{GOTO, INVOKE, REACH_ARG, READ, ROW_ARG, SET, VALUE_ARG, WAIT};
+
+mod widgets;
 use crate::model::{
     Action, Cond, Field, Fingerprint, GotoStep, Handling, InvokeStep, Locator, PAYLOAD_FORMAT,
     ReadStep, Rows, Screen, ScreenSection, Segment, SetStep, SurfaceFields, TabKind, WaitStep,
 };
 use crate::screens::{PACK, SCREEN_KIND};
+use widgets::Chosen;
 
 /// What the browser engine reports a move of the tab that it ended
 /// under. A window it closed, and a download it denied, have words of
@@ -200,6 +203,8 @@ struct Session {
     /// ended, each with its `ready` (decision 0245).
     expiry: Vec<(String, Cond)>,
     snapshots: SnapshotLimits,
+    /// Where files for a file input are staged, or why that is not known.
+    staging: Result<a2m_provider::CheckedPath, Failure>,
     /// What the run may do. Only a live run sets a field or clicks an
     /// action that does not save; a run against a declared test record
     /// sets fields and performs the one action marked as the commit point
@@ -1193,6 +1198,28 @@ impl Session {
                     .insert(item.output.clone(), Value::Text(code));
                 continue;
             }
+            if !matches!(rule, Rule::Text | Rule::Select | Rule::Check) {
+                let row = input.args.get(&format!("{ROW_ARG}{}", item.from));
+                let value = self
+                    .read_widget(
+                        rule,
+                        &Chosen {
+                            field,
+                            element: &element,
+                            locator,
+                            row,
+                            what: &what,
+                        },
+                        deadline,
+                    )
+                    .await?;
+                means.push(Detail::new(
+                    format!("locator.{}", item.from),
+                    locator.to_string(),
+                ));
+                observed.values.insert(item.output.clone(), value);
+                continue;
+            }
             let value = match self
                 .tab()
                 .read(&element, &field.read.what(), deadline)
@@ -1316,6 +1343,24 @@ impl Session {
             Rule::Text => {
                 let text = widget_text(value).ok_or_else(wrong_value)?;
                 self.set_text(&element, &text, &what, deadline).await?
+            }
+            rule => {
+                let text = widget_text(value).ok_or_else(wrong_value)?;
+                let row = input.args.get(&format!("{ROW_ARG}{}", payload.field));
+                self.set_widget(
+                    rule,
+                    &Chosen {
+                        field,
+                        element: &element,
+                        locator,
+                        row,
+                        what: &what,
+                    },
+                    &text,
+                    &wrong_value,
+                    deadline,
+                )
+                .await?
             }
         };
         Ok(StepOutcome::Done(Observed {
@@ -1697,6 +1742,13 @@ enum Rule {
     Select,
     Check,
     Radio,
+    Combo,
+    Slider,
+    File,
+    Grid,
+    Tree,
+    Tabs,
+    Accordion,
 }
 
 /// The rule for a control's name. A name with no rule stops the step: the
@@ -1705,11 +1757,20 @@ fn known_control(control: &str) -> Result<Rule, StepFailure> {
     match control {
         "text" | "textarea" | "number" | "currency" | "measurement" => Ok(Rule::Text),
         "select" => Ok(Rule::Select),
-        "checkbox" => Ok(Rule::Check),
+        "checkbox" | "toggle" => Ok(Rule::Check),
         "radio" => Ok(Rule::Radio),
-        // A date is typed, or set through the field's own setter, in the
-        // form the browser's date field takes: `2026-12-01`.
-        "date" => Ok(Rule::Text),
+        // A date, a date and time, and a time are typed, or set through the
+        // field's own setter, in the form the browser's field takes:
+        // `2026-12-01`, `2026-12-01T09:30`, `09:30`. A rich-text editor is
+        // an editable element whose text is set as any text is.
+        "date" | "datetime" | "time" | "rich_text" => Ok(Rule::Text),
+        "combobox" | "autocomplete" => Ok(Rule::Combo),
+        "slider" => Ok(Rule::Slider),
+        "file" => Ok(Rule::File),
+        "grid" => Ok(Rule::Grid),
+        "tree" => Ok(Rule::Tree),
+        "tabs" => Ok(Rule::Tabs),
+        "accordion" => Ok(Rule::Accordion),
         other => Err(StepFailure::not_sent(fail(
             &codes::row::UNKNOWN_CONTROL,
             format!(
@@ -2039,6 +2100,7 @@ impl UiDriver {
             origin,
             sections,
             snapshots: self.snapshots.clone(),
+            staging: self.browsers.staging_folder(),
             posture: cx.posture,
         })
     }
@@ -2131,6 +2193,19 @@ impl Driver for UiDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every control the pack registers has a rule, and a control it did
+    /// not register is a stop with its own code, never a guess at a text
+    /// box (rule 7).
+    #[test]
+    fn every_registered_control_has_a_rule_and_any_other_is_a_stop() {
+        for control in crate::screens::CONTROLS {
+            assert!(known_control(control).is_ok(), "{control}");
+        }
+        let stopped = known_control("signature_pad").unwrap_err();
+        assert_eq!(stopped.failure.code().as_str(), "unknown_control");
+        assert_eq!(stopped.sent, a2m_provider::Sent::NotSent);
+    }
 
     #[test]
     fn an_origin_is_a_scheme_a_host_and_a_port() {

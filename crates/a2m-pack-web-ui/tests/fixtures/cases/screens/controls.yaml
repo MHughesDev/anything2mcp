@@ -1,0 +1,99 @@
+# Case 10: the custom controls of one form, each drawn by the page itself:
+# two filtering dropdowns (one with a code for each choice), a date and time
+# field, a time field, a date field a person can only pick, a slider, a file
+# input, a rich-text editor, a switch, tabs, an accordion, a tree, and a grid
+# whose counts are edited in place.
+screen: controls
+surface: app
+reach: {url: "/cases/controls"}
+ready: {visible: {role: heading, name: "Shipment options"}}
+fields:
+  carrier:
+    type: text
+    control: combobox
+    locate:
+      - {role: combobox, name: Carrier}
+    fingerprint: {section: {role: form, name: ""}}
+    options: {nw: "Northwind Freight", sl: "Southern Line", ee: "Eastbound Express"}
+  destination:
+    type: text
+    control: autocomplete
+    locate:
+      - {role: combobox, name: Destination}
+    fingerprint: {section: {role: form, name: ""}}
+  pickup:
+    type: text
+    control: datetime
+    locate:
+      - {role: textbox, name: "Pickup time"}
+    fingerprint: {section: {role: form, name: ""}}
+  cutoff:
+    type: text
+    control: time
+    locate:
+      - {role: textbox, name: Cutoff}
+    fingerprint: {section: {role: form, name: ""}}
+  picker:
+    type: text
+    control: date
+    locate:
+      - {role: textbox, name: "Picker only date"}
+    fingerprint: {section: {role: form, name: ""}}
+  level:
+    type: text
+    control: slider
+    locate:
+      - {role: slider, name: "Handling level"}
+    fingerprint: {section: {role: form, name: ""}}
+  attachment:
+    type: text
+    control: file
+    locate:
+      - {label: Attachment}
+    fingerprint: {section: {role: form, name: ""}}
+  notes:
+    type: text
+    control: rich_text
+    locate:
+      - {role: textbox, name: "Handling notes"}
+    fingerprint: {section: {role: form, name: ""}}
+  insured:
+    type: boolean
+    control: toggle
+    locate:
+      - {role: switch, name: Insured}
+    fingerprint: {section: {role: form, name: ""}}
+  section:
+    type: text
+    control: tabs
+    locate:
+      - {role: tablist, name: Sections}
+    fingerprint: {section: {role: form, name: ""}}
+    options: {overview: Overview, handling: Handling, history: History}
+  panel:
+    type: text
+    control: accordion
+    locate:
+      - {role: group, name: Details}
+    fingerprint: {section: {role: form, name: ""}}
+    options: {billing: Billing, customs: Customs}
+  location:
+    type: text
+    control: tree
+    locate:
+      - {role: tree, name: Location}
+    fingerprint: {section: {role: form, name: ""}}
+  count:
+    type: text
+    control: grid
+    column: 2
+    locate:
+      - {role: grid, name: Parcels}
+    fingerprint: {section: {role: form, name: ""}}
+actions:
+  save:
+    locate:
+      - {role: button, name: "Save options"}
+    fingerprint: {section: {role: form, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, equals: "Saved."}}
+    commits: true

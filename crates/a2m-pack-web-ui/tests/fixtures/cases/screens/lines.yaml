@@ -1,0 +1,14 @@
+# Case 9: ten thousand rows of which about fifteen exist in the page at a
+# time. A cell is read by the key its row's first cell shows.
+screen: lines
+surface: app
+reach: {url: "/cases/grid"}
+ready: {visible: {role: heading, name: "Order lines"}}
+fields:
+  quantity:
+    type: text
+    control: grid
+    column: 2
+    locate:
+      - {role: grid, name: Lines}
+    fingerprint: {section: {role: main, name: ""}}

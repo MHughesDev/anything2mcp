@@ -1,0 +1,18 @@
+operation: example_order_line_quantity_read
+title: Read the quantity of an order line
+effect: read
+key: line
+inputs:
+  line: {type: text, description: "The key of the line, such as R-00003"}
+outputs:
+  quantity: {type: text}
+bindings:
+  - mode: ui
+    verb: read
+    status: shadow
+    screen: lines
+    rows:
+      quantity: input.line
+description: >
+  Reads the quantity of one line of a grid that draws only the rows near
+  the top, found by its key.

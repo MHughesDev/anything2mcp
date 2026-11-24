@@ -113,7 +113,8 @@ Brought by the web pack, and by the desktop pack for desktop surfaces.
 | `locate` (required) | Ordered list of [locators](#locators) |
 | `fingerprint` (required) | What must also be true of the matched element: `section`, a locator of the one element it is inside, and optionally `near_text`, a text that section shows ([decision 0113](../decisions/0113-a-screens-fingerprint-is-a-section-absent-is-a-variant-and-a-table-is-read-by-its-headings.md)) |
 | `read` | `value`, `text`, or an attribute name; default by control |
-| `options` | For a `radio`, and for no other control: each stored code with the label of its radio button. The field's locators find the group ([decision 0350](../decisions/0350-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md)) |
+| `options` | For a `radio`, `tabs`, or `accordion`, which must have it, and for a `combobox` or `autocomplete`, which may: each stored code with the label the page shows for it. The field's locators find the group, the tab list, the sections, or the input ([decision 0350](../decisions/0350-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md), [decision 0399](../decisions/0399-the-remaining-widget-drivers-built-from-what-a-page-says-of-its-controls-a-staged-file-a-grid-cell-by-its-rows-key.md)) |
+| `column` | For a `grid`, which must have it, and for no other control: the place of the field's cell among the cells of a row, counted from zero. The field's locators find the grid; the binding's `rows` says the row ([decision 0399](../decisions/0399-the-remaining-widget-drivers-built-from-what-a-page-says-of-its-controls-a-staged-file-a-grid-cell-by-its-rows-key.md)) |
 | `commit` | What commits the value in the page: `blur`, `enter`, or `none` |
 
 **Action.**
@@ -250,7 +251,7 @@ Each pack registers these file kinds and surface kinds in its manifest. The fiel
 | `permissions` | Uploads, downloads, and destinations beyond the surfaces its bindings use. A destination is one exact address: a host name or an address, with a port or a scheme where needed, and no wildcard, range, path, or user information. For a web tool it is an origin its pages may load from or send to, and needs its scheme, such as `https://assets.example.com`; one without a scheme gives the tool's tab nothing ([decision 0292](../decisions/0292-a-web-tab-sends-only-to-its-surface-and-the-destinations-its-tool-declares.md)). An upload or a download is one name |
 | `decision_points` | Questions a person may have to answer during a run: a list, each with a `name`, unique within the operation, and the `question` as the person is asked it. A run asks only what its operation declares |
 
-**Binding.** Common fields: `mode` (required), `status` (`draft`, `shadow`, `verified`, `retired`), `read_back` (required for writes), `precondition`.
+**Binding.** Common fields: `mode` (required), `status` (`draft`, `shadow`, `verified`, `retired`), `read_back` (required for writes), `precondition`. A binding of the `ui` mode that sets or reads a `grid` field also has `rows`, a map from the field's name to an expression for the key of the row, the text its first cell shows; `read_back` takes `rows` as well ([decision 0399](../decisions/0399-the-remaining-widget-drivers-built-from-what-a-page-says-of-its-controls-a-staged-file-a-grid-cell-by-its-rows-key.md)).
 
 | Mode | Its fields |
 | --- | --- |

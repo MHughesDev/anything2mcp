@@ -38,7 +38,26 @@ pub const CONTROLS: &[&str] = &[
     "checkbox",
     "radio",
     "date",
+    "combobox",
+    "autocomplete",
+    "datetime",
+    "time",
+    "slider",
+    "file",
+    "rich_text",
+    "grid",
+    "tree",
+    "tabs",
+    "accordion",
+    "toggle",
 ];
+
+/// The controls whose choices the field names under `options`, each code
+/// with the label the page shows for it. A `radio`, a set of `tabs`, and an
+/// `accordion` must: each is read as the code of the choice that is on. A
+/// `combobox` and an `autocomplete` may; with none, the label is the value.
+const CHOICES_REQUIRED: &[&str] = &["radio", "tabs", "accordion"];
+const CHOICES_OPTIONAL: &[&str] = &["combobox", "autocomplete"];
 
 /// A code of this pack's compiler: its lint rules, and what its file kind
 /// and lowering refuse.
@@ -120,7 +139,8 @@ pub(crate) fn screen_schema() -> JsonSchema {
         .required("locate", locate_schema())
         .optional("fingerprint", fingerprint_schema())
         .optional("read", JsonSchema::words(&["value", "text", "checked"]))
-        .optional("options", JsonSchema::map_of(JsonSchema::text()));
+        .optional("options", JsonSchema::map_of(JsonSchema::text()))
+        .optional("column", JsonSchema::int());
     let action = JsonSchema::object()
         .required("locate", locate_schema())
         .optional("fingerprint", fingerprint_schema())
@@ -391,10 +411,10 @@ impl Reader {
         let read = match (doc.text("read"), control.as_str()) {
             (Some("value"), _) => ReadHow::Value,
             (Some("text"), _) => ReadHow::Text,
-            (Some("checked"), _) | (None, "checkbox") => ReadHow::Checked,
+            (Some("checked"), _) | (None, "checkbox" | "toggle") => ReadHow::Checked,
             _ => ReadHow::Value,
         };
-        if (read == ReadHow::Checked) != (control == "checkbox") {
+        if (read == ReadHow::Checked) != matches!(control.as_str(), "checkbox" | "toggle") {
             self.refuse(
                 "read_not_fitting",
                 &doc.at,
@@ -402,7 +422,7 @@ impl Reader {
                     "The control `{}` cannot be read as the field says.",
                     shown(&control)
                 ),
-                "A `checkbox` is read as `checked`, and every other control as `value` or `text`.",
+                "A `checkbox` and a `toggle` are read as `checked`, and every other control as `value` or `text`.",
             );
             return None;
         }
@@ -412,19 +432,56 @@ impl Reader {
                 options.insert(entry.key.value.clone(), label.to_owned());
             }
         }
-        if (control == "radio") == options.is_empty() {
+        let required = CHOICES_REQUIRED.contains(&control.as_str());
+        let allowed = required || CHOICES_OPTIONAL.contains(&control.as_str());
+        if (required && options.is_empty()) || (!allowed && !options.is_empty()) {
             self.refuse(
                 "options_not_fitting",
                 &doc.at,
-                if control == "radio" {
-                    "A `radio` field names its choices under `options`, each code with the label of its radio button.".to_owned()
+                if required {
+                    format!(
+                        "A `{}` field names its choices under `options`, each code with the label the page shows for it.",
+                        shown(&control)
+                    )
                 } else {
                     format!(
-                        "The control `{}` has no `options`; only a `radio` takes them.",
+                        "The control `{}` has no `options`; only a `radio`, `tabs`, `accordion`, `combobox`, or `autocomplete` takes them.",
                         shown(&control)
                     )
                 },
-                "Write `options:` for a radio group, and nowhere else.",
+                "Write `options:` for a control that has choices, and nowhere else.",
+            );
+            return None;
+        }
+        let column = match doc.get("column").and_then(Located::as_int) {
+            Some(place) => match u32::try_from(place) {
+                Ok(place) => Some(place),
+                Err(_) => {
+                    self.refuse(
+                        "column_not_fitting",
+                        &doc.at,
+                        "A `column` is the place of a cell in its row, counted from zero."
+                            .to_owned(),
+                        "Write a whole number of zero or more.",
+                    );
+                    return None;
+                }
+            },
+            None => None,
+        };
+        if (control == "grid") != column.is_some() {
+            self.refuse(
+                "column_not_fitting",
+                &doc.at,
+                if control == "grid" {
+                    "A `grid` field names the `column` of its cell: its place among the cells of a row, counted from zero.".to_owned()
+                } else {
+                    format!(
+                        "The control `{}` has no `column`; only a `grid` takes one.",
+                        shown(&control)
+                    )
+                },
+                "Write `column:` for a grid cell, and nowhere else.",
             );
             return None;
         }
@@ -434,6 +491,7 @@ impl Reader {
             fingerprint,
             read,
             options,
+            column,
         })
     }
 

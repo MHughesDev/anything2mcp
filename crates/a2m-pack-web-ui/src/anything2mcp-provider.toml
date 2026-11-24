@@ -1,6 +1,6 @@
 # The manifest of the web pack's drivers. What is not built is not declared:
 # the `site_tools` mode, the `page_http` writes beyond `update` by PUT, the auth providers, the screen
-# matcher, platform profiles, and every control beyond the ones listed here.
+# matcher, and platform profiles.
 manifest_format = 1
 contract = 1
 
@@ -120,6 +120,42 @@ name = "radio"
 [[controls]]
 name = "date"
 
+[[controls]]
+name = "combobox"
+
+[[controls]]
+name = "autocomplete"
+
+[[controls]]
+name = "datetime"
+
+[[controls]]
+name = "time"
+
+[[controls]]
+name = "slider"
+
+[[controls]]
+name = "file"
+
+[[controls]]
+name = "rich_text"
+
+[[controls]]
+name = "grid"
+
+[[controls]]
+name = "tree"
+
+[[controls]]
+name = "tabs"
+
+[[controls]]
+name = "accordion"
+
+[[controls]]
+name = "toggle"
+
 [[lint_rules]]
 code = "web.css_not_last"
 level = "error"
@@ -194,6 +230,10 @@ code = "read_too_large"
 [[failure_codes]]
 class = "rejected"
 code = "app_validation_error"
+
+[[failure_codes]]
+class = "input"
+code = "file_not_staged"
 
 [[failure_codes]]
 class = "policy"

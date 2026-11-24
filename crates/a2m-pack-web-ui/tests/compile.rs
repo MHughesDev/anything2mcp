@@ -220,7 +220,7 @@ fn what_a_screen_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
     // A control no enabled pack registered.
     let control = refused(
         form,
-        |text| text.replacen("control: number", "control: slider", 1),
+        |text| text.replacen("control: number", "control: signature_pad", 1),
         "kernel.unknown_control",
     );
     assert_eq!((control.at.file.as_str(), control.at.line), (form, 16));

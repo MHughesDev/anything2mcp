@@ -191,16 +191,16 @@ One driver per kind of control. The control names are shared with the desktop pa
 | `text`, `textarea` | Fill; escalate to key-by-key typing, then the native value setter with events | Input value |
 | `number`, `currency`, `measurement` | As text, formatted by the field type | Input value, normalized |
 | `select` | Choose by stored code | Selected code |
-| `combobox`, `autocomplete` | Open, type to filter, choose the option whose code or exact label matches | Selected code, or the label map |
-| `date`, `datetime`, `time` | Type in the field's declared format; fall back to the picker. As built, for `date`: the text rule, in the form the browser's date field takes (`2026-12-01`); the picker, `datetime`, and `time` are not built ([decision 0350](../../decisions/0350-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md)) | Value, normalized to the field's time-zone rule |
-| `checkbox`, `toggle` | Set to the target state only if different | Live checked state, never the attribute |
+| `combobox`, `autocomplete` | Open, type to filter, choose the option whose code or exact label matches. As built: the label is typed, the option of exactly that label is waited for (up to five seconds, for a page that loads its options late) and pressed ([decision 0399](../../decisions/0399-the-remaining-widget-drivers-built-from-what-a-page-says-of-its-controls-a-staged-file-a-grid-cell-by-its-rows-key.md)) | Selected code through the field's `options`, or the label when it has none |
+| `date`, `datetime`, `time` | Type in the field's declared format; fall back to the picker. As built: the text rule, in the form the browser's field takes (`2026-12-01`, `2026-12-01T09:30`, `17:30`); a field that takes no typing is a stop, and the picker is not built ([decision 0350](../../decisions/0350-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md), [decision 0399](../../decisions/0399-the-remaining-widget-drivers-built-from-what-a-page-says-of-its-controls-a-staged-file-a-grid-cell-by-its-rows-key.md)) | Value; normalizing it to the field's time-zone rule is not built |
+| `checkbox`, `toggle` | Set to the target state only if different. A switch a page draws is one that says `aria-checked` | Live checked state, never the attribute, except for a switch a page draws, which has only its `aria-checked` |
 | `radio` | Choose by stored code: the field's `options` give the label of each code's radio button inside the group its locators find; a code the options do not list is refused before anything is sent | Checked option, as its code |
-| `slider` | Keyboard steps to the value | Current value |
-| `file` | Attach the file to the input directly | File name shown |
-| `rich_text` | Editor-specific command, or paste as plain text | Editor content, normalized |
-| `grid` | Address a cell by row key and column id; scroll or filter to find the row | Cell value; the network response preferred |
-| `tree` | Expand along a path of labels | Selected path |
-| `tabs`, `accordion` | Activate by name | Active name |
+| `slider` | Keyboard steps to the value. As built: Right or Left, one key at a time, reading after each, at most 500; a step that does not move it, or passes the value, is a stop | Current value: the input's, or `aria-valuenow` |
+| `file` | Attach the file to the input directly. As built: a name in the staging folder, `staging/` of the pack's profile root, never a path; a name that is not one plain name or not a file of the folder is refused before anything is sent (`file_not_staged`) | File name shown |
+| `rich_text` | Editor-specific command, or paste as plain text. As built: the text rule, into an editable element | Editor text; normalizing it is not built |
+| `grid` | Address a cell by row key and column id; scroll or filter to find the row. As built: the field names its `column`, the binding names the row's key in `rows`; the cell is pressed, typed into, and ended with Enter, in a row the page holds. A finder, and scrolling, are not built | Cell value, from the row the page holds; the network response preferred, and the only way to a row the page does not hold |
+| `tree` | Expand along a path of labels. As built: the path is one text of labels joined by `/`; Right opens a closed item, Enter selects the last | Selected path |
+| `tabs`, `accordion` | Activate by name. As built: the field's `options` give each code's label; the choice is pressed unless its `aria-selected` or `aria-expanded` is already `true` | Active choice, as its code |
 | `dialog` | Declared as expected; confirm or dismiss by named action. As built: a dialog in the page is a variant with the handling `confirm` or `dismiss` and the action it is `with`; a dialog of the browser is declared by the action that opens it (`dialog: {says, answer}`), and one that says anything else stops the run | Closed state |
 | `toast` | Observed only | Text, used as a confirmation |
 
@@ -411,7 +411,7 @@ The test application ([test application plan](../../plan/test-application.md)) i
 
 | Cases | What they prove for this pack |
 | --- | --- |
-| 6 to 12 | Locating without generated identifiers, widget escalation, in-page navigation, grids by key, custom controls, declared dialogs, frames and shadow trees |
+| 6 to 12 | Locating without generated identifiers, widget escalation, in-page navigation, grids by key, custom controls (built: the page `/cases/controls`, [decision 0399](../../decisions/0399-the-remaining-widget-drivers-built-from-what-a-page-says-of-its-controls-a-staged-file-a-grid-cell-by-its-rows-key.md)), declared dialogs, frames and shadow trees |
 | 13 to 15 | The auth providers, sign-in detection, the keeper's probes, exclusive sessions |
 | 16 to 21 | Normalization, `possible_commit` after a crash, identity strategies, dependent records, no duplicate send, `changed_since_preview` |
 | 22 to 24 | Mining stopping at shadow; edge blocks; long jobs and downloads |
