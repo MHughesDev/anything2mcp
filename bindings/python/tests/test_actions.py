@@ -133,6 +133,7 @@ class GeneratorTests(unittest.TestCase):
                 "/api/v1/actions/thing.do": {
                     "post": {
                         "x-action": "thing.do",
+                        "x-sdk": True,
                         "summary": summary,
                         "requestBody": {"content": {"application/json": {"schema": schema}}},
                     }
@@ -188,6 +189,29 @@ class GeneratorTests(unittest.TestCase):
         ):
             self.assertIn(expected, text)
         compile(text, "<generated>", "exec")
+
+    def test_an_action_without_an_sdk_face_gets_no_method(self) -> None:
+        schema = {"type": "object", "additionalProperties": False, "properties": {}}
+        document = self.document(schema)
+        document["paths"]["/api/v1/actions/thing.skip"] = {
+            "post": {**document["paths"]["/api/v1/actions/thing.do"]["post"], "x-action": "thing.skip", "x-sdk": False}
+        }
+        text = generator.render(document)
+        self.assertIn("def thing_do(", text)
+        self.assertNotIn("thing_skip", text)
+        self.assertNotIn("thing.skip", text)
+
+    def test_a_route_that_does_not_say_whether_it_has_a_method_stops_the_generator(self) -> None:
+        schema = {"type": "object", "additionalProperties": False, "properties": {}}
+        for value in (None, "true", 1):
+            document = self.document(schema)
+            operation = document["paths"]["/api/v1/actions/thing.do"]["post"]
+            if value is None:
+                del operation["x-sdk"]
+            else:
+                operation["x-sdk"] = value
+            with self.assertRaises(generator.GenerateError, msg=repr(value)):
+                generator.render(document)
 
     def test_a_document_it_does_not_understand_stops_the_generator(self) -> None:
         free = {"type": "object", "additionalProperties": {}, "properties": {}}

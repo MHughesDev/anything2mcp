@@ -8,7 +8,8 @@
 // action the engine lacks. `bindings/python/tools/openapi.json` is the saved
 // copy, shared with the Python client (`tools/fetch_openapi.py` saves it).
 // This script reads it and writes `anything2mcp/client/actions.js` and
-// `anything2mcp/client/actions.d.ts`: one method per action, named as the
+// `anything2mcp/client/actions.d.ts`: one method per action whose route
+// carries `x-sdk: true` (the action's SDK face), named as the
 // action names it in camel case (`tool.call` is `toolCall`,
 // `policy.tools_allowed` is `policyToolsAllowed`), taking one
 // object of inputs, with the input types from the request schema and a
@@ -120,6 +121,13 @@ function actionsOf(document) {
     if (action !== route.slice(ACTION_ROUTE.length)) {
       throw new GenerateError(`route ${route} names action ${JSON.stringify(action)}`);
     }
+    // `x-sdk` is the action's SDK face: an action without one gets no
+    // method, and a route that does not say stops the generator.
+    const sdk = item.post["x-sdk"];
+    if (typeof sdk !== "boolean") {
+      throw new GenerateError(`route ${route} does not say whether \`${action}\` has an SDK method`);
+    }
+    if (!sdk) continue;
     found.set(action, item.post);
   }
   if (found.size === 0) throw new GenerateError("the document has no action routes");

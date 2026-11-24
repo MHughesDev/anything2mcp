@@ -123,8 +123,9 @@ def request_schema(operation: Dict[str, Any]) -> Tuple[List[Tuple[str, Any]], Li
 
 
 def actions_of(document: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
-    """Every action with its POST operation on ``/api/v1/actions/<action>``,
-    sorted by name. That route is the one the client's ``call`` uses."""
+    """Every action with an SDK method, with its POST operation on
+    ``/api/v1/actions/<action>``, sorted by name. That route is the one the
+    client's ``call`` uses."""
     found: Dict[str, Dict[str, Any]] = {}
     for path, item in document["paths"].items():
         if not path.startswith(ACTION_ROUTE) or "post" not in item:
@@ -133,6 +134,13 @@ def actions_of(document: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
         action = operation.get("x-action")
         if action != path[len(ACTION_ROUTE):]:
             raise GenerateError(f"route {path} names action {action!r}")
+        # `x-sdk` is the action's SDK face: an action without one gets no
+        # method, and a route that does not say stops the generator.
+        sdk = operation.get("x-sdk")
+        if not isinstance(sdk, bool):
+            raise GenerateError(f"route {path} does not say whether `{action}` has an SDK method")
+        if not sdk:
+            continue
         found[action] = operation
     if not found:
         raise GenerateError("the document has no action routes")
