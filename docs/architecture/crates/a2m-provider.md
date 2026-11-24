@@ -18,6 +18,7 @@ The one doorway between the kernel and everything that knows a kind of system. I
 - The manifest: its file format, its schema, and the checks that a provider asks for nothing it did not declare.
 - The `Registry`: one immutable snapshot of every provider, its modes with their archetypes, and the objects each supplied.
 - The traits `Driver`, `Discoverer`, `Describer`, and `ProviderAction`, and the `DriverHandle` through which alone the engine reaches a driver.
+- Traffic capture as a capability a pack may offer: `CaptureSource`, `TrafficCapture`, the form of what a capture yields (`CapturedTraffic`, `CapturedRequest`), and the check every yield passes (`take_capture`), with the registry's `CaptureHandle` ([decision 0399](../../decisions/0399-traffic-capture-is-a-capability-of-the-provider-contract-that-yields-structure-only.md)).
 - The registered names a provider brings: modes with their archetypes, surface kinds, step kinds, file kinds, lint codes, finding kinds. Each is a checked name from `a2m-core`; the registry is the only list of them.
 - The choice between two providers that could fill the same place, and its recorded reason.
 - File access for packs: `CheckedPath`, which only the check against the allowed roots can make ([section 502](../../spec/5-security/502-defending-against-a-manipulated-agent.md), [section 213](../../spec/2-kernel/213-effects-hazards-and-consent.md)).
@@ -82,6 +83,7 @@ discoverer = ["sheet_structure"]         # each discoverer also supplies its des
 auth_provider = []
 source_reader = ["example_sheet_rows"]
 widget_driver = []
+traffic_capture = []                     # surface kinds whose traffic it captures, through one CaptureSource; empty: never asked (decision 0399)
 
 [[discoverers]]
 name = "sheet_structure"
@@ -461,6 +463,26 @@ pub enum DescribeForm { Summary, Full }
 #[derive(Default)]
 pub struct Description { pub text: String, pub data: Values, pub untrusted: Vec<String> }
 
+/// Traffic capture (decision 0399). A pack that lists kinds under `points.traffic_capture` registers one source
+/// with `Registrar::traffic_capture`; one that lists none and registers one is refused, `effect_not_declared`.
+pub trait CaptureSource: Send + Sync {
+    fn open<'a>(&'a self, surface: &'a SurfaceRef, deadline: Deadline) -> BoxFuture<'a, Result<Box<dyn TrafficCapture>, Failure>>;
+}
+pub trait TrafficCapture: Send + Sync {
+    fn start(&self);
+    fn take_recorded<'a>(&'a self, until: Deadline) -> BoxFuture<'a, CapturedTraffic>;   // read only through take_capture
+}
+pub struct CapturedTraffic { pub requests: Vec<CapturedRequest>, pub dropped: usize, pub awaited: usize, pub withheld: usize }
+pub struct CapturedRequest {   // structure only: no field holds a value of a query, a header, a cookie, or a body
+    pub method: String, pub origin: String, pub path: String, pub query: Vec<String>, pub query_left_out: bool,
+    pub credential_headers: Vec<String>, pub set_headers: Vec<String>, pub headers_left_out: bool,
+    pub status: u16, pub media_type: String, pub fields: Option<BTreeMap<String, String>>, pub names_withheld: bool,
+}
+pub async fn take_capture(capture: &dyn TrafficCapture, until: Deadline, redact: &dyn Redact) -> CapturedTraffic;
+impl Registry { pub fn captures_for(&self, kind: &SurfaceKind) -> Vec<CaptureHandle>; }   // only declaring packs
+impl CaptureHandle { pub async fn open(&self, surface: &SurfaceRef, deadline: Deadline) -> Result<Capturing, Failure>; }
+impl Capturing { pub async fn take(&self, until: Deadline) -> CapturedTraffic; }          // take_capture, the host's redactor
+
 /// A registered discoverer, as the registry gives it to a runner.
 impl DiscovererHandle {
     pub fn provider(&self) -> &ProviderName;   pub fn declared(&self) -> &DiscovererDecl;
@@ -479,6 +501,7 @@ Contracts the signatures do not show:
 - **Cancellation.** A driver must be safe to cancel on any step not marked `commits`. On a `commits` step the engine waits to the deadline and never drops the future.
 - **No secret leaves a driver.** Credentials arrive through `SessionLease::apply`, which writes into a sink the driver owns and never returns the value. Captures pass the `Redact` the context carries before they leave `act`. The handle is the backstop: on the way out of `act` it redacts every text in `Observed::values` and `for_reconcile`, a capture's name, and a capture whose bytes are text. Bytes that are not text cannot be searched and pass as the driver left them. A value that was redacted no longer equals what was intended, so a read-back that returns a secret ends as a mismatch and not as a stored secret.
 - **There is one redactor.** `PackContext::redact`, `PrepareContext::redact`, and the handle's own are the same object: the vault's redactor, which the action registry's kernel hands to `HostServices` and to the engine alike. `PrepareContext::redact` is a borrow that ends with `prepare`, and `StepInput` carries none, so a driver redacts in `act` with the one it keeps from its `PackContext`. A host that built the two from different objects would break this; nothing checks it.
+- **What a capture yields is structure, and passes the contract's check whatever the pack did.** `take_capture` withholds whole a request whose method or origin is not of its form or holds a secret the redactor knows, and counts it; puts `{value}` for each path segment that is not a plain word or holds a secret, and cuts a query or fragment off a path; and keeps a name of a query's parameter, a header, or a field only when it is of a name's form and holds no secret, saying when one was left out. A surface of a kind the manifest does not declare is refused by the handle before the pack is asked (decision 0399).
 - **A discoverer has no handle and no token.** `discover` is given a `SandboxPort`, a scope, and a sink. The port's one method takes no `Authority`, so there is nowhere to pass a token; a `DriverHandle` comes only from the registry, which no pack is given; an `IntentToken` has no public constructor. `ReadOnlyPort` sends every step with `Authority::Read`, so a step marked `commits` is refused before the driver sees it. For a first-party pack that is structural and reviewed; for a plug-in it is only as strong as the effects listing says. What a read-only step is, for its archetype, each pack states and its conformance test proves. The limit of this: a discoverer builds its own steps, and the driver behind the port may be another pack's, so a step of a kind that saves, sent without the `commits` mark, is stopped by that driver's own posture guard and by nothing in the kernel, unless the mode lists the kind under `commit_steps`. No first-party manifest lists one yet.
 - **`CheckedPath` refuses the same forms on every operating system:** an empty path, an absolute path, `.` and `..`, a backslash, a colon (so every drive, stream, and network form), a home folder mark, a control character, a part that ends with a dot or a space, a device name, and a link that leads outside the root. A link that stays inside is followed. The path is resolved once; every method that opens the file looks once more that it still resolves inside the root.
 - **What `check` and `join` promise about links.** Every link that exists in the path when it is made is followed, in a folder on the way and at the final name alike, as long as it leads inside the root; one that leads outside, or nowhere, is refused. So the path a `CheckedPath` holds, which `as_path` gives and the reading methods use, has no link in it, and a pack that looks at it cannot tell a file from a link to one. `entry_kind` is how it can: it reports what stands at the final name as written, `Absent`, `File`, `Folder`, `Link`, or `Other`, and follows nothing.
@@ -771,6 +794,7 @@ The codes are declared in this crate's `failure_codes!` table, the module `codes
 12. Done ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)): each destination carries its scope, read by `ScopedHost::of_destination` from its own address when `Destinations::new` builds the set, and returned by `scope_of`. Nothing else sets it, and the allow-list still compares addresses as written. `tests/destinations.rs`; the engine's `a_destinations_scope_comes_from_its_address_and_never_from_an_input`. Not built: any check that decides by a scope.
 13. Done ([decision 0313](../../decisions/0313-the-place-of-an-address-is-derived-from-its-scope-and-the-machines-subnets.md)): `NetworkPlace`, `Placed`, `MachineState`, and `Destinations::place_of`: the place of an address, derived from its scope and the subnets of the machine's interfaces that are up, never from an input and never by resolving a name. `src/place.rs` unit tests; `tests/destinations.rs`. Not built: any check that decides from a place, and `via_gateway`.
 14. Done in part ([decision 0327](../../decisions/0327-a-reach-is-a-record-in-force-only-on-the-network-it-was-named-on-and-via-gateway-is-derived-from-it.md), slice N3): `Reach`, `ReachEntry`, `GatewayName`, `PlacedInReach`, and `NetworkPlace::of_in_reach`, which gives `via_gateway` only where a reach in force names a gateway for the destination, and so the place of a destination now depends on the network the machine is on. A reach is in force only where its fingerprint (`a2m-netstate`) is recognized as the current one. Tests: `reach.rs`. Not built: the protected store of reaches and the person's actions to name, list, and withdraw one, which are `a2m-actions`'.
+17. Done ([decision 0399](../../decisions/0399-traffic-capture-is-a-capability-of-the-provider-contract-that-yields-structure-only.md), package E2): `points.traffic_capture`, `CaptureSource`, `TrafficCapture`, `CapturedTraffic`, `CapturedRequest`, `take_capture`, `kept_by_structure`, `Registrar::traffic_capture`, `Registry::captures_for`, `CaptureHandle`, `Capturing`. Tests: `tests/capture.rs`. No action handler opens a capture through the registry yet.
 16. Done ([decision 0343](../../decisions/0343-the-decompiling-engine-is-a-discoverer-of-the-provider-contract-that-starts-only-a-pinned-program-and-reads-one-form.md), package X6): the module `decompiler`: `Decompiler` (the place the person named and the digests the product pins; `identify` looks at the program and starts nothing; `decompile` is handed a `CheckedPath` of a regular file and never a process), `DecompilerSpec`, `DecompilerDiscoverer`, and `DecompilerDescriber`; the codes `decompiler_not_installed`, `decompiler_not_pinned`, `decompiler_spec_invalid`, `decompiler_failed`, and `decompiler_output_unknown`; the stand `targets/example-decompiler`. The findings are `artifact`, `inferred`, and carry the engine's digest. Not built: the settings and the pack that register it, and the first engine's adapter and pinned digests.
 
 ## Open points
