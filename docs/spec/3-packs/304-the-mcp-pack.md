@@ -10,7 +10,7 @@ The pack is one crate, `a2m-pack-mcp`. It has no base crate and depends on no ot
 
 | Reaches | How |
 | --- | --- |
-| A local MCP server program | Started through the supervisor the pack's context scopes to the programs the published plan declares, by path and digest, with its arguments and an allowlisted environment ([section 204](../2-kernel/204-supervising-subsystems.md)). The program, its digest, its arguments, and its environment are fields of its `mcp` surface. On every system it speaks over its standard streams, and before every start it is held to the provider's check of who may change it, as a command program is: its file and every folder on the way closed to other users, and no shell, interpreter, batch file, or script ([decision 0250](../../decisions/0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md)). A server that an interpreter runs from a script is not started yet |
+| A local MCP server program | Started through the supervisor the pack's context scopes to the programs the published plan declares, by path and digest, with its arguments and an allowlisted environment ([section 204](../2-kernel/204-supervising-subsystems.md)). The program, its digest, its arguments, and its environment are fields of its `mcp` surface. On every system it speaks over its standard streams, and before every start it is held to the provider's check of who may change it, as a command program is: its file and every folder on the way closed to other users, and no shell, interpreter, batch file, or script ([decision 0250](../../decisions/0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md)). A server a launcher runs from its installed entry file is started through a launcher of the provider's closed table of interpreter forms, in its one form, with the entry file pinned by `entry_digest`, checked before every start, and run where it lies; a package runner, which fetches code as it starts, is refused with what to do instead ([decision 0399](../../decisions/0399-the-mcp-pack-starts-a-server-through-a-launcher-with-its-installed-entry-file-pinned-where-it-lies.md)) |
 | A remote MCP server | Over HTTP, at the address its `mcp` surface declares, with the protocol's own authorization. As built: HTTP with a bearer token, and HTTPS in a build with the feature `tls` ([decision 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)); the protocol's authorization flow is not built |
 | A server used only to help discovery | A mapping with `purpose: discovery`, whose tools can never be bound to an operation |
 
@@ -144,7 +144,9 @@ As built, the drafter writes the mapping entry for either kind of tool, and the 
 | --- | --- | --- |
 | `mcp.tool_unmapped` | Error | A binding names a tool its surface's mapping does not |
 | `mcp.tool_unpinned` | Error | A mapped tool with no definition digest |
-| `mcp.program_unpinned` | Error | A local server program with no digest |
+| `mcp.program_unpinned` | Error | A local server program, or the entry file a launcher runs, with no digest |
+| `mcp.package_runner` | Error | A local server program that is a package runner |
+| `mcp.launcher_form` | Error | An entry file whose program is not a launcher of the provider's table in its one form |
 | `mcp.write_no_readback` | Error, unless the tool is mapped `irreversible` | A write tool with no mapped read tool |
 | `mcp.discovery_bound` | Error | A binding to a tool on a `discovery` mapping |
 | `mcp.environment_refused` | Error | A local server program is handed a variable of the engine's (a name that starts with `A2M_`), one that makes a program load code other than its own ([decision 0250](../../decisions/0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md)), or one named for a credential. The driver refuses them again at run time, and the supervisor refuses the first two |

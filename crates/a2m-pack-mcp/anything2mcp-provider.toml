@@ -93,6 +93,18 @@ class = "policy"
 code = "program_path_unsafe"
 
 [[failure_codes]]
+class = "drift"
+code = "entry_digest_changed"
+
+[[failure_codes]]
+class = "policy"
+code = "package_runner_refused"
+
+[[failure_codes]]
+class = "policy"
+code = "launcher_not_in_table"
+
+[[failure_codes]]
 class = "policy"
 code = "product_header_refused"
 
@@ -150,7 +162,7 @@ summary = "A mapped tool states the digest of its definition."
 [[lint_rules]]
 code = "mcp.program_unpinned"
 level = "error"
-summary = "A local server program states its digest."
+summary = "A local server program states its digest, and so does the entry file a launcher runs."
 
 [[lint_rules]]
 code = "mcp.write_no_readback"
@@ -176,6 +188,16 @@ summary = "A local server program is handed no variable of the engine's, none th
 code = "mcp.unencrypted_credentials"
 level = "warning"
 summary = "A surface that sends its credentials over an unencrypted link says so, and is reported on every lint."
+
+[[lint_rules]]
+code = "mcp.package_runner"
+level = "error"
+summary = "A local server program is not a package runner, which fetches the code it runs when it starts."
+
+[[lint_rules]]
+code = "mcp.launcher_form"
+level = "error"
+summary = "A surface that names an entry file names a launcher of the provider's table as its program, in that launcher's one form."
 
 [[drafting_rules]]
 finding_kind = "upstream_tool"

@@ -470,11 +470,38 @@ impl Lowering for McpLowering {
                     })
                 }),
         );
-        Statement::Stated(BindingStatement {
-            runs: vec![ProgramRun::Program {
+        // A launcher and the entry file it runs are the fixed pair the
+        // review shows for a script: the launcher, its fixed arguments, and
+        // the file with its digest (decision 0399).
+        let run = match (
+            surface.doc.text(crate::mapping::ENTRY),
+            surface
+                .doc
+                .text(crate::mapping::ENTRY_DIGEST)
+                .and_then(parse_digest),
+        ) {
+            (Some(entry), Some(script_digest)) => ProgramRun::Script {
+                interpreter: path.to_owned(),
+                interpreter_digests: digests,
+                arguments: surface
+                    .doc
+                    .get(crate::mapping::LAUNCHER_ARGS)
+                    .map(Located::items)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|item| item.as_text().map(str::to_owned))
+                    .collect(),
+                script: entry.to_owned(),
+                script_digest,
+            },
+            (Some(_), None) => return Statement::NotStated,
+            (None, _) => ProgramRun::Program {
                 path: path.to_owned(),
                 digests,
-            }],
+            },
+        };
+        Statement::Stated(BindingStatement {
+            runs: vec![run],
             environment,
             sends: Sends::NotStated,
         })
@@ -784,10 +811,12 @@ pub(crate) enum Rule {
     FreeText,
     EnvironmentRefused,
     UnencryptedCredentials,
+    PackageRunner,
+    LauncherForm,
 }
 
 impl Rule {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 10] = [
         Self::ToolUnmapped,
         Self::ToolUnpinned,
         Self::ProgramUnpinned,
@@ -796,6 +825,8 @@ impl Rule {
         Self::FreeText,
         Self::EnvironmentRefused,
         Self::UnencryptedCredentials,
+        Self::PackageRunner,
+        Self::LauncherForm,
     ];
 }
 
@@ -832,6 +863,8 @@ impl LintRule for Rule {
             Self::FreeText => names::FREE_TEXT,
             Self::EnvironmentRefused => names::ENVIRONMENT_REFUSED,
             Self::UnencryptedCredentials => names::UNENCRYPTED_CREDENTIALS,
+            Self::PackageRunner => names::PACKAGE_RUNNER,
+            Self::LauncherForm => names::LAUNCHER_FORM,
         }
     }
 
@@ -846,7 +879,9 @@ impl LintRule for Rule {
         match self {
             Self::ToolUnmapped => "A binding names a tool that its surface's mapping names.",
             Self::ToolUnpinned => "A mapped tool states the digest of its definition.",
-            Self::ProgramUnpinned => "A local server program states its digest.",
+            Self::ProgramUnpinned => {
+                "A local server program states its digest, and so does the entry file a launcher runs."
+            }
             Self::WriteNoReadback => {
                 "A tool mapped as a write names a mapped read tool whose result has fields, or is mapped as irreversible."
             }
@@ -861,6 +896,12 @@ impl LintRule for Rule {
             }
             Self::UnencryptedCredentials => {
                 "A surface that sends its credentials over an unencrypted link says so, and is reported on every lint."
+            }
+            Self::PackageRunner => {
+                "A local server program is not a package runner, which fetches the code it runs when it starts."
+            }
+            Self::LauncherForm => {
+                "A surface that names an entry file names a launcher of the provider's table as its program, in that launcher's one form."
             }
         }
     }
@@ -930,6 +971,88 @@ impl LintRule for Rule {
                         ),
                         "Add `digest:` with the SHA-256 digest of the program that was reviewed.",
                     )
+                })
+                .chain(
+                    target
+                        .surfaces()
+                        .into_iter()
+                        .filter(|surface| *surface.kind == names::SURFACE_KIND)
+                        .filter(|surface| {
+                            surface.doc.get(crate::mapping::ENTRY).is_some()
+                                && surface
+                                    .doc
+                                    .text(crate::mapping::ENTRY_DIGEST)
+                                    .and_then(parse_digest)
+                                    .is_none()
+                        })
+                        .map(|surface| {
+                            problem(
+                                &surface.doc.at,
+                                format!(
+                                    "The surface `{}` names an entry file for its launcher and states no SHA-256 digest for it.",
+                                    surface.name
+                                ),
+                                "Add `entry_digest:` with the SHA-256 digest of the installed entry file that was reviewed.",
+                            )
+                        }),
+                )
+                .collect(),
+            Self::PackageRunner => target
+                .surfaces()
+                .into_iter()
+                .filter(|surface| *surface.kind == names::SURFACE_KIND)
+                .filter_map(|surface| {
+                    let program = surface.doc.get("program")?;
+                    crate::mapping::is_package_runner(program.as_text()?).then(|| {
+                        problem(
+                            &program.at,
+                            format!(
+                                "The surface `{}` starts its server through a package runner, which fetches the code it runs when it starts; nothing the product starts fetches code then.",
+                                surface.name
+                            ),
+                            "Install the server's package, then name the launcher of the provider's table as `program` and the installed entry file as `entry`, each with its digest.",
+                        )
+                    })
+                })
+                .collect(),
+            Self::LauncherForm => target
+                .surfaces()
+                .into_iter()
+                .filter(|surface| *surface.kind == names::SURFACE_KIND)
+                .filter_map(|surface| {
+                    let launcher_args: Vec<String> = surface
+                        .doc
+                        .get(crate::mapping::LAUNCHER_ARGS)
+                        .map(Located::items)
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|item| item.as_text().map(str::to_owned))
+                        .collect();
+                    let entry = surface.doc.get(crate::mapping::ENTRY);
+                    let program = surface.doc.get("program");
+                    let why = match (entry, program.and_then(|program| program.as_text())) {
+                        (None, _) if surface.doc.get(crate::mapping::LAUNCHER_ARGS).is_some() => {
+                            "gives a launcher's arguments and names no entry file"
+                        }
+                        (None, _) => return None,
+                        (Some(_), None) => "names an entry file and no program to run it",
+                        (Some(_), Some(path)) => {
+                            match a2m_provider::interpreter_form(path, &launcher_args) {
+                                Ok(()) => return None,
+                                Err(a2m_provider::InterpreterRefused::NotItsForm(_)) => {
+                                    "gives its launcher arguments that are not that launcher's one form"
+                                }
+                                Err(_) => {
+                                    "names an entry file, and its program is not a launcher of the provider's table"
+                                }
+                            }
+                        }
+                    };
+                    Some(problem(
+                        &surface.doc.at,
+                        format!("The surface `{}` {why}.", surface.name),
+                        "Name a launcher of the table as `program`, with the fixed arguments of its form as `launcher_args`, and the server's installed entry file as `entry`; or name a program that is itself the server and no entry file.",
+                    ))
                 })
                 .collect(),
             Self::UnencryptedCredentials => target

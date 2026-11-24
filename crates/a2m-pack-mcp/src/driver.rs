@@ -39,6 +39,9 @@ enum FarEnd {
     Program {
         path: String,
         digest: Option<String>,
+        /// The entry file a launcher runs, and the digest that pins it.
+        entry: Option<(String, String)>,
+        launcher_args: Vec<String>,
         args: Vec<String>,
         environment: BTreeMap<String, String>,
         pass_environment: Vec<String>,
@@ -71,6 +74,35 @@ impl FarEnd {
                     "The local server program of the surface is not one the published plan declares for it.",
                 )));
             }
+            // An entry file is started only pinned, and only as the plan
+            // declares it for the surface (decision 0399).
+            let entry = match (fields.entry.as_deref(), fields.entry_digest.as_deref()) {
+                (None, None) => None,
+                (Some(entry), Some(stated)) => {
+                    let pinned = parse_digest(stated);
+                    let declared =
+                        pinned.is_some()
+                            && cx.surface.surface.programs.iter().any(|declared| {
+                                declared.path == entry && declared.digest == pinned
+                            });
+                    if !declared {
+                        return Err(unsent(codes::not_granted(
+                            "The entry file of the surface's local server is not one the published plan declares for it, pinned by its digest.",
+                        )));
+                    }
+                    Some((entry.to_owned(), stated.to_owned()))
+                }
+                _ => {
+                    return Err(unsent(codes::plan_unreadable(
+                        "a surface names an entry file and no digest for it, or a digest and no entry file",
+                    )));
+                }
+            };
+            if entry.is_none() && !fields.launcher_args.is_empty() {
+                return Err(unsent(codes::plan_unreadable(
+                    "a surface gives a launcher's arguments and names no entry file",
+                )));
+            }
             // Whatever the plan holds, the engine's own variables and
             // credentials never reach a program through its environment.
             if let Some((name, why)) = fields
@@ -84,6 +116,8 @@ impl FarEnd {
             return Ok(Self::Program {
                 path: program.to_owned(),
                 digest: fields.digest.clone(),
+                entry,
+                launcher_args: fields.launcher_args.clone(),
                 args: fields.args.clone(),
                 environment: fields.environment.clone(),
                 pass_environment: fields.pass_environment.clone(),
@@ -325,6 +359,12 @@ impl McpDriver {
     /// other users, and it may not be a shell, an interpreter, a batch file,
     /// or a script. No group counts as the administrators' beyond the
     /// system's own: the pack has no setting that names one.
+    ///
+    /// A surface that names an entry file starts its program as a launcher
+    /// of the provider's closed table of interpreter forms, in its one form,
+    /// given the entry file and then the surface's arguments; the entry
+    /// file is checked and its digest measured before every start (decision
+    /// 0399). A package runner is refused whatever the surface names.
     async fn open_local(
         &self,
         cx: &PrepareContext<'_>,
@@ -336,21 +376,78 @@ impl McpDriver {
             SubsystemKind, check_program,
         };
 
+        // A package runner fetches what it runs as it starts: refused, by
+        // its declared name and by the name of the file the path leads to,
+        // with what to do instead (decision 0299, point 5).
+        let real = {
+            let program = program.to_owned();
+            tokio::task::spawn_blocking(move || std::fs::canonicalize(program).ok())
+                .await
+                .ok()
+                .flatten()
+        };
+        let names = std::iter::once(std::path::PathBuf::from(program)).chain(real);
+        if names
+            .clone()
+            .any(|name| crate::mapping::is_package_runner(&name.to_string_lossy()))
+        {
+            return Err(unsent(codes::package_runner_refused(program)));
+        }
+        let entry = fields.entry.as_deref().zip(fields.entry_digest.as_deref());
+        // A launcher runs an entry file only in the one form the provider's
+        // closed table gives it, by both names (decision 0399).
+        if entry.is_some() {
+            for name in names {
+                let why = match a2m_provider::interpreter_form(
+                    &name.to_string_lossy(),
+                    &fields.launcher_args,
+                ) {
+                    Ok(()) => continue,
+                    Err(a2m_provider::InterpreterRefused::NotItsForm(_)) => {
+                        "the arguments given before the entry file are not its launcher's form"
+                    }
+                    Err(_) => "it is not a launcher of the provider's table",
+                };
+                return Err(unsent(codes::launcher_not_in_table(program, why)));
+            }
+        }
+        let role = if entry.is_some() {
+            ProgramRole::Interpreter
+        } else {
+            ProgramRole::Program
+        };
         let checked = std::path::PathBuf::from(program);
         let verdict = tokio::task::spawn_blocking(move || {
-            check_program(&checked, &ProgramTrust::default(), ProgramRole::Program)
+            check_program(&checked, &ProgramTrust::default(), role)
         })
         .await
         .unwrap_or(Err(ProgramRefused::Missing));
         if let Err(why) = verdict {
-            return Err(unsent(codes::program_refused(&why, program)));
+            let noun = if entry.is_some() {
+                "launcher of the local server"
+            } else {
+                "local server program"
+            };
+            return Err(unsent(codes::file_refused(&why, program, noun)));
         }
+        let mut args: Vec<std::ffi::OsString> = Vec::new();
+        if let Some((entry, stated)) = entry {
+            let pinned = parse_digest(stated).ok_or_else(|| {
+                unsent(codes::plan_unreadable(
+                    "the entry file's digest is not a SHA-256 digest",
+                ))
+            })?;
+            checked_entry(entry, pinned).await?;
+            args.extend(fields.launcher_args.iter().map(Into::into));
+            args.push(entry.into());
+        }
+        args.extend(fields.args.iter().map(Into::into));
         let spec = LaunchSpec {
             program: ProgramRef {
                 path: program.into(),
                 digest: fields.digest.as_deref().and_then(parse_digest),
             },
-            args: fields.args.iter().map(Into::into).collect(),
+            args,
             env: EnvAllowlist {
                 pass: passed(&fields.pass_environment),
                 set: fields
@@ -530,6 +627,32 @@ impl State {
             "gone": gone,
         });
         Values::new().with("listing", canonical(&listing))
+    }
+}
+
+/// Holds the entry file of a server started through a launcher to what it
+/// must be before every start (decision 0399): it and every folder on the
+/// way to it closed to other users, as the provider checks a file the
+/// engine wrote, and its bytes the ones `pinned` names. It is run where it
+/// lies, so that the files it loads beside it load; those are not pinned.
+async fn checked_entry(entry: &str, pinned: Digest) -> Result<(), StepFailure> {
+    use a2m_provider::{ProgramRefused, ProgramRole, ProgramTrust, check_program};
+    let path = std::path::PathBuf::from(entry);
+    let verdict = tokio::task::spawn_blocking(move || {
+        check_program(&path, &ProgramTrust::default(), ProgramRole::Script)?;
+        let bytes = std::fs::read(&path).map_err(|_| ProgramRefused::Missing)?;
+        Ok::<Digest, ProgramRefused>(Digest::of(&bytes))
+    })
+    .await
+    .unwrap_or(Err(ProgramRefused::Missing));
+    match verdict {
+        Ok(found) if found == pinned => Ok(()),
+        Ok(_) => Err(unsent(codes::entry_digest_changed(entry, "as it lies"))),
+        Err(why) => Err(unsent(codes::file_refused(
+            &why,
+            entry,
+            "entry file of the local server",
+        ))),
     }
 }
 

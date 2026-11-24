@@ -45,6 +45,8 @@ pub(crate) const DISCOVERY_BOUND: LintCode = LintCode::fixed("mcp.discovery_boun
 pub(crate) const FREE_TEXT: LintCode = LintCode::fixed("mcp.free_text");
 pub(crate) const ENVIRONMENT_REFUSED: LintCode = LintCode::fixed("mcp.environment_refused");
 pub(crate) const UNENCRYPTED_CREDENTIALS: LintCode = LintCode::fixed("mcp.unencrypted_credentials");
+pub(crate) const PACKAGE_RUNNER: LintCode = LintCode::fixed("mcp.package_runner");
+pub(crate) const LAUNCHER_FORM: LintCode = LintCode::fixed("mcp.launcher_form");
 /// Codes of the lowering and of the mapping's own compile step.
 pub(crate) const EFFECT_UNDERSTATED: LintCode = LintCode::fixed("mcp.effect_understated");
 pub(crate) const BINDING_INCOMPLETE: LintCode = LintCode::fixed("mcp.binding_incomplete");
