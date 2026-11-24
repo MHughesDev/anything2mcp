@@ -140,7 +140,7 @@ fn only_an_absolute_path_is_opened() {
     }
 }
 
-// ---- the driver, given a plan the compiler would not make ----
+// ---- the driver, given a compiled target the compiler would not make ----
 
 #[tokio::test]
 async fn a_read_that_attaches_a_file_an_input_names_is_refused_unsent() {
@@ -182,10 +182,11 @@ async fn a_read_that_attaches_a_file_an_input_names_is_refused_unsent() {
 }
 
 /// The embedded dialect holds the refusal of decision 0184 as the server's
-/// does (`a_comment_the_server_ends_at_a_carriage_return_is_refused_before_it_is_sent`):
+/// does
+/// (`a_comment_the_server_ends_at_a_carriage_return_is_refused_before_it_is_sent`):
 /// the bundled store reads a form feed and a carriage return as space and
-/// runs such a statement, and the driver refuses every control character
-/// but a line feed and a tab in a plan's statement, before it is sent.
+/// runs such a statement, and the driver refuses every control character but
+/// a line feed and a tab in a compiled target's statement, before it is sent.
 #[tokio::test]
 async fn a_control_character_in_an_embedded_statement_is_refused_unsent() {
     let db = TestDb::start().unwrap();

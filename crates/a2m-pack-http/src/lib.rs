@@ -1,11 +1,11 @@
 //! The HTTP pack: a target can be a service reached by HTTP requests.
 //!
 //! The pack owns the endpoint catalog, the `endpoints/` file kind, and
-//! compiles each entry into a typed request template, its own payload in
-//! the plan. Its driver, of the mode `http`, builds every request position
-//! by position from a template, sends it to the surface's own address with
-//! no browser, and checks the answer against the shape the endpoint
-//! declares. Its discoverers read a published description and what a
+//! compiles each entry into a typed request template, its own payload in the
+//! compiled target. Its driver, of the mode `http`, builds every request
+//! position by position from a template, sends it to the surface's own
+//! address with no browser, and checks the answer against the shape the
+//! endpoint declares. Its discoverers read a published description and what a
 //! surface says about itself, with requests that cannot write.
 //!
 //! The product crate registers the pack with one call:

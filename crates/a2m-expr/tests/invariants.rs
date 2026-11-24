@@ -3,13 +3,13 @@
 use std::collections::BTreeSet;
 
 use a2m_core::{
-    CodeLabel, Date, Decimal, Failure, FailureClass, FieldOf, Millis, PlanExpr, Rounding,
+    CodeLabel, CompiledExpr, Date, Decimal, Failure, FailureClass, FieldOf, Millis, Rounding,
     Timestamp, Value, ValueType, Values,
 };
 use a2m_expr::{
-    Bindings, COST_LIMIT, Checked, DecimalMark, EXPRESSION_COST_EXCEEDED, EXPRESSION_INVALID,
-    EXPRESSION_TYPE_ERROR, ExprError, FieldRule, LibraryVersion, Normalizer,
-    PLAN_EXPRESSION_UNLOADABLE, Program, Span, TypeEnv, VALUE_ABSENT, VALUE_OUT_OF_RANGE,
+    Bindings, COMPILED_EXPRESSION_UNLOADABLE, COST_LIMIT, Checked, DecimalMark,
+    EXPRESSION_COST_EXCEEDED, EXPRESSION_INVALID, EXPRESSION_TYPE_ERROR, ExprError, FieldRule,
+    LibraryVersion, Normalizer, Program, Span, TypeEnv, VALUE_ABSENT, VALUE_OUT_OF_RANGE,
     VALUE_UNPARSABLE, Whitespace, compile, library, names,
 };
 
@@ -110,8 +110,8 @@ fn bound() -> Bound {
 
 fn run(source: &str, expected: Option<&ValueType>) -> Result<Value, Failure> {
     let compiled = compile(source, &env(), expected).map_err(Failure::from)?;
-    let plan = compiled.to_plan_expr().map_err(Failure::from)?;
-    let program = Program::load(&plan)?;
+    let compiled_target = compiled.to_compiled_expr().map_err(Failure::from)?;
+    let program = Program::load(&compiled_target)?;
     let bound = bound();
     let bindings = Bindings::new()
         .with(names::INPUT, &bound.input)
@@ -129,7 +129,7 @@ fn refused(source: &str) -> ExprError {
 }
 
 #[test]
-fn the_same_source_compiles_to_the_same_plan_expression() {
+fn the_same_source_compiles_to_the_same_compiled_target_expression() {
     let env = env();
     let first = compile(
         "round_to( input.price*decimal('2') ,2,\"half_even\" )",
@@ -150,14 +150,17 @@ fn the_same_source_compiles_to_the_same_plan_expression() {
     )
     .unwrap();
     assert_eq!(first, again);
-    assert_eq!(first.to_plan_expr().unwrap(), again.to_plan_expr().unwrap());
     assert_eq!(
-        first.to_plan_expr().unwrap(),
-        spaced.to_plan_expr().unwrap()
+        first.to_compiled_expr().unwrap(),
+        again.to_compiled_expr().unwrap()
     );
     assert_eq!(
-        first.to_plan_expr().unwrap(),
-        PlanExpr {
+        first.to_compiled_expr().unwrap(),
+        spaced.to_compiled_expr().unwrap()
+    );
+    assert_eq!(
+        first.to_compiled_expr().unwrap(),
+        CompiledExpr {
             source: "round_to(input.price * decimal(\"2\"), 2, \"half_even\")".to_owned(),
             result: ValueType::Decimal,
             library: 1,
@@ -295,13 +298,13 @@ fn a_float_an_unknown_name_and_a_wrong_type_are_refused_with_a_place() {
 }
 
 #[test]
-fn an_unknown_type_compiles_as_a_warning_and_cannot_reach_a_plan() {
+fn an_unknown_type_compiles_as_a_warning_and_cannot_reach_a_compiled_target() {
     let mut env = TypeEnv::new(LibraryVersion::CURRENT);
     env.declare_unknown("row").unwrap();
     let draft = compile("row.qty", &env, None).unwrap();
     assert_eq!(draft.result(), &Checked::Dyn);
     assert_eq!(
-        draft.to_plan_expr().unwrap_err().code,
+        draft.to_compiled_expr().unwrap_err().code,
         EXPRESSION_TYPE_ERROR
     );
     // Once a function states the type, the result is known.
@@ -638,7 +641,7 @@ fn decimals_are_exact_where_a_float_is_not() {
 fn normalizer(rule: &FieldRule) -> Normalizer {
     let compiled = ok(rule.normalizer());
     assert_eq!(compiled.names(), ["value".to_owned()]);
-    ok(Normalizer::load(&ok(compiled.to_plan_expr())))
+    ok(Normalizer::load(&ok(compiled.to_compiled_expr())))
 }
 
 #[test]
@@ -955,15 +958,15 @@ fn a_choice_read_back_never_stands_for_two_choices() {
         "{refusal}"
     );
 
-    // A plan the compiler did not make cannot carry the list either: the
-    // text is canonical, and the load checks the rule again.
-    let stored = PlanExpr {
+    // A compiled target the compiler did not make cannot carry the list
+    // either: the text is canonical, and the load checks the rule again.
+    let stored = CompiledExpr {
         source: "as_choice(value, {\"A\": \"B\", \"B\": \"C\"})".into(),
         result: ValueType::Choice,
         library: LibraryVersion::CURRENT.get(),
     };
     let failure = Normalizer::load(&stored).unwrap_err();
-    assert_eq!(failure.code(), &PLAN_EXPRESSION_UNLOADABLE);
+    assert_eq!(failure.code(), &COMPILED_EXPRESSION_UNLOADABLE);
 
     // A code may be its own label, and codes may differ from labels in
     // case: neither makes one text stand for two choices.
@@ -1083,7 +1086,7 @@ fn the_cost_limit_stops_a_runaway_with_a_named_failure() {
     let bindings = Bindings::new().with("rows", &rows);
     let load = |source: &str| {
         let compiled = compile(source, &env, None).unwrap();
-        Program::load(&compiled.to_plan_expr().unwrap()).unwrap()
+        Program::load(&compiled.to_compiled_expr().unwrap()).unwrap()
     };
     // 300 cubed is 27 million steps: far past the limit.
     let runaway = load("rows.all(a, rows.all(b, rows.all(c, a + b + c >= 0)))");
@@ -1102,7 +1105,7 @@ fn the_cost_limit_stops_a_runaway_with_a_named_failure() {
     env.declare("text", ValueType::Text).unwrap();
     let text = Value::Text("a ".repeat(40_000_000));
     let compiled = compile("collapse_space(text)", &env, None).unwrap();
-    let program = Program::load(&compiled.to_plan_expr().unwrap()).unwrap();
+    let program = Program::load(&compiled.to_compiled_expr().unwrap()).unwrap();
     let failure = program
         .evaluate(&Bindings::new().with("text", &text))
         .unwrap_err();
@@ -1199,7 +1202,7 @@ fn a_failure_never_carries_a_bound_value() {
         "any == text",
     ] {
         let compiled = compile(source, &env, None).unwrap();
-        let plan = PlanExpr {
+        let compiled_target = CompiledExpr {
             source: compiled.source().to_owned(),
             result: match compiled.result() {
                 Checked::Known(result) => result.clone(),
@@ -1207,7 +1210,7 @@ fn a_failure_never_carries_a_bound_value() {
             },
             library: 1,
         };
-        let failure = Program::load(&plan)
+        let failure = Program::load(&compiled_target)
             .unwrap()
             .evaluate(&bindings)
             .unwrap_err();
@@ -1218,59 +1221,63 @@ fn a_failure_never_carries_a_bound_value() {
 }
 
 #[test]
-fn a_plan_expression_loads_only_when_it_is_what_the_compiler_wrote() {
+fn a_compiled_target_expression_loads_only_when_it_is_what_the_compiler_wrote() {
     let good = compile("trim(input.name)", &env(), None)
         .unwrap()
-        .to_plan_expr()
+        .to_compiled_expr()
         .unwrap();
     let program = Program::load(&good).unwrap();
     assert_eq!(program.names(), ["input".to_owned()]);
     assert_eq!(program.result_type(), &ValueType::Text);
     let broken = [
         // A library this engine does not carry.
-        PlanExpr {
+        CompiledExpr {
             library: 2,
             ..good.clone()
         },
         // Text that is not canonical, or not an expression, or holds a float.
-        PlanExpr {
+        CompiledExpr {
             source: "trim( input.name )".into(),
             ..good.clone()
         },
-        PlanExpr {
+        CompiledExpr {
             source: "trim(".into(),
             ..good.clone()
         },
-        PlanExpr {
+        CompiledExpr {
             source: "1.5".into(),
             ..good.clone()
         },
         // A function this engine does not have.
-        PlanExpr {
+        CompiledExpr {
             source: "squash(input.name)".into(),
             ..good.clone()
         },
         // A type the text does not give.
-        PlanExpr {
+        CompiledExpr {
             result: ValueType::Decimal,
             ..good.clone()
         },
     ];
-    for plan in broken {
-        let failure = Program::load(&plan).unwrap_err();
-        assert_eq!(failure.class(), FailureClass::Input, "{plan:?}");
-        assert_eq!(failure.code(), &PLAN_EXPRESSION_UNLOADABLE, "{plan:?}");
+    for compiled_target in broken {
+        let failure = Program::load(&compiled_target).unwrap_err();
+        assert_eq!(failure.class(), FailureClass::Input, "{compiled_target:?}");
+        assert_eq!(
+            failure.code(),
+            &COMPILED_EXPRESSION_UNLOADABLE,
+            "{compiled_target:?}"
+        );
     }
     // A name the program reads must be bound.
     let failure = program.evaluate(&Bindings::new()).unwrap_err();
-    assert_eq!(failure.code(), &PLAN_EXPRESSION_UNLOADABLE);
+    assert_eq!(failure.code(), &COMPILED_EXPRESSION_UNLOADABLE);
     // Text from a value never becomes a decimal through `decimal`, even when
     // the checker could not see its type.
     let mut open = TypeEnv::new(LibraryVersion::CURRENT);
     open.declare_unknown("any").unwrap();
     let sneaky = compile("decimal(any)", &open, None)
         .unwrap()
-        .to_plan_expr()
+        .to_compiled_expr()
         .unwrap();
     let text = Value::from("1.5");
     let failure = Program::load(&sneaky)
@@ -1287,7 +1294,7 @@ fn a_plan_expression_loads_only_when_it_is_what_the_compiler_wrote() {
     // A normalizer reads only the raw value.
     assert_eq!(
         Normalizer::load(&good).unwrap_err().code(),
-        &PLAN_EXPRESSION_UNLOADABLE
+        &COMPILED_EXPRESSION_UNLOADABLE
     );
 }
 

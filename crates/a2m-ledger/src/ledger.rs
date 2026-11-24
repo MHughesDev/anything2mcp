@@ -95,7 +95,7 @@ pub struct NewRun {
     pub tool_kind: ToolKind,
     /// The target.
     pub target: TargetName,
-    /// The published version that runs: its plan's hash.
+    /// The published version that runs: its compiled target's hash.
     pub target_version: Digest,
     /// The environment.
     pub environment: Environment,

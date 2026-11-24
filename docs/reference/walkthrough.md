@@ -97,7 +97,7 @@ anything2mcp test
 anything2mcp publish
 ```
 
-The command returns exit code 3: a person must review. The person is shown the review summary, ordered by risk, and approves. The version is now published and its plan hash recorded.
+The command returns exit code 3: a person must review. The person is shown the review summary, ordered by risk, and approves. The version is now published and its compiled target hash recorded.
 
 ## 9. Connect an agent and use the tool
 

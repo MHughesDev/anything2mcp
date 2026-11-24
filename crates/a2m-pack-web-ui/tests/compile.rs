@@ -133,18 +133,22 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     assert_eq!(roots, ["profiles"]);
 }
 
-/// The hash of the plan the `example` pages target compiles to. Held in the
-/// source so that each of the three CI systems compares its own build to the
-/// same value (package 1.3): the plan's bytes carry no line ending of a
-/// system, and no path or time of a machine.
-const PAGES_PLAN_HASH: &str = "b7964c167c02b0501e690dd8083c2d794e4aba382193b9d8c3811416a51caf31";
+/// The hash of the compiled target the `example` pages target compiles to.
+/// Held in the source so that each of the three CI systems compares its own
+/// build to the same value (package 1.3): the compiled target's bytes carry
+/// no line ending of a system, and no path or time of a machine.
+const PAGES_COMPILED_TARGET_HASH: &str =
+    "b7964c167c02b0501e690dd8083c2d794e4aba382193b9d8c3811416a51caf31";
 
 #[test]
-fn the_pages_target_compiles_to_the_same_plan_bytes_on_every_machine() {
-    let stand = stand("plan_hash");
+fn the_pages_target_compiles_to_the_same_compiled_target_bytes_on_every_machine() {
+    let stand = stand("compiled_target_hash");
     let compiled = compile(&stand.registry, "example");
     assert!(!compiled.encoded.bytes.contains(&b'\r'));
-    assert_eq!(compiled.encoded.hash.to_string(), PAGES_PLAN_HASH);
+    assert_eq!(
+        compiled.encoded.hash.to_string(),
+        PAGES_COMPILED_TARGET_HASH
+    );
 }
 
 #[test]
@@ -157,8 +161,8 @@ fn the_fixture_target_compiles_twice_to_the_same_bytes() {
 
     // What a write lowers to: one commit point, which is the action, and a
     // read-back that is a lookup and never commits.
-    let plan = first.plan;
-    let update = plan
+    let compiled_target = first.compiled_target;
+    let update = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_line_item_update")
@@ -182,8 +186,8 @@ fn the_fixture_target_compiles_twice_to_the_same_bytes() {
             .all(|step| step.lookup && !step.commits)
     );
     // The locators are in the pack's section and nowhere in a step; the
-    // plan holds the path's template and no address.
-    let section = plan
+    // compiled target holds the path's template and no address.
+    let section = compiled_target
         .packs
         .iter()
         .find(|section| section.pack == "web")

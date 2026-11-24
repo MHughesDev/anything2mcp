@@ -14,8 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    Digest, EffectClass, Environment, Epoch, EvidenceLevel, Failure, FailureClass, OperationName,
-    Plan, PrincipalId, RecordKey, RunState, Step, TargetName, Timestamp, Value, Values,
+    CompiledTarget, Digest, EffectClass, Environment, Epoch, EvidenceLevel, Failure, FailureClass,
+    OperationName, PrincipalId, RecordKey, RunState, Step, TargetName, Timestamp, Value, Values,
     WorkspaceId,
 };
 use a2m_files::CompileMode;
@@ -164,13 +164,13 @@ async fn token(store: &Store, fence: Fence, record_seq: u32, name: &str) -> Inte
         .remove(0)
 }
 
-// ---- the plan, the registry, and one prepared driver ----
+// ---- the compiled target, the registry, and one prepared driver ----
 
 struct Scene {
     _folder: Folder,
     pack: TestPack,
     registry: Registry,
-    plan: Plan,
+    compiled_target: CompiledTarget,
     surface: SurfaceRef,
 }
 
@@ -188,38 +188,40 @@ fn scene_of(pack: TestPack, redact: Arc<dyn a2m_core::Redact>) -> Scene {
     builder.add_pack(&pack);
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
-    // A real plan, compiled from the example target by the compiler's own
-    // test pack. Its steps are of the kinds `fetch` and `send`.
+    // A real compiled target, compiled from the example target by the
+    // compiler's own test pack. Its steps are of the kinds `fetch` and
+    // `send`.
     let set = a2m_files::testing::stand_set().unwrap();
     let sources = a2m_files::load(&a2m_files::testing::example_root(), &set).unwrap();
-    let plan = a2m_files::compile(&sources, &set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
-        .unwrap()
-        .plan;
+    let compiled_target =
+        a2m_files::compile(&sources, &set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
+            .unwrap()
+            .compiled_target;
     let surface = SurfaceRef {
-        target: plan.header.target.clone(),
+        target: compiled_target.header.target.clone(),
         environment: Environment::new("test").unwrap(),
-        surface: plan.surfaces[0].clone(),
+        surface: compiled_target.surfaces[0].clone(),
     };
     Scene {
         _folder: folder,
         pack,
         registry,
-        plan,
+        compiled_target,
         surface,
     }
 }
 
 impl Scene {
-    /// A step of the plan, with the marks a test needs.
+    /// A step of the compiled target, with the marks a test needs.
     fn step(&self, kind: &str, commits: bool, lookup: bool) -> Step {
         let mut step = self
-            .plan
+            .compiled_target
             .operations
             .iter()
             .flat_map(|operation| &operation.bindings)
             .flat_map(|binding| binding.act.iter().chain(&binding.read_back))
             .next()
-            .expect("the example plan has a step")
+            .expect("the example compiled target has a step")
             .clone();
         step.kind = step_kind(kind);
         step.commits = commits;
@@ -238,7 +240,7 @@ impl Scene {
             run: fence.run,
             epoch: fence.epoch,
             surface: &self.surface,
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             posture,
             deadline: Deadline::after(Duration::from_secs(30)),
             redact: &a2m_core::NoSecrets,
@@ -773,7 +775,7 @@ async fn a_secret_a_driver_returns_does_not_pass_the_handle() {
 
 /// A mode may name the kinds of step that always save. The handle then
 /// refuses one sent as a step that commits nothing, whoever built the step:
-/// the plan, or a discoverer through the read-only port.
+/// the compiled target, or a discoverer through the read-only port.
 #[tokio::test]
 async fn a_step_of_a_kind_that_always_commits_is_refused_when_sent_as_a_read() {
     let declares = manifest("alpha", "request", "").replace(

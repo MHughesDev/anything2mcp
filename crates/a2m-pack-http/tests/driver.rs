@@ -430,12 +430,12 @@ async fn the_faults_of_the_application_are_each_named() {
     // Drift: the application's answer no longer fits the declared shape.
     let folder = Folder::new("drift");
     let registry = registry(&folder, Arc::new(NoSecrets));
-    let plan = compile_changed(&registry, "example", "endpoints/orders.yaml", |text| {
+    let compiled_target = compile_changed(&registry, "example", "endpoints/orders.yaml", |text| {
         text.replace("enum: [draft, submitted]", "enum: [open, closed]")
     })
     .unwrap()
-    .plan;
-    let drifted = Scene::over(folder, registry, plan, &app.url(""));
+    .compiled_target;
+    let drifted = Scene::over(folder, registry, compiled_target, &app.url(""));
     let (handle, mut prepared) = drifted.reader().await;
     let drift = drifted
         .read(&handle, &mut prepared, "example_order_get", &order)
@@ -770,12 +770,13 @@ async fn a_write_whose_answer_is_not_the_applications_verdict_is_in_doubt_and_ne
     // read: the write is in doubt.
     let folder = Folder::new("small");
     let registry = registry(&folder, Arc::new(NoSecrets));
-    let plan = compile_changed(&registry, "example", "endpoints/line_items.yaml", |text| {
-        text.replacen("effect: write", "effect: write\nmax_response_bytes: 8", 1)
-    })
-    .unwrap()
-    .plan;
-    let small = Scene::over(folder, registry, plan, &app.url(""));
+    let compiled_target =
+        compile_changed(&registry, "example", "endpoints/line_items.yaml", |text| {
+            text.replacen("effect: write", "effect: write\nmax_response_bytes: 8", 1)
+        })
+        .unwrap()
+        .compiled_target;
+    let small = Scene::over(folder, registry, compiled_target, &app.url(""));
     let large = saved_under(&app, &small, "L-905", None).await;
     in_doubt(&large, "an answer over the limit");
 

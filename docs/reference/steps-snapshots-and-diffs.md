@@ -1,10 +1,10 @@
 # Steps, snapshots, and diffs
 
-Three internal formats that several parts of the system share: the steps a compiled plan is made of, the snapshot an agent sees of a screen, and the diff a person approves. All three are built: the steps as the plan's types in `a2m-core`, the snapshot in the browser engine, and the diff with its hash in the engine and the ledger (package 3.5). Where this page and the code differ, the code is right and this page is to be corrected.
+Three internal formats that several parts of the system share: the steps a compiled target is made of, the snapshot an agent sees of a screen, and the diff a person approves. All three are built: the steps as the compiled target's types in `a2m-core`, the snapshot in the browser engine, and the diff with its hash in the engine and the ledger (package 3.5). Where this page and the code differ, the code is right and this page is to be corrected.
 
 ## Steps
 
-The compiler lowers each binding's verb into a fixed list of steps ([spec section 206](../spec/2-kernel/206-the-compiler-and-the-plan.md)). A driver knows only how to carry out its own step kinds. Fixed in Phase 1 for `ui`, Phase 4 for the HTTP kinds, Phase 8 for the rest.
+The compiler lowers each binding's verb into a fixed list of steps ([spec section 206](../spec/2-kernel/206-the-compiler-and-the-compiled-target.md)). A driver knows only how to carry out its own step kinds. Fixed in Phase 1 for `ui`, Phase 4 for the HTTP kinds, Phase 8 for the rest.
 
 **The engine loop**, the same in every mode, has the eight parts of [spec section 207](../spec/2-kernel/207-the-engine-loop.md): `guard`, `choose`, `prepare`, `intend`, `act`, `confirm`, `read_back`, `record`. These are parts of a loop, not steps. The steps below are what the parts `act`, `confirm`, and `read_back` expand into, and "step" alone always means one of these.
 

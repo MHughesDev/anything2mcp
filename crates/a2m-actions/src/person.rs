@@ -424,7 +424,7 @@ pub struct PreviewNotice {
 /// The notices `surface` carries, as its kind's pack registered them.
 pub(crate) fn notices_of(
     set: &a2m_files::CompilerSet,
-    surface: &a2m_core::SurfacePlan,
+    surface: &a2m_core::CompiledSurface,
 ) -> Vec<PreviewNotice> {
     set.surface_notices(surface)
         .into_iter()
@@ -700,28 +700,30 @@ impl ApprovalDesk {
             return Err(stale());
         }
         let counts = diff.counts();
-        // The plan the diff was made under, for the notices of the surfaces
-        // the records' bindings write to. Read from the store by the diff's
-        // own plan hash; where it cannot be read, no notice is invented and
-        // the page shows the rest.
-        let set_and_plan = match self.acts.kernel() {
+        // The compiled target the diff was made under, for the notices of the
+        // surfaces the records' bindings write to. Read from the store by the
+        // diff's own compiled target hash; where it cannot be read, no notice
+        // is invented and the page shows the rest.
+        let set_and_compiled_target = match self.acts.kernel() {
             Ok(kernel) => {
-                let (target, hash) = (diff.target.clone(), diff.plan);
+                let (target, hash) = (diff.target.clone(), diff.compiled_target);
                 self.store
                     .read(move |tx| tx.versions().load(&workspace, &target, &hash))
                     .await
                     .ok()
-                    .and_then(|encoded| a2m_core::Plan::decode(&encoded.bytes, &diff.plan).ok())
-                    .map(|plan| (kernel, plan))
+                    .and_then(|encoded| {
+                        a2m_core::CompiledTarget::decode(&encoded.bytes, &diff.compiled_target).ok()
+                    })
+                    .map(|compiled_target| (kernel, compiled_target))
             }
             Err(_) => None,
         };
         let notices_for = |record: &a2m_engine::DiffRecord| -> Vec<PreviewNotice> {
-            let Some((kernel, plan)) = set_and_plan.as_ref() else {
+            let Some((kernel, compiled_target)) = set_and_compiled_target.as_ref() else {
                 return Vec::new();
             };
             let set = kernel.providers().compiler_set();
-            let Some(operation) = plan
+            let Some(operation) = compiled_target
                 .operations
                 .iter()
                 .find(|operation| operation.name == record.operation)
@@ -739,7 +741,7 @@ impl ApprovalDesk {
             let mut found: Vec<PreviewNotice> = Vec::new();
             for surface in surfaces
                 .into_iter()
-                .filter_map(|index| plan.surfaces.get(index))
+                .filter_map(|index| compiled_target.surfaces.get(index))
             {
                 for notice in notices_of(set, surface) {
                     if !found.contains(&notice) {

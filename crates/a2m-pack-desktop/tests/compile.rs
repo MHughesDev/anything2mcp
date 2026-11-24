@@ -1,7 +1,8 @@
-//! The pack's compiler side, on every system: the fixture compiles into
-//! the same plan each time; a write lowers into `set` steps, one committing
-//! `invoke`, and a read-back on a screen reached afresh; each refusal of a
-//! write is by name; a locator is a known role and a name, nothing else.
+//! The pack's compiler side, on every system: the fixture compiles into the
+//! same compiled target each time; a write lowers into `set` steps, one
+//! committing `invoke`, and a read-back on a screen reached afresh; each
+//! refusal of a write is by name; a locator is a known role and a name,
+//! nothing else.
 
 #![allow(
     clippy::unwrap_used,
@@ -14,13 +15,13 @@ mod common;
 use common::{Folder, compile_at, fixture, fixture_copy, registry, shown};
 
 #[test]
-fn the_fixture_compiles_into_the_same_plan_each_time() {
+fn the_fixture_compiles_into_the_same_compiled_target_each_time() {
     let folder = Folder::new("compile");
     let registry = registry(folder.path(), None);
     let first = compile_at(&registry, &fixture()).unwrap_or_else(|p| panic!("{}", shown(&p)));
     let again = compile_at(&registry, &fixture()).unwrap();
-    assert_eq!(first.plan, again.plan);
-    let binding = common::binding_of(&first.plan, "example_order_get");
+    assert_eq!(first.compiled_target, again.compiled_target);
+    let binding = common::binding_of(&first.compiled_target, "example_order_get");
     let kinds: Vec<&str> = binding.act.iter().map(|step| step.kind.as_str()).collect();
     assert_eq!(kinds, ["goto", "wait", "read"]);
     assert!(binding.act.iter().all(|step| !step.commits));
@@ -31,11 +32,11 @@ fn the_fixture_compiles_into_the_same_plan_each_time() {
 fn a_write_lowers_into_sets_one_committing_invoke_and_a_read_back_afresh() {
     let folder = Folder::new("write");
     let registry = registry(folder.path(), None);
-    let plan = compile_at(&registry, &fixture())
+    let compiled_target = compile_at(&registry, &fixture())
         .unwrap_or_else(|p| panic!("{}", shown(&p)))
-        .plan;
+        .compiled_target;
     for operation in ["example_order_update", "example_order_upsert"] {
-        let binding = common::binding_of(&plan, operation);
+        let binding = common::binding_of(&compiled_target, operation);
         let kinds: Vec<&str> = binding.act.iter().map(|step| step.kind.as_str()).collect();
         let sets = if operation == "example_order_update" {
             2
@@ -190,10 +191,10 @@ fn a_locator_is_a_known_role_and_a_name_and_nothing_else() {
 fn a_property_of_a_service_lowers_into_one_step_that_only_reads() {
     let folder = Folder::new("property");
     let registry = registry(folder.path(), None);
-    let plan = compile_at(&registry, &fixture())
+    let compiled_target = compile_at(&registry, &fixture())
         .unwrap_or_else(|p| panic!("{}", shown(&p)))
-        .plan;
-    let binding = common::binding_of(&plan, "example_orders_total_get");
+        .compiled_target;
+    let binding = common::binding_of(&compiled_target, "example_orders_total_get");
     let kinds: Vec<&str> = binding.act.iter().map(|step| step.kind.as_str()).collect();
     assert_eq!(kinds, ["property"]);
     assert!(

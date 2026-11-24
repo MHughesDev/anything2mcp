@@ -46,10 +46,10 @@ fn compiled(profile: Option<&str>, id: &str) -> Result<(), String> {
 
 #[test]
 fn a_locator_built_on_an_identifier_the_platform_makes_does_not_compile() {
-    let refused = compiled(Some("aspnet_webforms"), "ctl00_Content_Reference").unwrap_err();
+    let refused = compiled(Some("server_postback_forms"), "ctl00_Content_Reference").unwrap_err();
     assert!(refused.contains("web.generated_id"), "{refused}");
     assert!(refused.contains("ctl00_Content_Reference"), "{refused}");
-    assert!(refused.contains("aspnet_webforms"), "{refused}");
+    assert!(refused.contains("server_postback_forms"), "{refused}");
     // The fix says what to locate by instead.
     assert!(refused.contains("label"), "{refused}");
 }
@@ -57,7 +57,7 @@ fn a_locator_built_on_an_identifier_the_platform_makes_does_not_compile() {
 #[test]
 fn the_same_locator_compiles_where_the_profile_does_not_reject_it() {
     // An identifier of the family that is not made by it.
-    compiled(Some("aspnet_webforms"), "reference").unwrap();
+    compiled(Some("server_postback_forms"), "reference").unwrap();
     // The same made identifier, on a profile that rejects none.
     compiled(Some("plain"), "ctl00_Content_Reference").unwrap();
     // No profile named, and `auto`, which the probe names.

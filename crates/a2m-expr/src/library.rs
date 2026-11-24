@@ -24,7 +24,7 @@ impl LibraryVersion {
         }
     }
 
-    /// The number a plan stores.
+    /// The number a compiled target stores.
     #[must_use]
     pub const fn get(self) -> u32 {
         self.0

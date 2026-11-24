@@ -1,6 +1,6 @@
 # The test application
 
-An imaginary order-entry system named `example`. Anything2MCP is proven against this application and never against a real one. The plan for it, and the list of cases it must imitate, is in [docs/plan/test-application.md](../../docs/plan/test-application.md). Cases 1 to 4 are built, and cases 6 to 9, 11, and 12 (the pages under `/cases`), and parts of cases 10, 11, 13 to 15, 17, 23, and 29 to 34; the table under "What is built" in the plan says which parts.
+An imaginary order-entry system named `example`. Anything2MCP is proven against this application and never against a real one. The plan for it, and the list of cases it must imitate, is in [docs/plan/test-application.md](../../docs/plan/test-application.md). Cases 1 to 4 are built, and cases 6 to 9, 11, and 12 (the pages under `/cases`), and parts of cases 10, 11, 13 to 15, 17, 23, and 29 to 34; the table under "What is built" in the compiled target says which parts.
 
 ## Running it
 

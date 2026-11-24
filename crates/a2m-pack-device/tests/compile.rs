@@ -47,19 +47,23 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
     assert_eq!(first.encoded.bytes, second.encoded.bytes);
     assert_eq!(first.encoded.hash, second.encoded.hash);
 
-    let plan = first.plan;
-    assert_eq!(plan.surfaces[0].kind.as_str(), "device_link");
+    let compiled_target = first.compiled_target;
+    assert_eq!(compiled_target.surfaces[0].kind.as_str(), "device_link");
     // The surface carries the serial of the unit of each environment.
-    let fields: serde_json::Value = plan.surfaces[0].payload.decode().unwrap();
+    let fields: serde_json::Value = compiled_target.surfaces[0].payload.decode().unwrap();
     assert_eq!(fields["serials"]["test"], "100123");
-    assert_eq!(plan.packs.len(), 1);
+    assert_eq!(compiled_target.packs.len(), 1);
     assert_eq!(
-        (plan.packs[0].pack.as_str(), plan.packs[0].kind.as_str()),
+        (
+            compiled_target.packs[0].pack.as_str(),
+            compiled_target.packs[0].kind.as_str()
+        ),
         ("device", "register")
     );
 
     let operation = |name: &str| {
-        plan.operations
+        compiled_target
+            .operations
             .iter()
             .find(|found| found.name.as_str() == name)
             .unwrap()
@@ -132,7 +136,7 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
     assert_eq!(binding.evidence, a2m_core::WriteEvidence::ReadBack);
 
     // No step of this mode may be sent twice by itself.
-    for operation in &plan.operations {
+    for operation in &compiled_target.operations {
         for binding in &operation.bindings {
             for step in binding
                 .act

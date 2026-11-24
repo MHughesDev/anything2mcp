@@ -33,7 +33,7 @@ In short, as of 2026-11-18: the kernel, nine packs, the local engine with its co
 | [203](../2-kernel/203-the-provider-contract.md). The provider contract | Designed | Built for packs compiled in (package B3); plug-ins in another process are package F3 | Extend it by decision record | Add an extension point without a decision record |
 | [204](../2-kernel/204-supervising-subsystems.md). Supervising subsystems | Designed as rules | Partly built; the design of `a2m-provider` says what | Build the supervisor against the rules | Promise confinement of plug-ins before the research is done |
 | [205](../2-kernel/205-target-files.md). Target files | Designed, with the [file formats](../../reference/file-formats.md) | Built for the kernel's file kinds (package B4) and for each built pack's own kinds | Add a file kind through a pack's registration | Add a field the formats do not define |
-| [206](../2-kernel/206-the-compiler-and-the-plan.md). The compiler and the plan | Designed | Built; package 1.3's proof, the same plan bytes on three operating systems, is not yet shown | Extend it through the registration points | Let the engine depend on the compiler |
+| [206](../2-kernel/206-the-compiler-and-the-compiled-target.md). The compiler and the compiled target | Designed | Built; package 1.3's proof, the same compiled target bytes on three operating systems, is not yet shown | Extend it through the registration points | Let the engine depend on the compiler |
 | [207](../2-kernel/207-the-engine-loop.md). The engine loop | Designed | Built, for reads and verified writes | Add what a package needs, through `Control` and the driver interface | Let the engine name a mode, a driver, or a pack |
 | [208](../2-kernel/208-runs-the-ledger-and-resume.md). Runs, the ledger, and resume | Designed, with open points | Built on SQLite, with the nine rules as tests (package 3.1); Postgres is package 6.1; the `run_steps` and `outbox` tables are not built | Add a table through a migration | Merge a change that breaks a rule |
 | [209](../2-kernel/209-record-identity-and-dependent-records.md). Record identity and dependent records | Designed | Built (package 3.8) | Add an identity strategy by decision record | Resume a create with no identity strategy |
@@ -93,7 +93,7 @@ Every bet is in the [hypothesis register](../../hypotheses/README.md). These are
 | --- | --- | --- |
 | A Rust engine on the DevTools protocol is good enough | H-01 | Package 0.4 |
 | The driver interface and `Control` are drawn right | H-35, H-36 | Package 1.1 |
-| Compiling target files into a plan is worth it | H-14 | Package 1.3 |
+| Compiling target files into a compiled target is worth it | H-14 | Package 1.3 |
 | The trace signature is stable across runs and systems | H-16 | Package 1.2 |
 | The speed budgets can be met | H-20 | Package 1.7 |
 | One engine per user, found through a socket or pipe, is reliable | H-06 | Package 1.4 |

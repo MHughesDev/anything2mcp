@@ -1,11 +1,11 @@
 //! The `statements/` file kind: its schema, the names it defines, and its
-//! compilation into the pack's section of the plan.
+//! compilation into the pack's section of the compiled target.
 //!
-//! A statement's text is a constant of the plan. A hand-written text is
-//! copied as it stands, once its form is held to one plain read; a
+//! A statement's text is a constant of the compiled target. A hand-written
+//! text is copied as it stands, once its form is held to one plain read; a
 //! `form: table` statement is written here, from identifiers of the file
-//! quoted by the dialect's rule. No value from a tool input is ever placed
-//! in either.
+//! quoted by the dialect's rule. No value from a tool input is ever placed in
+//! either.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -173,7 +173,7 @@ fn records(
                 name: field.key.value.clone(),
                 column: field.value.text("column").unwrap_or_default().to_owned(),
                 field_type: type_name.to_owned(),
-                stored: Stored::of(&field_type.plan.ty),
+                stored: Stored::of(&field_type.compiled.ty),
                 key_position: 0,
                 nullable: field
                     .value

@@ -37,10 +37,10 @@ async fn scene() -> (TestApp, Scene) {
 fn changed(app: &TestApp, path: &str, change: impl Fn(&str) -> String) -> Scene {
     let folder = Folder::new("forms-changed");
     let registry = registry(&folder, Arc::new(NoSecrets));
-    let plan = compile_changed(&registry, FORMS, path, change)
+    let compiled_target = compile_changed(&registry, FORMS, path, change)
         .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
-        .plan;
-    Scene::over(folder, registry, plan, &app.url(""))
+        .compiled_target;
+    Scene::over(folder, registry, compiled_target, &app.url(""))
 }
 
 async fn read(scene: &Scene, operation: &str, inputs: &Values) -> Result<Values, StepFailure> {
@@ -447,10 +447,10 @@ fn the_forms_compile_through_the_public_entry_twice_to_the_same_bytes_and_json_i
     assert_eq!(first.encoded.bytes, second.encoded.bytes);
 
     // A JSON endpoint that declares nothing of its answer is written into
-    // the plan as before this form existed.
-    let plain = compile(&registry, "example").plan;
-    let section = |plan: &a2m_core::Plan| {
-        let section = plan
+    // the compiled target as before this form existed.
+    let plain = compile(&registry, "example").compiled_target;
+    let section = |compiled_target: &a2m_core::CompiledTarget| {
+        let section = compiled_target
             .packs
             .iter()
             .find(|section| section.pack == "http")
@@ -458,7 +458,7 @@ fn the_forms_compile_through_the_public_entry_twice_to_the_same_bytes_and_json_i
         String::from_utf8(section.payload.as_bytes().to_vec()).unwrap()
     };
     assert!(!section(&plain).contains("\"answer\""));
-    assert!(section(&first.plan).contains("\"xml\""));
+    assert!(section(&first.compiled_target).contains("\"xml\""));
 }
 
 /// Compiles the `forms` fixture with one change, and gives the codes of

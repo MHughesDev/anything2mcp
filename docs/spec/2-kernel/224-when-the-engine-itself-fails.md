@@ -5,7 +5,7 @@ Other sections cover what happens when the target system misbehaves, a session e
 ## Three rules
 
 1. **No ledger, no write.** If an intent cannot be stored, the write does not start.
-2. **Nothing unverified runs.** A plan, policy set, or binary that cannot be checked against its hash or signature is not used.
+2. **Nothing unverified runs.** A compiled target, policy set, or binary that cannot be checked against its hash or signature is not used.
 3. **Reads degrade before writes do, and both fail closed.** Under pressure the engine gives up evidence detail, then capacity, then reads, and writes first of all. It never gives up a check.
 
 ## Health states
@@ -32,7 +32,7 @@ Other sections cover what happens when the target system misbehaves, a session e
 | Memory runs short | No new browser work, or other memory-heavy subsystem work, is started; queued runs wait | `busy` with a retry time | In the web pack, the browser is recycled between runs once past a memory limit |
 | The engine process dies | Runs in flight are interrupted | The next client starts a new engine | Reconcile, then resume, as in section 208 |
 | The machine's clock jumps | Leases are unaffected; they are measured on a steady clock | Approvals and tokens are judged by the database's or issuer's clock, with a small tolerance | None needed |
-| A plan fails its hash check | The tool is not run | That tool is unavailable; others are unaffected | Republish from stored sources |
+| A compiled target fails its hash check | The tool is not run | That tool is unavailable; others are unaffected | Republish from stored sources |
 | A new policy version fails to load | The previous version stays in force: a version that does not compile or fails its tests is never stored | Unchanged | Fix and publish again. A newest stored version that cannot be read denies everything; the engine does not fall back to an older one, which may be looser (decision 0352) |
 | The identity provider is down | Running work continues on existing sessions | Server callers cannot be authenticated and are refused; local use is unaffected | Automatic |
 | A migration is interrupted | Not applicable | The engine refuses to start on a half-migrated store: one that holds a later migration without an earlier one, or what a migration makes without its record, `store_version_unsupported` (decision 0352) | Migrations are transactional where the database allows, each with the row that records it, so an interruption leaves none half; a backup is taken first and restored otherwise |

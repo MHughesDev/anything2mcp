@@ -251,7 +251,7 @@ impl Answer {
 }
 
 /// What `prepare` acquires: the client, the surface's address, the
-/// endpoints of the plan, and the pass's own state.
+/// endpoints of the compiled target, and the pass's own state.
 struct Session {
     client: reqwest::Client,
     client_key: String,
@@ -261,8 +261,8 @@ struct Session {
     /// unencrypted link to another machine.
     unencrypted_accepted: bool,
     sections: BTreeMap<usize, EndpointSection>,
-    /// The pinned descriptions of the plan, by the position of their
-    /// section; their operations are in `sections` too (decision 0389).
+    /// The pinned descriptions of the compiled target, by the position of
+    /// their section; their operations are in `sections` too (decision 0389).
     described: BTreeMap<usize, DescribedSection>,
     /// The pinned descriptions this pass found unchanged where they are
     /// served, by section and name. Each is read again once a pass.
@@ -279,9 +279,9 @@ struct Session {
     /// What the run may do to the system: the driver's own read-only guard
     /// (decision 0249).
     posture: Posture,
-    /// Whether a read an endpoint asserts may be sent outside a live run:
-    /// the plan is a published version's, and the run's environment is of
-    /// kind `test` in it (decision 0270). Under the drafts both facts are
+    /// Whether a read an endpoint asserts may be sent outside a live run: the
+    /// compiled target is a published version's, and the run's environment is
+    /// of kind `test` in it (decision 0270). Under the drafts both facts are
     /// the drafts' own word, and it is never sent outside a live run.
     asserted_reads: bool,
     /// Where this pass's reads are counted while they run past their
@@ -353,8 +353,8 @@ impl HttpDriver {
             return Ok(client.clone());
         }
         // No redirect is followed, and no proxy is used: either would send
-        // the request somewhere the plan does not name. The client trusts
-        // what the engine trusts, and states its own TLS provider.
+        // the request somewhere the compiled target does not name. The client
+        // trusts what the engine trusts, and states its own TLS provider.
         let trust = a2m_auth::tls::installed()?;
         let client = a2m_auth::tls::client_builder(&trust)
             .https_only(https)
@@ -414,7 +414,7 @@ impl HttpDriver {
 
         let mut sections = BTreeMap::new();
         let mut described = BTreeMap::new();
-        for (position, section) in cx.plan.packs.iter().enumerate() {
+        for (position, section) in cx.compiled_target.packs.iter().enumerate() {
             let pinned = section.pack == PACK
                 && section.kind == DESCRIPTION_KIND
                 && section.surface_kind == surface.kind;
@@ -455,8 +455,8 @@ impl HttpDriver {
         }
 
         // A credential never crosses an unencrypted link to another machine
-        // unless the surface accepts it: a pass with a session whose plan
-        // has an endpoint on this surface that takes the credential is
+        // unless the surface accepts it: a pass with a session whose compiled
+        // target has an endpoint on this surface that takes the credential is
         // refused here, and each request is checked again as it is sent.
         let takes_credential = sections
             .values()
@@ -490,14 +490,14 @@ impl HttpDriver {
             }
             // What the target's auth file declares for this surface.
             let index = cx
-                .plan
+                .compiled_target
                 .surfaces
                 .iter()
                 .position(|known| known.name == surface.name)
                 .and_then(|position| u32::try_from(position).ok())
                 .map(SurfaceIndex::new);
             let signals = index
-                .and_then(|index| cx.plan.auth_of(index))
+                .and_then(|index| cx.compiled_target.auth_of(index))
                 .map(|auth| auth.expiry_signals.as_slice())
                 .unwrap_or_default();
             for signal in signals {
@@ -534,9 +534,9 @@ impl HttpDriver {
             versions: BTreeMap::new(),
             tokens: BTreeMap::new(),
             posture: cx.posture,
-            asserted_reads: published(cx.plan)
+            asserted_reads: published(cx.compiled_target)
                 && cx
-                    .plan
+                    .compiled_target
                     .environment_named(&cx.surface.environment)
                     .is_some_and(|environment| environment.kind == EnvironmentKind::Test),
             reading_place: format!("{} {}", surface.name.as_str(), origin.text),
@@ -553,7 +553,7 @@ fn endpoint(session: &Session, step: &Step) -> Result<(String, EndpointTemplate)
         .get(&named.section.get())
         .and_then(|section| section.get_key_value(&named.entry))
         .map(|(name, template)| (name.clone(), template.clone()))
-        .ok_or("the endpoint it names is not in the plan")
+        .ok_or("the endpoint it names is not in the compiled target")
 }
 
 /// The endpoint a step that judges a held answer names.
@@ -688,7 +688,9 @@ impl Session {
         let refused = |why: &str| {
             NotReceived::Refused(failure_of(
                 &codes::row::STEP_NOT_USABLE,
-                format!("The HTTP driver cannot carry out this step as the plan wrote it: {why}."),
+                format!(
+                    "The HTTP driver cannot carry out this step as the compiled target wrote it: {why}."
+                ),
                 "Compile the target again with the version of the HTTP pack that is enabled.",
             ))
         };
@@ -830,11 +832,11 @@ impl Session {
             .map(|(_, value)| value.as_str());
         if let (300..=399, Some(location)) = (received.status, location) {
             // A redirect is never followed. Where it leads is read as a
-            // browser would read it, against the address of the request:
-            // with a scheme, with none (`//host/path`), or as a path. One
-            // that leaves the surface is a sign-in request when the target
-            // says so, and otherwise a destination the plan does not list.
-            // One that stays on the surface is a status like any other.
+            // browser would read it, against the address of the request: with
+            // a scheme, with none (`//host/path`), or as a path. One that
+            // leaves the surface is a sign-in request when the target says
+            // so, and otherwise a destination the compiled target does not
+            // list. One that stays on the surface is a status like any other.
             let elsewhere = self
                 .address(built)
                 .ok()
@@ -1105,9 +1107,9 @@ impl HttpDriver {
                 &format!("The surface of the endpoint `{name}`"),
             )));
         }
-        // An endpoint that writes is sent only by a step the plan marks as
-        // a commit point, which the handle lets through only with the
-        // ledger's intent token.
+        // An endpoint that writes is sent only by a step the compiled target
+        // marks as a commit point, which the handle lets through only with
+        // the ledger's intent token.
         if template.writes && !step.commits {
             return Err(codes::not_usable(format!(
                 "the endpoint `{name}` writes, and the step is not marked as a commit point"
@@ -1294,12 +1296,12 @@ impl HttpDriver {
     }
 }
 
-/// Whether a plan is a published version's, as far as a driver can tell:
-/// a draft is always compiled as the draft version, and a published
-/// version under any other (decision 0161). A version published as the
-/// draft version's number is taken for a draft, which is the safe side.
-fn published(plan: &a2m_core::Plan) -> bool {
-    plan.header.version != a2m_files::DRAFT_VERSION
+/// Whether a compiled target is a published version's, as far as a driver can
+/// tell: a draft is always compiled as the draft version, and a published
+/// version under any other (decision 0161). A version published as the draft
+/// version's number is taken for a draft, which is the safe side.
+fn published(compiled_target: &a2m_core::CompiledTarget) -> bool {
+    compiled_target.header.version != a2m_files::DRAFT_VERSION
 }
 
 /// Percent-decoded text of a query's name or value, `+` read as a space,
@@ -1358,13 +1360,13 @@ fn overrides_to_unsafe(built: &Built) -> bool {
     by_header || by_query
 }
 
-/// The driver's own read-only guard (decisions 0249 and 0270). A request
-/// that may change something, by its method, by a method override it
-/// carries, or by its endpoint's `effect`, is sent in a live run; outside
-/// one it is sent only as the commit point of a write to a declared test
-/// record, in the context the engine prepared for that write, or, for an
-/// endpoint whose `read_asserted` says that a method HTTP does not mark
-/// safe only reads, when the plan is a published version's and the run's
+/// The driver's own read-only guard (decisions 0249 and 0270). A request that
+/// may change something, by its method, by a method override it carries, or
+/// by its endpoint's `effect`, is sent in a live run; outside one it is sent
+/// only as the commit point of a write to a declared test record, in the
+/// context the engine prepared for that write, or, for an endpoint whose
+/// `read_asserted` says that a method HTTP does not mark safe only reads,
+/// when the compiled target is a published version's and the run's
 /// environment is of kind `test` in it. An asserted read is never sent
 /// outside a live run with an override that may change the system: the
 /// assertion is about the endpoint's own method. A discovery sends none.
@@ -1948,8 +1950,8 @@ fn token_slot(endpoint: &str, input: &StepInput<'_>) -> (String, Vec<u8>) {
     )
 }
 
-/// One value at the end of a path, as the type the plan asks for. `None`
-/// when the value is there and is not of that type.
+/// One value at the end of a path, as the type the compiled target asks for.
+/// `None` when the value is there and is not of that type.
 fn taken(json: &Json, path: &[String], take: Take) -> Option<Value> {
     let Some((first, rest)) = path.split_first() else {
         return match (take, json) {
@@ -2119,14 +2121,14 @@ impl HttpDriver {
         }))
     }
 
-    /// One safe request with no body and no credential, to a literal path
-    /// of the surface: what a discoverer may send.
-    /// Before the first call of a pass that a pinned description serves,
-    /// the description is read again where it was served, and its digest
-    /// compared with the one the plan pins (decision 0389). One that has
-    /// changed, or is no longer served there, stops the call as `drift`,
-    /// `description_changed`, and nothing of the call is sent. A
-    /// description handed in as a file names no place, and is not read.
+    /// One safe request with no body and no credential, to a literal path of
+    /// the surface: what a discoverer may send. Before the first call of a
+    /// pass that a pinned description serves, the description is read again
+    /// where it was served, and its digest compared with the one the compiled
+    /// target pins (decision 0389). One that has changed, or is no longer
+    /// served there, stops the call as `drift`, `description_changed`, and
+    /// nothing of the call is sent. A description handed in as a file names
+    /// no place, and is not read.
     async fn unchanged(
         &self,
         session: &mut Session,
@@ -2449,10 +2451,10 @@ mod tests {
             "http://app.example.test/v2/orders/A%2F1/items?q=a%26b"
         );
         // What the compiler and the builder refuse is refused again here,
-        // where a plan that held it all the same would be sent: a dot
-        // segment that leaves the surface's path, plain or encoded; a
-        // separator that starts a query, a fragment, or another host; a
-        // byte that would be encoded again.
+        // where a compiled target that held it all the same would be sent: a
+        // dot segment that leaves the surface's path, plain or encoded; a
+        // separator that starts a query, a fragment, or another host; a byte
+        // that would be encoded again.
         for path in [
             "/../admin",
             "/orders/../../admin",

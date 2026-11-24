@@ -23,8 +23,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use a2m_core::{
-    Address, Coverage, EvidenceLevel, FailureClass, Finding, FindingKind, LimitationCode,
-    NoSecrets, Plan, ProducedBy, Source, Subject, Timestamp, Value, Values,
+    Address, CompiledTarget, Coverage, EvidenceLevel, FailureClass, Finding, FindingKind,
+    LimitationCode, NoSecrets, ProducedBy, Source, Subject, Timestamp, Value, Values,
 };
 use a2m_files::{CompileMode, Diagnostics, DraftReport, Drafter, RelPath, TargetRoot};
 use a2m_provider::{Posture, Sent, StepFailure};
@@ -198,7 +198,7 @@ fn compile_drafts(
     report: &DraftReport,
     path: &str,
     change: impl Fn(&str) -> String,
-) -> Result<Plan, Diagnostics> {
+) -> Result<CompiledTarget, Diagnostics> {
     let mut files: Vec<(RelPath, Vec<u8>)> = files_of(folder.path())
         .into_iter()
         .filter(|(file, _)| !report.open_questions.iter().any(|open| open.file == *file))
@@ -211,15 +211,15 @@ fn compile_drafts(
     let set = stand.registry.compiler_set();
     let sources = a2m_files::load_files(&TargetRoot::new(folder.path()), &files, set)?;
     a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
-        .map(|compiled| compiled.plan)
+        .map(|compiled| compiled.compiled_target)
 }
 
 fn class_and_code(failure: &StepFailure) -> (FailureClass, &str) {
     (failure.failure.class(), failure.failure.code().as_str())
 }
 
-/// Runs one read of a plan in a mode, in a run that may only look, from
-/// the preparing of its tab to its release.
+/// Runs one read of a compiled target in a mode, in a run that may only look,
+/// from the preparing of its tab to its release.
 async fn look_in(
     scene: &Scene,
     mode: &a2m_core::Mode,
@@ -367,9 +367,9 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
     answered(&again, &again_report);
     assert_eq!(files_of(folder.path()), files_of(again.path()));
 
-    let plan = compile_drafts(&stand, &folder, &report, "", str::to_owned)
+    let compiled_target = compile_drafts(&stand, &folder, &report, "", str::to_owned)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    let operation = plan
+    let operation = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == TOTALS)
@@ -383,7 +383,7 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
     assert_eq!(kinds, ["goto", "request"]);
     assert!(operation.bindings[0].act.iter().all(|step| !step.commits));
 
-    let scene = Scene::over(stand, plan, &origin);
+    let scene = Scene::over(stand, compiled_target, &origin);
     let mode = page_http_mode();
     let mut said = Vec::new();
     for order in ["A-100", "A-101"] {
@@ -546,7 +546,7 @@ async fn a_request_the_driver_cannot_make_again_exactly_drafts_a_question_and_no
         std::fs::write(folder.path().join("page_requests/lengths.yaml"), entry).unwrap();
         std::fs::write(folder.path().join("operations/lengths.yaml"), read).unwrap();
         let lengths = Stand::new("page-http-lengths", Arc::new(NoSecrets));
-        let plan = compile_drafts(
+        let compiled_target = compile_drafts(
             &lengths,
             &folder,
             &DraftReport::default(),
@@ -554,7 +554,7 @@ async fn a_request_the_driver_cannot_make_again_exactly_drafts_a_question_and_no
             str::to_owned,
         )
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-        let scene = Scene::over(lengths, plan, &origin);
+        let scene = Scene::over(lengths, compiled_target, &origin);
         let key = Values::new().with("order_id", "A-100");
         let ran = look_in(
             &scene,
@@ -595,7 +595,7 @@ async fn a_request_the_driver_cannot_make_again_exactly_drafts_a_question_and_no
         )
         .unwrap();
         let redirected = Stand::new("page-http-redirect", Arc::new(NoSecrets));
-        let plan = compile_drafts(
+        let compiled_target = compile_drafts(
             &redirected,
             &folder,
             &DraftReport::default(),
@@ -603,7 +603,7 @@ async fn a_request_the_driver_cannot_make_again_exactly_drafts_a_question_and_no
             str::to_owned,
         )
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-        let scene = Scene::over(redirected, plan, &origin);
+        let scene = Scene::over(redirected, compiled_target, &origin);
         let stopped = look_in(
             &scene,
             &page_http_mode(),
@@ -835,9 +835,9 @@ async fn the_page_http_read_and_the_screen_read_of_one_order_agree_and_are_measu
         TOTALS_UI_READ,
     )
     .unwrap();
-    let plan = compile_drafts(&stand, &folder, &report, "", str::to_owned)
+    let compiled_target = compile_drafts(&stand, &folder, &report, "", str::to_owned)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    let scene = Scene::over(stand, plan, &origin);
+    let scene = Scene::over(stand, compiled_target, &origin);
     let key = Values::new().with("order_id", "A-100");
     let reads = [
         (ui_mode(), "example_orders_totals_get"),

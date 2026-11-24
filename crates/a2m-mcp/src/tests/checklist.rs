@@ -475,8 +475,8 @@ async fn a_list_holds_the_control_tools_and_the_pipelines_and_a_setting_widens_o
         );
     }
     // The control tools come first, then the pipelines: whatever else the
-    // shared plan publishes, this pipeline is listed after every built-in
-    // tool, and this operation is not listed.
+    // shared compiled target publishes, this pipeline is listed after every
+    // built-in tool, and this operation is not listed.
     let builtin = listed
         .iter()
         .take_while(|name| name.starts_with("a2m_"))

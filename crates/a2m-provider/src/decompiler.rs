@@ -15,7 +15,7 @@
 //! becomes findings of the source `artifact`, which supports no level above
 //! `inferred`; the text is listed apart by the describer, and nothing here
 //! can reach a run, because a finding is evidence for a person or an agent
-//! that drafts, and no plan or step reads one.
+//! that drafts, and no compiled target or step reads one.
 //!
 //! The form, one JSON object to a line, in this order: any number of
 //! `{"function": text, "address": text, "text": text}`, then once

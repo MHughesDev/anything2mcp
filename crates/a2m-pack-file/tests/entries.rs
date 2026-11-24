@@ -325,7 +325,7 @@ async fn a_folder_lists_its_entries_in_order_and_reads_one_by_its_name() {
     // and the kind are always there.
     assert_eq!(sizes[0], Value::Null);
     let operation = scene
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|found| found.name.as_str() == "example_inbox_list")
@@ -346,7 +346,7 @@ async fn a_folder_lists_its_entries_in_order_and_reads_one_by_its_name() {
         ]
     );
     let tool = scene
-        .plan
+        .compiled_target
         .tools
         .iter()
         .find(|found| found.name.as_str() == "example_inbox_list")
@@ -619,7 +619,7 @@ async fn an_entry_is_removed_irreversibly_and_a_folder_only_when_empty() {
     let scene = Scene::new();
     let store = store().await;
     let operation = scene
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|found| found.name.as_str() == "example_inbox_remove")

@@ -243,8 +243,8 @@ impl Desk {
             "{text}"
         );
         // The page says where the version's surface leads, in each
-        // environment, by name, as the plan holds the address (decision
-        // 0199).
+        // environment, by name, as the compiled target holds the address
+        // (decision 0199).
         assert!(
             text.contains(&format!(
                 "<h2>Where it leads</h2><ul><li><code>http</code>, a surface of the kind <code>http</code>, leads to <code>{}</code> in the environment <code>test</code>;",

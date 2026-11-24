@@ -6,7 +6,8 @@
 //! not stop: one that attaches another file, one that changes a setting of
 //! the connection, one that ends the transaction it runs in. The compiler
 //! makes the refusal for a statement of a target file, and the driver makes
-//! it again for a statement of a plan, whoever made the plan.
+//! it again for a statement of a compiled target, whoever made the compiled
+//! target.
 //!
 //! The check reads words, never meaning. A read is one statement whose
 //! first word is `SELECT` or `WITH`; a write is one statement whose first
@@ -37,8 +38,8 @@ impl Wrong {
     }
 }
 
-/// The words no statement of a plan may hold outside quotes. None can be
-/// part of one read or one keyed write, so each is refused wherever it
+/// The words no statement of a compiled target may hold outside quotes. None
+/// can be part of one read or one keyed write, so each is refused wherever it
 /// stands.
 const NEVER: &[&str] = &[
     "attach",
@@ -263,7 +264,7 @@ pub(crate) fn check_in(text: &str, does: Does, dialect: Dialect) -> Result<(), W
         && tokens.iter().skip(end).any(|token| *token != Token::End)
     {
         return Err(Wrong::Form(
-            "The text holds more than one statement. A plan runs one statement at a time.",
+            "The text holds more than one statement. A compiled target runs one statement at a time.",
         ));
     }
     let reads = does == Does::Read;
@@ -281,7 +282,7 @@ pub(crate) fn check_in(text: &str, does: Does, dialect: Dialect) -> Result<(), W
                 || (word.eq_ignore_ascii_case("set") && does != Does::Update))
         {
             return Err(Wrong::Form(
-                "The statement copies, calls, or runs another statement, reads or changes a setting, changes the schema or the rights, takes a lock, listens or notifies, or ends its transaction. No statement of a plan may.",
+                "The statement copies, calls, or runs another statement, reads or changes a setting, changes the schema or the rights, takes a lock, listens or notifies, or ends its transaction. No statement of a compiled target may.",
             ));
         }
         if is(word, NEVER)
@@ -290,7 +291,7 @@ pub(crate) fn check_in(text: &str, does: Does, dialect: Dialect) -> Result<(), W
                 .is_some_and(|start| start.eq_ignore_ascii_case("pragma_"))
         {
             return Err(Wrong::Form(
-                "The statement attaches or detaches a file, reads or changes a setting, changes the schema, or loads an extension. No statement of a plan may.",
+                "The statement attaches or detaches a file, reads or changes a setting, changes the schema, or loads an extension. No statement of a compiled target may.",
             ));
         }
         // `replace(a, b, c)` is a function of text; `REPLACE` alone writes.

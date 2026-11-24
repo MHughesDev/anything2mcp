@@ -1,14 +1,14 @@
-//! What the pack writes into a plan and its driver reads back: compiled
-//! screens, the payload of each step, and the surface's own fields. The
-//! kernel stores and hashes these and never decodes them.
+//! What the pack writes into a compiled target and its driver reads back:
+//! compiled screens, the payload of each step, and the surface's own fields.
+//! The kernel stores and hashes these and never decodes them.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// The version of the shapes below. A plan written in another is refused.
-/// Format 2 added a screen's actions and variants, and the payloads of
-/// `set` and `invoke` (decision 0218).
+/// The version of the shapes below. A compiled target written in another is
+/// refused. Format 2 added a screen's actions and variants, and the payloads
+/// of `set` and `invoke` (decision 0218).
 pub(crate) const PAYLOAD_FORMAT: u16 = 2;
 
 /// Every screen of the target's desktop surfaces, by name.

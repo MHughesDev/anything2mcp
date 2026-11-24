@@ -1,5 +1,5 @@
 //! The `screens/` file kind for surfaces of the kind `desktop`: its schema,
-//! and its compilation into the screens of the plan.
+//! and its compilation into the screens of the compiled target.
 //!
 //! Locators live here and nowhere else (rule 8). A desktop locator is a
 //! role and an accessible name, both exact: no text near it, no selector,

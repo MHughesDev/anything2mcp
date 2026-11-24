@@ -15,7 +15,7 @@ mod common;
 
 use std::sync::OnceLock;
 
-use a2m_core::{FailureClass, Plan, Value, Values};
+use a2m_core::{CompiledTarget, FailureClass, Value, Values};
 use a2m_provider::{Authority, Posture, Registry, Sent, StepFailure, StepOutcome, SurfaceRef};
 use common::{
     Folder, compiled_fixture, fence_of, input, key, prepare, record, registry, running, steps,
@@ -41,7 +41,7 @@ fn trusted() -> &'static TestAuthority {
 struct Scene {
     _folder: Folder,
     registry: Registry,
-    plan: Plan,
+    compiled_target: CompiledTarget,
     stand: HttpStand,
     _front: TlsFront,
     surface: SurfaceRef,
@@ -53,7 +53,7 @@ async fn scene(authority: &TestAuthority, shape: ServerCertificate) -> Scene {
     let server = authority.server(shape).unwrap();
     let folder = Folder::new("tls");
     let registry = registry(&folder);
-    let plan = compiled_fixture(&registry);
+    let compiled_target = compiled_fixture(&registry);
     let stand = HttpStand::start().await.unwrap();
     let plain = stand.url();
     let upstream = plain
@@ -65,11 +65,11 @@ async fn scene(authority: &TestAuthority, shape: ServerCertificate) -> Scene {
         .unwrap();
     let front = TlsFront::start(server, upstream).await.unwrap();
     let address = format!("https://{}/mcp", front.address());
-    let surface = surface(&plan, "orders", Some(&address));
+    let surface = surface(&compiled_target, "orders", Some(&address));
     Scene {
         _folder: folder,
         registry,
-        plan,
+        compiled_target,
         stand,
         _front: front,
         surface,
@@ -80,14 +80,14 @@ impl Scene {
     async fn get(&self, order: &str) -> Result<StepOutcome, StepFailure> {
         let (handle, mut prepared) = prepare(
             &self.registry,
-            &self.plan,
+            &self.compiled_target,
             &self.surface,
             fence_of(7),
             Posture::Live,
             None,
         )
         .await?;
-        let step = steps(&self.plan, "example_order_get").act;
+        let step = steps(&self.compiled_target, "example_order_get").act;
         let args = Values::new().with("order_id", order);
         let result = handle
             .act(
@@ -124,7 +124,7 @@ async fn a_read_and_a_verified_write_over_https_trust_the_named_authority() {
     let fence = running(&ledger, 1, &["A-100"]).await;
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &scene.surface,
         fence,
         Posture::Live,
@@ -132,7 +132,7 @@ async fn a_read_and_a_verified_write_over_https_trust_the_named_authority() {
     )
     .await
     .unwrap();
-    let update = steps(&scene.plan, "example_order_note_update");
+    let update = steps(&scene.compiled_target, "example_order_note_update");
     let args = Values::new()
         .with("order_id", "A-100")
         .with("field", "note")
@@ -206,7 +206,7 @@ async fn a_write_lost_after_it_was_sent_over_https_is_in_doubt() {
     let fence = running(&ledger, 1, &["new"]).await;
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &scene.surface,
         fence,
         Posture::Live,
@@ -214,7 +214,7 @@ async fn a_write_lost_after_it_was_sent_over_https_is_in_doubt() {
     )
     .await
     .unwrap();
-    let create = steps(&scene.plan, "example_order_create");
+    let create = steps(&scene.compiled_target, "example_order_create");
     let args = Values::new()
         .with("customer", "Fourth Example Customer")
         .with("note", Value::Null);

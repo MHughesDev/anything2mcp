@@ -9,7 +9,9 @@
 //! engine recorded nothing, which is true, and editing a file cannot change
 //! the answer.
 
-use a2m_core::{Digest, EvidenceLevel, Failure, OperationName, Plan, TargetName, ToolRuns};
+use a2m_core::{
+    CompiledTarget, Digest, EvidenceLevel, Failure, OperationName, TargetName, ToolRuns,
+};
 use a2m_ledger::AuditRow;
 use serde_json::{Value as Json, json};
 
@@ -147,8 +149,8 @@ pub(crate) fn level(has_trial: bool, has_recorded_fixture: bool) -> EvidenceLeve
 /// The address a trial of `operation` was made against: that of the surface
 /// of the binding it ran, in the target's default environment.
 pub(crate) fn address_of(
-    plan: &Plan,
-    operation: &a2m_core::OperationPlan,
+    compiled_target: &CompiledTarget,
+    operation: &a2m_core::CompiledOperation,
     pin: Option<&a2m_engine::BindingPin>,
 ) -> String {
     let position = pin.map_or(0, |pin| pin.position);
@@ -159,10 +161,11 @@ pub(crate) fn address_of(
     else {
         return String::new();
     };
-    let Some(surface) = plan.surface(binding.surface) else {
+    let Some(surface) = compiled_target.surface(binding.surface) else {
         return String::new();
     };
-    plan.default_environment()
+    compiled_target
+        .default_environment()
         .and_then(|environment| {
             environment
                 .addresses
@@ -179,18 +182,18 @@ pub(crate) async fn lines(
     kernel: &Kernel,
     caller: &crate::dispatch::Caller,
     target: &TargetName,
-    plan: &Plan,
+    compiled_target: &CompiledTarget,
     gates: &GateRun,
 ) -> Result<Vec<String>, Failure> {
     let rows = chain(kernel).await?;
     let mut lines = Vec::new();
 
-    for operation in &plan.operations {
+    for operation in &compiled_target.operations {
         for (position, binding) in operation.bindings.iter().enumerate() {
             if binding.status != a2m_core::BindingStatus::Verified {
                 continue;
             }
-            let proved = a2m_engine::binding_digest(plan, binding)
+            let proved = a2m_engine::binding_digest(compiled_target, binding)
                 .is_some_and(|digest| promoted(&rows, target, &operation.name, digest));
             if !proved {
                 lines.push(format!(
@@ -209,15 +212,15 @@ pub(crate) async fn lines(
         .iter()
         .map(|(folder, digest)| (folder.clone(), fixture_of(&rows, target, folder, *digest)))
         .collect();
-    let trials = tools_with_a_trial(kernel, caller, target, plan).await?;
-    let tools: Vec<ToolEvidence> = plan
+    let trials = tools_with_a_trial(kernel, caller, target, compiled_target).await?;
+    let tools: Vec<ToolEvidence> = compiled_target
         .tools
         .iter()
         .enumerate()
         .map(|(at, tool)| ToolEvidence {
             name: tool.name.to_string(),
             trial: trials.iter().any(|name| name == &tool.name),
-            folders: plan
+            folders: compiled_target
                 .tests
                 .iter()
                 .filter(|test| test.tool.get() == at)
@@ -278,19 +281,19 @@ pub(crate) fn tool_and_fixture_lines(
     lines
 }
 
-/// The tools of the plan that a completed trial of the caller's is held for
-/// in the ledger: a run that carries the binding it tried.
+/// The tools of the compiled target that a completed trial of the caller's is
+/// held for in the ledger: a run that carries the binding it tried.
 async fn tools_with_a_trial(
     kernel: &Kernel,
     caller: &crate::dispatch::Caller,
     target: &TargetName,
-    plan: &Plan,
+    compiled_target: &CompiledTarget,
 ) -> Result<Vec<OperationName>, Failure> {
     let Some(person) = caller.principal.person() else {
         return Ok(Vec::new());
     };
     let workspace = caller.principal.workspace;
-    let names: Vec<OperationName> = plan
+    let names: Vec<OperationName> = compiled_target
         .tools
         .iter()
         .filter(|tool| matches!(tool.runs, ToolRuns::Operation(_) | ToolRuns::Pipeline(_)))

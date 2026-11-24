@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use a2m_core::{
-    Digest, Failure, FailureClass, KeyedDigest, OperationName, Plan, Redact, RunState, SurfaceName,
-    ToolRuns, Version,
+    CompiledTarget, Digest, Failure, FailureClass, KeyedDigest, OperationName, Redact, RunState,
+    SurfaceName, ToolRuns, Version,
 };
 use a2m_provider::{Exclusive, Posture, Registry};
 use a2m_sources::Limits;
@@ -30,7 +30,7 @@ pub struct EngineSettings {
     pub freshness_window: Duration,
     /// How long a driver may take to prepare.
     pub prepare_timeout: Duration,
-    /// The time limit of a step whose plan states none.
+    /// The time limit of a step whose compiled target states none.
     pub step_timeout: Duration,
     /// How long the engine waits for one call to `Control` to be answered.
     /// An implementation that waits (for a lock, a lease, a rate budget)
@@ -39,8 +39,8 @@ pub struct EngineSettings {
     pub control_timeout: Duration,
     /// What reading a source may use up.
     pub source_limits: Limits,
-    /// How many plans are kept loaded.
-    pub plans_kept: usize,
+    /// How many compiled targets are kept loaded.
+    pub compiled_targets_kept: usize,
     /// The engine's version, for the trace.
     pub version: Version,
     /// The one budget of time every binding in shadow of a job shares,
@@ -67,7 +67,7 @@ impl Default for EngineSettings {
                 cells: 5_000_000,
                 cell_bytes: 32 * 1024,
             },
-            plans_kept: 16,
+            compiled_targets_kept: 16,
             version: Version::new(0, 0, 1),
             shadow_limit: Duration::from_secs(2),
         }
@@ -106,11 +106,11 @@ pub struct ExclusiveNeed {
     pub surface: SurfaceName,
 }
 
-/// The engine. It holds the plans it has loaded and nothing else between
-/// jobs: the ledger, reached through `Control`, is the authority.
+/// The engine. It holds the compiled targets it has loaded and nothing else
+/// between jobs: the ledger, reached through `Control`, is the authority.
 pub struct Engine {
     pub(crate) deps: EngineDeps,
-    plans: Mutex<Vec<Arc<Loaded>>>,
+    compiled_targets: Mutex<Vec<Arc<Loaded>>>,
     /// Shadow comparisons that could not be kept within the job's shadow
     /// budget, or whose keeping failed (decision 0251).
     pub(crate) shadows_lost: AtomicU64,
@@ -168,7 +168,7 @@ impl Engine {
     pub fn new(deps: EngineDeps) -> Self {
         Self {
             deps,
-            plans: Mutex::new(Vec::new()),
+            compiled_targets: Mutex::new(Vec::new()),
             shadows_lost: AtomicU64::new(0),
         }
     }
@@ -182,47 +182,59 @@ impl Engine {
         self.shadows_lost.load(Ordering::Relaxed)
     }
 
-    /// The plan by its hash, fetched through `Control` and checked against
-    /// the hash before it is used.
-    pub(crate) async fn plan(
+    /// The compiled target by its hash, fetched through `Control` and checked
+    /// against the hash before it is used.
+    pub(crate) async fn compiled_target(
         &self,
         hash: &Digest,
         control: &dyn Control,
     ) -> Result<Arc<Loaded>, Failure> {
         {
-            let plans = self.plans.lock().unwrap_or_else(PoisonError::into_inner);
-            if let Some(found) = plans.iter().find(|loaded| loaded.hash == *hash) {
+            let compiled_targets = self
+                .compiled_targets
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(found) = compiled_targets.iter().find(|loaded| loaded.hash == *hash) {
                 return Ok(Arc::clone(found));
             }
         }
-        let plan = control.plan(hash).await?;
-        let loaded = Arc::new(Loaded::load(plan, hash)?);
-        let mut plans = self.plans.lock().unwrap_or_else(PoisonError::into_inner);
-        if plans.len() >= self.deps.settings.plans_kept.max(1) {
-            plans.remove(0);
+        let compiled_target = control.compiled_target(hash).await?;
+        let loaded = Arc::new(Loaded::load(compiled_target, hash)?);
+        let mut compiled_targets = self
+            .compiled_targets
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if compiled_targets.len() >= self.deps.settings.compiled_targets_kept.max(1) {
+            compiled_targets.remove(0);
         }
-        plans.push(Arc::clone(&loaded));
+        compiled_targets.push(Arc::clone(&loaded));
         Ok(loaded)
     }
 
     /// What a job that carries out `tool` must hold alone, when the tool
-    /// writes: for every binding that may write, what its mode declares
-    /// one write holds alone, on the binding's surface. In the order of
-    /// the kinds and then of the surfaces' names, each once. Empty for a
-    /// tool that only reads, and for a tool the plan does not hold.
+    /// writes: for every binding that may write, what its mode declares one
+    /// write holds alone, on the binding's surface. In the order of the kinds
+    /// and then of the surfaces' names, each once. Empty for a tool that only
+    /// reads, and for a tool the compiled target does not hold.
     ///
     /// A binding's mode is looked up by name in the registry, as data; a
     /// mode no enabled provider declares can never be chosen and adds
     /// nothing.
     #[must_use]
-    pub fn exclusive_needs(&self, plan: &Plan, tool: &OperationName) -> Vec<ExclusiveNeed> {
-        let operations: Vec<_> = match plan.tool(tool).map(|tool| tool.runs) {
-            Some(ToolRuns::Operation(index)) => plan.operation(index).into_iter().collect(),
-            Some(ToolRuns::Pipeline(index)) => plan
+    pub fn exclusive_needs(
+        &self,
+        compiled_target: &CompiledTarget,
+        tool: &OperationName,
+    ) -> Vec<ExclusiveNeed> {
+        let operations: Vec<_> = match compiled_target.tool(tool).map(|tool| tool.runs) {
+            Some(ToolRuns::Operation(index)) => {
+                compiled_target.operation(index).into_iter().collect()
+            }
+            Some(ToolRuns::Pipeline(index)) => compiled_target
                 .pipeline(index)
                 .into_iter()
                 .flat_map(|pipeline| &pipeline.steps)
-                .filter_map(|step| plan.operation(step.operation))
+                .filter_map(|step| compiled_target.operation(step.operation))
                 .collect(),
             None => Vec::new(),
         };
@@ -236,7 +248,7 @@ impl Engine {
             let Some(defaults) = self.deps.registry.mode_defaults(&binding.mode) else {
                 continue;
             };
-            let Some(surface) = plan.surface(binding.surface) else {
+            let Some(surface) = compiled_target.surface(binding.surface) else {
                 continue;
             };
             if defaults.exclusive != Exclusive::None {
@@ -253,24 +265,26 @@ impl Engine {
         needs
     }
 
-    /// The environment a job names, as its position in the plan.
+    /// The environment a job names, as its position in the compiled target.
     pub(crate) fn environment(loaded: &Loaded, job: &JobSpec) -> Result<usize, Failure> {
-        let plan = &loaded.plan;
+        let compiled_target = &loaded.compiled_target;
         match &job.environment {
-            Some(name) => plan
+            Some(name) => compiled_target
                 .environments
                 .iter()
                 .position(|environment| &environment.name == name)
                 .ok_or_else(|| {
-                    codes::job_invalid(format!("The plan holds no environment named `{name}`."))
+                    codes::job_invalid(format!(
+                        "The compiled target holds no environment named `{name}`."
+                    ))
                 }),
             None => {
-                let position = plan.target.default_environment.get();
-                if position < plan.environments.len() {
+                let position = compiled_target.target.default_environment.get();
+                if position < compiled_target.environments.len() {
                     Ok(position)
                 } else {
                     Err(codes::job_invalid(
-                        "The plan's default environment is not in the plan.",
+                        "The compiled target's default environment is not in the compiled target.",
                     ))
                 }
             }
@@ -346,10 +360,10 @@ impl Engine {
                 codes::job_invalid("A discovery job names a surface, and this one names a tool."),
             );
         }
-        // A new run is `validating` from here on: the plan, the
-        // environment, and the tool are checked as part of it, so that a
-        // job that names one the plan does not hold ends `rejected`, which
-        // a run that is still `queued` cannot.
+        // A new run is `validating` from here on: the compiled target, the
+        // environment, and the tool are checked as part of it, so that a job
+        // that names one the compiled target does not hold ends `rejected`,
+        // which a run that is still `queued` cannot.
         let mut claimed = claimed;
         // So is a run stopped before anything was planned, such as a write
         // a drift or an edge block stopped at its preview: resumed, it is
@@ -366,7 +380,7 @@ impl Engine {
             }
             claimed = RunState::Validating;
         }
-        let loaded = match self.plan(&job.plan, control).await {
+        let loaded = match self.compiled_target(&job.compiled_target, control).await {
             Ok(loaded) => loaded,
             Err(failure) => return give_up(claimed, failure),
         };
@@ -391,7 +405,7 @@ impl Engine {
                 run: job.run,
                 attempt: job.attempt,
                 operation: name.clone(),
-                plan: loaded.hash,
+                compiled_target: loaded.hash,
                 engine: self.deps.settings.version,
                 registry: self.deps.registry.digest(),
             },

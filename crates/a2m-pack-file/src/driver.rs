@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use a2m_auth::SessionLease;
-use a2m_core::{Digest, FieldTypeIndex, FieldTypePlan, Plan, Step, Value, Values};
+use a2m_core::{CompiledFieldType, CompiledTarget, Digest, FieldTypeIndex, Step, Value, Values};
 use a2m_expr::Normalizer;
 use a2m_provider::{
     Access, BoxFuture, Capture, CheckedPaths, Cleanup, Driver, DriverHealth, Observed, Posture,
@@ -21,7 +21,7 @@ use a2m_sources::{FieldTyper, Limits};
 use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
 
-use crate::codes::{self, plan_unreadable, stop, unsupported};
+use crate::codes::{self, compiled_target_unreadable, stop, unsupported};
 use crate::drive_folder::{Entries, Here};
 use crate::edit::{self, Leads, Meant, Patch};
 use crate::model::{
@@ -87,7 +87,7 @@ impl FileDriver {
 struct Typing {
     typer: FieldTyper,
     normalizer: Normalizer,
-    plan: FieldTypePlan,
+    compiled: CompiledFieldType,
 }
 
 /// One document of the surface, with its field types loaded.
@@ -201,7 +201,7 @@ pub(crate) fn surface_folder(
     } else {
         payload
             .decode()
-            .map_err(|_| plan_unreadable("the surface's fields do not decode"))?
+            .map_err(|_| compiled_target_unreadable("the surface's fields do not decode"))?
     };
     let root = RootName::new(fields.root.as_deref().unwrap_or(DEFAULT_ROOT))
         .map_err(StepFailure::not_sent)?;
@@ -250,26 +250,26 @@ fn timed_out() -> StepFailure {
 }
 
 fn out_of_order(what: &str) -> StepFailure {
-    plan_unreadable(&format!("{what}, which no lowering of the pack gives"))
+    compiled_target_unreadable(&format!("{what}, which no lowering of the pack gives"))
 }
 
-fn load(plan: &Plan, spec: DocumentSpec) -> Result<Loaded, StepFailure> {
+fn load(compiled_target: &CompiledTarget, spec: DocumentSpec) -> Result<Loaded, StepFailure> {
     let mut typings = BTreeMap::new();
     for field in spec.records.values().flat_map(|record| &record.fields) {
         if typings.contains_key(&field.field_type) {
             continue;
         }
         let index = FieldTypeIndex::new(field.field_type);
-        let loaded = plan.field_type(index).and_then(|field_type| {
-            let normalizer = plan.expression(field_type.normalizer?)?;
+        let loaded = compiled_target.field_type(index).and_then(|field_type| {
+            let normalizer = compiled_target.expression(field_type.normalizer?)?;
             Some(Typing {
                 typer: FieldTyper::from_parts(field_type, normalizer).ok()?,
                 normalizer: Normalizer::load(normalizer).ok()?,
-                plan: field_type.clone(),
+                compiled: field_type.clone(),
             })
         });
         let Some(typing) = loaded else {
-            return Err(plan_unreadable(
+            return Err(compiled_target_unreadable(
                 "a field of a document names a field type that does not load",
             ));
         };
@@ -280,16 +280,15 @@ fn load(plan: &Plan, spec: DocumentSpec) -> Result<Loaded, StepFailure> {
 
 impl Loaded {
     fn record(&self, name: &str) -> Result<&RecordSpec, StepFailure> {
-        self.spec
-            .records
-            .get(name)
-            .ok_or_else(|| plan_unreadable("a step names a record kind its document does not have"))
+        self.spec.records.get(name).ok_or_else(|| {
+            compiled_target_unreadable("a step names a record kind its document does not have")
+        })
     }
 
     fn typing(&self, field_type: u32) -> Result<&Typing, StepFailure> {
         self.typings
             .get(&field_type)
-            .ok_or_else(|| plan_unreadable("a field's type was not loaded"))
+            .ok_or_else(|| compiled_target_unreadable("a field's type was not loaded"))
     }
 }
 
@@ -323,7 +322,9 @@ fn key_of(
                 .iter()
                 .enumerate()
                 .find(|(_, field)| &field.name == name)
-                .ok_or_else(|| plan_unreadable("a key names a field its record does not have"))?;
+                .ok_or_else(|| {
+                    compiled_target_unreadable("a key names a field its record does not have")
+                })?;
             let slot = slots
                 .and_then(|slots| slots.get(position))
                 .and_then(Option::as_ref);
@@ -419,10 +420,9 @@ impl FileDriver {
         for_write: bool,
     ) -> Result<Observed, StepFailure> {
         state.current = None;
-        let loaded = state
-            .documents
-            .get(document)
-            .ok_or_else(|| plan_unreadable("a step names a document the surface does not have"))?;
+        let loaded = state.documents.get(document).ok_or_else(|| {
+            compiled_target_unreadable("a step names a document the surface does not have")
+        })?;
         if for_write {
             // What the compiler refuses, the driver refuses too.
             may_be_written(&loaded.spec)?;
@@ -468,14 +468,15 @@ impl FileDriver {
 
 /// Whether a write to the document's file may begin: the document says
 /// whether an application may hold the file open, and, where one may, names
-/// the sign that it does. A plan that lacks either was not compiled by this
-/// pack's rules, and its write is refused here as it is there.
+/// the sign that it does. A compiled target that lacks either was not
+/// compiled by this pack's rules, and its write is refused here as it is
+/// there.
 fn may_be_written(spec: &DocumentSpec) -> Result<(), StepFailure> {
     match (spec.may_be_open, &spec.lock_sibling) {
-        (None, _) => Err(plan_unreadable(
+        (None, _) => Err(compiled_target_unreadable(
             "a write to a document that does not say whether an application may hold its file open",
         )),
-        (Some(true), None) => Err(plan_unreadable(
+        (Some(true), None) => Err(compiled_target_unreadable(
             "a write to a document whose file may be held open, with no lock signal declared",
         )),
         _ => Ok(()),
@@ -503,13 +504,12 @@ fn locate(
     let mut key = Vec::new();
     if expect != Expect::All {
         for name in &record.key {
-            let field = record
-                .field(name)
-                .ok_or_else(|| plan_unreadable("a key names a field its record does not have"))?;
-            let given = input
-                .args
-                .get(&key_arg(name))
-                .ok_or_else(|| plan_unreadable("a `locate` step lacks a key field's value"))?;
+            let field = record.field(name).ok_or_else(|| {
+                compiled_target_unreadable("a key names a field its record does not have")
+            })?;
+            let given = input.args.get(&key_arg(name)).ok_or_else(|| {
+                compiled_target_unreadable("a `locate` step lacks a key field's value")
+            })?;
             key.push(normalized(loaded.typing(field.field_type)?, given)?);
         }
     }
@@ -632,7 +632,7 @@ fn intended_values(
             values.push((position, key.get(at).cloned().unwrap_or(Value::Null)));
         } else if let Some(given) = input.args.get(&field_arg(&field.name)) {
             if !field.writable {
-                return Err(plan_unreadable(
+                return Err(compiled_target_unreadable(
                     "a `set` step names a field that is not writable",
                 ));
             }
@@ -759,18 +759,18 @@ fn set(
                         which,
                         Quotes::from_name(spec.quotes.as_deref()),
                         intended,
-                        &typing.plan,
+                        &typing.compiled,
                     )?
                 } else if spec.format == Format::Json {
                     nodes.push(span);
-                    edit::json_literal(intended, &typing.plan, Some(existing))?
+                    edit::json_literal(intended, &typing.compiled, Some(existing))?
                 } else {
                     if let (RowAt::Line(line), Some(column)) =
                         (row.at, table.columns.get(*position))
                     {
                         cells.push((line, *column));
                     }
-                    let text = edit::spell(intended, &typing.plan)?.unwrap_or_default();
+                    let text = edit::spell(intended, &typing.compiled)?.unwrap_or_default();
                     formula_guard(field, intended, &text)?;
                     edit::csv_field(&text, existing.first() == Some(&b'"'), delimiter)
                 };
@@ -832,8 +832,10 @@ fn set(
                             ));
                         };
                         let typing = loaded.typing(field.field_type)?;
-                        members
-                            .push((name.clone(), edit::json_literal(value, &typing.plan, None)?));
+                        members.push((
+                            name.clone(),
+                            edit::json_literal(value, &typing.compiled, None)?,
+                        ));
                     }
                     patches.push(
                         edit::json_add(&old.bytes, list, &members)
@@ -848,7 +850,7 @@ fn set(
                         let typing = loaded.typing(field.field_type)?;
                         if let (Some(column), Some(text)) = (
                             table.columns.get(*position),
-                            edit::spell(value, &typing.plan)?,
+                            edit::spell(value, &typing.compiled)?,
                         ) {
                             formula_guard(field, value, &text)?;
                             texts.push((*column, text));
@@ -929,9 +931,9 @@ impl FileDriver {
         document: &str,
         step: &Step,
     ) -> Result<Observed, StepFailure> {
-        // The driver's own guard. Live, the step the plan marks `commits`.
-        // In a sandbox with test records, that one step alone: the engine
-        // cannot see what a step not marked does there. Nowhere else.
+        // The driver's own guard. Live, the step the compiled target marks
+        // `commits`. In a sandbox with test records, that one step alone: the
+        // engine cannot see what a step not marked does there. Nowhere else.
         let allowed = match state.posture {
             Posture::Live => step.commits,
             Posture::Sandbox { test_records } => test_records && step.commits,
@@ -943,10 +945,9 @@ impl FileDriver {
                 "Run the operation live, or against a declared test record, with the save as the binding's commit point.",
             )));
         }
-        let loaded = state
-            .documents
-            .get(document)
-            .ok_or_else(|| plan_unreadable("a step names a document the surface does not have"))?;
+        let loaded = state.documents.get(document).ok_or_else(|| {
+            compiled_target_unreadable("a step names a document the surface does not have")
+        })?;
         let current = state
             .current
             .as_mut()
@@ -1019,10 +1020,12 @@ impl Driver for FileDriver {
                 return Err(timed_out());
             }
             if cx.surface.surface.kind != SURFACE_KIND {
-                return Err(plan_unreadable("the surface is not of the kind `file`"));
+                return Err(compiled_target_unreadable(
+                    "the surface is not of the kind `file`",
+                ));
             }
             let folder = self.folder(cx.surface, cx.paths)?;
-            let section = cx.plan.packs.iter().find(|section| {
+            let section = cx.compiled_target.packs.iter().find(|section| {
                 section.pack == PACK
                     && section.kind == DOCUMENT_KIND
                     && section.surface_kind == SURFACE_KIND
@@ -1032,26 +1035,25 @@ impl Driver for FileDriver {
                 let decoded: Section = section
                     .payload
                     .decode()
-                    .map_err(|_| plan_unreadable("its section does not decode"))?;
+                    .map_err(|_| compiled_target_unreadable("its section does not decode"))?;
                 for (name, spec) in decoded {
                     if spec.surface == cx.surface.surface.name.as_str() {
-                        documents.insert(name, load(cx.plan, spec)?);
+                        documents.insert(name, load(cx.compiled_target, spec)?);
                     }
                 }
             }
             let mut entries = Entries::default();
             let surface_name = cx.surface.surface.name.as_str();
             for section in cx
-                .plan
+                .compiled_target
                 .packs
                 .iter()
                 .filter(|section| section.pack == PACK && section.surface_kind == SURFACE_KIND)
             {
                 if section.kind == FOLDER_KIND {
-                    let decoded: FolderSection = section
-                        .payload
-                        .decode()
-                        .map_err(|_| plan_unreadable("its section of folders does not decode"))?;
+                    let decoded: FolderSection = section.payload.decode().map_err(|_| {
+                        compiled_target_unreadable("its section of folders does not decode")
+                    })?;
                     entries.folders.extend(
                         decoded
                             .into_iter()
@@ -1059,7 +1061,7 @@ impl Driver for FileDriver {
                     );
                 } else if section.kind == LOG_KIND {
                     let decoded: LogSection = section.payload.decode().map_err(|_| {
-                        plan_unreadable("its section of growing files does not decode")
+                        compiled_target_unreadable("its section of growing files does not decode")
                     })?;
                     entries.logs.extend(
                         decoded
@@ -1088,18 +1090,18 @@ impl Driver for FileDriver {
             if input.deadline.passed() {
                 return Err(timed_out());
             }
-            let state = prepared
-                .state::<State>()
-                .ok_or_else(|| plan_unreadable("the driver was prepared by another provider"))?;
+            let state = prepared.state::<State>().ok_or_else(|| {
+                compiled_target_unreadable("the driver was prepared by another provider")
+            })?;
             let spec: StepSpec = step
                 .payload
                 .decode()
-                .map_err(|_| plan_unreadable("a step's payload does not decode"))?;
+                .map_err(|_| compiled_target_unreadable("a step's payload does not decode"))?;
             let document = step
                 .refers_to
                 .as_ref()
                 .map(|refers| refers.entry.as_str())
-                .ok_or_else(|| plan_unreadable("a step names no document"))?;
+                .ok_or_else(|| compiled_target_unreadable("a step names no document"))?;
             let means = means_of(
                 &spec,
                 state
@@ -1137,7 +1139,9 @@ impl Driver for FileDriver {
                 StepSpec::Confirm => done(self.confirm(state, document).await?),
                 other => {
                     let loaded = state.documents.get(document).ok_or_else(|| {
-                        plan_unreadable("a step names a document the surface does not have")
+                        compiled_target_unreadable(
+                            "a step names a document the surface does not have",
+                        )
                     })?;
                     let current = state
                         .current
@@ -1225,8 +1229,8 @@ mod tests {
 
     #[test]
     fn a_write_to_a_document_that_does_not_say_whether_it_may_be_open_does_not_run() {
-        // The compiler refuses both; a plan that holds either all the same
-        // is refused by the driver before the file is read.
+        // The compiler refuses both; a compiled target that holds either all
+        // the same is refused by the driver before the file is read.
         for spec in [document(None, None), document(None, Some("stock.csv.lock"))] {
             let failure = may_be_written(&spec).unwrap_err();
             assert_eq!(failure.failure.code(), &codes::PAYLOAD_UNREADABLE);

@@ -1,9 +1,9 @@
-//! Guard's five checks, in their order (decision 0309): the plan's hash,
-//! the kernel's health, the session's state, the policy decision, and the
-//! edge block. Each test shows its check stopping the run with its own
-//! failure, and holds something that only that check, made where guard
-//! makes it, would give: were the check taken out, a later one, choose, or
-//! a driver would be reached instead, and the test would fail.
+//! Guard's five checks, in their order (decision 0309): the compiled target's
+//! hash, the kernel's health, the session's state, the policy decision, and
+//! the edge block. Each test shows its check stopping the run with its own
+//! failure, and holds something that only that check, made where guard makes
+//! it, would give: were the check taken out, a later one, choose, or a driver
+//! would be reached instead, and the test would fail.
 
 #![allow(
     clippy::unwrap_used,
@@ -56,13 +56,16 @@ fn moved_to_running(scene: &Scene) -> bool {
 }
 
 #[tokio::test]
-async fn guard_one_a_plan_that_is_not_the_published_version_stops_the_run() {
+async fn guard_one_a_compiled_target_that_is_not_the_published_version_stops_the_run() {
     let mut scene = Scene::new(ORDER_GET, |_| {}).await;
-    scene.plan_hash = Digest::of(b"another plan");
+    scene.compiled_target_hash = Digest::of(b"another plan");
     let outcome = scene.work(JobKind::Execute, ORDER_GET, order()).await;
     assert_eq!(
         failed_as(&outcome),
-        (FailureClass::Policy, "plan_unverified".to_owned())
+        (
+            FailureClass::Policy,
+            "compiled_target_unverified".to_owned()
+        )
     );
     assert_eq!(outcome.run_state(), Some(RunState::Failed));
     // Nothing after the first check was asked.
@@ -169,7 +172,7 @@ async fn guard_asks_its_five_checks_in_order_and_the_first_that_fails_names_the_
     // A write on which all five checks fail. Each run takes one fault
     // away, and the next check names the stop.
     let mut scene = Scene::new(ITEM_UPSERT, |_| {}).await;
-    let published = scene.plan_hash;
+    let published = scene.compiled_target_hash;
     {
         let mut conditions = scene.conditions.lock().unwrap();
         conditions.health = KernelHealth::Degraded(FailureCode::fixed("storage_full"));
@@ -177,12 +180,12 @@ async fn guard_asks_its_five_checks_in_order_and_the_first_that_fails_names_the_
         conditions.edge_blocked.push(app());
     }
     scene.control.faults.denied.store(true, Ordering::SeqCst);
-    scene.plan_hash = Digest::of(b"another plan");
+    scene.compiled_target_hash = Digest::of(b"another plan");
 
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
-    assert_eq!(failed_as(&outcome).1, "plan_unverified");
+    assert_eq!(failed_as(&outcome).1, "compiled_target_unverified");
 
-    scene.plan_hash = published;
+    scene.compiled_target_hash = published;
     scene.another_run(ITEM_UPSERT).await;
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, rail()).await;
     assert_eq!(failed_as(&outcome).1, "engine_degraded");

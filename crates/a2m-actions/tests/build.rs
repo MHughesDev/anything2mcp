@@ -873,8 +873,8 @@ async fn drafts_are_linted_a_person_publishes_them_and_the_tools_are_found() {
         world.surface.asked.lock().unwrap().as_slice(),
         ["version.publish"]
     );
-    // The plan the store holds is the one the drafts compile to at that
-    // version: the same hash the compiler gives on its own.
+    // The compiled target the store holds is the one the drafts compile to at
+    // that version: the same hash the compiler gives on its own.
     let sources =
         a2m_files::load(&testing::example_root(), &testing::stand_set().unwrap()).unwrap();
     let alone = a2m_files::compile(
@@ -884,7 +884,10 @@ async fn drafts_are_linted_a_person_publishes_them_and_the_tools_are_found() {
         a2m_core::Version::new(1, 0, 0),
     )
     .unwrap();
-    assert_eq!(version["plan_hash"], alone.encoded.hash.to_string());
+    assert_eq!(
+        version["compiled_target_hash"],
+        alone.encoded.hash.to_string()
+    );
 
     // A published version is never changed: the same label is refused.
     let again = world
@@ -896,7 +899,7 @@ async fn drafts_are_linted_a_person_publishes_them_and_the_tools_are_found() {
         .await;
     assert_eq!(again.error.unwrap().code, "schema_invalid");
     // The drafts' own version is never published (decision 0273): a pack
-    // tells a draft's plan from a published one by it.
+    // tells a draft's compiled target from a published one by it.
     let draft = world
         .call(
             &world.person,
@@ -928,7 +931,7 @@ async fn drafts_are_linted_a_person_publishes_them_and_the_tools_are_found() {
     assert_eq!(described["version"], "1.0.0");
     assert!(described["input_schema"].is_object());
     let shown = world
-        .call(&agent, "plan.show", json!({"target": "example"}))
+        .call(&agent, "target.show", json!({"target": "example"}))
         .await;
     assert!(
         shown.result.unwrap()["text"]
@@ -1121,7 +1124,7 @@ async fn a_publish_an_agent_asks_for_is_carried_out_once_on_its_page_by_the_pers
         .iter()
         .map(|field| (field.name.as_str(), field.value.as_str()))
         .collect();
-    assert_eq!(fields[0], ("plan_hash", fields[0].1));
+    assert_eq!(fields[0], ("compiled_target_hash", fields[0].1));
     assert!(
         fields.contains(&("target", "example")) && fields.contains(&("version", "1.0.0")),
         "{fields:?}"
@@ -1204,7 +1207,7 @@ async fn a_publish_an_agent_asks_for_is_carried_out_once_on_its_page_by_the_pers
     assert!(done.ok, "{:?}", done.error);
     let version = done.result.unwrap();
     assert_eq!(version["version"], "1.0.0");
-    assert_eq!(version["plan_hash"], fields[0].1);
+    assert_eq!(version["compiled_target_hash"], fields[0].1);
     // Once: a second press does nothing.
     let second = desk.carry_out(act, proof_for(&world, act)).await;
     assert_eq!(second.unwrap_err().code().as_str(), "not_found");
@@ -1308,9 +1311,9 @@ async fn a_publish_runs_the_gates_shows_them_to_the_person_and_keeps_their_evide
         "{page}"
     );
 
-    // A fixture changed after the page was shown: the fixtures are among
-    // the files the plan is compiled from, so the press publishes nothing,
-    // refused as drafts that changed.
+    // A fixture changed after the page was shown: the fixtures are among the
+    // files the compiled target is compiled from, so the press publishes
+    // nothing, refused as drafts that changed.
     let answer = target_dir
         .join("fixtures")
         .join("order_get")
@@ -1408,7 +1411,13 @@ async fn a_requested_publish_rests_on_the_drafts_shown_and_ends_unanswered_with_
         .unwrap();
     assert_eq!(changed.error.unwrap().code, "drafts_changed");
     let listed = world.call(&agent, "target.list", json!({})).await;
-    assert!(!listed.result.unwrap().to_string().contains("plan_hash"));
+    assert!(
+        !listed
+            .result
+            .unwrap()
+            .to_string()
+            .contains("compiled_target_hash")
+    );
 
     // A new ask, declined: nothing is published, and the same call is told.
     let asked = world
@@ -1449,7 +1458,13 @@ async fn a_requested_publish_rests_on_the_drafts_shown_and_ends_unanswered_with_
         .await;
     assert_eq!(late.unwrap_err().code().as_str(), "not_found");
     let listed = world.call(&agent, "target.list", json!({})).await;
-    assert!(!listed.result.unwrap().to_string().contains("plan_hash"));
+    assert!(
+        !listed
+            .result
+            .unwrap()
+            .to_string()
+            .contains("compiled_target_hash")
+    );
 
     // A caller with no page to go to is refused by name, as before.
     *world.surface.pages.lock().unwrap() = false;
@@ -3151,20 +3166,20 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
     std::fs::write(&operation, &with_shadow).unwrap();
 
     // The assumption the promotion rests on: the shadow binding's digest is
-    // the same in the drafts and in the plan published from them.
+    // the same in the drafts and in the compiled target published from them.
     let set = testing::stand_set().unwrap();
     let root = a2m_files::TargetRoot::new(&target_dir);
     let sources = a2m_files::load(&root, &set).unwrap();
     let digest_in = |mode: a2m_files::CompileMode, version: a2m_core::Version| {
         let compiled = a2m_files::compile(&sources, &set, mode, version).unwrap();
-        let plan = compiled.plan;
-        let operation = plan
+        let compiled_target = compiled.compiled_target;
+        let operation = compiled_target
             .operations
             .iter()
             .find(|operation| operation.name.as_str() == "example_order_get")
             .unwrap()
             .clone();
-        a2m_engine::BindingPin::of(&plan, &operation, 1)
+        a2m_engine::BindingPin::of(&compiled_target, &operation, 1)
             .unwrap()
             .digest
     };
@@ -3189,7 +3204,7 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
                 .unwrap()
         ),
         drafted,
-        "a binding whose files did not change has one digest in the drafts and the plan"
+        "a binding whose files did not change has one digest in the drafts and the compiled target"
     );
 
     let read = |order: &'static str| {
@@ -3792,7 +3807,10 @@ async fn a_held_draft_is_listed_refused_by_name_and_named_by_what_depends_on_it(
         .result
         .unwrap();
     assert_eq!(linted["ok"], true, "{linted}");
-    assert_eq!(linted["plan_hash"], plain["plan_hash"], "{linted}");
+    assert_eq!(
+        linted["compiled_target_hash"], plain["compiled_target_hash"],
+        "{linted}"
+    );
     assert_eq!(linted["tools"], plain["tools"], "{linted}");
     assert_eq!(
         linted["held"],

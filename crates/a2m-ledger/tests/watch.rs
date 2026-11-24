@@ -56,7 +56,7 @@ fn new_watch(effect: EffectClass) -> NewWatch {
 }
 
 /// The published version the watches are asked for.
-fn plan() -> Digest {
+fn compiled_target() -> Digest {
     Digest::of(b"plan")
 }
 
@@ -80,8 +80,12 @@ async fn confirmed(store: &Store) -> WatchId {
     let watch = ask(store, new_watch(EffectClass::Read)).await.unwrap();
     store
         .write(Durability::Synced, move |tx| {
-            tx.watches()
-                .confirm(watch.id, principal(1), Duration::from_secs(7), &plan())
+            tx.watches().confirm(
+                watch.id,
+                principal(1),
+                Duration::from_secs(7),
+                &compiled_target(),
+            )
         })
         .await
         .unwrap();
@@ -291,7 +295,7 @@ async fn a_watch_does_nothing_until_its_own_person_confirms_it() {
         store
             .write(Durability::Synced, move |tx| {
                 tx.watches()
-                    .confirm(id, principal(7), Duration::ZERO, &plan())
+                    .confirm(id, principal(7), Duration::ZERO, &compiled_target())
             })
             .await,
         &codes::WATCH_NOT_YOURS,
@@ -307,7 +311,7 @@ async fn a_watch_does_nothing_until_its_own_person_confirms_it() {
     let row = store
         .write(Durability::Synced, move |tx| {
             tx.watches()
-                .confirm(id, principal(1), Duration::from_secs(3), &plan())
+                .confirm(id, principal(1), Duration::from_secs(3), &compiled_target())
         })
         .await
         .unwrap();
@@ -1137,9 +1141,9 @@ async fn two_watches_of_one_read_share_a_run_and_only_the_opener_is_marked() {
     assert!(changed.to_string().contains("never changes"), "{changed}");
 }
 
-/// A condition over the read's `total`, in the plan's form, as the registry
-/// compiles it against the read's outputs.
-fn total_reaches(at_least: i64) -> a2m_core::PlanExpr {
+/// A condition over the read's `total`, in the compiled target's form, as the
+/// registry compiles it against the read's outputs.
+fn total_reaches(at_least: i64) -> a2m_core::CompiledExpr {
     let mut env = a2m_expr::TypeEnv::new(a2m_expr::LibraryVersion::CURRENT);
     env.declare(
         a2m_expr::names::RESULT,
@@ -1155,11 +1159,11 @@ fn total_reaches(at_least: i64) -> a2m_core::PlanExpr {
         Some(&a2m_core::ValueType::Bool),
     )
     .unwrap()
-    .to_plan_expr()
+    .to_compiled_expr()
     .unwrap()
 }
 
-async fn confirmed_until(store: &Store, condition: a2m_core::PlanExpr) -> WatchId {
+async fn confirmed_until(store: &Store, condition: a2m_core::CompiledExpr) -> WatchId {
     let watch = ask(
         store,
         NewWatch {
@@ -1171,8 +1175,12 @@ async fn confirmed_until(store: &Store, condition: a2m_core::PlanExpr) -> WatchI
     .unwrap();
     store
         .write(Durability::Synced, move |tx| {
-            tx.watches()
-                .confirm(watch.id, principal(1), Duration::from_secs(7), &plan())
+            tx.watches().confirm(
+                watch.id,
+                principal(1),
+                Duration::from_secs(7),
+                &compiled_target(),
+            )
         })
         .await
         .unwrap();

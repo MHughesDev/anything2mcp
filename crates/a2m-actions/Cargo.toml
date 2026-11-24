@@ -39,7 +39,7 @@ rustix = { workspace = true, features = ["fs"] }
 
 [features]
 # A way for the tests of the crates above this one to have a published tool
-# without the compiler: `Kernel::publish_plan`. Never part of the product.
+# without the compiler: `Kernel::publish_compiled`. Never part of the product.
 testing = []
 
 [dev-dependencies]

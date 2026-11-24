@@ -1,5 +1,6 @@
 //! The `screens/` file kind for surfaces of the kind `web`: its schema, its
-//! compilation into the screens of the plan, and the lint rules over it.
+//! compilation into the screens of the compiled target, and the lint rules
+//! over it.
 //!
 //! Locators live here and nowhere else. An operation names a screen, a
 //! field, and an action; how each is found on the page is this file kind's

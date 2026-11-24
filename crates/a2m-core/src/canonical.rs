@@ -2,8 +2,8 @@
 //!
 //! The same data gives the same bytes on every machine and every run: no
 //! spaces, the keys of every object sorted by their bytes, whole numbers
-//! only, and one way to escape text. A plan, a pack's payload, and the bytes
-//! a value's digest is made from all use it (decision 0069).
+//! only, and one way to escape text. A compiled target, a pack's payload, and
+//! the bytes a value's digest is made from all use it (decision 0069).
 
 use std::fmt;
 
@@ -16,7 +16,7 @@ use crate::failure::{Failure, FailureClass, FailureCode};
 /// Why data could not be written in the canonical encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NotEncodable {
-    /// It holds a float. No number in a plan is a float.
+    /// It holds a float. No number in a compiled target is a float.
     Float,
     /// It holds something JSON cannot carry: a map whose keys are not text,
     /// or a number beyond 64 bits.
@@ -27,10 +27,10 @@ impl fmt::Display for NotEncodable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Float => f.write_str(
-                "the data holds a float; the plan's encoding carries whole numbers, and a decimal travels as text",
+                "the data holds a float; the compiled target's encoding carries whole numbers, and a decimal travels as text",
             ),
             Self::NotData => f.write_str(
-                "the data holds something the plan's encoding cannot carry: a map whose keys are not text, or a number beyond 64 bits",
+                "the data holds something the compiled target's encoding cannot carry: a map whose keys are not text, or a number beyond 64 bits",
             ),
         }
     }
@@ -217,7 +217,7 @@ impl CanonicalJson {
                 FailureClass::Input,
                 FailureCode::PAYLOAD_UNREADABLE,
                 format!(
-                    "A payload in the plan does not decode as the type its reader expects, at character {} of {}.",
+                    "A payload in the compiled target does not decode as the type its reader expects, at character {} of {}.",
                     error.column(),
                     self.0.len()
                 ),

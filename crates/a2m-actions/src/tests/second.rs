@@ -42,11 +42,15 @@ async fn a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes() {
     // The pipeline of fixed steps is given the sheet as its source, so that
     // this proof stands on reading a source and on nothing else a pipeline
     // may do with its rows.
-    let mut plan = engine::plan(&world.app.url(""));
-    plan.header.version = a2m_core::Version::new(2, 0, 0);
-    plan.pipelines[0].source = plan.pipelines[1].source.clone();
-    assert!(plan.pipelines[0].source.is_some());
-    world.kernel.publish_plan(&plan).await.unwrap();
+    let mut compiled_target = engine::compiled_target(&world.app.url(""));
+    compiled_target.header.version = a2m_core::Version::new(2, 0, 0);
+    compiled_target.pipelines[0].source = compiled_target.pipelines[1].source.clone();
+    assert!(compiled_target.pipelines[0].source.is_some());
+    world
+        .kernel
+        .publish_compiled_target(&compiled_target)
+        .await
+        .unwrap();
     let project = world.project("project");
     std::fs::create_dir_all(project.join("sheets")).unwrap();
     std::fs::write(project.join("sheets").join("items.csv"), b"Code\n").unwrap();
@@ -211,7 +215,7 @@ async fn a_tool_list_in_full_is_one_decided_step() {
             "input_schema",
             "output_schema",
             "annotations",
-            "plan_hash",
+            "compiled_target_hash",
             "hazard",
         ] {
             assert!(tool.get(key).is_some(), "{name}: {key}");

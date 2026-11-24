@@ -127,8 +127,8 @@ async fn a_row_the_source_rejects_ends_the_run_before_the_system_is_touched() {
 
 #[tokio::test]
 async fn a_sheet_with_more_rows_than_the_pipeline_allows_is_refused_whole() {
-    let scene = Scene::new(SHEET_ENTER, |plan| {
-        plan.pipelines[1].limits.max_records = Some(2);
+    let scene = Scene::new(SHEET_ENTER, |compiled_target| {
+        compiled_target.pipelines[1].limits.max_records = Some(2);
     })
     .await;
     give(&scene, three_rows());
@@ -143,8 +143,8 @@ async fn a_sheet_with_more_rows_than_the_pipeline_allows_is_refused_whole() {
 
 #[tokio::test]
 async fn a_run_past_its_time_limit_stops_before_the_next_record_and_resumes_there() {
-    let scene = Scene::new(SHEET_ENTER, |plan| {
-        plan.pipelines[1].limits.max_duration_ms = Some(15_000);
+    let scene = Scene::new(SHEET_ENTER, |compiled_target| {
+        compiled_target.pipelines[1].limits.max_duration_ms = Some(15_000);
     })
     .await;
     give(&scene, three_rows());

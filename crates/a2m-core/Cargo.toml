@@ -1,6 +1,6 @@
 [package]
 name = "a2m-core"
-description = "Shared types for Anything2MCP: the vocabularies, checked names, identifiers, values, failures, findings, the secret wrapper, and the compiled plan as data."
+description = "Shared types for Anything2MCP: the vocabularies, checked names, identifiers, values, failures, findings, the secret wrapper, and the compiled target as data."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

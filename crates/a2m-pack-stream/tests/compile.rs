@@ -17,7 +17,7 @@ use a2m_core::{
     Archetype, EffectClass, Hazard, IdentityStrategy, Mode, SurfaceKind, Values, WriteEvidence,
 };
 use a2m_provider::{Manifest, ProviderName, ProviderSettings};
-use common::{Folder, Planted, compile, edited, plan, registry, registry_with};
+use common::{Folder, Planted, compile, compiled_target, edited, registry, registry_with};
 
 fn mode() -> Mode {
     Mode::new("stream").unwrap()
@@ -88,14 +88,15 @@ fn the_manifest_declares_every_code_the_driver_returns_and_no_other() {
 fn the_example_target_compiles_twice_to_the_same_bytes() {
     let folder = Folder::new("compile");
     let registry = registry(&folder);
-    let first = plan(&registry).encode().unwrap();
-    let second = plan(&registry).encode().unwrap();
+    let first = compiled_target(&registry).encode().unwrap();
+    let second = compiled_target(&registry).encode().unwrap();
     assert_eq!(first.bytes, second.bytes);
     assert_eq!(first.hash, second.hash);
 
-    let plan = plan(&registry);
+    let compiled_target = compiled_target(&registry);
     let operation = |name: &str| {
-        plan.operations
+        compiled_target
+            .operations
             .iter()
             .find(|operation| operation.name.as_str() == name)
             .unwrap()
@@ -153,7 +154,7 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
     assert_eq!(notice.bindings[0].evidence, WriteEvidence::Acknowledged);
     assert_eq!(notice.effect, EffectClass::Irreversible);
 
-    // A wait is two steps, and its limit is in the plan.
+    // A wait is two steps, and its limit is in the compiled target.
     let wait = operation("example_order_event_await");
     assert_eq!(kinds(&wait.bindings[0].act), ["subscribe", "await"]);
     assert!(wait.bindings[0].act[1].timeout_ms > 1_000);
@@ -179,7 +180,7 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
     assert!(take.bindings[0].read_back[0].lookup && !take.bindings[0].read_back[0].commits);
 
     // Every step names its channel by reference, never by an argument.
-    for operation in &plan.operations {
+    for operation in &compiled_target.operations {
         for binding in &operation.bindings {
             for step in binding
                 .act
@@ -420,9 +421,10 @@ fn text_a_broker_returns_is_an_output_only_as_untrusted_text() {
 fn an_output_is_certain_only_where_the_channels_schema_or_the_verb_makes_it_so() {
     let registry_with_folder = registry;
     let folder = Folder::new("absent");
-    let plan = plan(&registry_with_folder(&folder));
+    let compiled_target = compiled_target(&registry_with_folder(&folder));
     let absent = |operation: &str, output: &str| {
-        plan.operations
+        compiled_target
+            .operations
             .iter()
             .find(|found| found.name.as_str() == operation)
             .unwrap()
@@ -478,7 +480,7 @@ fn an_output_is_certain_only_where_the_channels_schema_or_the_verb_makes_it_so()
         let compiled =
             compile(&extra_registry, &root).unwrap_or_else(|problems| panic!("{problems}"));
         let extra = compiled
-            .plan
+            .compiled_target
             .operations
             .iter()
             .find(|found| found.name.as_str() == "example_extra")

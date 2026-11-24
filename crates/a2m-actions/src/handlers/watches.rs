@@ -2,23 +2,23 @@
 //! interval until an end, whose checks record what was added, changed, or
 //! went out of view (decisions 0234, 0247, 0262, 0283).
 //!
-//! The ledger keeps the watch, its checks, and its changes, and compares
-//! each check with what earlier checks saw; the scheduler says when a check
-//! is due and admits it as the lowest work. This module holds what neither
-//! can: an agent asks, and only its person confirms, on the engine's page;
-//! the person a watch acts for is the caller's own; what a watch reads,
-//! where, how many requests a check sends, and how its result is compared
-//! all come from the published plan, never from the caller's input; every
-//! check ends with its own run's stored result; and a change names a record
-//! only from a run of the caller's own person.
+//! The ledger keeps the watch, its checks, and its changes, and compares each
+//! check with what earlier checks saw; the scheduler says when a check is due
+//! and admits it as the lowest work. This module holds what neither can: an
+//! agent asks, and only its person confirms, on the engine's page; the person
+//! a watch acts for is the caller's own; what a watch reads, where, how many
+//! requests a check sends, and how its result is compared all come from the
+//! published compiled target, never from the caller's input; every check ends
+//! with its own run's stored result; and a change names a record only from a
+//! run of the caller's own person.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
 
 use a2m_core::{
-    BindingStatus, Digest, EffectClass, Environment, Failure, FailureClass, FailureCode, FieldOf,
-    Identity, OperationName, OperationPlan, Plan, PlanExpr, PrincipalId, RecordKey, RunId,
-    RunState, SessionState, Timestamp, ToolRuns, Value, ValueType, Values,
+    BindingStatus, CompiledExpr, CompiledOperation, CompiledTarget, Digest, EffectClass,
+    Environment, Failure, FailureClass, FailureCode, FieldOf, Identity, OperationName, PrincipalId,
+    RecordKey, RunId, RunState, SessionState, Timestamp, ToolRuns, Value, ValueType, Values,
 };
 use a2m_engine::{decode_values, encode_values};
 use a2m_ledger::{
@@ -110,7 +110,7 @@ pub(crate) fn watch_json(row: &WatchRow) -> Json {
     map.insert("target".to_owned(), json!(row.target.as_str()));
     map.insert("environment".to_owned(), json!(row.environment.as_str()));
     map.insert(
-        "plan_hash".to_owned(),
+        "compiled_target_hash".to_owned(),
         json!(row.target_version.to_string()),
     );
     map.insert("state".to_owned(), json!(row.state.as_str()));
@@ -157,21 +157,26 @@ pub(crate) fn watch_json(row: &WatchRow) -> Json {
     Json::Object(map)
 }
 
-/// What a watch of `operation` reads, as the published plan states it: the
-/// surface of its first verified binding, the requests a check sends there,
-/// and how its result is compared. Nothing of it comes from a caller.
+/// What a watch of `operation` reads, as the published compiled target states
+/// it: the surface of its first verified binding, the requests a check sends
+/// there, and how its result is compared. Nothing of it comes from a caller.
 struct Planned {
     surface: a2m_core::SurfaceName,
     requests_per_check: u32,
     shape: WatchShape,
 }
 
-/// The surface, cost, and shape of a watch of `operation` in `plan`.
+/// The surface, cost, and shape of a watch of `operation` in
+/// `compiled_target`.
 ///
-/// The shape is the whole result. A plan declares no list of records with
-/// a key: an operation's output is a value of one field type or a list of
-/// them (decision 0283), so there are no records to compare one by one.
-fn planned(plan: &Plan, operation: &OperationPlan) -> Result<Planned, Failure> {
+/// The shape is the whole result. A compiled target declares no list of
+/// records with a key: an operation's output is a value of one field type or
+/// a list of them (decision 0283), so there are no records to compare one by
+/// one.
+fn planned(
+    compiled_target: &CompiledTarget,
+    operation: &CompiledOperation,
+) -> Result<Planned, Failure> {
     let binding = operation
         .bindings
         .iter()
@@ -186,10 +191,10 @@ fn planned(plan: &Plan, operation: &OperationPlan) -> Result<Planned, Failure> {
                 "Promote a binding of the read, publish, and ask again.",
             )
         })?;
-    let surface = plan.surface(binding.surface).ok_or_else(|| {
+    let surface = compiled_target.surface(binding.surface).ok_or_else(|| {
         codes::input(
             codes::SCHEMA_INVALID,
-            "The read's binding names a surface its plan does not hold.",
+            "The read's binding names a surface its compiled target does not hold.",
             "Publish the target again from its sources.",
         )
     })?;
@@ -206,12 +211,12 @@ fn planned(plan: &Plan, operation: &OperationPlan) -> Result<Planned, Failure> {
 }
 
 /// The operation a found tool runs, when it is an operation.
-fn operation_of(found: &FoundTool) -> Result<&OperationPlan, Failure> {
+fn operation_of(found: &FoundTool) -> Result<&CompiledOperation, Failure> {
     match found.tool.runs {
-        ToolRuns::Operation(index) => found.plan.operation(index).ok_or_else(|| {
+        ToolRuns::Operation(index) => found.compiled_target.operation(index).ok_or_else(|| {
             codes::input(
                 codes::SCHEMA_INVALID,
-                "The tool's plan does not hold what it runs.",
+                "The tool's compiled target does not hold what it runs.",
                 "Publish the target again from its sources.",
             )
         }),
@@ -229,7 +234,7 @@ fn operation_of(found: &FoundTool) -> Result<&OperationPlan, Failure> {
 /// Checks a watch's input against the read's declared inputs: every name
 /// given is an input, and every input that must be given is. Its values are
 /// checked by type when each check runs, as for any call.
-fn checked_input(operation: &OperationPlan, input: &Values) -> Result<(), Failure> {
+fn checked_input(operation: &CompiledOperation, input: &Values) -> Result<(), Failure> {
     let mut problems = Vec::new();
     for name in input.names() {
         if !operation
@@ -261,7 +266,7 @@ fn checked_input(operation: &OperationPlan, input: &Values) -> Result<(), Failur
 
 /// Checks each name left out of the comparison against the read's outputs.
 fn checked_ignore(
-    operation: &OperationPlan,
+    operation: &CompiledOperation,
     ignore: &[String],
 ) -> Result<BTreeSet<String>, Failure> {
     let unknown: Vec<&String> = ignore
@@ -286,15 +291,16 @@ fn checked_ignore(
 }
 
 /// Checks and compiles a watch's condition: an expression over the read's
-/// result, `result`, a record of the read's outputs with the types the plan
-/// gives them, that gives true or false (decisions 0234 and 0291). It reads
-/// no input, no environment, and nothing but the one result, so the same
-/// result always gives the same answer. Kept in the plan's form, which the
-/// ledger loads again and evaluates on each check's own result.
+/// result, `result`, a record of the read's outputs with the types the
+/// compiled target gives them, that gives true or false (decisions 0234 and
+/// 0291). It reads no input, no environment, and nothing but the one result,
+/// so the same result always gives the same answer. Kept in the compiled
+/// target's form, which the ledger loads again and evaluates on each check's
+/// own result.
 fn checked_condition(
-    operation: &OperationPlan,
+    operation: &CompiledOperation,
     given: Option<&str>,
-) -> Result<Option<PlanExpr>, Failure> {
+) -> Result<Option<CompiledExpr>, Failure> {
     let Some(source) = given.filter(|source| !source.trim().is_empty()) else {
         return Ok(None);
     };
@@ -308,7 +314,7 @@ fn checked_condition(
     );
     env.declare(a2m_expr::names::RESULT, result)?;
     let compiled = a2m_expr::compile(source, &env, Some(&ValueType::Bool))?;
-    Ok(Some(compiled.to_plan_expr()?))
+    Ok(Some(compiled.to_compiled_expr()?))
 }
 
 impl Kernel {
@@ -334,8 +340,10 @@ impl Kernel {
     /// counted against it: the surface's own declared limit, or the
     /// scheduler's default.
     async fn surface_rate(&self, row: &WatchRow) -> Result<RateLimit, Failure> {
-        let plan = self.plan_by_hash(&row.target, &row.target_version).await?;
-        let declared = plan
+        let compiled_target = self
+            .compiled_target_by_hash(&row.target, &row.target_version)
+            .await?;
+        let declared = compiled_target
             .surfaces
             .iter()
             .find(|surface| surface.name == row.surface)
@@ -509,10 +517,10 @@ impl Kernel {
         // admitted, as a run's control sets it before its first request:
         // the watches' share at admission is then a share of the limit the
         // check's requests are counted against, and not of the default.
-        if let Ok(plan) = self
-            .plan_by_hash(&watch.target, &watch.target_version)
+        if let Ok(compiled_target) = self
+            .compiled_target_by_hash(&watch.target, &watch.target_version)
             .await
-            && let Some(rate) = plan
+            && let Some(rate) = compiled_target
                 .surfaces
                 .iter()
                 .find(|surface| surface.name == watch.surface)
@@ -717,7 +725,7 @@ impl Kernel {
         let share = self.sched()?.settings().watch.budget_share_percent;
         Ok(vec![
             format!(
-                "The read: `{}` of the target `{}`, in the environment `{}`, as published with the plan {}. It reads and never writes.",
+                "The read: `{}` of the target `{}`, in the environment `{}`, as published with the compiled target {}. It reads and never writes.",
                 row.operation, row.target, row.environment, row.target_version
             ),
             if shown.is_empty() {
@@ -856,7 +864,7 @@ handler!(
         let environment = match call.text("environment") {
             Some(given) => Environment::new(given)?,
             None => found
-                .plan
+                .compiled_target
                 .default_environment()
                 .map(|environment| environment.name.clone())
                 .ok_or_else(|| {
@@ -867,7 +875,11 @@ handler!(
                     )
                 })?,
         };
-        if found.plan.environment_named(&environment).is_none() {
+        if found
+            .compiled_target
+            .environment_named(&environment)
+            .is_none()
+        {
             return Err(codes::input(
                 codes::NOT_FOUND,
                 format!(
@@ -877,7 +889,7 @@ handler!(
                 "Leave `environment` out to use the target's default.",
             ));
         }
-        let planned = planned(&found.plan, operation)?;
+        let planned = planned(&found.compiled_target, operation)?;
         let interval = Duration::from_secs(
             u64::try_from(call.int("interval_seconds").unwrap_or(0)).unwrap_or(0),
         );
@@ -906,7 +918,7 @@ handler!(
             tool_name: name.clone(),
             tool_kind: ToolKind::Operation,
             target: found.target.clone(),
-            target_version: found.plan_hash,
+            target_version: found.compiled_target_hash,
             environment: environment.clone(),
             identity: Some(Identity::Person(person)),
             effect: EffectClass::Read,
@@ -927,7 +939,7 @@ handler!(
                 target: found.target.clone(),
                 environment,
                 operation: name.clone(),
-                target_version: found.plan_hash,
+                target_version: found.compiled_target_hash,
                 effect: operation.effect,
                 input_hash,
                 input: Some(stored),

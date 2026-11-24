@@ -81,11 +81,11 @@ async fn discover(
     Vec<Finding>,
     usize,
 ) {
-    let plan = common::stand_plan(stand, registry.compiler_set());
+    let compiled_target = common::stand_compiled_target(stand, registry.compiler_set());
     let surface = SurfaceRef {
-        target: plan.header.target.clone(),
+        target: compiled_target.header.target.clone(),
         environment: Environment::new("test").unwrap(),
-        surface: plan.surfaces[0].clone(),
+        surface: compiled_target.surfaces[0].clone(),
     };
     let sources = folder.path().join("sources");
     std::fs::create_dir_all(&sources).unwrap();
@@ -110,7 +110,7 @@ async fn discover(
         run: a2m_core::RunId::from_bytes([9; 16]),
         epoch: a2m_core::Epoch::new(1),
         surface: &surface,
-        plan: &plan,
+        compiled_target: &compiled_target,
         posture: Posture::Discovery,
         deadline: Deadline::after(WITHIN),
         redact: &NoSecrets,
@@ -197,11 +197,11 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
 
     // The registry takes the two names from the manifest: nothing else is
     // needed for `scout run --files` to accept them.
-    let plan = common::stand_plan(&stand, registry.compiler_set());
+    let compiled_target = common::stand_compiled_target(&stand, registry.compiler_set());
     let surface = SurfaceRef {
-        target: plan.header.target.clone(),
+        target: compiled_target.header.target.clone(),
         environment: Environment::new("test").unwrap(),
-        surface: plan.surfaces[0].clone(),
+        surface: compiled_target.surfaces[0].clone(),
     };
     let taken: Vec<String> = registry
         .files_taken(&description(&surface))

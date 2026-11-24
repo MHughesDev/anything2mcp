@@ -353,7 +353,7 @@ def main():
             note("layering", f"{c} is in the layering table but {places.get(c, 'crates/' + c)} does not exist")
     # Edges the layers would allow and the design forbids (docs/architecture/README.md).
     forbidden = {
-        ("a2m-engine", "a2m-files"): "the engine runs only compiled plans and never depends on the compiler "
+        ("a2m-engine", "a2m-files"): "the engine runs only compiled targets and never depends on the compiler "
                                      "(decision 0036)",
         ("a2m-engine", "a2m-policy"): "only the control plane decides; the engine asks through Control",
     }

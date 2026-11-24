@@ -298,7 +298,7 @@ async fn a_credential_reaches_only_the_request_it_is_for_and_appears_nowhere_els
 
     // A redirect is never followed. To the sign-in host the target
     // declares, it is a sign of expiry; to any other host, a destination
-    // the plan does not list.
+    // the compiled target does not list.
     let before = service.seen().len();
     let moved = scene
         .read(
@@ -816,19 +816,20 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
     );
 
     let sources = a2m_files::load(&root, set).unwrap();
-    let plan = a2m_files::compile(
+    let compiled_target = a2m_files::compile(
         &sources,
         set,
         a2m_files::CompileMode::Draft,
         a2m_files::DRAFT_VERSION,
     )
     .unwrap()
-    .plan;
-    for operation in &plan.operations {
+    .compiled_target;
+    for operation in &compiled_target.operations {
         assert_eq!(operation.effect, a2m_core::EffectClass::Read);
     }
     let examples = |name: &str| {
-        plan.operations
+        compiled_target
+            .operations
             .iter()
             .find(|operation| operation.name.as_str() == name)
             .unwrap()
@@ -845,7 +846,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
             .with("order_id", "A-100")
             .with("item_code", "L-101")
     );
-    let item = plan
+    let item = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_orders_items_get")
@@ -855,7 +856,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
         .iter()
         .find(|output| output.name == "description")
         .unwrap();
-    assert!(plan.field_types[description.field_type.unwrap().get()].untrusted);
+    assert!(compiled_target.field_types[description.field_type.unwrap().get()].untrusted);
 
     let reading = Scene::over(
         Folder::new("drafted-run"),
@@ -863,7 +864,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
             &Folder::new("drafted-registry"),
             Arc::new(a2m_core::NoSecrets),
         ),
-        plan.clone(),
+        compiled_target.clone(),
         &address,
     );
     let (handle, mut prepared) = reading.reader_of("api").await;
@@ -986,8 +987,8 @@ async fn a_drafted_api_read_is_pinned_to_its_description_and_a_changed_one_is_na
             a2m_files::DRAFT_VERSION,
         )
     };
-    let plan = compiled(&root).unwrap().plan;
-    let operation = plan
+    let compiled_target = compiled(&root).unwrap().compiled_target;
+    let operation = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_api_orders_get")
@@ -1001,7 +1002,7 @@ async fn a_drafted_api_read_is_pinned_to_its_description_and_a_changed_one_is_na
             &Folder::new("drafted-api-registry"),
             Arc::new(a2m_core::NoSecrets),
         ),
-        plan,
+        compiled_target,
         &address,
     );
     let inputs = Values::new().with("order_id", "A-100");
@@ -1021,8 +1022,8 @@ async fn a_drafted_api_read_is_pinned_to_its_description_and_a_changed_one_is_na
         Some("A-100")
     );
 
-    // The service's description is revised after the plan was made: the
-    // next pass reads it again, and stops before the call is sent.
+    // The service's description is revised after the compiled target was
+    // made: the next pass reads it again, and stops before the call is sent.
     app.revise_description(true).await.unwrap();
     let before = app.seen().await.unwrap().len();
     let (handle, mut prepared) = reading.reader_of("api").await;
@@ -1131,21 +1132,21 @@ async fn a_read_drafted_from_a_description_takes_null_and_missing_for_an_optiona
     let endpoint = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
     assert!(endpoint.contains("nullable"), "{endpoint}");
     let sources = a2m_files::load(&root, set).unwrap();
-    let plan = a2m_files::compile(
+    let compiled_target = a2m_files::compile(
         &sources,
         set,
         a2m_files::CompileMode::Draft,
         a2m_files::DRAFT_VERSION,
     )
     .unwrap()
-    .plan;
+    .compiled_target;
     let reading = Scene::over(
         Folder::new("drafted-optional-run"),
         common::registry(
             &Folder::new("drafted-optional-registry"),
             Arc::new(a2m_core::NoSecrets),
         ),
-        plan,
+        compiled_target,
         &address,
     );
     let (handle, mut prepared) = reading.reader_of("api").await;
@@ -1278,16 +1279,17 @@ async fn a_property_and_a_parameter_named_as_a_secret_are_never_drafted() {
 
     // The target compiles; the compiler refuses nothing.
     let sources = a2m_files::load(&root, set).unwrap();
-    let plan = a2m_files::compile(
+    let compiled_target = a2m_files::compile(
         &sources,
         set,
         a2m_files::CompileMode::Draft,
         a2m_files::DRAFT_VERSION,
     )
     .unwrap()
-    .plan;
+    .compiled_target;
     assert!(
-        plan.operations
+        compiled_target
+            .operations
             .iter()
             .all(|operation| operation.name.as_str() != "example_orders_pickup_get")
     );
@@ -1298,7 +1300,7 @@ async fn a_property_and_a_parameter_named_as_a_secret_are_never_drafted() {
             &Folder::new("drafted-secret-registry"),
             Arc::new(a2m_core::NoSecrets),
         ),
-        plan,
+        compiled_target,
         &address,
     );
     let (handle, mut prepared) = reading.reader_of("api").await;
@@ -1354,17 +1356,18 @@ async fn a_drafted_read_declares_the_output_the_description_does_not_require_as_
     let set = scene.registry.compiler_set();
     Drafter::new(set, &root).draft(&findings).unwrap();
     let sources = a2m_files::load(&root, set).unwrap();
-    let plan = a2m_files::compile(
+    let compiled_target = a2m_files::compile(
         &sources,
         set,
         a2m_files::CompileMode::Draft,
         a2m_files::DRAFT_VERSION,
     )
     .unwrap()
-    .plan;
+    .compiled_target;
 
-    // The plan: `packages` may be absent, and nothing else of the read.
-    let operation = plan
+    // The compiled target: `packages` may be absent, and nothing else of the
+    // read.
+    let operation = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_orders_handoff_get")
@@ -1380,7 +1383,7 @@ async fn a_drafted_read_declares_the_output_the_description_does_not_require_as_
 
     // The schema says the same: every output required, `null` admitted by
     // `packages` alone.
-    let tool = plan
+    let tool = compiled_target
         .tools
         .iter()
         .find(|tool| tool.name.as_str() == "example_orders_handoff_get")
@@ -1413,7 +1416,7 @@ async fn a_drafted_read_declares_the_output_the_description_does_not_require_as_
             &Folder::new("drafted-absent-registry"),
             Arc::new(a2m_core::NoSecrets),
         ),
-        plan,
+        compiled_target,
         &address,
     );
     let (handle, mut prepared) = reading.reader_of("api").await;
@@ -1645,7 +1648,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
         a2m_files::DRAFT_VERSION,
     )
     .unwrap();
-    assert!(!compiled.plan.operations.is_empty());
+    assert!(!compiled.compiled_target.operations.is_empty());
 
     // One `http` surface, and a second surface of another kind: the one of
     // kind `http` is still the only one to name.

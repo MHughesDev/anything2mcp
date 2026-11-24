@@ -16,8 +16,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, NoSecrets, OperationName, Plan,
-    PrincipalId, RecordKey, RunState, Step, TargetName, Timestamp, Value, Values, WorkspaceId,
+    CompiledBinding, CompiledTarget, Digest, EffectClass, Environment, Epoch, Failure, NoSecrets,
+    OperationName, PrincipalId, RecordKey, RunState, Step, TargetName, Timestamp, Value, Values,
+    WorkspaceId,
 };
 use a2m_expr::{Bindings, Program};
 use a2m_files::{CompileMode, CompilerSet, Diagnostics, TargetRoot};
@@ -95,7 +96,7 @@ pub fn compile(root: &Path, set: &CompilerSet) -> Result<a2m_files::Compiled, Di
 pub struct Scene {
     pub stand: FileStand,
     pub registry: Registry,
-    pub plan: Plan,
+    pub compiled_target: CompiledTarget,
     /// The root the surfaces are in, when it is not the one they state.
     root: Option<&'static str>,
     /// The run's checked paths: with a project folder, for a scene whose
@@ -130,13 +131,13 @@ impl Scene {
             }
         };
         let registry = registry(roots);
-        let plan = compile(&fixtures(), registry.compiler_set())
+        let compiled_target = compile(&fixtures(), registry.compiler_set())
             .unwrap_or_else(|problems| panic!("the fixtures do not compile: {problems:?}"))
-            .plan;
+            .compiled_target;
         Self {
             stand,
             registry,
-            plan,
+            compiled_target,
             root: (access == Access::Read).then_some("project"),
             paths,
         }
@@ -153,14 +154,14 @@ impl Scene {
             .add_project(RootName::new("files").unwrap(), Access::Write)
             .unwrap();
         let registry = registry(roots);
-        let plan = compile(&fixtures(), registry.compiler_set())
+        let compiled_target = compile(&fixtures(), registry.compiler_set())
             .unwrap_or_else(|problems| panic!("the fixtures do not compile: {problems:?}"))
-            .plan;
+            .compiled_target;
         let paths = project_paths(stand.root());
         Self {
             stand,
             registry,
-            plan,
+            compiled_target,
             root: None,
             paths,
         }
@@ -168,7 +169,7 @@ impl Scene {
 
     pub fn surface(&self, name: &str) -> SurfaceRef {
         let mut surface = self
-            .plan
+            .compiled_target
             .surfaces
             .iter()
             .find(|surface| surface.name.as_str() == name)
@@ -180,16 +181,16 @@ impl Scene {
                 a2m_core::PackPayload::encode(&Values::new().with("root", root)).unwrap();
         }
         SurfaceRef {
-            target: self.plan.header.target.clone(),
+            target: self.compiled_target.header.target.clone(),
             environment: Environment::new("test").unwrap(),
             surface,
         }
     }
 
     /// The one binding of an operation, and the surface it acts on.
-    pub fn binding(&self, operation: &str) -> (&BindingPlan, SurfaceRef) {
+    pub fn binding(&self, operation: &str) -> (&CompiledBinding, SurfaceRef) {
         let binding = self
-            .plan
+            .compiled_target
             .operations
             .iter()
             .find(|found| found.name.as_str() == operation)
@@ -197,7 +198,12 @@ impl Scene {
             .bindings
             .first()
             .unwrap();
-        let surface = self.plan.surface(binding.surface).unwrap().name.clone();
+        let surface = self
+            .compiled_target
+            .surface(binding.surface)
+            .unwrap()
+            .name
+            .clone();
         (binding, self.surface(surface.as_str()))
     }
 
@@ -233,7 +239,7 @@ impl Scene {
             run: fence.run,
             epoch: fence.epoch,
             surface,
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             posture,
             deadline: Deadline::after(Duration::from_secs(30)),
             redact: &NoSecrets,
@@ -251,7 +257,8 @@ impl Scene {
         let input = Value::Record(inputs.clone());
         let mut args = Values::new();
         for arg in &step.args {
-            let program = Program::load(self.plan.expression(arg.value).unwrap()).unwrap();
+            let program =
+                Program::load(self.compiled_target.expression(arg.value).unwrap()).unwrap();
             let value = program
                 .evaluate(&Bindings::new().with("input", &input))
                 .unwrap();
@@ -333,8 +340,8 @@ impl Scene {
 /// returned; an output the step gave no value for stops the test, as it
 /// stops a read in the engine. A list output is normalized item by item,
 /// and a `null` item stays `null`, as the engine does (decision 0180).
-pub fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
-    let operation = plan
+pub fn outputs_of(compiled_target: &CompiledTarget, operation: &str, observed: &Values) -> Values {
+    let operation = compiled_target
         .operations
         .iter()
         .find(|found| found.name.as_str() == operation)
@@ -346,11 +353,11 @@ pub fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Values {
             .unwrap_or_else(|| panic!("no value for the output `{}`", output.name));
         let value = match output
             .field_type
-            .and_then(|index| plan.field_types[index.get()].normalizer)
+            .and_then(|index| compiled_target.field_types[index.get()].normalizer)
         {
             Some(index) => {
                 let normalizer =
-                    a2m_expr::Normalizer::load(plan.expression(index).unwrap()).unwrap();
+                    a2m_expr::Normalizer::load(compiled_target.expression(index).unwrap()).unwrap();
                 let one = |value: &Value| {
                     if value.is_null() {
                         Value::Null

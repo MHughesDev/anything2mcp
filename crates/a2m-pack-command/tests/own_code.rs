@@ -16,7 +16,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use a2m_core::{Digest, Environment, Epoch, FailureClass, NoSecrets, Plan, RunId, Values};
+use a2m_core::{
+    CompiledTarget, Digest, Environment, Epoch, FailureClass, NoSecrets, RunId, Values,
+};
 use a2m_files::Diagnostics;
 use a2m_pack_command::codes;
 use a2m_provider::{
@@ -76,8 +78,8 @@ fn reading(args: &str) -> String {
     format!("    effect: read\n    args: {args}\n")
 }
 
-fn compile(files: &[(String, String)], registry: &Registry) -> Result<Plan, Diagnostics> {
-    common::compile(files, registry.compiler_set()).map(|compiled| compiled.plan)
+fn compile(files: &[(String, String)], registry: &Registry) -> Result<CompiledTarget, Diagnostics> {
+    common::compile(files, registry.compiler_set()).map(|compiled| compiled.compiled_target)
 }
 
 fn codes_of(problems: &Diagnostics) -> Vec<String> {
@@ -89,12 +91,12 @@ fn codes_of(problems: &Diagnostics) -> Vec<String> {
 
 /// Runs the one operation, as the engine would: prepare, each step of its
 /// binding, then release.
-async fn run(registry: &Registry, plan: &Plan) -> Result<(), StepFailure> {
+async fn run(registry: &Registry, compiled_target: &CompiledTarget) -> Result<(), StepFailure> {
     let handle = registry.driver(&codes::mode()).unwrap();
     let surface = SurfaceRef {
-        target: plan.header.target.clone(),
+        target: compiled_target.header.target.clone(),
         environment: Environment::new("test").unwrap(),
-        surface: plan.surfaces[0].clone(),
+        surface: compiled_target.surfaces[0].clone(),
     };
     let supervisor = handle.supervisor(
         surface
@@ -109,7 +111,7 @@ async fn run(registry: &Registry, plan: &Plan) -> Result<(), StepFailure> {
         run: RunId::from_bytes([7; 16]),
         epoch: Epoch::new(1),
         surface: &surface,
-        plan,
+        compiled_target,
         posture: Posture::Live,
         deadline: Deadline::after(WITHIN),
         redact: &NoSecrets,
@@ -120,7 +122,7 @@ async fn run(registry: &Registry, plan: &Plan) -> Result<(), StepFailure> {
     let mut prepared = handle.prepare(&cx, None).await?;
     let args = Values::new();
     let mut result = Ok(());
-    for step in &plan.operations[0].bindings[0].act {
+    for step in &compiled_target.operations[0].bindings[0].act {
         let input = StepInput::new(&args, Deadline::after(WITHIN));
         if let Err(failure) = handle
             .act(&mut prepared, step, &input, Authority::Read)
@@ -155,9 +157,9 @@ async fn a_listed_command_of_a_launcher_a_version_manager_and_a_container_runner
         let registry = registry(&folder, Arc::new(NoSecrets));
         let stand = Stand::start().unwrap();
         let program = placed(&stand, name);
-        let plan = compile(&files(&program, "", &reading("['--version']")), &registry)
+        let compiled_target = compile(&files(&program, "", &reading("['--version']")), &registry)
             .unwrap_or_else(|problems| panic!("{name}: {problems:#?}"));
-        run(&registry, &plan)
+        run(&registry, &compiled_target)
             .await
             .unwrap_or_else(|failure| panic!("{name}: {failure:?}"));
         assert_eq!(
@@ -241,16 +243,18 @@ fn a_command_not_listed_is_refused_by_name_where_the_files_are_compiled() {
     );
 }
 
-/// The driver does not take the plan's word: a plan changed after it was
-/// compiled, to give the program a command not on the list, starts nothing.
+/// The driver does not take the compiled target's word: a compiled target
+/// changed after it was compiled, to give the program a command not on the
+/// list, starts nothing.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_plan_that_gives_such_a_program_a_command_not_listed_starts_nothing() {
+async fn a_compiled_target_that_gives_such_a_program_a_command_not_listed_starts_nothing() {
     let folder = Folder::new("own-code-plan");
     let registry = registry(&folder, Arc::new(NoSecrets));
     let stand = Stand::start().unwrap();
     let docker = placed(&stand, "docker");
-    let mut plan = compile(&files(&docker, "", &reading("['--version']")), &registry).unwrap();
-    let pack = plan
+    let mut compiled_target =
+        compile(&files(&docker, "", &reading("['--version']")), &registry).unwrap();
+    let pack = compiled_target
         .packs
         .iter_mut()
         .find(|section| section.pack == "command")
@@ -261,7 +265,7 @@ async fn a_plan_that_gives_such_a_program_a_command_not_listed_starts_nothing() 
         {"is": "literal", "text": "example"},
     ]);
     pack.payload = a2m_core::PackPayload::encode(&section).unwrap();
-    let failure = run(&registry, &plan).await.unwrap_err();
+    let failure = run(&registry, &compiled_target).await.unwrap_err();
     assert_eq!(
         (failure.failure.class(), failure.failure.code()),
         (FailureClass::Policy, &codes::PROGRAM_PATH_UNSAFE)

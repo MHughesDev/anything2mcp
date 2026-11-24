@@ -22,8 +22,8 @@ use example_app::harness::TestApp;
 
 async fn scene(name: &str, app: &TestApp) -> Scene {
     let stand = Stand::new(name, Arc::new(NoSecrets));
-    let plan = compile(&stand.registry, "cases").plan;
-    Scene::over(stand, plan, &app.url(""))
+    let compiled_target = compile(&stand.registry, "cases").compiled_target;
+    Scene::over(stand, compiled_target, &app.url(""))
 }
 
 /// What the application was told, once it has been told at least `count`

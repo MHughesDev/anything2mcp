@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use a2m_core::{FileKindName, PackPayload, Plan, SurfaceKind, SurfacePlan};
+use a2m_core::{CompiledSurface, CompiledTarget, FileKindName, PackPayload, SurfaceKind};
 use a2m_files::{
     CompiledSection, DefinedName, Diagnostic, Diagnostics, Doc, ExprSite, FileKind, JsonSchema,
     KindContext, Located, Place, RelPath, Stage, SurfaceKindSpec,
@@ -47,7 +47,8 @@ pub(crate) const RESULT_JSON_TEXT: &str = "json_text";
 /// server started through a launcher names the launcher as its program and
 /// the server's installed entry file as `entry`, pinned by `entry_digest`,
 /// with the fixed arguments of the launcher's form as `launcher_args`
-/// (decision 0371): the plan declares both files as the surface's programs.
+/// (decision 0371): the compiled target declares both files as the surface's
+/// programs.
 pub(crate) fn surface_kind_spec() -> SurfaceKindSpec {
     SurfaceKindSpec::new(
         names::surface_kind(),
@@ -236,8 +237,8 @@ impl SurfaceFields {
         self.unencrypted_credentials.as_deref() == Some(ACCEPTED)
     }
 
-    /// Reads the fields of a surface of the plan.
-    pub(crate) fn of(surface: &SurfacePlan) -> Result<Self, a2m_core::Failure> {
+    /// Reads the fields of a surface of the compiled target.
+    pub(crate) fn of(surface: &CompiledSurface) -> Result<Self, a2m_core::Failure> {
         if surface.payload.is_none() {
             Ok(Self::default())
         } else {
@@ -246,7 +247,7 @@ impl SurfaceFields {
     }
 }
 
-/// One mapped tool, as the plan holds it.
+/// One mapped tool, as the compiled target holds it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ToolEntry {
@@ -304,7 +305,7 @@ pub(crate) struct ServerSeen {
     pub version: String,
 }
 
-/// One surface's mapping, as the plan holds it.
+/// One surface's mapping, as the compiled target holds it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Mapping {
@@ -328,7 +329,7 @@ impl Default for Mapping {
 }
 
 /// Every mapping of a target, by surface: the pack's one section of the
-/// plan.
+/// compiled target.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Section {
@@ -336,10 +337,10 @@ pub(crate) struct Section {
 }
 
 impl Section {
-    /// The pack's section of a published plan. A plan with no mapping file
-    /// has none, and nothing is reachable.
-    pub(crate) fn of(plan: &Plan) -> Result<Self, a2m_core::Failure> {
-        let found = plan.packs.iter().find(|section| {
+    /// The pack's section of a published compiled target. A compiled target
+    /// with no mapping file has none, and nothing is reachable.
+    pub(crate) fn of(compiled_target: &CompiledTarget) -> Result<Self, a2m_core::Failure> {
+        let found = compiled_target.packs.iter().find(|section| {
             section.pack == names::PACK
                 && section.kind == names::mapping_kind()
                 && section.surface_kind == names::surface_kind()
@@ -347,7 +348,7 @@ impl Section {
         match found {
             None => Ok(Self::default()),
             Some(section) if section.format == SECTION_FORMAT => section.payload.decode(),
-            Some(_) => Err(crate::codes::plan_unreadable(
+            Some(_) => Err(crate::codes::compiled_target_unreadable(
                 "its mapping section has a format this build does not read",
             )),
         }

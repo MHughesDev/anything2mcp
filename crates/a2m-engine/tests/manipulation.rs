@@ -4,8 +4,9 @@
 //! nothing the system returns becomes an instruction to the engine.
 //!
 //! The engine holds this by construction: an input is a typed value, the
-//! plan alone names surfaces, steps, and keys, and a step's arguments are
-//! values handed to the driver by name. These tests hold it to that.
+//! compiled target alone names surfaces, steps, and keys, and a step's
+//! arguments are values handed to the driver by name. These tests hold it to
+//! that.
 
 #![allow(
     clippy::unwrap_used,
@@ -35,8 +36,8 @@ async fn an_input_that_is_an_address_does_not_change_where_the_request_goes() {
             Values::new().with("order_id", elsewhere),
         )
         .await;
-    // The driver was prepared for the surface's address, which the plan
-    // gives, and was handed the input as a value under its name. The
+    // The driver was prepared for the surface's address, which the compiled
+    // target gives, and was handed the input as a value under its name. The
     // system has no order of that name.
     let steps = scene.hooks.given("get_order");
     assert!(!steps.is_empty());
@@ -85,7 +86,7 @@ async fn an_input_the_tool_does_not_declare_is_refused_before_anything_runs() {
 }
 
 #[tokio::test]
-async fn an_environment_or_a_mode_the_plan_does_not_hold_runs_nothing() {
+async fn an_environment_or_a_mode_the_compiled_target_does_not_hold_runs_nothing() {
     let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
     let rail = item("A-102", "L-300", "New rail", 3, "150.5");
     // The operation has one binding, and it is not through this mode.
@@ -157,7 +158,7 @@ async fn an_input_that_reads_like_an_expression_or_a_key_stays_one_value() {
 }
 
 #[tokio::test]
-async fn which_steps_run_is_the_plans_whatever_the_inputs_say() {
+async fn which_steps_run_is_the_compiled_targets_whatever_the_inputs_say() {
     let scene = Scene::new(ORDER_FILL, |_| {}).await;
     // The order is submitted, and the pipeline's first step expects a
     // draft. The inputs ask, in words, for that step to be skipped.
@@ -207,8 +208,8 @@ async fn text_from_the_system_that_reads_like_an_instruction_is_carried_as_a_val
 
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, input).await;
     assert!(completed(&outcome), "{outcome:?}");
-    // The engine did what the plan says for this record and nothing else:
-    // the freshness read, the save, the read-back.
+    // The engine did what the compiled target says for this record and
+    // nothing else: the freshness read, the save, the read-back.
     assert_eq!(
         scene.steps(&DRIVER_STEPS),
         ["get_item", "get_item", "put_item", "get_item"]

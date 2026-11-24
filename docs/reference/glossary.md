@@ -28,7 +28,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Client | Anything that talks to the engine: a command, an MCP client, an SDK, the tray application |
 | Commit point | One change the system makes durable: a save, a committed transaction, a replaced file, a published message. One ledger row |
 | Compiled target | The compiled, hashed form of a target version that the engine runs: what the compiler makes from a target's files, run step by step with no model. Formerly "plan" ([decision 0329](../decisions/0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md)) |
-| Control | Everything the engine asks of the control plane while it runs a job: the plan, the policy decision, a session lease, a record lock, a budget, the approval check, recording an intent, sending events. In one process it is a direct call; on a runner it is the runner link |
+| Control | Everything the engine asks of the control plane while it runs a job: the compiled target, the policy decision, a session lease, a record lock, a budget, the approval check, recording an intent, sending events. In one process it is a direct call; on a runner it is the runner link |
 | Control plane | The part that decides, records, and hands out work |
 | Coverage | How much of what could have been looked at was looked at: complete, partial, or unknown. An empty result with anything less than complete coverage is not absence |
 | Crate design | The page in `docs/architecture/crates/` that says what one crate owns, offers, uses, stores, and must never do |
@@ -69,7 +69,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Hazard | What an operation could damage beyond the data it names: nothing, data elsewhere, something sent outside, a device's ability to work, or the physical world |
 | Held folder | A folder reached from its root down with no link followed, and held while a pack acts on one entry directly in it, so that nothing done to the path meanwhile leads the act elsewhere: on Linux and macOS its own descriptor, on Windows every folder from the root down held open. Made by `CheckedPath::hold_folder` ([decision 0272](../decisions/0272-the-file-packs-folder-writes-act-through-a-held-folder-after-a-second-reader.md)) |
 | Hold | The scheduler's stop on a scope: everything, a workspace, a target, or a caller. No job in a held scope is handed out. It is how a kill switch reaches the scheduler |
-| Holding folder | The folder `held/` inside a target's folder, where the drafter writes a draft that holds an open question, with every file drafted from the same finding. The loader does not read it, so it is in no plan ([decision 0298](../decisions/0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md)). Not a held folder, which is a folder kept open while a pack acts on one entry |
+| Holding folder | The folder `held/` inside a target's folder, where the drafter writes a draft that holds an open question, with every file drafted from the same finding. The loader does not read it, so it is in no compiled target ([decision 0298](../decisions/0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md)). Not a held folder, which is a folder kept open while a pack acts on one entry |
 | Repair proposer | A pack's deterministic scorer that ranks candidate elements in a failure snapshot under fixed weights, for the repairing agent and the reviewer; it proposes nothing when the top two are too close, and applies nothing (decision 0323) |
 | Source Definitions | The files under a target's `sources/` folder: how a kind of handed file is read and mapped. Compiled with the target ([decision 0309](../decisions/0309-two-names-are-settled-the-source-folder-and-what-guard-checks.md)). |
 | Handed Files | The files in the project's `sources` folder: what a person gives a scout or a pipeline. Named from the project folder and never compiled. |
@@ -111,7 +111,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Pinned description | The HTTP pack's reading of a published description's drafted reads, in `descriptions/`, with the digest of the text it was read from and where it was served; an `api` binding names one, and its change is `drift`, `description_changed` ([decision 0389](../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) |
 | Pipeline | Operations in order over a source, with checkpoints |
 | Pipeline step | One entry in a pipeline's `steps`: one operation, called once or once per row. Never called a step alone |
-| Plan | The old name of the compiled target, kept in the code until roadmap package N0 renames it ([decision 0329](../decisions/0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md)) |
+| Plan | The old name of the compiled target ([decision 0329](../decisions/0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md)). Package N0 renamed it in the code and the documents; the stored names that keep it are listed in [decision 0999](../decisions/0999-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md) |
 | Policy set | The versioned rules the policy engine evaluates |
 | Pre-approval rule | A rule in a policy set under which a write may proceed without a person, for one run and one diff. It can never cover an `irreversible` operation or a hazard other than `none` |
 | Precondition | An input of a writing operation that the write is sent with and the system checks, and that is no field of the record, such as the version a guard compares. Declared `precondition: true` on the input; shown in the diff and bound by the approval, never compared with a read-back ([decision 0378](../decisions/0378-an-input-marked-precondition-is-sent-with-a-write-and-never-compared-with-its-read-back.md)) |
@@ -147,7 +147,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Snapshot | A compact view of the current page or window, built from the accessibility tree |
 | Source | A reader that turns a file or another system's output into validated records |
 | Stdio proxy | The small program an MCP client starts with `anything2mcp bridge`, which carries MCP messages between standard input and output and the running engine and holds no logic. Not a bridge, which is an archetype |
-| Step | One fixed instruction in a compiled plan, carried out by a driver |
+| Step | One fixed instruction in a compiled target, carried out by a driver |
 | Step trace | One structured record per step of a run |
 | Subject | What a finding or a piece of evidence is about, as one tagged identity: a file by digest, an address, a process, a session, a device, or unknown with a reason |
 | Supervisor | The part of the kernel that starts, talks to, and stops outside processes and connections, and stops only what it can prove it started |

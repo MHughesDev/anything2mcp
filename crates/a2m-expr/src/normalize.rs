@@ -1,7 +1,7 @@
 //! Field-type normalization: one rule for what a caller sent and what a
 //! system showed, so the two are compared as typed values.
 
-use a2m_core::{CodeLabel, Decimal, Failure, FieldBase, PlanExpr, Rounding, Value, ValueType};
+use a2m_core::{CodeLabel, CompiledExpr, Decimal, Failure, FieldBase, Rounding, Value, ValueType};
 
 use crate::check::{Compiled, TypeEnv, compile};
 use crate::dates::Shape;
@@ -40,7 +40,7 @@ impl Whitespace {
 
 /// The rule by which one field type normalizes a value: what `types.yaml`
 /// says about it, as far as comparing goes. The compiler builds one from a
-/// field type and stores [`FieldRule::normalizer`] in the plan.
+/// field type and stores [`FieldRule::normalizer`] in the compiled target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldRule {
     /// Text: Unicode form C, then the whitespace rule, then the case rule.
@@ -241,7 +241,7 @@ impl FieldRule {
     }
 
     /// Compiles the rule into its normalizer. The compiler stores
-    /// `to_plan_expr()` of the result with the field type.
+    /// `to_compiled_expr()` of the result with the field type.
     ///
     /// # Errors
     ///
@@ -294,27 +294,27 @@ impl Normalized {
     }
 }
 
-/// Field-type normalization, as the plan stores it: the loaded program of
-/// the expression the compiler built for the field type.
+/// Field-type normalization, as the compiled target stores it: the loaded
+/// program of the expression the compiler built for the field type.
 #[derive(Debug, Clone)]
 pub struct Normalizer {
     program: Program,
 }
 
 impl Normalizer {
-    /// Loads a field type's normalizer from the plan.
+    /// Loads a field type's normalizer from the compiled target.
     ///
     /// # Errors
     ///
-    /// `plan_expression_unloadable`, as for [`Program::load`], and when the
-    /// expression reads a name other than [`NORMALIZER_INPUT`].
-    pub fn load(expr: &PlanExpr) -> Result<Self, Failure> {
+    /// `compiled_expression_unloadable`, as for [`Program::load`], and when
+    /// the expression reads a name other than [`NORMALIZER_INPUT`].
+    pub fn load(expr: &CompiledExpr) -> Result<Self, Failure> {
         let program = Program::load(expr)?;
         if program.names().iter().any(|name| name != NORMALIZER_INPUT) {
             return Err(Failure::new(
                 a2m_core::FailureClass::Input,
-                crate::error::PLAN_EXPRESSION_UNLOADABLE,
-                "A plan's expression cannot be loaded: a normalizer reads only the raw value.",
+                crate::error::COMPILED_EXPRESSION_UNLOADABLE,
+                "A compiled target's expression cannot be loaded: a normalizer reads only the raw value.",
                 "Compile the target again with this engine.",
             ));
         }

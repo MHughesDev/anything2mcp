@@ -1,6 +1,6 @@
 //! The lowering of the `ui` mode: one binding into `goto`, `wait`, `read`,
 //! `set`, and `invoke` steps, each naming its screen in the pack's section
-//! of the plan and carrying this pack's own payload.
+//! of the compiled target and carrying this pack's own payload.
 //!
 //! | Verb | Act | Confirm | Read back |
 //! | --- | --- | --- | --- |

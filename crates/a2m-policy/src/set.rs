@@ -10,8 +10,8 @@
 use std::collections::BTreeSet;
 
 use a2m_core::{
-    CanonicalJson, Digest, EffectClass, Failure, PlanExpr, PrincipalId, Sensitivity, TargetName,
-    ValueType, WorkspaceId,
+    CanonicalJson, CompiledExpr, Digest, EffectClass, Failure, PrincipalId, Sensitivity,
+    TargetName, ValueType, WorkspaceId,
 };
 use a2m_expr::{LibraryVersion, Program, TypeEnv};
 use serde::{Deserialize, Serialize};
@@ -687,7 +687,7 @@ fn compile_condition(source: &str) -> Result<Program, Failure> {
         env.declare(name, ty.clone())?;
     }
     let compiled = a2m_expr::compile(source, &env, Some(&ValueType::Bool))?;
-    let expr: PlanExpr = compiled.to_plan_expr()?;
+    let expr: CompiledExpr = compiled.to_compiled_expr()?;
     Program::load(&expr)
 }
 

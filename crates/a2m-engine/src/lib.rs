@@ -1,11 +1,11 @@
 //! The engine loop: one job in, one outcome out.
 //!
-//! The engine carries out a compiled plan through the eight parts of every
+//! The engine carries out a compiled target through the eight parts of every
 //! operation call: guard, choose, prepare, intend, act, confirm, read back,
-//! record. It chooses among the plan's bindings in their declared order,
-//! normalizes and compares values, builds the diff of a write and its hash,
-//! reconciles before it writes on resume, and gives discoverers a sandbox
-//! through which a write is impossible.
+//! record. It chooses among the compiled target's bindings in their declared
+//! order, normalizes and compares values, builds the diff of a write and its
+//! hash, reconciles before it writes on resume, and gives discoverers a
+//! sandbox through which a write is impossible.
 //!
 //! It names no mode, driver, or pack: it asks the registry in
 //! `a2m-provider` for the driver of a binding's mode and reaches it only

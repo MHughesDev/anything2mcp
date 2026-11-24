@@ -55,7 +55,7 @@ The product was first designed as a tool for wrapping web applications. Its spec
 | 43 | [223, The runner protocol](../spec/2-kernel/223-the-runner-protocol.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
 | 44 | [215, Sessions and the session keeper](../spec/2-kernel/215-sessions-and-the-session-keeper.md) | Consolidated | [The session keeper](spec-2026-11/44-session-keeper.md) |
 | 45 | [212, Policy and approvals](../spec/2-kernel/212-policy-and-approvals.md) | Consolidated | [The policy engine](spec-2026-11/45-policy-engine.md) |
-| 46 | [206, The compiler and the plan](../spec/2-kernel/206-the-compiler-and-the-plan.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
+| 46 | [206, The compiler and the plan](../spec/2-kernel/206-the-compiler-and-the-compiled-target.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
 | 47 | [217, Traces, evidence, and repair](../spec/2-kernel/217-traces-evidence-and-repair.md) | Consolidated | [Traces and evidence](spec-2026-11/47-traces-and-evidence.md) |
 | 48 | [216, The vault and its keys](../spec/2-kernel/216-the-vault-and-its-keys.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
 | 49 | [503, Approval and sign-in surfaces](../spec/5-security/503-approval-and-sign-in-surfaces.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |

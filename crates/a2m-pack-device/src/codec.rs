@@ -9,7 +9,7 @@
 use a2m_core::{Decimal, Value};
 
 use crate::link::{Reply, Request};
-use crate::map::{Data, RegisterPlan, ValueKind, WordOrder, raw_of};
+use crate::map::{CompiledRegister, Data, ValueKind, WordOrder, raw_of};
 
 /// Why a value cannot be written to a register.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +25,7 @@ pub(crate) enum Unwritable {
 }
 
 /// The request that reads a register.
-pub(crate) const fn read_request(register: &RegisterPlan) -> Request {
+pub(crate) const fn read_request(register: &CompiledRegister) -> Request {
     if register.table.holds_bits() {
         Request::ReadBits {
             table: register.table,
@@ -42,7 +42,7 @@ pub(crate) const fn read_request(register: &RegisterPlan) -> Request {
 }
 
 /// The raw number in a register's words.
-fn raw_number(register: &RegisterPlan, words: &[u16]) -> Option<i64> {
+fn raw_number(register: &CompiledRegister, words: &[u16]) -> Option<i64> {
     let two = |first: u16, second: u16| {
         let (high, low) = match register.word_order {
             WordOrder::HighFirst => (first, second),
@@ -63,7 +63,7 @@ fn raw_number(register: &RegisterPlan, words: &[u16]) -> Option<i64> {
 
 /// The value a reply holds for a register, or `None` when the reply is not
 /// of the form the register's layout declares.
-pub(crate) fn decode(register: &RegisterPlan, reply: &Reply) -> Option<Value> {
+pub(crate) fn decode(register: &CompiledRegister, reply: &Reply) -> Option<Value> {
     match (register.data, reply) {
         (Data::Bit, Reply::Bits(bits)) => {
             let [bit] = bits.as_slice() else {
@@ -106,7 +106,10 @@ pub(crate) fn decode(register: &RegisterPlan, reply: &Reply) -> Option<Value> {
 }
 
 /// The request that writes `value` to a register, after both range checks.
-pub(crate) fn write_request(register: &RegisterPlan, value: &Value) -> Result<Request, Unwritable> {
+pub(crate) fn write_request(
+    register: &CompiledRegister,
+    value: &Value,
+) -> Result<Request, Unwritable> {
     if register.data == Data::Bit {
         let on = match (register.kind, value) {
             (ValueKind::Bool, Value::Bool(on)) => *on,
@@ -181,7 +184,7 @@ mod tests {
     use super::{Unwritable, decode, write_request};
     use crate::link::{Reply, Request};
     use crate::map::{
-        Access, Data, RangePlan, ReadEffect, RegisterPlan, Table, ValueKind, WordOrder,
+        Access, CompiledRange, CompiledRegister, Data, ReadEffect, Table, ValueKind, WordOrder,
     };
 
     fn decimal(text: &str) -> Decimal {
@@ -192,8 +195,8 @@ mod tests {
         data: Data,
         scale: Option<&str>,
         range: Option<(&str, &str, i64, i64)>,
-    ) -> RegisterPlan {
-        RegisterPlan {
+    ) -> CompiledRegister {
+        CompiledRegister {
             table: Table::Holding,
             offset: 100,
             data,
@@ -206,7 +209,7 @@ mod tests {
                 ValueKind::Int
             },
             access: Access::ReadWrite,
-            range: range.map(|(min, max, raw_min, raw_max)| RangePlan {
+            range: range.map(|(min, max, raw_min, raw_max)| CompiledRange {
                 min: decimal(min),
                 max: decimal(max),
                 raw_min,

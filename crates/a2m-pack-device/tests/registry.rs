@@ -112,6 +112,6 @@ fn every_failure_code_of_the_pack_is_declared_with_its_one_class() {
     // links, and starts no program.
     assert!(manifest.effects.devices);
     assert!(manifest.effects.processes.is_empty());
-    assert!(!manifest.effects.plan_programs);
+    assert!(!manifest.effects.compiled_target_programs);
     assert_eq!(manifest.effects.sessions.len(), 1);
 }

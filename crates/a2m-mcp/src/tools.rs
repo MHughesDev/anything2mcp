@@ -632,9 +632,9 @@ fn without_wait(input: &Json) -> Json {
 fn entry(name: &str, tool: &Json) -> ToolEntry {
     let hint = |key: &str| tool["annotations"][key].as_bool().unwrap_or(false);
     let title = tool["title"].as_str().unwrap_or(name).to_owned();
-    // The target and the version, as the plan the tool was published in
-    // states them, and who wrote the description, `rule` or `builder`
-    // (decision 0307, point 6).
+    // The target and the version, as the compiled target the tool was
+    // published in states them, and who wrote the description, `rule` or
+    // `builder` (decision 0307, point 6).
     let mut meta = Map::new();
     for (key, field) in [
         (TOOL_TARGET_KEY, "target"),

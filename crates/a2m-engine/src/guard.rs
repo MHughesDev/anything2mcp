@@ -16,7 +16,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use a2m_auth::{ExpirySign, SessionLease};
-use a2m_core::{Digest, Failure, Plan, SurfaceName};
+use a2m_core::{CompiledTarget, Digest, Failure, SurfaceName};
 use a2m_ledger::{
     Acted, ActedToken, BlobRef, IntentToken, LockHeld, ReadBack, Reconciled, RecordIntent,
     RecordRef, Settled,
@@ -81,8 +81,11 @@ impl<'c> Timed<'c> {
 }
 
 impl Control for Timed<'_> {
-    fn plan<'a>(&'a self, hash: &'a Digest) -> BoxFuture<'a, Result<Arc<Plan>, Failure>> {
-        Box::pin(self.within("plan", self.inner.plan(hash)))
+    fn compiled_target<'a>(
+        &'a self,
+        hash: &'a Digest,
+    ) -> BoxFuture<'a, Result<Arc<CompiledTarget>, Failure>> {
+        Box::pin(self.within("compiled_target", self.inner.compiled_target(hash)))
     }
 
     fn decide<'a>(&'a self, question: &'a GuardQuestion) -> BoxFuture<'a, Result<(), Failure>> {

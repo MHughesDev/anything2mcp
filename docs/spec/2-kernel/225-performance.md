@@ -39,7 +39,7 @@ Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should
 **How the design gets there.**
 
 - **Rust, one process, async I/O.** No interpreter start-up, no garbage-collection pauses, and, in the web pack, no driver subprocess between the engine and the browser.
-- **Compiled plans.** At publish time, target files are validated and compiled into a binary plan: resolved references, pre-compiled CEL expressions, pre-built request templates, and pre-parsed schemas. Nothing is parsed at call time.
+- **Compiled targets.** At publish time, target files are validated and compiled into a binary compiled target: resolved references, pre-compiled CEL expressions, pre-built request templates, and pre-parsed schemas. Nothing is parsed at call time.
 - **Fastest verified mode first.** When several bindings are verified, the runtime prefers the cheapest. Where an operation states no order, the compiler sets it from each mode's rank in its provider's manifest; for the first packs that gives `api`, `http`, `page_http`, then `ui`. A spreadsheet-entry pipeline that takes minutes through the UI can take seconds over HTTP once that binding is promoted.
 - **Event-driven waits.** Every wait is on a named condition. In the web pack, the browser engine waits with in-page observers and protocol events, never on a polling timer. One Rust engine reports a median of about 1 ms to notice an element this way, against roughly 100 ms for a polling cadence ([ferrous-browser, vendor benchmark](https://github.com/theoxfaber/ferrous-browser)).
 - **Warm pools.** Signed-in sessions, their browsers, and HTTP/2 connections stay warm and are reused across calls and callers.

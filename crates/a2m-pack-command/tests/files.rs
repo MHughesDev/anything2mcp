@@ -44,7 +44,7 @@ fn a_registry_with_only_the_command_pack_builds_and_its_digest_is_stable() {
     );
 
     // The manifest declares every code the driver can raise, each with its
-    // one class, and the pack starts only what a plan declares.
+    // one class, and the pack starts only what a compiled target declares.
     let manifest = Manifest::parse(a2m_pack_command::MANIFEST).unwrap();
     let declared: Vec<(FailureClass, &str)> = manifest
         .failure_codes
@@ -52,7 +52,7 @@ fn a_registry_with_only_the_command_pack_builds_and_its_digest_is_stable() {
         .map(|code| (code.class, code.code.as_str()))
         .collect();
     assert_eq!(declared, a2m_pack_command::codes::ALL);
-    assert!(manifest.effects.plan_programs);
+    assert!(manifest.effects.compiled_target_programs);
     assert!(manifest.effects.processes.is_empty());
 }
 
@@ -84,9 +84,9 @@ fn the_example_files_compile_twice_to_the_same_bytes() {
     assert_eq!(first.encoded.bytes, third.encoded.bytes);
 
     // The surface declares its program in every environment, for the
-    // supervisor; the plan holds the pack's section.
-    let plan = &first.plan;
-    let programs: Vec<&str> = plan.surfaces[0]
+    // supervisor; the compiled target holds the pack's section.
+    let compiled_target = &first.compiled_target;
+    let programs: Vec<&str> = compiled_target.surfaces[0]
         .programs
         .iter()
         .map(|program| program.path.as_str())
@@ -98,13 +98,14 @@ fn the_example_files_compile_twice_to_the_same_bytes() {
             "/opt/example-test/bin/example-cli"
         ]
     );
-    assert_eq!(plan.packs.len(), 1);
-    assert_eq!(plan.packs[0].pack, "command");
+    assert_eq!(compiled_target.packs.len(), 1);
+    assert_eq!(compiled_target.packs[0].pack, "command");
 
     // The one write with no identity and no read-back states that its own
     // end is the only evidence; every write that names a read-back keeps it.
     let evidence = |name: &str| {
-        plan.operations
+        compiled_target
+            .operations
             .iter()
             .find(|operation| operation.name.as_str() == name)
             .unwrap()
@@ -125,7 +126,7 @@ fn the_example_files_compile_twice_to_the_same_bytes() {
 
     // A write starts its program in one committing step, sees it end and
     // reads its output to confirm, and reads the record back.
-    let set_quantity = plan
+    let set_quantity = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_item_set_quantity")
@@ -154,7 +155,7 @@ fn the_example_files_compile_twice_to_the_same_bytes() {
             ("parse".to_owned(), false, true)
         ]
     );
-    let add = plan
+    let add = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_item_add")
@@ -177,19 +178,19 @@ fn a_write_may_declare_the_servers_that_are_the_targets_own_and_stays_verified()
         ),
         registry.compiler_set(),
     );
-    let plan = match compiled {
-        Ok(compiled) => compiled.plan,
+    let compiled_target = match compiled {
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("{problems:#?}"),
     };
-    let set = plan
+    let set = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_item_set_quantity")
         .unwrap();
     assert_eq!(set.effect, EffectClass::Write);
     assert_eq!(set.bindings[0].evidence, a2m_core::WriteEvidence::ReadBack);
-    // The declaration is in the plan the pack reads at run time.
-    let section = String::from_utf8_lossy(plan.packs[0].payload.as_bytes()).into_owned();
+    // The declaration is in the compiled target the pack reads at run time.
+    let section = String::from_utf8_lossy(compiled_target.packs[0].payload.as_bytes()).into_owned();
     assert!(section.contains("store.example.com"), "{section}");
 }
 

@@ -21,7 +21,7 @@ A provider fills one or more of a fixed list. It cannot add to the list.
 | Source reader | How one kind of input becomes validated records | `a2m-sources`; section 210 |
 | Widget driver | How one kind of control is set and read | The technical reference |
 | Discoverer | How a target is observed, returning findings | `a2m-provider`; [section 218](218-discovery-and-findings.md) |
-| Compiler registrations | File kinds, the lowering of each verb of its modes, lint rules, and drafting rules | `a2m-files`; [section 206](206-the-compiler-and-the-plan.md) |
+| Compiler registrations | File kinds, the lowering of each verb of its modes, lint rules, and drafting rules | `a2m-files`; [section 206](206-the-compiler-and-the-compiled-target.md) |
 
 A provider may also add actions to the registry, under its own name space. They are defined once, like every action, and their four faces are generated. Only the dispatcher in `a2m-actions` calls one, after the caller's credential is checked and policy has decided, and it is given checked paths and the registry, never the store. A provider never adds a command or a tool by hand.
 
@@ -120,5 +120,5 @@ A provider that does something its manifest did not declare is stopped, and the 
 
 ## Open points
 
-- How schemas and lint rules cross a process boundary for plug-ins. The `a2m-provider` design proposes that schemas cross as the files the manifest names and that lowerings and lint rules are calls made at compile time, with the plug-in's digest recorded in the plan; the compiler's design still leaves it open.
+- How schemas and lint rules cross a process boundary for plug-ins. The `a2m-provider` design proposes that schemas cross as the files the manifest names and that lowerings and lint rules are calls made at compile time, with the plug-in's digest recorded in the compiled target; the compiler's design still leaves it open.
 - The manifest example in the `a2m-provider` design has no field yet for the kinds a provider reads from other packs.

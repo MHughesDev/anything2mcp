@@ -1,14 +1,14 @@
-//! Which knowledge a drift was seen in, and which bindings of a plan it
-//! stops (decision 0380).
+//! Which knowledge a drift was seen in, and which bindings of a compiled
+//! target it stops (decision 0380).
 //!
 //! A canary, or any run, that fails with `drift` at a step names the pack
 //! entry the step refers to: in the web pack a screen, in another pack the
 //! entry of its kind. That entry is the knowledge that no longer fits the
-//! system, and every binding of the plan with a step that refers to the
-//! same entry, through the same mode on the same surface, is stopped by it:
-//! a write that would go through a screen a canary found changed is refused
-//! before anything is sent. A drift no step named stops every binding of
-//! its mode on its surface, since nothing says which knowledge it was in.
+//! system, and every binding of the compiled target with a step that refers
+//! to the same entry, through the same mode on the same surface, is stopped
+//! by it: a write that would go through a screen a canary found changed is
+//! refused before anything is sent. A drift no step named stops every binding
+//! of its mode on its surface, since nothing says which knowledge it was in.
 //!
 //! A mark is held to the knowledge, not to the version: an entry by the
 //! digest of the whole pack section that holds it, a binding by its own
@@ -18,7 +18,8 @@
 //! and digests.
 
 use a2m_core::{
-    BindingPlan, CanonicalJson, Digest, Mode, OperationName, PackRef, Plan, Step, SurfaceName,
+    CanonicalJson, CompiledBinding, CompiledTarget, Digest, Mode, OperationName, PackRef, Step,
+    SurfaceName,
 };
 
 use crate::binding::binding_digest;
@@ -26,8 +27,8 @@ use crate::binding::binding_digest;
 /// The knowledge a drift was seen in, or a canary's pass vouched for.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DriftKnowledge {
-    /// One entry of a pack section: the digest of the section as the plan
-    /// holds it ([`section_digest`]), and the entry's name in it.
+    /// One entry of a pack section: the digest of the section as the compiled
+    /// target holds it ([`section_digest`]), and the entry's name in it.
     Entry {
         /// The digest of the whole section.
         section: Digest,
@@ -52,18 +53,18 @@ pub struct DriftMark {
     pub knowledge: DriftKnowledge,
 }
 
-/// The digest of one pack section of `plan`: what it holds, its pack, its
-/// kind, and its format. `None` when the plan holds no such section or it
-/// cannot be encoded.
+/// The digest of one pack section of `compiled_target`: what it holds, its
+/// pack, its kind, and its format. `None` when the compiled target holds no
+/// such section or it cannot be encoded.
 #[must_use]
-pub fn section_digest(plan: &Plan, reference: &PackRef) -> Option<Digest> {
-    let section = plan.packs.get(reference.section.get())?;
+pub fn section_digest(compiled_target: &CompiledTarget, reference: &PackRef) -> Option<Digest> {
+    let section = compiled_target.packs.get(reference.section.get())?;
     CanonicalJson::encode(section)
         .ok()
         .map(|encoded| encoded.digest())
 }
 
-fn steps_of(binding: &BindingPlan) -> impl Iterator<Item = &Step> {
+fn steps_of(binding: &CompiledBinding) -> impl Iterator<Item = &Step> {
     binding
         .act
         .iter()
@@ -74,19 +75,19 @@ fn steps_of(binding: &BindingPlan) -> impl Iterator<Item = &Step> {
 
 /// The knowledge a drift at `step` of `binding` is in: the entry the step
 /// refers to, or, when it refers to none or no step is known, the binding
-/// itself. `None` when the plan does not hold what either names.
+/// itself. `None` when the compiled target does not hold what either names.
 #[must_use]
 pub fn drifted_knowledge(
-    plan: &Plan,
-    binding: &BindingPlan,
+    compiled_target: &CompiledTarget,
+    binding: &CompiledBinding,
     step: Option<&Step>,
 ) -> Option<DriftKnowledge> {
     match step.and_then(|step| step.refers_to.as_ref()) {
         Some(reference) => Some(DriftKnowledge::Entry {
-            section: section_digest(plan, reference)?,
+            section: section_digest(compiled_target, reference)?,
             entry: reference.entry.clone(),
         }),
-        None => binding_digest(plan, binding).map(DriftKnowledge::Binding),
+        None => binding_digest(compiled_target, binding).map(DriftKnowledge::Binding),
     }
 }
 
@@ -94,17 +95,20 @@ pub fn drifted_knowledge(
 /// its steps refer to, and the binding itself. What a canary that passed
 /// through it vouches for again.
 #[must_use]
-pub fn knowledge_of(plan: &Plan, binding: &BindingPlan) -> Vec<DriftKnowledge> {
+pub fn knowledge_of(
+    compiled_target: &CompiledTarget,
+    binding: &CompiledBinding,
+) -> Vec<DriftKnowledge> {
     let mut known: Vec<DriftKnowledge> = steps_of(binding)
         .filter_map(|step| step.refers_to.as_ref())
         .filter_map(|reference| {
             Some(DriftKnowledge::Entry {
-                section: section_digest(plan, reference)?,
+                section: section_digest(compiled_target, reference)?,
                 entry: reference.entry.clone(),
             })
         })
         .collect();
-    if let Some(digest) = binding_digest(plan, binding) {
+    if let Some(digest) = binding_digest(compiled_target, binding) {
         known.push(DriftKnowledge::Binding(digest));
     }
     known.sort();
@@ -112,18 +116,22 @@ pub fn knowledge_of(plan: &Plan, binding: &BindingPlan) -> Vec<DriftKnowledge> {
     known
 }
 
-/// Every binding of `plan`, by its operation and mode, that one of `marks`
-/// stops: a binding through the mark's mode, on the mark's surface, with a
-/// step that refers to the entry the mark names, in a section with the
+/// Every binding of `compiled_target`, by its operation and mode, that one of
+/// `marks` stops: a binding through the mark's mode, on the mark's surface,
+/// with a step that refers to the entry the mark names, in a section with the
 /// digest the mark holds; or, for a mark of a whole binding, every binding
-/// through its mode on its surface, while the plan still holds a binding of
-/// the mark's operation with that digest. Each pair once, in plan order.
+/// through its mode on its surface, while the compiled target still holds a
+/// binding of the mark's operation with that digest. Each pair once, in
+/// compiled target order.
 #[must_use]
-pub fn drift_covers(plan: &Plan, marks: &[DriftMark]) -> Vec<(OperationName, Mode)> {
+pub fn drift_covers(
+    compiled_target: &CompiledTarget,
+    marks: &[DriftMark],
+) -> Vec<(OperationName, Mode)> {
     let mut covered = Vec::new();
-    for operation in &plan.operations {
+    for operation in &compiled_target.operations {
         for binding in &operation.bindings {
-            let Some(surface) = plan.surface(binding.surface) else {
+            let Some(surface) = compiled_target.surface(binding.surface) else {
                 continue;
             };
             let stopped = marks.iter().any(|mark| {
@@ -134,17 +142,18 @@ pub fn drift_covers(plan: &Plan, marks: &[DriftMark]) -> Vec<(OperationName, Mod
                     DriftKnowledge::Entry { section, entry } => steps_of(binding).any(|step| {
                         step.refers_to.as_ref().is_some_and(|reference| {
                             &reference.entry == entry
-                                && section_digest(plan, reference).as_ref() == Some(section)
+                                && section_digest(compiled_target, reference).as_ref()
+                                    == Some(section)
                         })
                     }),
-                    DriftKnowledge::Binding(digest) => plan
+                    DriftKnowledge::Binding(digest) => compiled_target
                         .operations
                         .iter()
                         .filter(|other| other.name == mark.operation)
                         .flat_map(|other| &other.bindings)
                         .any(|other| {
                             other.mode == mark.mode
-                                && binding_digest(plan, other).as_ref() == Some(digest)
+                                && binding_digest(compiled_target, other).as_ref() == Some(digest)
                         }),
                 }
             });

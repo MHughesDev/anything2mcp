@@ -13,7 +13,7 @@
 
 mod common;
 
-use a2m_core::{PackPayload, Plan, Step, Value, Values};
+use a2m_core::{CompiledTarget, PackPayload, Step, Value, Values};
 use a2m_provider::{
     Authority, Posture, Recorded, RecordedAnswer, Replay, Sent, StepOutcome, answer_name,
 };
@@ -25,11 +25,12 @@ use example_mcp::faults::Drift;
 use example_mcp::harness::HttpStand;
 
 /// The values of a step's arguments, each of which is an input by name, as
-/// the engine evaluates them: so a test sends what the plan says is sent.
-fn evaluated(plan: &Plan, step: &Step, inputs: &Values) -> Values {
+/// the engine evaluates them: so a test sends what the compiled target says
+/// is sent.
+fn evaluated(compiled_target: &CompiledTarget, step: &Step, inputs: &Values) -> Values {
     let mut args = Values::new();
     for arg in &step.args {
-        let source = &plan.expression(arg.value).unwrap().source;
+        let source = &compiled_target.expression(arg.value).unwrap().source;
         let name = source
             .strip_prefix("input.")
             .unwrap_or_else(|| panic!("the argument `{}` is `{source}`", arg.name));
@@ -39,12 +40,12 @@ fn evaluated(plan: &Plan, step: &Step, inputs: &Values) -> Values {
 }
 
 /// The fixture target with `edit` applied, compiled.
-fn compiled_with(folder: &Folder, edit: &dyn Fn(&str, String) -> String) -> Plan {
+fn compiled_target_with(folder: &Folder, edit: &dyn Fn(&str, String) -> String) -> CompiledTarget {
     let registry = registry(folder);
     let root = folder.path().join("target");
     write_target(&root, edit);
     match compile(&registry, &root) {
-        Ok(compiled) => compiled.plan,
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the target does not compile:\n{}", shown(&problems)),
     }
 }
@@ -58,28 +59,39 @@ fn done(outcome: Result<StepOutcome, a2m_provider::StepFailure>) -> a2m_provider
 
 /// Finding 38: a read whose binding states no `args` sends the key its
 /// mapping names under `key_args`, from the operation's key input, as the
-/// plan says it does, and the stand receives it.
+/// compiled target says it does, and the stand receives it.
 #[tokio::test]
 async fn a_read_with_no_args_sends_the_key_its_mapping_names() {
     let folder = Folder::new("answers-key");
-    let plan = compiled_with(&folder, &|path, text| {
+    let compiled_target = compiled_target_with(&folder, &|path, text| {
         if path == "operations/order_get.yaml" {
             text.replace("    args: {order_id: input.order_id}\n", "")
         } else {
             text
         }
     });
-    let get = steps(&plan, "example_order_get").act;
+    let get = steps(&compiled_target, "example_order_get").act;
     let names: Vec<&str> = get.args.iter().map(|arg| arg.name.as_str()).collect();
     assert_eq!(names, ["order_id"]);
 
     let stand = HttpStand::start().await.unwrap();
     let registry = registry(&folder);
-    let at = surface(&plan, "orders", Some(&stand.url()));
-    let (handle, mut prepared) = prepare(&registry, &plan, &at, fence_of(3), Posture::Live, None)
-        .await
-        .unwrap();
-    let args = evaluated(&plan, &get, &Values::new().with("order_id", "A-100"));
+    let at = surface(&compiled_target, "orders", Some(&stand.url()));
+    let (handle, mut prepared) = prepare(
+        &registry,
+        &compiled_target,
+        &at,
+        fence_of(3),
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
+    let args = evaluated(
+        &compiled_target,
+        &get,
+        &Values::new().with("order_id", "A-100"),
+    );
     let read = done(
         handle
             .act(
@@ -98,10 +110,13 @@ async fn a_read_with_no_args_sends_the_key_its_mapping_names() {
     handle.release(prepared, false).await;
 }
 
-/// A plan whose `orders_get` and `orders_list` are mapped as tools that
-/// answer with JSON as text, pinned to their definitions with no output
+/// A compiled target whose `orders_get` and `orders_list` are mapped as tools
+/// that answer with JSON as text, pinned to their definitions with no output
 /// schema, as the stand lists them under the `text_rows` drift.
-async fn text_rows_plan(stand: &HttpStand, plan: &Plan) -> Plan {
+async fn text_rows_compiled_target(
+    stand: &HttpStand,
+    compiled_target: &CompiledTarget,
+) -> CompiledTarget {
     let control = stand.control();
     for tool in ["orders_get", "orders_list"] {
         control
@@ -116,13 +131,13 @@ async fn text_rows_plan(stand: &HttpStand, plan: &Plan) -> Plan {
             .unwrap()
     };
     let (get_pin, list_pin) = (pin("orders_get"), pin("orders_list"));
-    let plan = remapped(plan, "orders", "orders_get", |entry| {
+    let compiled_target = remapped(compiled_target, "orders", "orders_get", |entry| {
         entry["digest"] = serde_json::json!(get_pin);
         entry["result"] = serde_json::json!("json_text");
         entry["records"] = serde_json::json!("rows");
         entry["absent_error"] = serde_json::Value::Null;
     });
-    remapped(&plan, "orders", "orders_list", |entry| {
+    remapped(&compiled_target, "orders", "orders_list", |entry| {
         entry["digest"] = serde_json::json!(list_pin);
         entry["result"] = serde_json::json!("json_text");
     })
@@ -137,14 +152,23 @@ async fn json_as_text_is_read_one_item_a_row_and_none_is_absent() {
     let registry = registry(&folder);
     let fixture = common::compiled_fixture(&registry);
     let stand = HttpStand::start().await.unwrap();
-    let plan = text_rows_plan(&stand, &fixture).await;
-    let at = surface(&plan, "orders", Some(&stand.url()));
-    let (handle, mut prepared) = prepare(&registry, &plan, &at, fence_of(4), Posture::Live, None)
-        .await
-        .unwrap();
+    let compiled_target = text_rows_compiled_target(&stand, &fixture).await;
+    let at = surface(&compiled_target, "orders", Some(&stand.url()));
+    let (handle, mut prepared) = prepare(
+        &registry,
+        &compiled_target,
+        &at,
+        fence_of(4),
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
 
     // The list: every row, under the member the mapping names.
-    let mut list = steps(&plan, "example_order_create").lookup.unwrap();
+    let mut list = steps(&compiled_target, "example_order_create")
+        .lookup
+        .unwrap();
     list.lookup = false;
     let none = Values::new();
     let listed = done(
@@ -163,7 +187,7 @@ async fn json_as_text_is_read_one_item_a_row_and_none_is_absent() {
     assert_eq!(rows.len(), 3);
 
     // A read by key: the one row; a key the server does not hold: absent.
-    let get = steps(&plan, "example_order_get").act;
+    let get = steps(&compiled_target, "example_order_get").act;
     let one = done(
         handle
             .act(
@@ -195,14 +219,15 @@ async fn a_write_is_read_back_through_a_tool_that_answers_json_as_text() {
     let registry = registry(&folder);
     let fixture = common::compiled_fixture(&registry);
     let stand = HttpStand::start().await.unwrap();
-    let plan = text_rows_plan(&stand, &fixture).await;
-    let at = surface(&plan, "orders", Some(&stand.url()));
+    let compiled_target = text_rows_compiled_target(&stand, &fixture).await;
+    let at = surface(&compiled_target, "orders", Some(&stand.url()));
     let (ledger, _vault) = store().await;
     let fence = running(&ledger, 1, &["A-100"]).await;
-    let (handle, mut prepared) = prepare(&registry, &plan, &at, fence, Posture::Live, None)
-        .await
-        .unwrap();
-    let update = steps(&plan, "example_order_note_update");
+    let (handle, mut prepared) =
+        prepare(&registry, &compiled_target, &at, fence, Posture::Live, None)
+            .await
+            .unwrap();
+    let update = steps(&compiled_target, "example_order_note_update");
     let args = Values::new()
         .with("order_id", "A-100")
         .with("field", "note")
@@ -274,8 +299,8 @@ fn a_write_read_back_through_text_alone_is_refused_at_lint() {
 async fn a_saves_offline_request_is_recorded_under_its_fixture_files_name() {
     let folder = Folder::new("answers-replay");
     let registry = registry(&folder);
-    let plan = common::compiled_fixture(&registry);
-    let update = steps(&plan, "example_order_note_update").act;
+    let compiled_target = common::compiled_fixture(&registry);
+    let update = steps(&compiled_target, "example_order_note_update").act;
     assert!(update.commits);
     assert_eq!(answer_name(&update), "orders_update");
     let replay = Replay::new(vec![RecordedAnswer {
@@ -306,17 +331,23 @@ async fn a_saves_offline_request_is_recorded_under_its_fixture_files_name() {
 async fn the_earlier_handshake_revision_is_spoken_when_the_surface_states_it() {
     let folder = Folder::new("answers-earlier");
     let registry = registry(&folder);
-    let plan = common::compiled_fixture(&registry);
+    let compiled_target = common::compiled_fixture(&registry);
     let stand = HttpStand::start().await.unwrap();
     stand.control().serve_earlier_revision_only(true).unwrap();
-    let mut earlier = surface(&plan, "orders", Some(&stand.url()));
+    let mut earlier = surface(&compiled_target, "orders", Some(&stand.url()));
     earlier.surface.payload =
         PackPayload::encode(&serde_json::json!({"revision": "2025-06-18"})).unwrap();
-    let (handle, mut prepared) =
-        prepare(&registry, &plan, &earlier, fence_of(6), Posture::Live, None)
-            .await
-            .unwrap();
-    let get = steps(&plan, "example_order_get").act;
+    let (handle, mut prepared) = prepare(
+        &registry,
+        &compiled_target,
+        &earlier,
+        fence_of(6),
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
+    let get = steps(&compiled_target, "example_order_get").act;
     let read = done(
         handle
             .act(
@@ -340,8 +371,16 @@ async fn the_earlier_handshake_revision_is_spoken_when_the_surface_states_it() {
 
     // The newer revision, stated against a server that serves only the
     // earlier one: refused when the server offers another.
-    let newer = surface(&plan, "orders", Some(&stand.url()));
-    let refused = prepare(&registry, &plan, &newer, fence_of(8), Posture::Live, None).await;
+    let newer = surface(&compiled_target, "orders", Some(&stand.url()));
+    let refused = prepare(
+        &registry,
+        &compiled_target,
+        &newer,
+        fence_of(8),
+        Posture::Live,
+        None,
+    )
+    .await;
     let failure = match refused {
         Err(failure) => failure,
         Ok((handle, mut prepared)) => handle

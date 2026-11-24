@@ -14,8 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use a2m_core::{
-    Digest, DigestPurpose, EffectClass, Environment, Failure, FailureClass, FailureCode,
-    OperationName, PlanExpr, PrincipalId, RecordKey, RunId, RunState, SurfaceName, TargetName,
+    CompiledExpr, Digest, DigestPurpose, EffectClass, Environment, Failure, FailureClass,
+    FailureCode, OperationName, PrincipalId, RecordKey, RunId, RunState, SurfaceName, TargetName,
     Timestamp, Value, ValueType, Values, WorkspaceId,
 };
 use serde_json::{Map, Value as Json};
@@ -202,7 +202,7 @@ words! {
 }
 
 /// What a watch's records are, in its checks' results: taken from the
-/// published plan, never from the caller's input.
+/// published compiled target, never from the caller's input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WatchShape {
     /// The whole result is one record.
@@ -316,7 +316,7 @@ pub struct NewWatch {
     pub environment: Environment,
     /// The published read.
     pub operation: OperationName,
-    /// The published version: its plan's hash.
+    /// The published version: its compiled target's hash.
     pub target_version: Digest,
     /// The operation's compiled effect class. Anything but `read` is
     /// refused.
@@ -332,9 +332,10 @@ pub struct NewWatch {
     /// spend. From the operation's verified binding.
     pub surface: SurfaceName,
     /// How many requests one check sends, at least one: the count of the
-    /// read's steps that send, from its rate plan.
+    /// read's steps that send, from its rate compiled target.
     pub requests_per_check: u32,
-    /// What its records are, from the plan's declared list output and key.
+    /// What its records are, from the compiled target's declared list output
+    /// and key.
     pub shape: WatchShape,
     /// The time between due times: whole seconds, at least
     /// [`WATCH_INTERVAL_FLOOR`].
@@ -354,7 +355,7 @@ pub struct NewWatch {
     /// read's output names, that gives true or false. Checked by the caller
     /// against the read's outputs and compiled; the ledger loads it again
     /// when it is asked and evaluates it on each check's own result.
-    pub condition: Option<PlanExpr>,
+    pub condition: Option<CompiledExpr>,
 }
 
 /// A watch, as the store holds it.
@@ -424,7 +425,7 @@ pub struct WatchRow {
     /// Whether a complete check is in the baseline.
     pub baseline_complete: bool,
     /// What ends it early, when its condition holds on a check.
-    pub condition: Option<PlanExpr>,
+    pub condition: Option<CompiledExpr>,
 }
 
 impl WatchRow {
@@ -626,9 +627,9 @@ fn failure_of(
     }
 }
 
-/// A watch's condition as the store keeps it: the plan's form as canonical
-/// JSON, once it is shown to load and to give true or false.
-fn condition_json(condition: Option<&PlanExpr>) -> Result<Option<String>, Failure> {
+/// A watch's condition as the store keeps it: the compiled target's form as
+/// canonical JSON, once it is shown to load and to give true or false.
+fn condition_json(condition: Option<&CompiledExpr>) -> Result<Option<String>, Failure> {
     let Some(expr) = condition else {
         return Ok(None);
     };
@@ -647,7 +648,7 @@ fn condition_json(condition: Option<&PlanExpr>) -> Result<Option<String>, Failur
 /// Whether a watch's condition holds on a check's result, bound as
 /// `result`. Anything but true or false, or an evaluation that stops, is
 /// no answer: the check is a gap, and never taken as false (rule 7).
-fn condition_holds(expr: &PlanExpr, result: &Values) -> Result<bool, Failure> {
+fn condition_holds(expr: &CompiledExpr, result: &Values) -> Result<bool, Failure> {
     let unanswered = || {
         refused(
             &crate::codes::row::WATCH_CONDITION_UNANSWERED,
@@ -765,7 +766,7 @@ fn watch_row(row: &Row) -> Result<WatchRow, Failure> {
         condition: row
             .opt_text(33)?
             .map(|text| {
-                serde_json::from_str::<PlanExpr>(text)
+                serde_json::from_str::<CompiledExpr>(text)
                     .map_err(|_| failure::corrupt("a watch's condition that no longer reads"))
             })
             .transpose()?,

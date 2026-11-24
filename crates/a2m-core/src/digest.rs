@@ -7,9 +7,9 @@ use sha2::{Digest as _, Sha256};
 
 /// A SHA-256 digest.
 ///
-/// It names a thing by its content: a file, a program, a plan, a finding. It
-/// is read and written as 64 lowercase hexadecimal characters and nothing
-/// else, so the same content has the same name on every machine.
+/// It names a thing by its content: a file, a program, a compiled target, a
+/// finding. It is read and written as 64 lowercase hexadecimal characters and
+/// nothing else, so the same content has the same name on every machine.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Digest([u8; Digest::LENGTH]);
 

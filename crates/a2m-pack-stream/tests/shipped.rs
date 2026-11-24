@@ -59,12 +59,12 @@ async fn the_ordinary_registration_offers_only_the_real_protocol_and_refuses_the
     // The same target compiles where a test registered the stand's
     // protocol, and names it.
     let tests = registry(&folder);
-    let plan = plan(&tests);
+    let compiled_target = compiled_target(&tests);
     let surface = SurfaceRef {
-        target: plan.header.target.clone(),
+        target: compiled_target.header.target.clone(),
         environment: Environment::new("test").unwrap(),
         surface: {
-            let mut surface = plan.surfaces[0].clone();
+            let mut surface = compiled_target.surfaces[0].clone();
             surface.address = "127.0.0.1:9".to_owned();
             surface
         },
@@ -75,8 +75,8 @@ async fn the_ordinary_registration_offers_only_the_real_protocol_and_refuses_the
             .contains(a2m_pack_stream::TEST_BROKER_PROTOCOL)
     );
 
-    // A plan made elsewhere that names it is refused by the driver of the
-    // ordinary registration too, before anything is sent.
+    // A compiled target made elsewhere that names it is refused by the driver
+    // of the ordinary registration too, before anything is sent.
     let handle = shipped.driver(&mode()).unwrap();
     assert_eq!(
         handle.health(&surface),
@@ -92,7 +92,7 @@ async fn the_ordinary_registration_offers_only_the_real_protocol_and_refuses_the
         run: fence.run,
         epoch: fence.epoch,
         surface: &surface,
-        plan: &plan,
+        compiled_target: &compiled_target,
         posture: Posture::Live,
         deadline: Deadline::after(Duration::from_secs(20)),
         redact: &Planted,

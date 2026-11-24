@@ -246,9 +246,9 @@ pub struct ModeDecl {
     #[serde(default)]
     pub steps: Vec<StepKind>,
     /// The kinds of step that always save. The handle refuses one that is
-    /// sent as a step that commits nothing, so that the mark a plan or a
-    /// discoverer puts on a step is not all that stands between a read and
-    /// a write. Empty, the default, checks nothing.
+    /// sent as a step that commits nothing, so that the mark a compiled
+    /// target or a discoverer puts on a step is not all that stands between a
+    /// read and a write. Empty, the default, checks nothing.
     #[serde(default)]
     pub commit_steps: Vec<StepKind>,
     /// The kinds of step whose "absent" the mode's driver states is
@@ -522,7 +522,7 @@ struct RawEffects {
     #[serde(default)]
     processes: Vec<RawProgram>,
     #[serde(default)]
-    plan_programs: bool,
+    compiled_target_programs: bool,
     #[serde(default)]
     read_roots: Vec<String>,
     #[serde(default)]
@@ -563,8 +563,8 @@ pub struct ProgramDecl {
 pub struct Effects {
     /// The programs it starts itself.
     pub processes: Vec<ProgramDecl>,
-    /// Whether it may also start programs a published plan names.
-    pub plan_programs: bool,
+    /// Whether it may also start programs a published compiled target names.
+    pub compiled_target_programs: bool,
     /// The roots it reads.
     pub read_roots: Vec<RootName>,
     /// The roots it writes.
@@ -1211,7 +1211,7 @@ impl Manifest {
         }
         let effects = Effects {
             processes,
-            plan_programs: raw.effects.plan_programs,
+            compiled_target_programs: raw.effects.compiled_target_programs,
             read_roots: roots("effects.read_roots", &raw.effects.read_roots)?,
             write_roots: roots("effects.write_roots", &raw.effects.write_roots)?,
             network: raw.effects.network,

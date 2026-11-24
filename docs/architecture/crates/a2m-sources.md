@@ -1,6 +1,6 @@
 # `a2m-sources`
 
-Turns an input into validated records. It defines `SourceReader`, carries the built-in readers for xlsx, csv, and json, checks an input against the template versions a plan knows by their fingerprints, applies the mapping, and gives the engine typed rows or every problem at once. It takes bytes: it never opens a path and never reaches a target.
+Turns an input into validated records. It defines `SourceReader`, carries the built-in readers for xlsx, csv, and json, checks an input against the template versions a compiled target knows by their fingerprints, applies the mapping, and gives the engine typed rows or every problem at once. It takes bytes: it never opens a path and never reaches a target.
 
 ## Facts
 
@@ -9,7 +9,7 @@ Turns an input into validated records. It defines `SourceReader`, carries the bu
 | Side | Kernel |
 | Layer | 4, Services |
 | May depend on | Layers 1 to 3 |
-| Depends on | `a2m-core`, for values, the plan's `SourcePlan` and field types, digests, and failures; `a2m-expr`, for mappings, row filters, the field types' normalizers, and the date systems. Outside: `miniz_oxide`, which inflates the parts of a workbook's package ([decision 0086](../../decisions/0086-the-source-readers-are-our-own-over-one-outside-crate-that-inflates.md)). `a2m-files`, for the source definition's types, which are defined there once, beside the file formats, and used here ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)): the compiler writes a `SourceSpec` into the plan, and this crate reads the same type back. It does not use `a2m-telemetry` yet |
+| Depends on | `a2m-core`, for values, the compiled target's `CompiledSource` and field types, digests, and failures; `a2m-expr`, for mappings, row filters, the field types' normalizers, and the date systems. Outside: `miniz_oxide`, which inflates the parts of a workbook's package ([decision 0086](../../decisions/0086-the-source-readers-are-our-own-over-one-outside-crate-that-inflates.md)). `a2m-files`, for the source definition's types, which are defined there once, beside the file formats, and used here ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)): the compiler writes a `SourceSpec` into the compiled target, and this crate reads the same type back. It does not use `a2m-telemetry` yet |
 | Roadmap packages | Phase 3, group D and slice 3.9 |
 | Carries out | Spec sections [210](../../spec/2-kernel/210-sources-and-value-normalization.md), [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (a file is read once, its content checked), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md) (step 1 of the preview), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (the structure of a real file, for the drafter); the `sources/*.yaml` part of the [file formats](../../reference/file-formats.md#sourcesyaml) |
 
@@ -18,7 +18,7 @@ Turns an input into validated records. It defines `SourceReader`, carries the bu
 - `SourceReader`, the extension point for a format.
 - The built-in readers for xlsx, csv, and json, and the content check that an input is the format it claims.
 - Template fingerprints: how each is computed, and the list of differences when an input matches no known version.
-- Loading `SourceSpec`, the compiled source definition, from the payload of the plan's `SourcePlan`. The type is `a2m-files`'s; this crate names it again for its callers and has no copy.
+- Loading `SourceSpec`, the compiled source definition, from the payload of the compiled target's `CompiledSource`. The type is `a2m-files`'s; this crate names it again for its callers and has no copy.
 - Applying a mapping: locating the data, filtering rows, turning cells into row fields of declared types.
 - `ValidatedRecords`: the only form in which the engine receives a source's rows.
 - Describing an input's structure, for a discoverer to turn into a finding.
@@ -72,10 +72,10 @@ pub struct RowField { pub name: String, pub field_type: FieldTypeIndex, pub requ
 pub enum Locate { Document, Named(String), Sheet(String) }
 pub enum HiddenRule { Reject, Include }
 
-/// A definition loaded from a plan once, and a field type loaded once.
-impl LoadedSource { pub fn load(plan: &Plan, source: &SourcePlan) -> Result<LoadedSource, Failure>; }
-impl FieldTyper { pub fn load(plan: &Plan, index: FieldTypeIndex) -> Result<FieldTyper, Failure>;
-                  pub fn from_parts(field_type: &FieldTypePlan, normalizer: &PlanExpr) -> Result<FieldTyper, Failure>; }
+/// A definition loaded from a compiled target once, and a field type loaded once.
+impl LoadedSource { pub fn load(compiled_target: &CompiledTarget, source: &CompiledSource) -> Result<LoadedSource, Failure>; }
+impl FieldTyper { pub fn load(compiled_target: &CompiledTarget, index: FieldTypeIndex) -> Result<FieldTyper, Failure>;
+                  pub fn from_parts(field_type: &CompiledFieldType, normalizer: &CompiledExpr) -> Result<FieldTyper, Failure>; }
 
 pub struct Sources { /* the registered readers */ }
 impl Sources {
@@ -120,8 +120,8 @@ Contracts that the signatures do not show:
 - **A cell is a date serial by its number format.** A number whose format is one of the built-in date and time formats, or a declared format with a day, month, year, hour, or second letter outside quotes, brackets, and escapes, is `DateSerial`. A plain number in a field whose type is a date is read as a serial too, because the field type declares it.
 - **Found by name, never by coordinate.** `Locate` is the whole document, for delimited text and a JSON list at the root; a table, a defined name, or the key of a JSON list; or a sheet, whose header row is the first row holding every header the definition names. The definition lists every column it reads. A header that appears twice or not at all, a column with no header, and a column the definition does not name are each a problem.
 - **What lies inside the data.** In a sheet, rows that hold nothing after the last row of data are not rows. A row that holds nothing inside the data, a merged range inside the data, and, unless the definition says `include`, a hidden row or column, are each a problem. In delimited text a row with another number of fields than the header is a problem.
-- **Typing uses the field types.** Every row field has a field type in the plan. `typed` hands the field type's normalizer the raw value the cell states: text as text, a number as an exact decimal, a date serial as the date its date system gives, true or false as it is. Places and rounding, units and steps, formats, and codes are the normalizer's, from `a2m-expr`, so a unit lives in one place. What a field type cannot take is a problem: a number with a fraction in a text field, true or false in a number field, a date-formatted cell in a number field, an error value, a list.
-- **Mappings are expressions.** A row field with no column is the expression of the same name in the plan's mapping, over `row` and `source`. `row` holds each listed column: text, an exact decimal for a number or a date serial, true or false, or null. `source` holds `template`, `version`, and `reader`. The result goes through the field's type like any other value. The `rows` filter is an expression too; a row it turns away is counted in `filtered_out`. An expression that fails on a row is a problem for that row.
+- **Typing uses the field types.** Every row field has a field type in the compiled target. `typed` hands the field type's normalizer the raw value the cell states: text as text, a number as an exact decimal, a date serial as the date its date system gives, true or false as it is. Places and rounding, units and steps, formats, and codes are the normalizer's, from `a2m-expr`, so a unit lives in one place. What a field type cannot take is a problem: a number with a fraction in a text field, true or false in a number field, a date-formatted cell in a number field, an error value, a list.
+- **Mappings are expressions.** A row field with no column is the expression of the same name in the compiled target's mapping, over `row` and `source`. `row` holds each listed column: text, an exact decimal for a number or a date serial, true or false, or null. `source` holds `template`, `version`, and `reader`. The result goes through the field's type like any other value. The `rows` filter is an expression too; a row it turns away is counted in `filtered_out`. An expression that fails on a row is a problem for that row.
 - **A key, when the definition has one.** Two rows whose key fields have the same values are a problem, `source_key_not_unique`, at the second row. (The packs' `key_not_unique` is `drift`, a system that holds two rows with one key; an input given with two is `input`, so it has a code of its own: [decision 0258](../../decisions/0258-every-crate-declares-its-failure-codes-in-one-table.md).)
 - **All problems, then nothing.** `read` returns `ValidatedRecords` only if no row has a problem. Otherwise it returns every problem, each with its cell, its field, and a sentence that never holds a value from the input. Problems of locating the data come back alone, before any row is typed.
 - **One parser, one meaning.** The file pack of section 308 depends on this crate for parsing, fingerprints, and `typed`, so a value never means one thing to a source and another to the file pack. A span covers exactly the literal of a value: a field of delimited text with its quotes, a JSON token, the content of a workbook cell's value element. For a cell that holds text through the shared strings, the span covers the entry's number and `shared` says which entry. Re-packing and checking a patched file are the file pack's work.
@@ -151,17 +151,17 @@ What happens between a pipeline call with a `source` input and the first record 
 | 9 | Count the rows against the record limit | `a2m-policy` |
 | 10 | Plan one record row per commit point the rows imply | `a2m-engine`, through `a2m-ledger` |
 
-Steps 3 to 8 are pure: the same bytes and the same plan give the same result, which is what lets a second run of the same sheet change nothing.
+Steps 3 to 8 are pure: the same bytes and the same compiled target give the same result, which is what lets a second run of the same sheet change nothing.
 
 ## Used by, and uses
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-engine` | `LoadedSource::load` when a plan is loaded; `Sources::read` and `from_rows` at step 1 of the preview |
+| `a2m-engine` | `LoadedSource::load` when a compiled target is loaded; `Sources::read` and `from_rows` at step 1 of the preview |
 | `a2m-provider` | `SourceReader`, to register plug-in readers alongside the built-in ones; `Sources::validate` for what a plug-in parsed |
 | The file pack, once it exists (section 308) | `Sources::parse`, `Parsed` and its positions, `Structure::fingerprint`, `locate`, `typed`, `FieldTyper`, `json::parse_document`, `field_text` |
 | `a2m-actions` | `Sources::new` with the registry's readers; `describe` for the discoverer of a real file's structure that feeds the drafter |
-| `a2m-files` | Nothing of this crate. It defines `SourceSpec` and the types it is made of, and writes one into the payload of a `SourcePlan`; this crate depends on it for those types |
+| `a2m-files` | Nothing of this crate. It defines `SourceSpec` and the types it is made of, and writes one into the payload of a `CompiledSource`; this crate depends on it for those types |
 
 ## State
 
@@ -184,7 +184,7 @@ Every failure is of class `input`: the input was refused and nothing ran. The co
 | `formula_without_value` (new) | A formula cell in the data has no kept result |
 | `source_key_not_unique` (new) | Two rows have the same key |
 | `source_reader_unknown` (new) | The definition names a reader that is not registered |
-| `source_definition_invalid` (new) | The compiled definition does not hold together: an index the plan lacks, a row field named twice, a fingerprint whose digest is not that of its parts |
+| `source_definition_invalid` (new) | The compiled definition does not hold together: an index the compiled target lacks, a row field named twice, a fingerprint whose digest is not that of its parts |
 
 ## Invariants
 
@@ -204,7 +204,7 @@ Every failure is of class `input`: the input was refused and nothing ran. The co
 | A workbook part that breaks the format is refused and never read by a default: a hidden row is not read as shown, nor a date as a plain number | `xml::tests`, three cases; `a_workbook_whose_attributes_break_the_format_is_refused_not_read_by_default` |
 | A number's exponent never panics or wraps, whatever its size | `number::tests`, with the largest and the smallest exponent 64 bits hold |
 | A difference from the template quotes the template and never the input | `fingerprint::tests`, with a file whose first row is data; the two tests of a changed header |
-| What the compiler writes, this crate reads | `tests/example_target.rs`: the `example` target compiles, its plan is decoded from its bytes, and its source reads the target's fixture sheet into typed rows; a sheet of another layout is refused by the fingerprint the compiler wrote; a header with a space is read by a bare column and by a mapping expression |
+| What the compiler writes, this crate reads | `tests/example_target.rs`: the `example` target compiles, its compiled target is decoded from its bytes, and its source reads the target's fixture sheet into typed rows; a sheet of another layout is refused by the fingerprint the compiler wrote; a header with a space is read by a bare column and by a mapping expression |
 
 ## Build order
 

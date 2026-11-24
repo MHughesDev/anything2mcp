@@ -1,5 +1,5 @@
 //! The `documents/` file kind: its schema, and how a document compiles into
-//! the pack's section of the plan.
+//! the pack's section of the compiled target.
 
 use a2m_core::{FileKindName, LintCode, PackPayload, SurfaceKind};
 use a2m_files::{

@@ -139,7 +139,7 @@ on_link_loss: {device_reverts_to_safe_state: true, after: 2s}
 | `hazard` | Required on every writable register. `none` is allowed only where the developer declares it |
 | `confirm_by` | A sensor register that shows the world followed, with a tolerance and a settle time. Compiled and checked to name a readable register; nothing acts on it yet |
 | `read_effect` | `none` by default; `clears` or `advances` for registers whose reading changes them |
-| `safe_state`, `on_link_loss` | What safe means for this device, the operation that reaches it, and what the device itself does when the link drops. Compiled into the plan; nothing acts on them yet |
+| `safe_state`, `on_link_loss` | What safe means for this device, the operation that reaches it, and what the device itself does when the link drops. Compiled into the compiled target; nothing acts on them yet |
 
 ## Verbs and how they lower
 
@@ -194,7 +194,7 @@ An operation with a hazard other than `none` is `irreversible` ([section 213](..
 - **Every writable register carries a hazard,** and the compiler refuses one without. The drafter never writes one.
 - **Range is enforced before a frame is sent, twice,** by the driver, before it builds the frame ([decision 0106](../../decisions/0106-the-device-pack-speaks-its-first-protocol-itself-and-checks-a-range-before-a-frame-is-built.md)). First the value in the register's unit, against the map's range. Then the raw number it encodes to, against the same range converted by the register's scale and against what the register's bits can hold, so no rounding or overflow can carry a value outside it. A value that is not a whole number of the register's steps is refused, never rounded. Each refusal is `value_out_of_range`, and nothing is sent. The kernel cannot check the range before the preview: its field types carry no range, and the range lives in the map.
 - **There is no automatic retry** of any device write, whatever its class. The pack declares its writes not idempotent to the engine, so `transient` never repeats them. A device reached over noise or a shared bus cannot prove that a frame with no reply did nothing.
-- **A `physical` operation declares `confirm_by`** where the device has a sensor for it. The setpoint read back proves the device took the value; the sensor within its tolerance after its settle time proves the world followed. They are two facts, reported separately. Not built: until `confirm_by` and the safe-state operation are, the compiler refuses every write to a `physical` register (`device.physical_not_built`), and the driver refuses a step that would send one, whatever plan it is handed (`unknown_variant`, `physical_not_built`).
+- **A `physical` operation declares `confirm_by`** where the device has a sensor for it. The setpoint read back proves the device took the value; the sensor within its tolerance after its settle time proves the world followed. They are two facts, reported separately. Not built: until `confirm_by` and the safe-state operation are, the compiler refuses every write to a `physical` register (`device.physical_not_built`), and the driver refuses a step that would send one, whatever compiled target it is handed (`unknown_variant`, `physical_not_built`).
 
 **A safe state when a run stops halfway.** A pipeline that opens a valve and then starts a pump may stop after the first. The engine does not continue it, undo it, or send anything further: a stop means the device or the link is in a state with no rule, and more frames into that state is a guess. Instead the stop is recorded with what landed and what may have, a person is alerted, and the alert offers the declared safe-state operation as one action. The person invoking it is the approval it needs. The kill switch reaches the link and runs the same operation. The device's own fail-safe, declared as `on_link_loss`, is the first line; the safe-state operation is the second (hypothesis H-34). The alert, the safe-state operation, and the kill switch reaching the link are not built.
 
@@ -268,7 +268,7 @@ None of these needs a kernel change beyond the identity precondition above. They
 | Class | Codes | When |
 | --- | --- | --- |
 | `input` | `value_out_of_range`, `schema_invalid` | Outside the declared range or type; nothing is sent |
-| `input` | `payload_unreadable` | The plan was compiled by another build of the pack; nothing is sent |
+| `input` | `payload_unreadable` | The compiled target was compiled by another build of the pack; nothing is sent |
 | `policy` | `surface_not_declared`, `approval_missing` | A link not declared; a hazard without its approval. `approval_missing` is the policy engine's, not the pack's |
 | `policy` | `device_serial_not_declared`, `discovery_identifies_only`, `frame_budget_exceeded` | A write where the surface declares no serial for the environment; a frame other than identification during discovery; a frame past the run's ceiling. Nothing is sent |
 | `busy` | `session_in_use` | Another run holds the link. The scheduler raises it, not the pack |

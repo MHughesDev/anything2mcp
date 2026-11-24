@@ -1,6 +1,6 @@
 //! The lowering of the `http` mode: one binding into `request`,
 //! `validate`, and `extract` steps, each naming its endpoint in the pack's
-//! section of the plan and carrying this pack's own payload.
+//! section of the compiled target and carrying this pack's own payload.
 //!
 //! | Verb | Act | Confirm | Read back |
 //! | --- | --- | --- | --- |

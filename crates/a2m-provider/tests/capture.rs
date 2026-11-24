@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    Environment, Failure, FailureClass, PackPayload, SurfaceKind, SurfaceName, SurfacePlan,
+    CompiledSurface, Environment, Failure, FailureClass, PackPayload, SurfaceKind, SurfaceName,
     TargetName,
 };
 use a2m_provider::{
@@ -204,7 +204,7 @@ fn surface(kind: &str) -> SurfaceRef {
     SurfaceRef {
         target: TargetName::new("example").unwrap(),
         environment: Environment::new("test").unwrap(),
-        surface: SurfacePlan {
+        surface: CompiledSurface {
             name: SurfaceName::new("app").unwrap(),
             kind: SurfaceKind::new(kind).unwrap(),
             address: "http://127.0.0.1:8080/".to_owned(),

@@ -297,11 +297,15 @@ async fn a_pack_starts_only_the_programs_its_manifest_declares() {
             Ran::NotStarted
         )
     );
-    // The handle's supervisor adds a published plan's programs only where
-    // the manifest says `plan_programs`, and this one does not.
+    // The handle's supervisor adds a published compiled target's programs
+    // only where the manifest says `compiled_target_programs`, and this one
+    // does not.
     let handle = registry.driver(&common::mode()).unwrap();
-    let with_plan = handle.supervisor(vec![undeclared.program.clone()]);
-    let failure = with_plan.run(undeclared, one_shot(60)).await.unwrap_err();
+    let with_compiled_target = handle.supervisor(vec![undeclared.program.clone()]);
+    let failure = with_compiled_target
+        .run(undeclared, one_shot(60))
+        .await
+        .unwrap_err();
     assert_eq!(failure.failure.code(), &codes::EFFECT_NOT_DECLARED);
 }
 

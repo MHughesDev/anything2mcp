@@ -150,10 +150,14 @@ async fn a_persons_press_retries_a_credential_an_agents_ask_may_not() {
     options.extra_pack = Some(Arc::new(StoredPack(Arc::clone(&side))));
     let world: World = world(options).await;
     *world.surface.pages.lock().unwrap() = true;
-    let mut plan = engine::plan(&world.app.url(""));
-    plan.auth[0].provider = AuthProviderName::new("example_stored_login").unwrap();
-    plan.auth[0].attempt_limit = 1;
-    world.kernel.publish_plan(&plan).await.unwrap();
+    let mut compiled_target = engine::compiled_target(&world.app.url(""));
+    compiled_target.auth[0].provider = AuthProviderName::new("example_stored_login").unwrap();
+    compiled_target.auth[0].attempt_limit = 1;
+    world
+        .kernel
+        .publish_compiled_target(&compiled_target)
+        .await
+        .unwrap();
 
     // The agent asks; the stored credential is sent once and refused.
     let login = json!({"target": "example"});

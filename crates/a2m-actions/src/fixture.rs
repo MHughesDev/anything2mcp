@@ -19,9 +19,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use a2m_core::{
-    CanonicalJson, Date, Decimal, Digest, EffectClass, FailureClass, FieldBase, FieldHasher,
-    FieldTypePlan, Millis, OperationName, OperationPlan, Plan, Redact, RunState, Step, TestKind,
-    TestPlan, Timestamp, ToolRuns, Value, ValueType, Values,
+    CanonicalJson, CompiledFieldType, CompiledOperation, CompiledTarget, CompiledTest, Date,
+    Decimal, Digest, EffectClass, FailureClass, FieldBase, FieldHasher, Millis, OperationName,
+    Redact, RunState, Step, TestKind, Timestamp, ToolRuns, Value, ValueType, Values,
 };
 use a2m_provider::{Recorded, RecordedAnswer};
 use serde_json::{Value as Json, json};
@@ -129,7 +129,7 @@ pub(crate) struct TypeRule {
 }
 
 impl TypeRule {
-    fn of(ty: &FieldTypePlan) -> Self {
+    fn of(ty: &CompiledFieldType) -> Self {
         Self {
             base: ty.base,
             codes: ty.codes.iter().map(|code| code.code.clone()).collect(),
@@ -512,7 +512,10 @@ fn fixed_decimal(places: u32) -> Result<Decimal, a2m_core::Failure> {
 /// record and its fields, or an endpoint's schema. They are the target's, already in the repository, and
 /// a name of them in an answer is structure, not the system's data (audit
 /// finding FX-1). A name only the system gave is data.
-fn declared_names(plan: &Plan, operation: &OperationPlan) -> BTreeSet<String> {
+fn declared_names(
+    compiled_target: &CompiledTarget,
+    operation: &CompiledOperation,
+) -> BTreeSet<String> {
     fn gather(json: &Json, into: &mut BTreeSet<String>) {
         match json {
             Json::Object(map) => {
@@ -541,7 +544,7 @@ fn declared_names(plan: &Plan, operation: &OperationPlan) -> BTreeSet<String> {
                 continue;
             };
             names.insert(reference.entry.clone());
-            let Some(section) = plan.packs.get(reference.section.get()) else {
+            let Some(section) = compiled_target.packs.get(reference.section.get()) else {
                 continue;
             };
             let Ok(payload) = section.payload.decode::<Json>() else {
@@ -558,7 +561,10 @@ fn declared_names(plan: &Plan, operation: &OperationPlan) -> BTreeSet<String> {
 
 /// The slot of each output of the operation, by name: an answer's names
 /// that are declared outputs are structure.
-fn output_slots(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, Slot> {
+fn output_slots(
+    compiled_target: &CompiledTarget,
+    operation: &CompiledOperation,
+) -> BTreeMap<String, Slot> {
     let key = key_names(operation);
     operation
         .outputs
@@ -566,7 +572,7 @@ fn output_slots(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, Slot
         .map(|output| {
             let rule = output
                 .field_type
-                .and_then(|index| plan.field_type(index))
+                .and_then(|index| compiled_target.field_type(index))
                 .map(TypeRule::of);
             (
                 output.name.clone(),
@@ -581,7 +587,10 @@ fn output_slots(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, Slot
 }
 
 /// The slot of each input of the operation, by name.
-fn input_slots(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, Slot> {
+fn input_slots(
+    compiled_target: &CompiledTarget,
+    operation: &CompiledOperation,
+) -> BTreeMap<String, Slot> {
     let key = key_names(operation);
     operation
         .inputs
@@ -590,7 +599,9 @@ fn input_slots(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, Slot>
             (
                 input.name.clone(),
                 Slot {
-                    rule: plan.field_type(input.field_type).map(TypeRule::of),
+                    rule: compiled_target
+                        .field_type(input.field_type)
+                        .map(TypeRule::of),
                     declared: Some(input.ty.clone()),
                     key: key.contains(&input.name),
                 },
@@ -600,7 +611,7 @@ fn input_slots(plan: &Plan, operation: &OperationPlan) -> BTreeMap<String, Slot>
 }
 
 /// The names of the operation's key inputs.
-fn key_names(operation: &OperationPlan) -> BTreeSet<String> {
+fn key_names(operation: &CompiledOperation) -> BTreeSet<String> {
     operation
         .identity
         .key
@@ -941,8 +952,8 @@ handler!(
         )
         .await?
         .map_err(a2m_core::Failure::from)?;
-        let plan = Arc::new(compiled.plan);
-        let Some(tool) = plan.tool(&tool_name).cloned() else {
+        let compiled_target = Arc::new(compiled.compiled_target);
+        let Some(tool) = compiled_target.tool(&tool_name).cloned() else {
             return Err(codes::input(
                 codes::NOT_FOUND,
                 format!("The drafts of `{target}` hold no tool named `{tool_name}`."),
@@ -950,7 +961,7 @@ handler!(
             ));
         };
         let operation = match tool.runs {
-            ToolRuns::Operation(index) => plan.operation(index).cloned(),
+            ToolRuns::Operation(index) => compiled_target.operation(index).cloned(),
             ToolRuns::Pipeline(_) => None,
         };
         let Some(operation) = operation.filter(|operation| operation.effect == EffectClass::Read)
@@ -980,7 +991,7 @@ handler!(
             })?,
             None => Values::new(),
         };
-        let environment = plan
+        let environment = compiled_target
             .default_environment()
             .map(|environment| environment.name.clone())
             .ok_or_else(|| {
@@ -1027,8 +1038,8 @@ handler!(
         let digest = hasher.finish();
         let found = crate::tools::FoundTool {
             target: target.clone(),
-            plan_hash: compiled.encoded.hash,
-            plan: Arc::clone(&plan),
+            compiled_target_hash: compiled.encoded.hash,
+            compiled_target: Arc::clone(&compiled_target),
             tool: tool.clone(),
         };
         // The binding recorded is the one named, else the one that would
@@ -1052,10 +1063,14 @@ handler!(
             })
             .await?
         };
-        let binding =
-            crate::handlers::tools::named_binding(&plan, &tool, &call, file_modes.as_deref())?;
+        let binding = crate::handlers::tools::named_binding(
+            &compiled_target,
+            &tool,
+            &call,
+            file_modes.as_deref(),
+        )?;
         let file_place = binding.as_ref().map(|pin| {
-            let plan_modes: Vec<&str> = operation
+            let compiled_modes: Vec<&str> = operation
                 .bindings
                 .iter()
                 .map(|binding| binding.mode.as_str())
@@ -1063,12 +1078,12 @@ handler!(
             file_modes
                 .as_deref()
                 .and_then(|file_modes| {
-                    crate::places::file_place(&plan_modes, file_modes, pin.position)
+                    crate::places::file_place(&compiled_modes, file_modes, pin.position)
                 })
                 .unwrap_or(pin.position)
         });
         let named = call.text("mode").is_some() || call.int("position").is_some();
-        kernel.keep_draft(&target, compiled.encoded.hash, Arc::clone(&plan));
+        kernel.keep_draft(&target, compiled.encoded.hash, Arc::clone(&compiled_target));
         let recorder = Recorder::start(kernel, digest);
         let run = crate::handlers::tools::submit_trial_kept(
             kernel,
@@ -1126,17 +1141,21 @@ handler!(
         // Scrub: the input first, so that a key keeps one synthetic value
         // in the input and in every answer of a key field.
         let redact = kernel.redact();
-        let mut scrubber =
-            Scrubber::new(redact.as_ref()).with_structure(declared_names(&plan, &operation));
-        let input_slots = input_slots(&plan, &operation);
+        let mut scrubber = Scrubber::new(redact.as_ref())
+            .with_structure(declared_names(&compiled_target, &operation));
+        let input_slots = input_slots(&compiled_target, &operation);
         let inputs = scrubber.values(&input, "input", &|name| {
             Some(input_slots.get(name).cloned().unwrap_or_default())
         })?;
-        let answers = scrubbed_answers(&mut scrubber, &observed, &output_slots(&plan, &operation))?;
+        let answers = scrubbed_answers(
+            &mut scrubber,
+            &observed,
+            &output_slots(&compiled_target, &operation),
+        )?;
 
         // The test, run against the scrubbed fixture in memory: once for
         // its result, which becomes its expectation, and once to pass.
-        let tool_index = plan
+        let tool_index = compiled_target
             .tools
             .iter()
             .position(|kept| kept.name == tool.name)
@@ -1145,7 +1164,7 @@ handler!(
             .ok_or_else(|| {
                 codes::input(
                     codes::NOT_FOUND,
-                    "The tool is not in the plan.",
+                    "The tool is not in the compiled target.",
                     "Report this.",
                 )
             })?;
@@ -1158,7 +1177,7 @@ handler!(
             principal: call.caller.principal.principal.id,
             vault: kernel.inner.vault.clone(),
         };
-        let mut test = TestPlan {
+        let mut test = CompiledTest {
             name: name.clone(),
             tool: tool_index,
             kind: TestKind::Offline,
@@ -1168,7 +1187,7 @@ handler!(
             restore: false,
         };
         let engine = kernel.engine().await?;
-        let (runs_plan, hash) = (Arc::clone(&plan), compiled.encoded.hash);
+        let (runs_compiled_target, hash) = (Arc::clone(&compiled_target), compiled.encoded.hash);
         let first = test.clone();
         let (first_binding, second_binding) = (binding.clone(), binding.clone());
         let (runs_replayed, runs_world) = (replayed.clone(), world.clone());
@@ -1184,7 +1203,7 @@ handler!(
         let (_, got) = tokio::task::spawn_blocking(move || {
             runtime.block_on(crate::offline::run_test_with_result(
                 &engine,
-                &runs_plan,
+                &runs_compiled_target,
                 hash,
                 &runs_world,
                 (&first, first_binding),
@@ -1201,12 +1220,13 @@ handler!(
             ));
         }
         test.expect = CanonicalJson::encode(&got)?;
-        let (runs_plan, second, runs_world) = (Arc::clone(&plan), test.clone(), world.clone());
+        let (runs_compiled_target, second, runs_world) =
+            (Arc::clone(&compiled_target), test.clone(), world.clone());
         let runtime = tokio::runtime::Handle::current();
         let (outcome, _) = tokio::task::spawn_blocking(move || {
             runtime.block_on(crate::offline::run_test_with_result(
                 &engine_again,
-                &runs_plan,
+                &runs_compiled_target,
                 hash,
                 &runs_world,
                 (&second, second_binding),
@@ -1337,7 +1357,7 @@ handler!(
                 })
                 .await?
             };
-            let address = crate::evidence::address_of(&plan, &operation, binding.as_ref());
+            let address = crate::evidence::address_of(&compiled_target, &operation, binding.as_ref());
             crate::evidence::record_fixture(
                 kernel,
                 &call.caller.principal.principal.id.to_string(),

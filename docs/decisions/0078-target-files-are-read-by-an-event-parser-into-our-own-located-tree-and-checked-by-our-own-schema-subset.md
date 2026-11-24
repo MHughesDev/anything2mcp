@@ -36,5 +36,5 @@ A pack needs a schema feature the subset lacks often enough that lint rules beco
 ## Spec sections
 
 - [205. Target files](../spec/2-kernel/205-target-files.md)
-- [206. The compiler and the plan](../spec/2-kernel/206-the-compiler-and-the-plan.md)
+- [206. The compiler and the plan](../spec/2-kernel/206-the-compiler-and-the-compiled-target.md)
 - [`a2m-files`](../architecture/crates/a2m-files.md)

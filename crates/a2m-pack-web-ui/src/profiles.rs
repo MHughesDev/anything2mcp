@@ -25,14 +25,14 @@ use regex::Regex;
 /// this list to the folder `profiles/`.
 const FILES: &[(&str, &str)] = &[
     (
-        "aspnet_webforms",
-        include_str!("../../../profiles/aspnet_webforms.yaml"),
-    ),
-    (
         "controlled_inputs",
         include_str!("../../../profiles/controlled_inputs.yaml"),
     ),
     ("plain", include_str!("../../../profiles/plain.yaml")),
+    (
+        "server_postback_forms",
+        include_str!("../../../profiles/server_postback_forms.yaml"),
+    ),
     (
         "virtualized_grid",
         include_str!("../../../profiles/virtualized_grid.yaml"),
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn a_family_rejects_the_identifiers_it_makes_and_only_those() {
-        let forms = named("aspnet_webforms").unwrap();
+        let forms = named("server_postback_forms").unwrap();
         assert!(forms.rejects_id("ctl00_Content_Save"));
         assert!(forms.rejects_id("MainContent_Total"));
         assert!(!forms.rejects_id("save"));
@@ -392,7 +392,7 @@ mod tests {
     fn each_family_states_its_commit_and_each_commit_is_read_by_its_name() {
         for (family, commit) in [
             ("plain", InputCommit::Blur),
-            ("aspnet_webforms", InputCommit::BlurThenWaitReady),
+            ("server_postback_forms", InputCommit::BlurThenWaitReady),
             ("controlled_inputs", InputCommit::TypeThenBlur),
             ("virtualized_grid", InputCommit::Enter),
         ] {

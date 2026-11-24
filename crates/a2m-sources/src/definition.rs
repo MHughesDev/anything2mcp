@@ -1,12 +1,13 @@
 //! A source definition, loaded: the form `read` works from.
 //!
 //! The compiler in `a2m-files` writes a [`SourceSpec`] into the payload of
-//! `a2m_core::SourcePlan`; this crate reads it back. The type and the types
+//! `a2m_core::CompiledSource`; this crate reads it back. The type and the types
 //! it is made of are defined once, in `a2m-files`, beside the file formats
 //! (decisions 0079 and 0121); this crate uses them and has no copy.
 
 use a2m_core::{
-    Failure, FieldBase, FieldTypeIndex, FieldTypePlan, Plan, PlanExpr, SourcePlan, ValueType,
+    CompiledExpr, CompiledFieldType, CompiledSource, CompiledTarget, Failure, FieldBase,
+    FieldTypeIndex, ValueType,
 };
 use a2m_expr::{Normalizer, Program};
 use a2m_files::{OPERATION_READER, SourceSpec};
@@ -24,30 +25,34 @@ pub struct FieldTyper {
 }
 
 impl FieldTyper {
-    /// Loads the field type at `index` of a plan.
+    /// Loads the field type at `index` of a compiled target.
     ///
     /// # Errors
     ///
-    /// `source_definition_invalid` when the plan has no such field type or
-    /// the field type has no normalizer; `plan_expression_unloadable` when
-    /// the normalizer does not load.
-    pub fn load(plan: &Plan, index: FieldTypeIndex) -> Result<Self, Failure> {
-        let field_type = plan
-            .field_type(index)
-            .ok_or_else(|| definition("a row field names a field type the plan does not hold"))?;
+    /// `source_definition_invalid` when the compiled target has no such field
+    /// type or the field type has no normalizer;
+    /// `compiled_expression_unloadable` when the normalizer does not load.
+    pub fn load(compiled_target: &CompiledTarget, index: FieldTypeIndex) -> Result<Self, Failure> {
+        let field_type = compiled_target.field_type(index).ok_or_else(|| {
+            definition("a row field names a field type the compiled target does not hold")
+        })?;
         let normalizer = field_type
             .normalizer
-            .and_then(|index| plan.expression(index))
-            .ok_or_else(|| definition("a field type has no normalizer in the plan"))?;
+            .and_then(|index| compiled_target.expression(index))
+            .ok_or_else(|| definition("a field type has no normalizer in the compiled target"))?;
         Self::from_parts(field_type, normalizer)
     }
 
-    /// Loads a field type from its entry in a plan and its normalizer.
+    /// Loads a field type from its entry in a compiled target and its
+    /// normalizer.
     ///
     /// # Errors
     ///
-    /// `plan_expression_unloadable` when the normalizer does not load.
-    pub fn from_parts(field_type: &FieldTypePlan, normalizer: &PlanExpr) -> Result<Self, Failure> {
+    /// `compiled_expression_unloadable` when the normalizer does not load.
+    pub fn from_parts(
+        field_type: &CompiledFieldType,
+        normalizer: &CompiledExpr,
+    ) -> Result<Self, Failure> {
         Ok(Self {
             name: field_type.name.clone(),
             base: field_type.base,
@@ -93,8 +98,8 @@ pub(crate) struct LoadedField {
     pub(crate) from: Origin,
 }
 
-/// A source definition, loaded from a plan once and used for every read:
-/// its expressions parsed, its field types' normalizers ready.
+/// A source definition, loaded from a compiled target once and used for every
+/// read: its expressions parsed, its field types' normalizers ready.
 #[derive(Debug, Clone)]
 pub struct LoadedSource {
     template: String,
@@ -105,18 +110,21 @@ pub struct LoadedSource {
 }
 
 impl LoadedSource {
-    /// Loads the source of a pipeline from its plan.
+    /// Loads the source of a pipeline from its compiled target.
     ///
     /// # Errors
     ///
     /// `payload_unreadable` when the payload is not a [`SourceSpec`];
     /// `source_definition_invalid` when the definition does not hold
-    /// together: an index the plan lacks, a row field named twice, a column
-    /// that is not listed, a mapping with no row field, a key that is not a
-    /// row field, a fingerprint whose digest is not that of its parts, a
-    /// file reader with no template version; `plan_expression_unloadable`
-    /// when an expression does not load.
-    pub fn load(plan: &Plan, source: &SourcePlan) -> Result<Self, Failure> {
+    /// together: an index the compiled target lacks, a row field named twice,
+    /// a column that is not listed, a mapping with no row field, a key that
+    /// is not a row field, a fingerprint whose digest is not that of its
+    /// parts, a file reader with no template version;
+    /// `compiled_expression_unloadable` when an expression does not load.
+    pub fn load(
+        compiled_target: &CompiledTarget,
+        source: &CompiledSource,
+    ) -> Result<Self, Failure> {
         let spec: SourceSpec = source.payload.decode()?;
         if source.reader != OPERATION_READER {
             ReaderName::new(&source.reader)?;
@@ -158,7 +166,7 @@ impl LoadedSource {
         }
         let mut fields = Vec::with_capacity(spec.fields.len());
         for field in &spec.fields {
-            let typer = FieldTyper::load(plan, field.field_type)?;
+            let typer = FieldTyper::load(compiled_target, field.field_type)?;
             let mapped = source.mapping.iter().find(|arg| arg.name == field.name);
             let from = match (&field.column, mapped) {
                 (Some(column), None) => {
@@ -168,8 +176,10 @@ impl LoadedSource {
                     Origin::Column(column.clone())
                 }
                 (None, Some(arg)) => {
-                    let expression = plan.expression(arg.value).ok_or_else(|| {
-                        definition("a mapping names an expression the plan does not hold")
+                    let expression = compiled_target.expression(arg.value).ok_or_else(|| {
+                        definition(
+                            "a mapping names an expression the compiled target does not hold",
+                        )
                     })?;
                     Origin::Expression(Program::load(expression)?)
                 }
@@ -208,8 +218,10 @@ impl LoadedSource {
         let filter = match source.rows {
             None => None,
             Some(index) => {
-                let expression = plan.expression(index).ok_or_else(|| {
-                    definition("the row filter names an expression the plan does not hold")
+                let expression = compiled_target.expression(index).ok_or_else(|| {
+                    definition(
+                        "the row filter names an expression the compiled target does not hold",
+                    )
                 })?;
                 if expression.result != ValueType::Bool {
                     return Err(definition("the row filter does not give true or false"));

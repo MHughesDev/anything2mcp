@@ -67,7 +67,7 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "run.resume" => tools::run_resume,
         "run.cancel" => tools::run_cancel,
         "trace.show" => tools::trace_show,
-        "plan.show" => tools::plan_show,
+        "target.show" => tools::target_show,
         "target.add" => build::target_add,
         "target.list" => drafts::target_list,
         "target.status" => drafts::target_status,

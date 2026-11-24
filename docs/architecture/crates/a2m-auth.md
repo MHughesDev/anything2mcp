@@ -62,16 +62,16 @@ pub struct AuthEntry {
     pub surfaces: EntrySurfaces,                      // decisions 0245 and 0248: empty by default
 }
 impl AuthEntry { pub fn published(self) -> Self; /* new, setting, credential, required, optional, only */ }
-/// The entry's surfaces as the plan holds them in the environment, the plan's pack sections of their
-/// kinds, every address the target declares there, whether the plan is a published version's (only the
+/// The entry's surfaces as the compiled target holds them in the environment, the compiled target's pack sections of their
+/// kinds, every address the target declares there, whether the compiled target is a published version's (only the
 /// caller that loaded one says so), and whether the person carried out this one sign-in on a page that
 /// showed every address (only the caller that took the act says so). Decision 0248.
 pub struct EntrySurfaces {
-    pub surfaces: Vec<SurfacePlan>, pub sections: Vec<PackSection>,
+    pub surfaces: Vec<CompiledSurface>, pub sections: Vec<PackSection>,
     pub from_published: bool, pub shown_to_person: bool, pub destinations: SignInDestinations,
 }
 impl EntrySurfaces {
-    pub fn of(plan: &Plan, auth: &AuthPlan, environment: &Environment) -> Self;
+    pub fn of(compiled_target: &CompiledTarget, auth: &CompiledAuth, environment: &Environment) -> Self;
     pub fn published(self) -> Self; pub fn shown_to_person(self) -> Self;
 }
 /// Where a sign-in may send: the target's surface addresses in the environment, compared by origin

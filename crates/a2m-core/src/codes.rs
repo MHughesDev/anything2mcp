@@ -12,19 +12,19 @@ crate::failure_codes! {
     VALUE_OUT_OF_RANGE = Input, "value_out_of_range",
         meaning "A decimal, a date, a key part, or a moment cannot be represented.",
         next "Give a value inside the range the message names.";
-    PLAN_HASH_MISMATCH = Input, "plan_hash_mismatch",
-        meaning "A plan's bytes do not match the hash it was published with.",
-        next "Compile and publish the target's version again, so that a new plan is stored; the tool stays unavailable until then.";
-    PLAN_FORMAT_UNSUPPORTED = Input, "plan_format_unsupported",
-        meaning "A plan's format is not one this engine loads.",
-        next "Compile the target again with this engine, or run the engine the plan was compiled for.";
-    PLAN_UNREADABLE = Input, "plan_unreadable",
-        meaning "A plan's bytes match its hash and are not a well-formed plan.",
+    COMPILED_TARGET_HASH_MISMATCH = Input, "compiled_target_hash_mismatch",
+        meaning "A compiled target's bytes do not match the hash it was published with.",
+        next "Compile and publish the target's version again, so that a new compiled target is stored; the tool stays unavailable until then.";
+    COMPILED_TARGET_FORMAT_UNSUPPORTED = Input, "compiled_target_format_unsupported",
+        meaning "A compiled target's format is not one this engine loads.",
+        next "Compile the target again with this engine, or run the engine the compiled target was compiled for.";
+    COMPILED_TARGET_UNREADABLE = Input, "compiled_target_unreadable",
+        meaning "A compiled target's bytes match its hash and are not a well-formed compiled target.",
         next "Compile the target again with this engine and publish the new version.";
     PAYLOAD_UNREADABLE = Input, "payload_unreadable",
-        meaning "A payload in a plan does not decode as the type its reader expects.",
+        meaning "A payload in a compiled target does not decode as the type its reader expects.",
         next "Compile the target again with the pack versions this engine has, and publish the new version.";
     PAYLOAD_NOT_ENCODABLE = Input, "payload_not_encodable",
-        meaning "Data holds something the plan's encoding cannot carry, such as a float.",
+        meaning "Data holds something the compiled target's encoding cannot carry, such as a float.",
         next "Give the value as a decimal, a text, or a whole number of at most 64 bits, and keys as text.";
 }

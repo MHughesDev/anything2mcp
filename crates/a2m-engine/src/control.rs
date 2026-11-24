@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use a2m_auth::{ExpirySign, SessionLease};
 use a2m_core::{
-    Digest, EffectClass, Environment, Failure, FailureClass, FailureCode, Finding, Hazard, Mode,
-    OperationName, Plan, RunState, SurfaceName, Values, Version,
+    CompiledTarget, Digest, EffectClass, Environment, Failure, FailureClass, FailureCode, Finding,
+    Hazard, Mode, OperationName, RunState, SurfaceName, Values, Version,
 };
 use a2m_ledger::{
     Acted, ActedToken, BlobKind, BlobRef, IntentToken, LockHeld, PlannedRecord, ReadBack,
@@ -186,7 +186,8 @@ pub enum EngineEvent {
         provider_version: Version,
         /// The digest of the provider's manifest.
         provider_digest: Digest,
-        /// The bindings before it in the plan's order that did not qualify.
+        /// The bindings before it in the compiled target's order that did not
+        /// qualify.
         passed_over: Vec<PassedOver>,
     },
     /// Values a step learned before its commit point, which reconcile will
@@ -272,9 +273,12 @@ impl EngineEvent {
 ///   transaction.
 /// - A failure it returns has passed the redactor.
 pub trait Control: Send + Sync {
-    /// The plan by its hash. The engine checks the hash again before it
-    /// uses the plan.
-    fn plan<'a>(&'a self, hash: &'a Digest) -> BoxFuture<'a, Result<Arc<Plan>, Failure>>;
+    /// The compiled target by its hash. The engine checks the hash again
+    /// before it uses the compiled target.
+    fn compiled_target<'a>(
+        &'a self,
+        hash: &'a Digest,
+    ) -> BoxFuture<'a, Result<Arc<CompiledTarget>, Failure>>;
 
     /// The policy decision at guard, made and recorded behind this call.
     /// `Ok` means allowed.

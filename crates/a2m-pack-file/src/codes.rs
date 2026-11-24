@@ -73,7 +73,8 @@ a2m_core::failure_codes! {
         next "Give a value of the kind the message names.";
 }
 
-/// The plan's section for this pack does not decode: the core's code.
+/// The compiled target's section for this pack does not decode: the core's
+/// code.
 pub const PAYLOAD_UNREADABLE: FailureCode = a2m_core::codes::PAYLOAD_UNREADABLE;
 
 /// The codes of other crates the pack gives as they are, which the
@@ -99,11 +100,11 @@ pub(crate) fn stop(
     StepFailure::not_sent(failure(row, message, next))
 }
 
-/// The plan does not hold what the driver needs. Nothing was read.
-pub(crate) fn plan_unreadable(what: &str) -> StepFailure {
+/// The compiled target does not hold what the driver needs. Nothing was read.
+pub(crate) fn compiled_target_unreadable(what: &str) -> StepFailure {
     stop(
         &a2m_core::codes::row::PAYLOAD_UNREADABLE,
-        format!("The plan cannot be used by the file pack: {what}."),
+        format!("The compiled target cannot be used by the file pack: {what}."),
         "Compile the target again with the version of the file pack that is enabled.",
     )
 }

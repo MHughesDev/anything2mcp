@@ -1,7 +1,7 @@
 //! The file kinds `folders/` and `logs/` (decision 0246): a folder of a
 //! surface read and written as a collection of entries, and a growing file
 //! read from where the last read stopped. Each compiles into a section of
-//! its own in the pack's part of the plan.
+//! its own in the pack's part of the compiled target.
 
 use a2m_core::{FileKindName, LintCode, PackPayload, SurfaceKind};
 use a2m_files::{

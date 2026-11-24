@@ -89,8 +89,8 @@ fn the_fixture_targets_compile_twice_to_the_same_bytes() {
 
     // What a write lowers to: one commit point, a confirm, and a read-back
     // that is a lookup and never commits.
-    let plan = compile(&registry, "example").plan;
-    let upsert = plan
+    let compiled_target = compile(&registry, "example").compiled_target;
+    let upsert = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_line_item_upsert")
@@ -112,8 +112,9 @@ fn the_fixture_targets_compile_twice_to_the_same_bytes() {
             .iter()
             .all(|step| step.lookup && !step.commits)
     );
-    // The plan holds the template, and no address: the origin is the surface's.
-    let section = plan
+    // The compiled target holds the template, and no address: the origin is
+    // the surface's.
+    let section = compiled_target
         .packs
         .iter()
         .find(|section| section.pack == "http")
@@ -436,7 +437,7 @@ fn a_submit_that_names_no_read_back_states_the_acknowledgement_as_its_evidence()
                 "effect: irreversible\n",
             )
     };
-    let plan = common::compile_changed_files(
+    let compiled_target = common::compile_changed_files(
         &registry,
         "example",
         &[
@@ -445,15 +446,16 @@ fn a_submit_that_names_no_read_back_states_the_acknowledgement_as_its_evidence()
         ],
     )
     .unwrap_or_else(|problems| panic!("{}", shown(&problems)))
-    .plan;
-    let operation = |plan: &a2m_core::Plan| {
-        plan.operations
+    .compiled_target;
+    let operation = |compiled_target: &a2m_core::CompiledTarget| {
+        compiled_target
+            .operations
             .iter()
             .find(|operation| operation.name.as_str() == "example_line_item_upsert")
             .unwrap()
             .clone()
     };
-    let operation_of_submit = operation(&plan);
+    let operation_of_submit = operation(&compiled_target);
     assert_eq!(
         operation_of_submit.bindings[0].evidence,
         a2m_core::WriteEvidence::Acknowledged
@@ -464,7 +466,7 @@ fn a_submit_that_names_no_read_back_states_the_acknowledgement_as_its_evidence()
     );
 
     // A write that names a read-back keeps it.
-    let kept = operation(&compile(&registry, "example").plan);
+    let kept = operation(&compile(&registry, "example").compiled_target);
     assert_eq!(kept.bindings[0].evidence, a2m_core::WriteEvidence::ReadBack);
 }
 
@@ -504,16 +506,17 @@ fn the_review_states_what_the_http_pack_runs_and_where_it_sends() {
     }
 }
 
-/// Decision 0305: an output the endpoint's shape does not make certain to
-/// be there is compiled as one that may be absent; one it makes certain is
-/// not, and cannot be declared absent by hand; a plan that declares none is
-/// the bytes it was.
+/// Decision 0305: an output the endpoint's shape does not make certain to be
+/// there is compiled as one that may be absent; one it makes certain is not,
+/// and cannot be declared absent by hand; a compiled target that declares
+/// none is the bytes it was.
 #[test]
 fn an_output_the_shape_does_not_make_certain_is_compiled_as_possibly_absent() {
     let folder = Folder::new("absent");
     let registry = registry(&folder, Arc::new(NoSecrets));
-    let flags = |plan: &a2m_core::Plan| -> Vec<(String, bool)> {
-        plan.operations
+    let flags = |compiled_target: &a2m_core::CompiledTarget| -> Vec<(String, bool)> {
+        compiled_target
+            .operations
             .iter()
             .find(|operation| operation.name.as_str() == "example_order_get")
             .unwrap()
@@ -524,14 +527,14 @@ fn an_output_the_shape_does_not_make_certain_is_compiled_as_possibly_absent() {
     };
 
     // Both outputs are required by the endpoint: neither may be absent, and
-    // the encoded plan says nothing of it.
+    // the encoded compiled target says nothing of it.
     let plain = compile(&registry, "example");
     assert_eq!(
-        flags(&plain.plan),
+        flags(&plain.compiled_target),
         [("status".to_owned(), false), ("customer".to_owned(), false)]
     );
     let outputs = &plain
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|o| o.name.as_str() == "example_order_get")
@@ -554,13 +557,13 @@ fn an_output_the_shape_does_not_make_certain_is_compiled_as_possibly_absent() {
     let compiled = compile_changed(&registry, "example", "endpoints/orders.yaml", optional)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
     assert_eq!(
-        flags(&compiled.plan),
+        flags(&compiled.compiled_target),
         [("status".to_owned(), false), ("customer".to_owned(), true)]
     );
     assert!(
         serde_json::to_string(
             &compiled
-                .plan
+                .compiled_target
                 .operations
                 .iter()
                 .find(|o| o.name.as_str() == "example_order_get")
@@ -590,7 +593,7 @@ fn an_output_the_shape_does_not_make_certain_is_compiled_as_possibly_absent() {
     )
     .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
     assert_eq!(
-        flags(&stands.plan),
+        flags(&stands.compiled_target),
         [("status".to_owned(), false), ("customer".to_owned(), true)]
     );
     let untrue = refused("operations/orders.yaml", declared, "http.absent_untrue");
@@ -598,9 +601,9 @@ fn an_output_the_shape_does_not_make_certain_is_compiled_as_possibly_absent() {
     assert!(!untrue.fix.is_empty(), "{untrue}");
 }
 
-/// The output schema of one tool of a compiled plan.
-fn output_schema(plan: &a2m_core::Plan, tool: &str) -> serde_json::Value {
-    let tool = plan
+/// The output schema of one tool of a compiled target.
+fn output_schema(compiled_target: &a2m_core::CompiledTarget, tool: &str) -> serde_json::Value {
+    let tool = compiled_target
         .tools
         .iter()
         .find(|found| found.name.as_str() == tool)
@@ -624,7 +627,7 @@ fn an_output_from_an_untyped_required_property_may_be_absent() {
     let compiled = compile_changed(&registry, "example", "endpoints/orders.yaml", untyped)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
     let operation = compiled
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_order_get")
@@ -635,7 +638,7 @@ fn an_output_from_an_untyped_required_property_may_be_absent() {
         .find(|output| output.name == "customer")
         .unwrap();
     assert!(customer.may_be_absent);
-    let schema = output_schema(&compiled.plan, "example_order_get");
+    let schema = output_schema(&compiled.compiled_target, "example_order_get");
     assert!(
         common::schema_fits(&schema["properties"]["customer"], &serde_json::Value::Null).is_ok()
     );
@@ -674,7 +677,7 @@ fn a_list_output_that_may_be_absent_admits_null_items_in_its_schema() {
     };
     let compiled = compile_changed(&registry, "example", "endpoints/orders.yaml", optional)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    let schema = output_schema(&compiled.plan, "example_order_list");
+    let schema = output_schema(&compiled.compiled_target, "example_order_list");
     let fits = |value: serde_json::Value| common::schema_fits(&schema, &value);
     fits(serde_json::json!({"order_ids": ["A-100", null]})).unwrap();
     fits(serde_json::json!({"order_ids": null})).unwrap();
@@ -682,7 +685,7 @@ fn a_list_output_that_may_be_absent_admits_null_items_in_its_schema() {
 
     // Where every item is certain, a `null` item does not fit.
     let plain = compile(&registry, "example");
-    let schema = output_schema(&plain.plan, "example_order_list");
+    let schema = output_schema(&plain.compiled_target, "example_order_list");
     assert!(
         common::schema_fits(&schema, &serde_json::json!({"order_ids": ["A-100", null]})).is_err()
     );

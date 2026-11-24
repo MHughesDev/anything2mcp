@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    Environment, PackPayload, Redact, SurfaceKind, SurfaceName, SurfacePlan, TargetName,
+    CompiledSurface, Environment, PackPayload, Redact, SurfaceKind, SurfaceName, TargetName,
 };
 use a2m_provider::{CAPTURE_PLACEHOLDER, Deadline, SurfaceRef};
 use axum::Router;
@@ -79,7 +79,7 @@ fn surface(address: &str) -> SurfaceRef {
     SurfaceRef {
         target: TargetName::new("example").unwrap(),
         environment: Environment::new("test").unwrap(),
-        surface: SurfacePlan {
+        surface: CompiledSurface {
             name: SurfaceName::new("app").unwrap(),
             kind: SurfaceKind::new(SURFACE_KIND).unwrap(),
             address: address.to_owned(),

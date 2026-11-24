@@ -1024,10 +1024,10 @@ async fn an_open_question_is_settled_by_evidence_and_never_by_a_statement() {
 // ---- published versions ----
 
 #[tokio::test]
-async fn a_published_plan_is_stored_by_its_hash_and_checked_on_every_load() {
+async fn a_published_compiled_target_is_stored_by_its_hash_and_checked_on_every_load() {
     let folder = Folder::new("versions");
     let store = on_disk(&folder).await;
-    let plan = |text: &str| a2m_core::EncodedPlan {
+    let compiled_target = |text: &str| a2m_core::EncodedCompiledTarget {
         bytes: text.as_bytes().to_vec(),
         hash: Digest::of(text.as_bytes()),
     };
@@ -1035,12 +1035,18 @@ async fn a_published_plan_is_stored_by_its_hash_and_checked_on_every_load() {
         workspace: workspace(),
         target: target(),
         version: Version::new(1, number, 0),
-        plan: plan(text),
+        compiled_target: compiled_target(text),
         published_by: principal(1),
         gate_evidence: (number == 1).then(|| r#"{"gates":[]}"#.to_owned()),
     };
-    let (first, second) = (plan("plan one").hash, plan("plan two").hash);
-    let (one, two) = (version("plan one", 0), version("plan two", 1));
+    let (first, second) = (
+        compiled_target("compiled target one").hash,
+        compiled_target("compiled target two").hash,
+    );
+    let (one, two) = (
+        version("compiled target one", 0),
+        version("compiled target two", 1),
+    );
     let listed = store
         .write(Durability::Synced, move |tx| {
             let mut versions = tx.versions();
@@ -1080,16 +1086,19 @@ async fn a_published_plan_is_stored_by_its_hash_and_checked_on_every_load() {
         .read(move |tx| tx.versions().load(&workspace(), &target(), &first))
         .await
         .unwrap();
-    assert_eq!(loaded, plan("plan one"));
+    assert_eq!(loaded, compiled_target("compiled target one"));
 
     // Bytes that are not the bytes the hash names are refused on the way in.
-    let mut wrong = version("plan three", 2);
-    wrong.plan.hash = first;
+    let mut wrong = version("compiled target three", 2);
+    wrong.compiled_target.hash = first;
     let refused = store
         .write(Durability::Synced, move |tx| tx.versions().put(&wrong))
         .await
         .unwrap_err();
-    assert_eq!(refused.code(), &a2m_core::FailureCode::PLAN_HASH_MISMATCH);
+    assert_eq!(
+        refused.code(),
+        &a2m_core::FailureCode::COMPILED_TARGET_HASH_MISMATCH
+    );
 
     // A published version never changes; if its bytes are changed behind the
     // store's back, the load says so.
@@ -1439,7 +1448,7 @@ async fn stopped_before_planning(store: &Store) -> Fence {
 }
 
 #[tokio::test]
-async fn a_stopped_run_with_nothing_planned_is_validated_again_and_plans_its_records() {
+async fn a_stopped_run_with_nothing_planned_is_validated_again_and_compiled_targets_its_records() {
     let store = memory().await;
     let fence = stopped_before_planning(&store).await;
     // Resumed under a new lease, it goes back to `validating`, plans its

@@ -77,7 +77,7 @@ If the HTTP pack is not enabled, the probe's endpoint inference is not available
 | `submit` | Yes | Yes | If offered |
 | `call` | No | Yes | Yes |
 
-`ui` lowers each verb into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, and `observe`. `page_http` lowers into `goto`, `token`, and `request`; as built, a read is `goto` and `request`, and an `update` is `goto` in an acting tab and `request`, a PUT marked as the commit point, read back by `goto` and `request` of a read entry in the observing tab; every other write is refused ([decision 0206](../../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)). A `page_http` `goto` the edge answers stops as `edge_blocked`, as a `ui` one does ([decision 0373](../../decisions/0373-the-page-http-write-stops-at-the-edge-and-at-an-ended-session-before-it-sends.md)). `site_tools` lowers into `goto` in an acting tab, `wait`, and `call_tool`, the commit point. Each lowering compiles what it reads, its screens and, for `page_http`, the endpoint entries the compiler hands it as validated data, into its own opaque step payload, and marks the steps that commit and the steps that are lookups. An action with `commits: true` is a commit point; the compiler counts those after lowering ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)). As built, `ui` declares the step kinds `goto`, `wait`, `read`, `set`, and `invoke`: each of the last three finds its own element and checks its fingerprint, and an `invoke` that commits is not done until the page shows the action's `confirm` or a declared variant, so a `ui` binding's confirm list is empty ([decision 0112](../../decisions/0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md)).
+`ui` lowers each verb into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, and `observe`. `page_http` lowers into `goto`, `token`, and `request`; as built, a read is `goto` and `request`, and an `update` is `goto` in an acting tab and `request`, a PUT marked as the commit point, read back by `goto` and `request` of a read entry in the observing tab; every other write is refused ([decision 0206](../../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)). A `page_http` `goto` the edge answers stops as `edge_blocked`, as a `ui` one does ([decision 0373](../../decisions/0373-the-page-http-write-stops-at-the-edge-and-at-an-ended-session-before-it-sends.md)). `site_tools` lowers into `goto` in an acting tab, `wait`, and `call_tool`, the commit point. Each lowering compiles what it reads, its screens and, for `page_http`, the endpoint entries the compiler hands it as validated data, into its own opaque step payload, and marks the steps that commit and the steps that are lookups. An action with `commits: true` is a commit point; the compiler counts those after lowering ([section 206](../2-kernel/206-the-compiler-and-the-compiled-target.md)). As built, `ui` declares the step kinds `goto`, `wait`, `read`, `set`, and `invoke`: each of the last three finds its own element and checks its fingerprint, and an `invoke` that commits is not done until the page shows the action's `confirm` or a declared variant, so a `ui` binding's confirm list is empty ([decision 0112](../../decisions/0112-the-ui-driver-as-built-five-step-kinds-and-a-commit-that-waits-for-its-confirmation.md)).
 
 ## The driver, part by part
 
@@ -156,13 +156,11 @@ As built ([decision 0370](../../decisions/0370-platform-profiles-are-data-in-pro
 A profile is data, compiled into `a2m-pack-web-browser` and versioned with it, because both the drivers and the probe need it. Applying a profile to locating and input is `a2m-pack-web-ui`'s work; choosing one for a surface is the probe's. Code never branches on a platform's name where a profile's data can say it.
 
 ```yaml
-profile: aspnet_webforms
+profile: server_postback_forms
 detect:                       # detection rules: globals, page markers, scripts, headers, cookies
   any:
-    - {dom: "input[name='__VIEWSTATE']"}
-    - {js: "Sys.WebForms.PageRequestManager"}
-ready:
-  js: "!Sys.WebForms.PageRequestManager.getInstance().get_isInAsyncPostBack()"
+    - {dom: "form input[type='hidden'][name^='__'][name$='STATE']"}
+    - {js: "typeof __doPostBack === 'function'"}
 locators:
   priority: [label, role, text, css]
   reject_id_patterns: ["^ctl\\d+_", "^MainContent_"]
@@ -175,7 +173,7 @@ support_tier: full
 | Field | Meaning |
 | --- | --- |
 | `detect` | Rules that name the platform, with a confidence. No match is `unknown_platform` |
-| `ready` | The platform's own readiness rule, used by the condition `{profile_ready: true}` |
+| `ready` | The platform's own readiness rule, used by the condition `{profile_ready: true}`. Optional: `server_postback_forms` states none, because its platform's own test is a call into the framework's script object, which would name the framework ([decision 0999](../../decisions/0999-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md)) |
 | `locators` | The locator priority, and the identifier patterns the linter rejects (`web_generated_id`) |
 | `input_commit` | How a text control's value is committed in the page: `blur` (put in, then the focus taken away, so the control says it changed), `enter` (put in, then Enter), `blur_then_wait_ready` (put in, the focus taken away, then a wait for the page to draw the form again, the value read from the control drawn anew; a page that does not is `commit_not_redrawn`), or `type_then_blur` (typed key by key, then the focus taken away). Any other word does not load |
 | `frames` | Whether frames are declared or found |
@@ -237,7 +235,7 @@ A big system with many modules, services, and origins is one target with many su
 - **Modules.** Files live under `targets/<target>/<module>/`, and tool names carry the module, such as `example_purchasing_order_create`. Agents find tools by module through search, so hundreds of operations stay usable.
 - **Shared pieces.** Field types, sign-in, and environment are defined once per target and shared by all modules.
 - **Several origins and services.** Micro-frontends, gateways, and separate services are separate surfaces with a declared relationship, such as sharing one sign-in.
-- **Pipelines across targets.** Not built yet. A pipeline's step names an operation by its place in its own target's plan, so a pipeline calls the operations of one target only. The design, when it is built, is that a pipeline reads from one target and writes to another, with each target's session and policy applied separately.
+- **Pipelines across targets.** Not built yet. A pipeline's step names an operation by its place in its own target's compiled target, so a pipeline calls the operations of one target only. The design, when it is built, is that a pipeline reads from one target and writes to another, with each target's session and policy applied separately.
 - **Load on demand.** Only modules in use are loaded, so a large target does not slow the server.
 
 ## Sign-in in a browser

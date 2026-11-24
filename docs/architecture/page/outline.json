@@ -54,7 +54,7 @@
       "name": "Local Storage",
       "short": "What the engine keeps",
       "text": "Kept on this machine and nowhere else: the project's files, the compiled target, the ledger of every run, the vault of secrets, and the engine's own browser.",
-      "groups": [{"title": "", "ids": ["project", "plan", "ledger", "vault", "browser"]}]
+      "groups": [{"title": "", "ids": ["project", "compiled-target", "ledger", "vault", "browser"]}]
     },
     {
       "id": "foundation",

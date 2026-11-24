@@ -32,7 +32,7 @@ a2m_core::failure_codes! {
         next "Try again; if it lasts, run `anything2mcp doctor run` and repair what it names.",
         passes not_by_itself;
     STORE_CORRUPT = Busy, "store_corrupt",
-        meaning "The integrity check, a stored row, a stored plan's hash, or the audit chain fails.",
+        meaning "The integrity check, a stored row, a stored compiled target's hash, or the audit chain fails.",
         next "Stop writing, keep the data directory as it is, and restore the last backup.",
         passes not_by_itself;
     STORE_VERSION_UNSUPPORTED = Busy, "store_version_unsupported",

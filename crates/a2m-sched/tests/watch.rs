@@ -77,7 +77,7 @@ fn check_of(watch: &WatchRow) -> Submission {
 }
 
 /// The published version the watches are asked for.
-fn plan() -> Digest {
+fn compiled_target() -> Digest {
     Digest::of(b"plan")
 }
 
@@ -94,7 +94,7 @@ fn roomy() -> RateLimit {
 async fn confirm(stand: &Stand, watch: WatchId, person: u8) -> WatchRow {
     stand
         .sched
-        .confirm_watch(watch, principal(person), plan(), roomy())
+        .confirm_watch(watch, principal(person), compiled_target(), roomy())
         .await
         .unwrap()
 }
@@ -786,8 +786,12 @@ async fn two_confirmations_racing_on_one_surface_admit_one() {
         .unwrap()
         .id;
     let (first, second) = tokio::join!(
-        stand.sched.confirm_watch(one, principal(1), plan(), tight),
-        stand.sched.confirm_watch(two, principal(2), plan(), tight),
+        stand
+            .sched
+            .confirm_watch(one, principal(1), compiled_target(), tight),
+        stand
+            .sched
+            .confirm_watch(two, principal(2), compiled_target(), tight),
     );
     let outcomes = [first, second];
     let admitted = outcomes.iter().filter(|outcome| outcome.is_ok()).count();

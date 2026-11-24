@@ -1,6 +1,6 @@
 //! What the tests share: a folder of the test's own, a registry that holds
-//! only the command pack, and the `example` fixtures compiled into a plan,
-//! as they are or with the test stand's program put in place.
+//! only the command pack, and the `example` fixtures compiled into a compiled
+//! target, as they are or with the test stand's program put in place.
 
 #![allow(
     dead_code,
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use a2m_core::{Plan, Redact};
+use a2m_core::{CompiledTarget, Redact};
 use a2m_files::{
     CompileMode, Compiled, CompilerSet, Diagnostics, RelPath, SourceFile, Sources, TargetRoot,
 };
@@ -180,10 +180,10 @@ pub fn compile(files: &[(String, String)], set: &CompilerSet) -> Result<Compiled
     a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
 }
 
-/// The plan of the fixtures with the stand's program in place.
-pub fn stand_plan(stand: &Stand, set: &CompilerSet) -> Plan {
+/// The compiled target of the fixtures with the stand's program in place.
+pub fn stand_compiled_target(stand: &Stand, set: &CompilerSet) -> CompiledTarget {
     match compile(&stand_files(stand), set) {
-        Ok(compiled) => compiled.plan,
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the fixtures do not compile: {problems:#?}"),
     }
 }

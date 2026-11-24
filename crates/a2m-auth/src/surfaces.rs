@@ -1,25 +1,25 @@
-//! What a target's plan says about one auth entry's sign-in: the surfaces it
-//! signs in to, every address the target declares, and whether the plan is a
-//! published version's.
+//! What a target's compiled target says about one auth entry's sign-in: the
+//! surfaces it signs in to, every address the target declares, and whether
+//! the compiled target is a published version's.
 //!
 //! A provider that only holds or exchanges a credential needs only the
-//! addresses. A provider a pack registers because signing in needs the
-//! pack's own surface, such as a sign-in through an application's own
-//! pages, needs to know where the surface is and what the pack compiled
-//! about it: its address in the session's environment, and the pack's
-//! sections of the plan. They are plain data from the same plan a run uses,
-//! so the sign-in a person makes and the session a run leases are one
+//! addresses. A provider a pack registers because signing in needs the pack's
+//! own surface, such as a sign-in through an application's own pages, needs
+//! to know where the surface is and what the pack compiled about it: its
+//! address in the session's environment, and the pack's sections of the
+//! compiled target. They are plain data from the same compiled target a run
+//! uses, so the sign-in a person makes and the session a run leases are one
 //! (decision 0245).
 //!
-//! A sign-in is held to the rule every request is held to: it goes only to
-//! an address the target declares, and what the target declares counts only
-//! once a person has published it (decision 0248). The layer above fills
-//! these values from the plan; the session keeper checks them before any
+//! A sign-in is held to the rule every request is held to: it goes only to an
+//! address the target declares, and what the target declares counts only once
+//! a person has published it (decision 0248). The layer above fills these
+//! values from the compiled target; the session keeper checks them before any
 //! request.
 
 use std::collections::BTreeSet;
 
-use a2m_core::{AuthPlan, Environment, PackSection, Plan, SurfacePlan};
+use a2m_core::{CompiledAuth, CompiledSurface, CompiledTarget, Environment, PackSection};
 
 /// The addresses a sign-in may send a credential, a token, or the person to:
 /// those the target declares for its surfaces in the session's environment.
@@ -86,23 +86,23 @@ pub(crate) fn origin_of(address: &str) -> Option<String> {
     origin.is_tuple().then(|| origin.ascii_serialization())
 }
 
-/// The surfaces an auth entry covers, as the plan holds them for one
-/// environment, the plan's pack sections for their kinds, every address the
-/// target declares there, and how far the plan counts. It holds no
-/// credential: the plan never does.
+/// The surfaces an auth entry covers, as the compiled target holds them for
+/// one environment, the compiled target's pack sections for their kinds,
+/// every address the target declares there, and how far the compiled target
+/// counts. It holds no credential: the compiled target never does.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EntrySurfaces {
     /// Each surface the entry covers, in the entry's order, at the address
     /// it has in the environment.
-    pub surfaces: Vec<SurfacePlan>,
-    /// The plan's pack sections registered for the kinds of those surfaces,
-    /// in the plan's order.
+    pub surfaces: Vec<CompiledSurface>,
+    /// The compiled target's pack sections registered for the kinds of those
+    /// surfaces, in the compiled target's order.
     pub sections: Vec<PackSection>,
-    /// Whether the plan is a published version's. A drafts' plan is not:
-    /// anyone who can write a draft could name the addresses in it, so the
-    /// keeper makes no sign-in, and renews none, on a drafts' word alone
-    /// (decision 0248). False unless the caller that built the entry says
-    /// so with [`EntrySurfaces::published`].
+    /// Whether the compiled target is a published version's. A drafts'
+    /// compiled target is not: anyone who can write a draft could name the
+    /// addresses in it, so the keeper makes no sign-in, and renews none, on a
+    /// drafts' word alone (decision 0248). False unless the caller that built
+    /// the entry says so with [`EntrySurfaces::published`].
     pub from_published: bool,
     /// Whether the session's person, on a page that showed them every
     /// address this sign-in sends to, carried out this one sign-in. It
@@ -116,12 +116,17 @@ pub struct EntrySurfaces {
 }
 
 impl EntrySurfaces {
-    /// What `plan` holds about the surfaces of `auth`, in `environment`. A
-    /// surface index the plan does not hold is left out; an environment it
-    /// does not hold leaves every address as the target wrote it.
+    /// What `compiled_target` holds about the surfaces of `auth`, in
+    /// `environment`. A surface index the compiled target does not hold is
+    /// left out; an environment it does not hold leaves every address as the
+    /// target wrote it.
     #[must_use]
-    pub fn of(plan: &Plan, auth: &AuthPlan, environment: &Environment) -> Self {
-        let at = plan.environment_named(environment);
+    pub fn of(
+        compiled_target: &CompiledTarget,
+        auth: &CompiledAuth,
+        environment: &Environment,
+    ) -> Self {
+        let at = compiled_target.environment_named(environment);
         let address_of = |index: usize, written: &str| {
             at.and_then(|at| {
                 at.addresses
@@ -132,14 +137,14 @@ impl EntrySurfaces {
         };
         let mut surfaces = Vec::new();
         for index in &auth.surfaces {
-            let Some(found) = plan.surface(*index) else {
+            let Some(found) = compiled_target.surface(*index) else {
                 continue;
             };
             let mut surface = found.clone();
             surface.address = address_of(index.get(), &found.address);
             surfaces.push(surface);
         }
-        let sections = plan
+        let sections = compiled_target
             .packs
             .iter()
             .filter(|section| {
@@ -150,7 +155,8 @@ impl EntrySurfaces {
             .cloned()
             .collect();
         let destinations = SignInDestinations::new(
-            plan.surfaces
+            compiled_target
+                .surfaces
                 .iter()
                 .enumerate()
                 .map(|(index, surface)| address_of(index, &surface.address)),
@@ -164,8 +170,9 @@ impl EntrySurfaces {
         }
     }
 
-    /// The same, marked as taken from a published version's plan. Only the
-    /// caller that loaded the plan from the version store says so.
+    /// The same, marked as taken from a published version's compiled target.
+    /// Only the caller that loaded the compiled target from the version store
+    /// says so.
     #[must_use]
     pub fn published(mut self) -> Self {
         self.from_published = true;

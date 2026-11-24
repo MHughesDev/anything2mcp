@@ -22,11 +22,11 @@ The store: one schema on SQLite and Postgres, its migrations and transactions, a
 - Evidence blobs, named by the keyed digest of their plain content and sealed through the vault; their retention and legal hold.
 - The vault's wrapped keys, kept through the vault's `KeyRecords`, which this crate implements.
 - Findings and the unknowns ledger, as stored data.
-- Published versions and their plan bytes, with the hash checked on every load.
+- Published versions and their compiled target bytes, with the hash checked on every load.
 - The audit chain, one per workspace.
 - The outbox, and callers' idempotency keys: the table `caller_idempotency` (migration `0013`), which keeps the workspace's keyed digest of a key, never the key, made under the purpose `caller_key` of `a2m-core`, which no other digest uses ([decision 0172](../../decisions/0172-the-ledger-ends-a-record-on-an-acknowledgement-and-keeps-what-the-system-said.md)).
 
-It must never: read or write a target system; decide whether something may happen; normalize or compare business values itself (it compares digests it is given); decode a plan; hold a secret in the clear; let a row be written outside a transaction.
+It must never: read or write a target system; decide whether something may happen; normalize or compare business values itself (it compares digests it is given); decode a compiled target; hold a secret in the clear; let a row be written outside a transaction.
 
 ## How a service owns its tables
 
@@ -239,7 +239,7 @@ impl Findings<'_, '_> {
 }
 impl Versions<'_, '_> {
     pub fn put(&mut self, v: &PublishedVersion) -> Result<(), Failure>;     // version.publish only
-    pub fn load(&mut self, workspace: &WorkspaceId, target: &TargetName, hash: &Digest) -> Result<EncodedPlan, Failure>; // hash checked
+    pub fn load(&mut self, workspace: &WorkspaceId, target: &TargetName, hash: &Digest) -> Result<EncodedCompiledTarget, Failure>; // hash checked
     pub fn make_current(..) -> Result<(), Failure>;   pub fn current(..) -> Result<Option<Digest>, Failure>;
     pub fn list(..) -> Result<Vec<VersionRow>, Failure>;
 }
@@ -328,8 +328,8 @@ pub struct NewWatch { pub workspace, pub target, pub environment, pub operation,
                       pub ignore: BTreeSet<String>, pub surface: SurfaceName, pub requests_per_check: u32,
                       pub shape: WatchShape, pub interval: Duration, pub ends_at: Timestamp,
                       pub asked_by: PrincipalId, pub acts_for: PrincipalId, pub client_label: String,
-                      pub retention: RetentionClass, pub condition: Option<PlanExpr> }   // WatchRow carries `condition` too
-pub enum WatchShape { Whole, List { list: String, key: Vec<String> } }   // from the plan; stored as canonical JSON
+                      pub retention: RetentionClass, pub condition: Option<CompiledExpr> }   // WatchRow carries `condition` too
+pub enum WatchShape { Whole, List { list: String, key: Vec<String> } }   // from the compiled target; stored as canonical JSON
 pub const WATCH_INTERVAL_FLOOR: Duration;   // 60 s
 pub const WATCH_LONGEST: Duration;          // 366 days
 pub enum WatchState { Asked, Confirmed, Running, Paused, Ended }
@@ -359,7 +359,7 @@ Contracts that the signatures do not show:
 - **Locks follow the record.** A lock is released in the transaction that marks its record `verified`, or `failed` with nothing in doubt. It is quarantined when a record fails after an intent with the outcome in doubt, when the run stops or needs a sign-in, and when a new lease is granted, for every record then in doubt; the run's other locks are released at the same moments. A quarantined lock is taken back only by its own run, under a new lease, on the way to `settle`.
 - **Append-only by trigger.** Triggers refuse an update or delete on `run_events` and `audit`, except deletes of a run whose retention state is `purging`, which only the retention job will set.
 - **Redaction on the way in.** Event payloads, audit entries, questions, and failure messages pass the redactor before they are written.
-- **A blob is named by a keyed digest.** `BlobRef` is the workspace's keyed digest of the plain content, never its plain hash, so someone who can read the store cannot confirm a guessed value by hashing it. Identical evidence within a workspace is still stored once. A digest that must be the same on every machine, such as a diff hash or a plan hash, is never a blob name. A record key is named in rows and locks by the workspace's keyed digest of its canonical bytes, for the purpose `record_key`: the same construction a trace uses, so the two agree.
+- **A blob is named by a keyed digest.** `BlobRef` is the workspace's keyed digest of the plain content, never its plain hash, so someone who can read the store cannot confirm a guessed value by hashing it. Identical evidence within a workspace is still stored once. A digest that must be the same on every machine, such as a diff hash or a compiled target hash, is never a blob name. A record key is named in rows and locks by the workspace's keyed digest of its canonical bytes, for the purpose `record_key`: the same construction a trace uses, so the two agree.
 - **Wrapped keys are rows, nothing more.** `vault_keys` holds what the vault hands over, already wrapped. The ledger never unwraps, chooses, or rotates a key; the vault does, through `KeyRecords`.
 - **Blobs are sealed before they are written,** with the workspace, the owner, the kind `blob`, and the blob's name as the sealing context, and synced to disk before the row that names them commits. A blob whose row never committed is collected by retention. A row that takes a blob reference refuses one that names no blob.
 - **An `Opened::Existing` is not an error.** A second identical call gets the first run's identifier.
@@ -394,7 +394,7 @@ The codes are constants in the crate's `codes` module.
 | --- | --- | --- |
 | `busy` | `storage_full` | A blob or row cannot be written for lack of space |
 | `busy` | `store_unavailable` | The database cannot commit, the store's threads have stopped, the code inside a transaction panicked, or no vault is attached yet |
-| `busy` | `store_corrupt` | The integrity check, a stored row that no longer reads, a stored plan's hash, a stored finding that no longer holds, or a blob's missing file |
+| `busy` | `store_corrupt` | The integrity check, a stored row that no longer reads, a stored compiled target's hash, a stored finding that no longer holds, or a blob's missing file |
 | `busy` | `store_version_unsupported` | The store holds a migration this engine does not carry, or carries differently |
 | `busy` | `record_locked` | Another run holds the lock |
 | `possible_commit` | `runner_lost` | A call carries a lease number other than the run's |
@@ -405,7 +405,7 @@ The codes are constants in the crate's `codes` module.
 | `unknown_variant` | `ledger_state_unexpected` | A transition no rule allows: a final run changed, a record skipping a state, a constraint or a trigger of the tables refusing a row |
 | `unknown_variant` | `table_not_owned` | A statement through `Tx::tables` names a table of another crate, or does what only the store may |
 | `input` | `not_found` | No run, record, blob, version, or question with that identifier |
-| `input` | `schema_invalid`, `plan_hash_mismatch` | Something the store cannot keep; a plan whose hash is not the digest of its bytes |
+| `input` | `schema_invalid`, `compiled_target_hash_mismatch` | Something the store cannot keep; a compiled target whose hash is not the digest of its bytes |
 | `policy` | `shadow_not_counted` | A shadow comparison in an offline test's store, or beside a run that is not a read under way |
 | `policy` | `shadow_not_promotable` | A promotion the evidence does not allow: nothing compared for the binding as it is now, too few distinct inputs matched in an environment its evidence must come from, a mismatch since, or promoted already |
 | `busy` | `shadow_write_not_built` | A shadow comparison of an operation that writes: the shadow of a write is not built |
@@ -444,7 +444,7 @@ The codes are constants in the crate's `codes` module.
 3. Done: reconcile: `in_doubt`, `settle`, quarantine. Not built: a way for a person to release the quarantined lock of a run that ended final with a record still in doubt.
 4. Done: assigned keys and stored outputs on record rows. Not built: values known before the commit point, recorded before `acted`.
 5. Done: findings and the unknowns ledger. Findings in an older format are kept and are not listed; marking them as old in a listing is not built.
-6. Done: the audit chain, and published versions with their plans. Done since (decision 0160): callers' idempotency keys and a caller's listing of their runs. Not built: the outbox, `run_steps`, `workspaces`, retention and legal hold (the columns and the triggers' exception for a run being purged exist; nothing sets them), and a token rebuilt from an acknowledgement on a runner.
+6. Done: the audit chain, and published versions with their compiled targets. Done since (decision 0160): callers' idempotency keys and a caller's listing of their runs. Not built: the outbox, `run_steps`, `workspaces`, retention and legal hold (the columns and the triggers' exception for a run being purged exist; nothing sets them), and a token rebuilt from an acknowledgement on a runner.
 7. Done (the safety audit, decision 0145): the policy engine's key; `begin_writes` reading the whole clearance; the triggers of migration 0012; a sent write in doubt whatever its class; the intent's mode, a landed record's outputs, and the evidence of a `not landed` read kept with the record; the `testing` feature.
 8. Done (the kernel's second pass, [decision 0172](../../decisions/0172-the-ledger-ends-a-record-on-an-acknowledgement-and-keeps-what-the-system-said.md)): a record that ends on an acknowledgement, with migration 0015 and its triggers; `tally`; a caller key's digest under its own purpose; a stored failure that keeps what the system said, read back whole by `run_failure` and `record_failure`. Not built: a person's settlement of an `acknowledged` record whose answer was lost.
 8a. Done ([decision 0180](../../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)): `StoreConfig::throwaway` and `Store::is_throwaway`, an offline test's own store in memory, which keeps its policy key; `WriteClearance::OfflineTest`, taken only there, recorded as a decision of the test's rule so the triggers of rule 3 hold; `PublishedVersion::gate_evidence` and `Versions::gate_evidence`, with migration 0016. Tests: `tests/offline.rs`, `tests/store.rs`.

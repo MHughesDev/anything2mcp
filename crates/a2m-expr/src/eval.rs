@@ -9,10 +9,10 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::cmp::Ordering;
 
-use a2m_core::{Decimal, Failure, FailureClass, PlanExpr, Value, ValueType, Values};
+use a2m_core::{CompiledExpr, Decimal, Failure, FailureClass, Value, ValueType, Values};
 
 use crate::check::{self, Checked, TypeEnv};
-use crate::error::{Fault, PLAN_EXPRESSION_UNLOADABLE, VALUE_UNPARSABLE};
+use crate::error::{COMPILED_EXPRESSION_UNLOADABLE, Fault, VALUE_UNPARSABLE};
 use crate::functions;
 use crate::library::{FnId, LibraryVersion, library};
 use crate::syntax::{self, BinaryOp, Kind, MacroKind, Node, UnaryOp};
@@ -54,8 +54,8 @@ impl<'a> Bindings<'a> {
     }
 }
 
-/// The parsed form of a plan's expression, rebuilt when the plan is loaded
-/// and kept for its life.
+/// The parsed form of a compiled target's expression, rebuilt when the
+/// compiled target is loaded and kept for its life.
 #[derive(Debug, Clone)]
 pub struct Program {
     tree: Node,
@@ -67,22 +67,24 @@ pub struct Program {
 fn unloadable(what: &str) -> Failure {
     Failure::new(
         FailureClass::Input,
-        PLAN_EXPRESSION_UNLOADABLE,
-        format!("A plan's expression cannot be loaded: {what}."),
+        COMPILED_EXPRESSION_UNLOADABLE,
+        format!("A compiled target's expression cannot be loaded: {what}."),
         "Compile the target again with this engine.",
     )
 }
 
 impl Program {
-    /// Reads a plan's expression back into a program: parses the canonical
-    /// text, and checks again that it gives the type the plan states.
+    /// Reads a compiled target's expression back into a program: parses the
+    /// canonical text, and checks again that it gives the type the compiled
+    /// target states.
     ///
     /// # Errors
     ///
-    /// `plan_expression_unloadable` when the plan names a library version
-    /// this engine does not carry, when the text does not parse or is not in
-    /// its canonical spelling, or when it no longer checks as its stated type.
-    pub fn load(expr: &PlanExpr) -> Result<Self, Failure> {
+    /// `compiled_expression_unloadable` when the compiled target names a
+    /// library version this engine does not carry, when the text does not
+    /// parse or is not in its canonical spelling, or when it no longer checks
+    /// as its stated type.
+    pub fn load(expr: &CompiledExpr) -> Result<Self, Failure> {
         let Some(version) = LibraryVersion::new(expr.library) else {
             return Err(unloadable(
                 "it was checked against a host-function library this engine does not carry",
@@ -100,7 +102,9 @@ impl Program {
         if let Checked::Known(found) = &found
             && !check::assignable(found, &expr.result)
         {
-            return Err(unloadable("it no longer gives the type the plan states"));
+            return Err(unloadable(
+                "it no longer gives the type the compiled target states",
+            ));
         }
         Ok(Self {
             tree,
@@ -130,7 +134,7 @@ impl Program {
     /// A failure of class `input`: `value_unparsable`, `value_out_of_range`,
     /// or `value_absent` when a value cannot be used as the expression needs;
     /// `expression_cost_exceeded` when the work passes the cost limit;
-    /// `plan_expression_unloadable` when a name the program reads is not
+    /// `compiled_expression_unloadable` when a name the program reads is not
     /// bound. The failure names the function or operator, never a value.
     pub fn evaluate(&self, bindings: &Bindings<'_>) -> Result<Value, Failure> {
         if let Some(missing) = self.names.iter().find(|name| bindings.get(name).is_none()) {

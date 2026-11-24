@@ -19,9 +19,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    BindingPlan, Digest, EffectClass, Environment, Epoch, Failure, Mode, NoSecrets, OperationName,
-    Plan, PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName, Timestamp, Value,
-    Values, WorkspaceId,
+    CompiledBinding, CompiledTarget, Digest, EffectClass, Environment, Epoch, Failure, Mode,
+    NoSecrets, OperationName, PrincipalId, RecordKey, Redact, RunId, RunState, Step, TargetName,
+    Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, RelPath, TargetRoot};
 use a2m_ledger::{
@@ -362,7 +362,7 @@ impl Ran {
 /// system a test started.
 pub struct Scene {
     pub stand: Stand,
-    pub plan: Plan,
+    pub compiled_target: CompiledTarget,
     pub surface: SurfaceRef,
     pub destinations: Destinations,
 }
@@ -371,22 +371,22 @@ impl Scene {
     /// The `example` fixture as it is on disk.
     pub fn new(name: &str, address: &str) -> Self {
         let stand = Stand::new(name, Arc::new(NoSecrets));
-        let plan = compile(&stand.registry, "example").plan;
-        Self::over(stand, plan, address)
+        let compiled_target = compile(&stand.registry, "example").compiled_target;
+        Self::over(stand, compiled_target, address)
     }
 
-    pub fn over(stand: Stand, plan: Plan, address: &str) -> Self {
-        let mut surface = plan.surfaces[0].clone();
+    pub fn over(stand: Stand, compiled_target: CompiledTarget, address: &str) -> Self {
+        let mut surface = compiled_target.surfaces[0].clone();
         surface.address = address.to_owned();
         Self {
             surface: SurfaceRef {
-                target: plan.header.target.clone(),
+                target: compiled_target.header.target.clone(),
                 environment: Environment::new("test").unwrap(),
                 surface,
             },
             destinations: Destinations::new([address.to_owned()]),
             stand,
-            plan,
+            compiled_target,
         }
     }
 
@@ -435,7 +435,7 @@ impl Scene {
             run: fence.run,
             epoch: fence.epoch,
             surface: &self.surface,
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             posture,
             deadline: Deadline::after(Duration::from_secs(60)),
             redact: &NoSecrets,
@@ -461,13 +461,13 @@ impl Scene {
     }
 
     /// The first `ui` binding of an operation.
-    pub fn binding(&self, operation: &str) -> &BindingPlan {
+    pub fn binding(&self, operation: &str) -> &CompiledBinding {
         self.binding_in(operation, &ui_mode())
     }
 
     /// The first binding of an operation in a mode.
-    pub fn binding_in(&self, operation: &str, mode: &Mode) -> &BindingPlan {
-        self.plan
+    pub fn binding_in(&self, operation: &str, mode: &Mode) -> &CompiledBinding {
+        self.compiled_target
             .operations
             .iter()
             .find(|known| known.name.as_str() == operation)
@@ -483,7 +483,7 @@ impl Scene {
     pub fn args(&self, step: &Step, inputs: &Values) -> Values {
         let mut args = Values::new();
         for arg in &step.args {
-            let source = &self.plan.expression(arg.value).unwrap().source;
+            let source = &self.compiled_target.expression(arg.value).unwrap().source;
             let name = source
                 .strip_prefix("input.")
                 .unwrap_or_else(|| panic!("the test helper cannot evaluate `{source}`"));

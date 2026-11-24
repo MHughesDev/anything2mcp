@@ -1,5 +1,5 @@
 //! The `commands/` file kind: its schema, the names it defines, and the
-//! compile of its documents into the pack's section of the plan.
+//! compile of its documents into the pack's section of the compiled target.
 //!
 //! The rules of spec section 306 that a file alone can break are checked
 //! here, each under a code of the pack's own, with the place and a fix.
@@ -695,7 +695,7 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
                 "secret_variable",
                 &entry.key.at,
                 format!(
-                    "The variable `{}` is named for a credential, and its value would sit in the target's files and in the plan.",
+                    "The variable `{}` is named for a credential, and its value would sit in the target's files and in the compiled target.",
                     codes::shown(name)
                 ),
                 "Remove it. A credential is kept in the vault and reaches a program only through the session, never through a target's files.",
@@ -898,12 +898,12 @@ fn script(name: &str, doc: &Located<Doc>, shared: &Program, found: &mut Found) -
 fn param(name: &str, doc: &Located<Doc>, cx: &KindContext<'_>, found: &mut Found) -> Option<Param> {
     let type_doc = doc.get("type")?;
     let field_type = cx.target().field_type(type_doc.as_text()?)?;
-    let (kind, choices) = match field_type.plan.base {
+    let (kind, choices) = match field_type.compiled.base {
         FieldBase::Text => (ParamKind::Text, Vec::new()),
         FieldBase::Choice => (
             ParamKind::Text,
             field_type
-                .plan
+                .compiled
                 .codes
                 .iter()
                 .map(|code| code.code.clone())

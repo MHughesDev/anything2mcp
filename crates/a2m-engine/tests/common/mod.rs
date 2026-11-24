@@ -1,6 +1,6 @@
 //! What the tests share: a test pack whose driver talks to the built-in test
 //! application over its JSON interface, registered through the provider
-//! contract as a real pack is; a hand-built plan for the imaginary
+//! contract as a real pack is; a hand-built compiled target for the imaginary
 //! `example` target; a `Control` over a real store, so that intent tokens
 //! are the ledger's own; and the part of the engine's caller: it claims the
 //! job, applies the outcome, and resumes.
@@ -17,17 +17,18 @@ use std::sync::{Arc, Mutex};
 
 use a2m_auth::{ExpirySign, SessionLease};
 use a2m_core::{
-    Address, ApprovalId, AuthPlan, AuthProviderName, BindingPlan, BindingStatus, CanonicalJson,
-    Digest, EffectClass, Environment, EnvironmentIndex, EnvironmentKind, EnvironmentPlan, Epoch,
+    Address, ApprovalId, AuthProviderName, BindingStatus, COMPILED_TARGET_FORMAT, CanonicalJson,
+    CompiledAuth, CompiledBinding, CompiledEnvironment, CompiledExpr, CompiledFieldType,
+    CompiledIdentity, CompiledInput, CompiledOperation, CompiledOutput, CompiledPipeline,
+    CompiledProbe, CompiledSource, CompiledSurface, CompiledTarget, CompiledTargetHeader,
+    CompiledTool, Digest, EffectClass, Environment, EnvironmentIndex, EnvironmentKind, Epoch,
     EvidenceLevel, ExprIndex, FailsAs, Failure, FailureClass, FailureCode, FieldFormat,
-    FieldTypeIndex, FieldTypePlan, Finding, FindingKind, Hazard, IdentityPlan, IdentityStrategy,
-    InputIndex, InputPlan, Mode, OperationIndex, OperationName, OperationPlan, OutputPlan,
-    PLAN_FORMAT, PackPayload, PermissionManifest, PipelineIndex, PipelineLimits, PipelinePlan,
-    PipelineStep, Plan, PlanExpr, PlanHeader, PrincipalId, ProbePlan, ProducedBy, RecordKey,
-    RecordState, Rounding, RunId, RunState, Sensitivity, SignInMode, Source, SourcePlan, Step,
-    StepArg, StepKind, Subject, SurfaceIndex, SurfaceKind, SurfaceName, SurfacePlan, TargetName,
-    TargetPlan, Timestamp, ToolAnnotations, ToolPlan, ToolRuns, Value, ValueType, Values, Verb,
-    Version, WhitespaceRule, WorkspaceId,
+    FieldTypeIndex, Finding, FindingKind, Hazard, IdentityStrategy, InputIndex, Mode,
+    OperationIndex, OperationName, PackPayload, PermissionManifest, PipelineIndex, PipelineLimits,
+    PipelineStep, PrincipalId, ProducedBy, RecordKey, RecordState, Rounding, RunId, RunState,
+    Sensitivity, SignInMode, Source, Step, StepArg, StepKind, Subject, SurfaceIndex, SurfaceKind,
+    SurfaceName, TargetName, TargetSection, Timestamp, ToolAnnotations, ToolRuns, Value, ValueType,
+    Values, Verb, Version, WhitespaceRule, WorkspaceId,
 };
 use a2m_engine::{
     BoxFuture, Clearance, Conditions, Control, Engine, EngineDeps, EngineEvent, EngineSettings,
@@ -251,9 +252,9 @@ pub struct Hooks {
     /// Every step of the first mode fails as drift.
     pub first_mode_drifts: AtomicBool,
     /// The layout the test application's screens show, once a test has
-    /// changed it on purpose: a step that refers to a screen the plan
-    /// models with another layout finds no element its model names, and
-    /// fails as drift with nothing sent (package 9.1). `None`: every
+    /// changed it on purpose: a step that refers to a screen the compiled
+    /// target models with another layout finds no element its model names,
+    /// and fails as drift with nothing sent (package 9.1). `None`: every
     /// screen looks as its model says.
     pub screen_shows: Mutex<Option<String>>,
     /// Every step is refused as it would be when the session has ended.
@@ -395,17 +396,17 @@ struct AppState {
     http: reqwest::Client,
     /// The posture the context was prepared in.
     posture: Posture,
-    /// The layout each screen of the plan is modelled with, by its section
-    /// and its name: a section of the kind `screen` maps each screen's name
-    /// to its layout.
+    /// The layout each screen of the compiled target is modelled with, by its
+    /// section and its name: a section of the kind `screen` maps each
+    /// screen's name to its layout.
     screens: BTreeMap<(usize, String), String>,
 }
 
-/// The layout of every screen the plan models, from its sections of the
-/// kind `screen`.
-fn modelled_screens(plan: &Plan) -> BTreeMap<(usize, String), String> {
+/// The layout of every screen the compiled target models, from its sections
+/// of the kind `screen`.
+fn modelled_screens(compiled_target: &CompiledTarget) -> BTreeMap<(usize, String), String> {
     let mut screens = BTreeMap::new();
-    for (at, section) in plan.packs.iter().enumerate() {
+    for (at, section) in compiled_target.packs.iter().enumerate() {
         if section.kind.as_str() != "screen" {
             continue;
         }
@@ -1104,7 +1105,7 @@ impl Driver for AppDriver {
                     .build()
                     .unwrap(),
                 posture: cx.posture,
-                screens: modelled_screens(cx.plan),
+                screens: modelled_screens(cx.compiled_target),
             }))
         })
     }
@@ -1322,25 +1323,30 @@ impl Pack for AppPack {
     }
 }
 
-// ---- the plan, built by hand ----
+// ---- the compiled target, built by hand ----
 
-pub struct PlanBuilder {
-    plan: Plan,
+pub struct CompiledTargetBuilder {
+    compiled_target: CompiledTarget,
 }
 
-pub fn expr(plan: &mut Plan, source: &str, result: ValueType) -> ExprIndex {
-    plan.expressions.push(PlanExpr {
+pub fn expr(compiled_target: &mut CompiledTarget, source: &str, result: ValueType) -> ExprIndex {
+    compiled_target.expressions.push(CompiledExpr {
         source: source.to_owned(),
         result,
         library: LibraryVersion::CURRENT.get(),
     });
-    ExprIndex::new(u32::try_from(plan.expressions.len() - 1).unwrap())
+    ExprIndex::new(u32::try_from(compiled_target.expressions.len() - 1).unwrap())
 }
 
-fn field_type(plan: &mut Plan, name: &str, rule: &FieldRule, sensitivity: Sensitivity) -> u32 {
+fn field_type(
+    compiled_target: &mut CompiledTarget,
+    name: &str,
+    rule: &FieldRule,
+    sensitivity: Sensitivity,
+) -> u32 {
     let compiled = rule.normalizer().unwrap();
     let ty = rule.value_type();
-    let normalizer = expr(plan, compiled.source(), ty.clone());
+    let normalizer = expr(compiled_target, compiled.source(), ty.clone());
     let format = match rule {
         FieldRule::Text { whitespace, .. } => FieldFormat::Text {
             case_sensitive: true,
@@ -1353,7 +1359,7 @@ fn field_type(plan: &mut Plan, name: &str, rule: &FieldRule, sensitivity: Sensit
             decimal_mark: a2m_core::DecimalMark::Point,
         },
     };
-    plan.field_types.push(FieldTypePlan {
+    compiled_target.field_types.push(CompiledFieldType {
         name: name.to_owned(),
         base: rule.base(),
         ty,
@@ -1370,7 +1376,7 @@ fn field_type(plan: &mut Plan, name: &str, rule: &FieldRule, sensitivity: Sensit
         format,
         normalizer: Some(normalizer),
     });
-    u32::try_from(plan.field_types.len() - 1).unwrap()
+    u32::try_from(compiled_target.field_types.len() - 1).unwrap()
 }
 
 pub fn step(kind: &str, args: &[(&str, ExprIndex)], commits: bool, lookup: bool) -> Step {
@@ -1401,8 +1407,8 @@ pub fn step(kind: &str, args: &[(&str, ExprIndex)], commits: bool, lookup: bool)
     }
 }
 
-fn input(name: &str, field_type: u32, ty: ValueType, required: bool) -> InputPlan {
-    InputPlan {
+fn input(name: &str, field_type: u32, ty: ValueType, required: bool) -> CompiledInput {
+    CompiledInput {
         name: name.to_owned(),
         field_type: FieldTypeIndex::new(field_type),
         ty,
@@ -1413,8 +1419,8 @@ fn input(name: &str, field_type: u32, ty: ValueType, required: bool) -> InputPla
     }
 }
 
-fn tool(name: &OperationName, runs: ToolRuns) -> ToolPlan {
-    ToolPlan {
+fn tool(name: &OperationName, runs: ToolRuns) -> CompiledTool {
+    CompiledTool {
         name: name.clone(),
         runs,
         module: None,
@@ -1466,16 +1472,16 @@ pub const SCREEN: &str = "order_screen";
 /// of the read of an order and of the first write of a line item referring
 /// to the one screen in it. `layout` stands for what the screen model
 /// says of the screen: a repair changes it.
-pub fn screens(plan: &mut Plan, layout: &str) {
-    let section = a2m_core::SectionIndex::new(u32::try_from(plan.packs.len()).unwrap());
-    plan.packs.push(a2m_core::PackSection {
+pub fn screens(compiled_target: &mut CompiledTarget, layout: &str) {
+    let section = a2m_core::SectionIndex::new(u32::try_from(compiled_target.packs.len()).unwrap());
+    compiled_target.packs.push(a2m_core::PackSection {
         pack: "example_app".to_owned(),
         kind: a2m_core::FileKindName::new("screen").unwrap(),
         surface_kind: SurfaceKind::new("json_app").unwrap(),
         format: 1,
         payload: PackPayload::encode(&Values::new().with(SCREEN, layout)).unwrap(),
     });
-    for operation in &mut plan.operations {
+    for operation in &mut compiled_target.operations {
         if ![ORDER_GET, ITEM_UPSERT].contains(&operation.name.as_str()) {
             continue;
         }
@@ -1496,20 +1502,20 @@ pub fn screens(plan: &mut Plan, layout: &str) {
     }
 }
 
-/// The plan of the imaginary `example` target, over the test application
-/// at `address`.
-pub fn plan(address: &str) -> Plan {
+/// The compiled target of the imaginary `example` target, over the test
+/// application at `address`.
+pub fn compiled_target(address: &str) -> CompiledTarget {
     let name = |text: &str| OperationName::new(text).unwrap();
-    let mut plan = Plan {
-        header: PlanHeader {
-            format: PLAN_FORMAT,
+    let mut compiled_target = CompiledTarget {
+        header: CompiledTargetHeader {
+            format: COMPILED_TARGET_FORMAT,
             minimum_engine: Version::new(0, 0, 1),
             compiler: Version::new(0, 0, 1),
             target: TargetName::new("example").unwrap(),
             version: Version::new(1, 0, 0),
             sources: Digest::of(b"hand-built"),
         },
-        target: TargetPlan {
+        target: TargetSection {
             title: "Example".to_owned(),
             modules: Vec::new(),
             default_environment: EnvironmentIndex::new(0),
@@ -1521,7 +1527,7 @@ pub fn plan(address: &str) -> Plan {
             authorization: None,
         },
         surfaces: Vec::new(),
-        environments: vec![EnvironmentPlan {
+        environments: vec![CompiledEnvironment {
             name: Environment::new("test").unwrap(),
             kind: EnvironmentKind::Test,
             addresses: Vec::new(),
@@ -1538,7 +1544,7 @@ pub fn plan(address: &str) -> Plan {
         tests: Vec::new(),
     };
     for surface in ["app", "secure"] {
-        plan.surfaces.push(SurfacePlan {
+        compiled_target.surfaces.push(CompiledSurface {
             name: SurfaceName::new(surface).unwrap(),
             kind: SurfaceKind::new("json_app").unwrap(),
             address: address.to_owned(),
@@ -1550,11 +1556,11 @@ pub fn plan(address: &str) -> Plan {
         });
     }
     // The second surface needs a sign-in; the first needs none.
-    plan.auth.push(AuthPlan {
+    compiled_target.auth.push(CompiledAuth {
         surfaces: vec![SurfaceIndex::new(1)],
         mode: SignInMode::ManagedSession,
         provider: AuthProviderName::new("example_login").unwrap(),
-        probe: ProbePlan::Operation {
+        probe: CompiledProbe::Operation {
             operation: OperationIndex::new(0),
             inputs: Values::new().with("order_id", "A-100"),
         },
@@ -1576,11 +1582,26 @@ pub fn plan(address: &str) -> Plan {
         case_sensitive: true,
         whitespace: Whitespace::Exact,
     };
-    let identifier = field_type(&mut plan, "identifier", &trimmed, Sensitivity::Public);
-    let free_text = field_type(&mut plan, "free_text", &trimmed, Sensitivity::Internal);
-    let exact_text = field_type(&mut plan, "exact_text", &exact, Sensitivity::Internal);
+    let identifier = field_type(
+        &mut compiled_target,
+        "identifier",
+        &trimmed,
+        Sensitivity::Public,
+    );
+    let free_text = field_type(
+        &mut compiled_target,
+        "free_text",
+        &trimmed,
+        Sensitivity::Internal,
+    );
+    let exact_text = field_type(
+        &mut compiled_target,
+        "exact_text",
+        &exact,
+        Sensitivity::Internal,
+    );
     let count = field_type(
-        &mut plan,
+        &mut compiled_target,
         "count",
         &FieldRule::Integer {
             mark: DecimalMark::Point,
@@ -1588,7 +1609,7 @@ pub fn plan(address: &str) -> Plan {
         Sensitivity::Internal,
     );
     let inches = field_type(
-        &mut plan,
+        &mut compiled_target,
         "inches",
         &FieldRule::Decimal {
             places: 4,
@@ -1598,11 +1619,11 @@ pub fn plan(address: &str) -> Plan {
         Sensitivity::Internal,
     );
 
-    let order_id = expr(&mut plan, "input.order_id", ValueType::Text);
-    let item_code = expr(&mut plan, "input.item_code", ValueType::Text);
-    let description = expr(&mut plan, "input.description", ValueType::Text);
-    let quantity = expr(&mut plan, "input.quantity", ValueType::Int);
-    let length = expr(&mut plan, "input.length_in", ValueType::Decimal);
+    let order_id = expr(&mut compiled_target, "input.order_id", ValueType::Text);
+    let item_code = expr(&mut compiled_target, "input.item_code", ValueType::Text);
+    let description = expr(&mut compiled_target, "input.description", ValueType::Text);
+    let quantity = expr(&mut compiled_target, "input.quantity", ValueType::Int);
+    let length = expr(&mut compiled_target, "input.length_in", ValueType::Decimal);
     // What the record held when it was last read, as the driver read it.
     let optional = |name: &str, ty: ValueType| a2m_core::FieldOf {
         name: name.to_owned(),
@@ -1610,7 +1631,7 @@ pub fn plan(address: &str) -> Plan {
         required: false,
     };
     let current = expr(
-        &mut plan,
+        &mut compiled_target,
         "current",
         ValueType::Record(vec![
             optional("description", ValueType::Text),
@@ -1626,45 +1647,46 @@ pub fn plan(address: &str) -> Plan {
         downloads: Vec::new(),
         destinations: Vec::new(),
     };
-    let binding = |mode: &str, surface: u32, act: Vec<Step>, read_back: Vec<Step>| BindingPlan {
-        mode: Mode::new(mode).unwrap(),
-        verb: Verb::new(if read_back.is_empty() {
-            "read"
-        } else {
-            "upsert"
-        })
-        .unwrap(),
-        status: BindingStatus::Verified,
-        surface: SurfaceIndex::new(surface),
-        act,
-        confirm: Vec::new(),
-        read_back,
-        lookup: Vec::new(),
-        settle_ms: 0,
-        evidence: a2m_core::WriteEvidence::ReadBack,
-        precondition: None,
-    };
+    let binding =
+        |mode: &str, surface: u32, act: Vec<Step>, read_back: Vec<Step>| CompiledBinding {
+            mode: Mode::new(mode).unwrap(),
+            verb: Verb::new(if read_back.is_empty() {
+                "read"
+            } else {
+                "upsert"
+            })
+            .unwrap(),
+            status: BindingStatus::Verified,
+            surface: SurfaceIndex::new(surface),
+            act,
+            confirm: Vec::new(),
+            read_back,
+            lookup: Vec::new(),
+            settle_ms: 0,
+            evidence: a2m_core::WriteEvidence::ReadBack,
+            precondition: None,
+        };
     let order_outputs = || {
         vec![
-            OutputPlan {
+            CompiledOutput {
                 name: "order_id".to_owned(),
                 ty: ValueType::Text,
                 field_type: Some(FieldTypeIndex::new(identifier)),
                 may_be_absent: false,
             },
-            OutputPlan {
+            CompiledOutput {
                 name: "customer".to_owned(),
                 ty: ValueType::Text,
                 field_type: Some(FieldTypeIndex::new(free_text)),
                 may_be_absent: false,
             },
-            OutputPlan {
+            CompiledOutput {
                 name: "status".to_owned(),
                 ty: ValueType::Text,
                 field_type: Some(FieldTypeIndex::new(identifier)),
                 may_be_absent: false,
             },
-            OutputPlan {
+            CompiledOutput {
                 name: "lines".to_owned(),
                 ty: ValueType::Int,
                 field_type: None,
@@ -1672,13 +1694,13 @@ pub fn plan(address: &str) -> Plan {
             },
         ]
     };
-    let read_operation = |text: &str, bindings: Vec<BindingPlan>| OperationPlan {
+    let read_operation = |text: &str, bindings: Vec<CompiledBinding>| CompiledOperation {
         name: name(text),
         effect: EffectClass::Read,
         hazard: Hazard::None,
         inputs: vec![input("order_id", identifier, ValueType::Text, true)],
         outputs: order_outputs(),
-        identity: IdentityPlan {
+        identity: CompiledIdentity {
             strategy: IdentityStrategy::Natural,
             key: vec![InputIndex::new(0)],
         },
@@ -1691,7 +1713,7 @@ pub fn plan(address: &str) -> Plan {
 
     // 0: read an order, through two bindings in order.
     let get_order = || step("get_order", &[("order_id", order_id)], false, false);
-    plan.operations.push(read_operation(
+    compiled_target.operations.push(read_operation(
         ORDER_GET,
         vec![
             binding(FIRST_MODE, 0, vec![get_order()], Vec::new()),
@@ -1699,18 +1721,18 @@ pub fn plan(address: &str) -> Plan {
         ],
     ));
     // 1: read stock, an endpoint that fails every third call.
-    plan.operations.push(OperationPlan {
+    compiled_target.operations.push(CompiledOperation {
         name: name(STOCK_GET),
         effect: EffectClass::Read,
         hazard: Hazard::None,
         inputs: vec![input("item_code", identifier, ValueType::Text, true)],
-        outputs: vec![OutputPlan {
+        outputs: vec![CompiledOutput {
             name: "in_stock".to_owned(),
             ty: ValueType::Int,
             field_type: None,
             may_be_absent: false,
         }],
-        identity: IdentityPlan {
+        identity: CompiledIdentity {
             strategy: IdentityStrategy::Natural,
             key: vec![InputIndex::new(0)],
         },
@@ -1729,7 +1751,7 @@ pub fn plan(address: &str) -> Plan {
     // is compared as written, and the application trims what it stores.
     for (text, description_type) in [(ITEM_UPSERT, free_text), (ITEM_UPSERT_EXACT, exact_text)] {
         let key = [("order_id", order_id), ("item_code", item_code)];
-        plan.operations.push(OperationPlan {
+        compiled_target.operations.push(CompiledOperation {
             name: name(text),
             effect: EffectClass::Write,
             hazard: Hazard::None,
@@ -1740,13 +1762,13 @@ pub fn plan(address: &str) -> Plan {
                 input("quantity", count, ValueType::Int, true),
                 input("length_in", inches, ValueType::Decimal, true),
             ],
-            outputs: vec![OutputPlan {
+            outputs: vec![CompiledOutput {
                 name: "version".to_owned(),
                 ty: ValueType::Int,
                 field_type: None,
                 may_be_absent: false,
             }],
-            identity: IdentityPlan {
+            identity: CompiledIdentity {
                 strategy: IdentityStrategy::Composite,
                 key: vec![InputIndex::new(0), InputIndex::new(1)],
             },
@@ -1775,23 +1797,23 @@ pub fn plan(address: &str) -> Plan {
         });
     }
     // 4: a read on the surface that needs a sign-in.
-    plan.operations.push(read_operation(
+    compiled_target.operations.push(read_operation(
         SECURE_GET,
         vec![binding(FIRST_MODE, 1, vec![get_order()], Vec::new())],
     ));
 
     // 5 to 7: creates whose code the system assigns, each found again in
     // its own way.
-    let result_code = expr(&mut plan, "result.item_code", ValueType::Text);
+    let result_code = expr(&mut compiled_target, "result.item_code", ValueType::Text);
     let created_outputs = || {
         vec![
-            OutputPlan {
+            CompiledOutput {
                 name: "item_code".to_owned(),
                 ty: ValueType::Text,
                 field_type: Some(FieldTypeIndex::new(identifier)),
                 may_be_absent: false,
             },
-            OutputPlan {
+            CompiledOutput {
                 name: "version".to_owned(),
                 ty: ValueType::Int,
                 field_type: None,
@@ -1809,19 +1831,19 @@ pub fn plan(address: &str) -> Plan {
     };
     let create = |text: &str,
                   strategy: IdentityStrategy,
-                  inputs: Vec<InputPlan>,
+                  inputs: Vec<CompiledInput>,
                   key: Vec<InputIndex>,
                   act: Vec<Step>,
                   lookup: Vec<Step>| {
         let mut binding = binding(FIRST_MODE, 0, act, read_created());
         binding.lookup = lookup;
-        OperationPlan {
+        CompiledOperation {
             name: name(text),
             effect: EffectClass::Write,
             hazard: Hazard::None,
             inputs,
             outputs: created_outputs(),
-            identity: IdentityPlan { strategy, key },
+            identity: CompiledIdentity { strategy, key },
             commit_points: 1,
             bindings: vec![binding],
             manifest: no_manifest(),
@@ -1830,7 +1852,7 @@ pub fn plan(address: &str) -> Plan {
         }
     };
     // 5: `find`: the lookup searches on the description the write sets.
-    plan.operations.push(create(
+    compiled_target.operations.push(create(
         NOTE_ADD,
         IdentityStrategy::Find,
         vec![
@@ -1868,7 +1890,7 @@ pub fn plan(address: &str) -> Plan {
         ]
     };
     let by_stamp = || vec![step("find_item", &[("order_id", order_id)], false, true)];
-    plan.operations.push(create(
+    compiled_target.operations.push(create(
         REF_ADD,
         IdentityStrategy::Stamped,
         stamped_inputs(),
@@ -1887,7 +1909,7 @@ pub fn plan(address: &str) -> Plan {
     ));
     // 7: the code is handed out by a step before the save, and the save
     // and the read-back use it.
-    plan.operations.push(create(
+    compiled_target.operations.push(create(
         SLOT_ADD,
         IdentityStrategy::Stamped,
         stamped_inputs(),
@@ -1909,8 +1931,8 @@ pub fn plan(address: &str) -> Plan {
         by_stamp(),
     ));
 
-    for (position, operation) in plan.operations.clone().iter().enumerate() {
-        plan.tools.push(tool(
+    for (position, operation) in compiled_target.operations.clone().iter().enumerate() {
+        compiled_target.tools.push(tool(
             &operation.name,
             ToolRuns::Operation(OperationIndex::new(u32::try_from(position).unwrap())),
         ));
@@ -1918,9 +1940,13 @@ pub fn plan(address: &str) -> Plan {
 
     // A pipeline: check the order is a draft, enter two line items, read
     // the order again.
-    let draft = expr(&mut plan, "result.status == \"draft\"", ValueType::Bool);
-    let first_code = expr(&mut plan, "input.first_code", ValueType::Text);
-    let second_code = expr(&mut plan, "input.second_code", ValueType::Text);
+    let draft = expr(
+        &mut compiled_target,
+        "result.status == \"draft\"",
+        ValueType::Bool,
+    );
+    let first_code = expr(&mut compiled_target, "input.first_code", ValueType::Text);
+    let second_code = expr(&mut compiled_target, "input.second_code", ValueType::Text);
     let enter = |id: &str, code: ExprIndex| PipelineStep {
         id: id.to_owned(),
         operation: OperationIndex::new(2),
@@ -1963,7 +1989,7 @@ pub fn plan(address: &str) -> Plan {
         when: None,
         expect,
     };
-    plan.pipelines.push(PipelinePlan {
+    compiled_target.pipelines.push(CompiledPipeline {
         name: name(ORDER_FILL),
         effect: EffectClass::Write,
         hazard: Hazard::None,
@@ -1986,7 +2012,7 @@ pub fn plan(address: &str) -> Plan {
         success: Vec::new(),
         headroom_ms: 0,
     });
-    plan.tools.push(tool(
+    compiled_target.tools.push(tool(
         &name(ORDER_FILL),
         ToolRuns::Pipeline(PipelineIndex::new(0)),
     ));
@@ -2015,7 +2041,7 @@ pub fn plan(address: &str) -> Plan {
         column: Some(column.to_owned()),
         required: true,
     };
-    let source = || SourcePlan {
+    let source = || CompiledSource {
         template: "example_sheet".to_owned(),
         reader: "csv".to_owned(),
         mapping: Vec::new(),
@@ -2048,7 +2074,7 @@ pub fn plan(address: &str) -> Plan {
         required: true,
     };
     let rows = expr(
-        &mut plan,
+        &mut compiled_target,
         "source.rows",
         ValueType::List(Box::new(ValueType::Record(vec![
             column("code", ValueType::Text),
@@ -2057,10 +2083,10 @@ pub fn plan(address: &str) -> Plan {
             column("length", ValueType::Decimal),
         ]))),
     );
-    let row_code = expr(&mut plan, "row.code", ValueType::Text);
-    let row_description = expr(&mut plan, "row.description", ValueType::Text);
-    let row_quantity = expr(&mut plan, "row.quantity", ValueType::Int);
-    let row_length = expr(&mut plan, "row.length", ValueType::Decimal);
+    let row_code = expr(&mut compiled_target, "row.code", ValueType::Text);
+    let row_description = expr(&mut compiled_target, "row.description", ValueType::Text);
+    let row_quantity = expr(&mut compiled_target, "row.quantity", ValueType::Int);
+    let row_length = expr(&mut compiled_target, "row.length", ValueType::Decimal);
     let arg = |name: &str, value: ExprIndex| StepArg {
         name: name.to_owned(),
         value,
@@ -2081,7 +2107,7 @@ pub fn plan(address: &str) -> Plan {
         expect: None,
     };
     // 1: check the order is a draft, enter every row, read the order again.
-    plan.pipelines.push(PipelinePlan {
+    compiled_target.pipelines.push(CompiledPipeline {
         name: name(SHEET_ENTER),
         effect: EffectClass::Write,
         hazard: Hazard::None,
@@ -2096,21 +2122,21 @@ pub fn plan(address: &str) -> Plan {
         success: Vec::new(),
         headroom_ms: 0,
     });
-    plan.tools.push(tool(
+    compiled_target.tools.push(tool(
         &name(SHEET_ENTER),
         ToolRuns::Pipeline(PipelineIndex::new(1)),
     ));
     // 2: a header whose code the system assigns, then its lines, each
     // under a code made from the header's.
-    let title = expr(&mut plan, "input.title", ValueType::Text);
-    let one = expr(&mut plan, "1", ValueType::Int);
-    let unit = expr(&mut plan, "decimal(\"1\")", ValueType::Decimal);
+    let title = expr(&mut compiled_target, "input.title", ValueType::Text);
+    let one = expr(&mut compiled_target, "1", ValueType::Int);
+    let unit = expr(&mut compiled_target, "decimal(\"1\")", ValueType::Decimal);
     let under_header = expr(
-        &mut plan,
+        &mut compiled_target,
         "steps.header.result.item_code + \"-\" + row.code",
         ValueType::Text,
     );
-    plan.pipelines.push(PipelinePlan {
+    compiled_target.pipelines.push(CompiledPipeline {
         name: name(KIT_ENTER),
         effect: EffectClass::Write,
         hazard: Hazard::None,
@@ -2140,25 +2166,25 @@ pub fn plan(address: &str) -> Plan {
         success: Vec::new(),
         headroom_ms: 0,
     });
-    plan.tools.push(tool(
+    compiled_target.tools.push(tool(
         &name(KIT_ENTER),
         ToolRuns::Pipeline(PipelineIndex::new(2)),
     ));
-    plan
+    compiled_target
 }
 
-/// The plan changed so that the create whose code a step hands out before
-/// the save is a record of no identity: it is found again only by the code
-/// its earlier step recorded, through a read-back that looks for it
+/// The compiled target changed so that the create whose code a step hands out
+/// before the save is a record of no identity: it is found again only by the
+/// code its earlier step recorded, through a read-back that looks for it
 /// (`taken`), as a take from a queue is by the message id it recorded. A
 /// write of no identity is irreversible.
-pub fn keyless_slot_add(plan: &mut Plan) {
-    for operation in &mut plan.operations {
+pub fn keyless_slot_add(compiled_target: &mut CompiledTarget) {
+    for operation in &mut compiled_target.operations {
         if operation.name.as_str() == SLOT_ADD {
             // A record that cannot be found by a key is written only by an
             // irreversible operation.
             operation.effect = EffectClass::Irreversible;
-            operation.identity = IdentityPlan {
+            operation.identity = CompiledIdentity {
                 strategy: IdentityStrategy::None,
                 key: Vec::new(),
             };
@@ -2174,9 +2200,9 @@ pub fn keyless_slot_add(plan: &mut Plan) {
 /// As [`keyless_slot_add`], and the binding also has a lookup that scans
 /// the order for the record's stamp (`scan`), whose "absent" the first
 /// mode's manifest states authoritative, with a settle time of `settle_ms`.
-pub fn keyless_slot_add_scanned(plan: &mut Plan, settle_ms: u32) {
-    keyless_slot_add(plan);
-    for operation in &mut plan.operations {
+pub fn keyless_slot_add_scanned(compiled_target: &mut CompiledTarget, settle_ms: u32) {
+    keyless_slot_add(compiled_target);
+    for operation in &mut compiled_target.operations {
         if operation.name.as_str() == SLOT_ADD {
             for binding in &mut operation.bindings {
                 let order_id = binding.read_back[0].args[0].value;
@@ -2187,12 +2213,12 @@ pub fn keyless_slot_add_scanned(plan: &mut Plan, settle_ms: u32) {
     }
 }
 
-/// The plan changed so that the upsert is irreversible and its only
-/// evidence is the system's acknowledgement (`acknowledged`): nothing is
-/// read back after its save. Every pipeline, which enters line items
-/// through it, becomes irreversible too, and no tool is read only.
-pub fn acknowledged_upsert(plan: &mut Plan) {
-    for operation in &mut plan.operations {
+/// The compiled target changed so that the upsert is irreversible and its
+/// only evidence is the system's acknowledgement (`acknowledged`): nothing is
+/// read back after its save. Every pipeline, which enters line items through
+/// it, becomes irreversible too, and no tool is read only.
+pub fn acknowledged_upsert(compiled_target: &mut CompiledTarget) {
+    for operation in &mut compiled_target.operations {
         if operation.name.as_str() == ITEM_UPSERT {
             operation.effect = EffectClass::Irreversible;
             for binding in &mut operation.bindings {
@@ -2201,10 +2227,10 @@ pub fn acknowledged_upsert(plan: &mut Plan) {
             }
         }
     }
-    for pipeline in &mut plan.pipelines {
+    for pipeline in &mut compiled_target.pipelines {
         pipeline.effect = EffectClass::Irreversible;
     }
-    for tool in &mut plan.tools {
+    for tool in &mut compiled_target.tools {
         tool.annotations.read_only = false;
     }
 }
@@ -2256,7 +2282,7 @@ pub struct StoreControl {
     /// The key to the policy engine's tables, which this stand-in for the
     /// policy engine takes from the store, as `Policy::open` does.
     pub policy_key: Arc<a2m_ledger::PolicyKey>,
-    pub plan: Arc<Plan>,
+    pub compiled_target: Arc<CompiledTarget>,
     pub fence: Mutex<Fence>,
     pub hooks: Arc<Hooks>,
     pub faults: Faults,
@@ -2392,10 +2418,13 @@ impl StoreControl {
 }
 
 impl Control for StoreControl {
-    fn plan<'a>(&'a self, _hash: &'a Digest) -> BoxFuture<'a, Result<Arc<Plan>, Failure>> {
+    fn compiled_target<'a>(
+        &'a self,
+        _hash: &'a Digest,
+    ) -> BoxFuture<'a, Result<Arc<CompiledTarget>, Failure>> {
         Box::pin(async move {
             self.called().await;
-            Ok(Arc::clone(&self.plan))
+            Ok(Arc::clone(&self.compiled_target))
         })
     }
 
@@ -2911,7 +2940,7 @@ pub struct Scene {
     pub discoverer: Arc<WritingDiscoverer>,
     pub engine: Engine,
     pub control: Arc<StoreControl>,
-    pub plan_hash: Digest,
+    pub compiled_target_hash: Digest,
     pub attempt: AtomicU32,
     pub conditions: Mutex<Conditions>,
     pub pin: Mutex<Option<Mode>>,
@@ -2951,14 +2980,14 @@ async fn open_store(folder: &Folder) -> (Store, Arc<Vault>) {
 
 impl Scene {
     /// A scene with a run of `tool` opened, in `queued`.
-    pub async fn new(tool: &str, change: impl FnOnce(&mut Plan)) -> Self {
+    pub async fn new(tool: &str, change: impl FnOnce(&mut CompiledTarget)) -> Self {
         Self::with_settings(tool, change, |_| {}).await
     }
 
     /// A scene whose engine has other settings than the defaults.
     pub async fn with_settings(
         tool: &str,
-        change: impl FnOnce(&mut Plan),
+        change: impl FnOnce(&mut CompiledTarget),
         settings: impl FnOnce(&mut EngineSettings),
     ) -> Self {
         Self::with_packs(tool, change, settings, |_, _| {}).await
@@ -2968,7 +2997,7 @@ impl Scene {
     /// adds them to the builder, and is given the redactor of the vault.
     pub async fn with_packs(
         tool: &str,
-        change: impl FnOnce(&mut Plan),
+        change: impl FnOnce(&mut CompiledTarget),
         settings: impl FnOnce(&mut EngineSettings),
         more: impl FnOnce(&mut RegistryBuilder, &Arc<dyn a2m_core::Redact>),
     ) -> Self {
@@ -3000,18 +3029,20 @@ impl Scene {
         assert!(problems.is_empty(), "{problems:?}");
         let registry: Arc<Registry> = Arc::new(registry);
 
-        let mut plan = plan(&app.url(""));
-        change(&mut plan);
-        let encoded = plan.encode().unwrap();
-        let plan = Arc::new(plan);
+        let mut compiled_target = compiled_target(&app.url(""));
+        change(&mut compiled_target);
+        let encoded = compiled_target.encode().unwrap();
+        let compiled_target = Arc::new(compiled_target);
         let tool_name = OperationName::new(tool).unwrap();
-        let (effect, kind) = match plan.tool(&tool_name).map(|tool| tool.runs) {
-            Some(ToolRuns::Operation(index)) => {
-                (plan.operation(index).unwrap().effect, ToolKind::Operation)
-            }
-            Some(ToolRuns::Pipeline(index)) => {
-                (plan.pipeline(index).unwrap().effect, ToolKind::Pipeline)
-            }
+        let (effect, kind) = match compiled_target.tool(&tool_name).map(|tool| tool.runs) {
+            Some(ToolRuns::Operation(index)) => (
+                compiled_target.operation(index).unwrap().effect,
+                ToolKind::Operation,
+            ),
+            Some(ToolRuns::Pipeline(index)) => (
+                compiled_target.pipeline(index).unwrap().effect,
+                ToolKind::Pipeline,
+            ),
             None => (EffectClass::Read, ToolKind::Operation),
         };
         let hash = encoded.hash;
@@ -3054,7 +3085,7 @@ impl Scene {
         let control = Arc::new(StoreControl {
             store,
             policy_key,
-            plan,
+            compiled_target,
             fence: Mutex::new(fence),
             hooks: Arc::clone(&hooks),
             faults: Faults::default(),
@@ -3090,7 +3121,7 @@ impl Scene {
             discoverer,
             engine,
             control,
-            plan_hash: hash,
+            compiled_target_hash: hash,
             attempt: AtomicU32::new(1),
             conditions: Mutex::new(Conditions::default()),
             pin: Mutex::new(None),
@@ -3110,18 +3141,20 @@ impl Scene {
     /// Opens another run of `tool` in the same store, against the same
     /// test application: a second call by the same caller.
     pub async fn another_run(&self, tool: &str) {
-        let plan = Arc::clone(&self.control.plan);
+        let compiled_target = Arc::clone(&self.control.compiled_target);
         let tool_name = OperationName::new(tool).unwrap();
-        let (effect, kind) = match plan.tool(&tool_name).map(|tool| tool.runs) {
-            Some(ToolRuns::Operation(index)) => {
-                (plan.operation(index).unwrap().effect, ToolKind::Operation)
-            }
-            Some(ToolRuns::Pipeline(index)) => {
-                (plan.pipeline(index).unwrap().effect, ToolKind::Pipeline)
-            }
+        let (effect, kind) = match compiled_target.tool(&tool_name).map(|tool| tool.runs) {
+            Some(ToolRuns::Operation(index)) => (
+                compiled_target.operation(index).unwrap().effect,
+                ToolKind::Operation,
+            ),
+            Some(ToolRuns::Pipeline(index)) => (
+                compiled_target.pipeline(index).unwrap().effect,
+                ToolKind::Pipeline,
+            ),
             None => (EffectClass::Read, ToolKind::Operation),
         };
-        let hash = self.plan_hash;
+        let hash = self.compiled_target_hash;
         let number = self.runs.fetch_add(1, Ordering::SeqCst) + 1;
         let fence = self
             .control
@@ -3294,7 +3327,7 @@ impl Scene {
             attempt: self.attempt.load(Ordering::SeqCst),
             epoch: self.control.fence().epoch,
             kind,
-            plan: self.plan_hash,
+            compiled_target: self.compiled_target_hash,
             tool: ToolRef::Tool(OperationName::new(tool).unwrap()),
             environment,
             identity: None,
@@ -3352,7 +3385,7 @@ impl Scene {
         fence.epoch
     }
 
-    /// Runs a discovery job on a surface of the plan.
+    /// Runs a discovery job on a surface of the compiled target.
     pub async fn discover(&self, surface: &str) -> JobOutcome {
         self.discover_with(surface, Values::new()).await
     }

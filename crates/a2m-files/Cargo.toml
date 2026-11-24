@@ -1,6 +1,6 @@
 [package]
 name = "a2m-files"
-description = "Target file schemas, the loader, the linter, and the plan compiler."
+description = "Target file schemas, the loader, the linter, and the compiler that makes the compiled target."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

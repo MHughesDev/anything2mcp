@@ -1,7 +1,7 @@
 //! The pack's two file kinds: `channels/`, one document per channel, and
 //! `schemas/`, one document per message schema (spec section 309, "The file
-//! kind"). Each compiles to one section of the plan, which only this pack's
-//! driver decodes.
+//! kind"). Each compiles to one section of the compiled target, which only
+//! this pack's driver decodes.
 
 use std::collections::BTreeMap;
 

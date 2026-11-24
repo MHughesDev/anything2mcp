@@ -300,7 +300,7 @@ impl RegistryBuilder {
             self.host.supervisor.clone(),
             name.clone(),
             declared,
-            manifest.effects.plan_programs,
+            manifest.effects.compiled_target_programs,
         );
         let context = PackContext {
             provider: name,

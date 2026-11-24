@@ -1,10 +1,11 @@
-//! A plan as the engine holds it: checked against its hash, with every
-//! expression parsed once and every field type's normalizer ready.
+//! A compiled target as the engine holds it: checked against its hash, with
+//! every expression parsed once and every field type's normalizer ready.
 
 use std::sync::Arc;
 
 use a2m_core::{
-    Digest, ExprIndex, Failure, FieldTypeIndex, InputPlan, Plan, Sensitivity, Value, Values,
+    CompiledInput, CompiledTarget, Digest, ExprIndex, Failure, FieldTypeIndex, Sensitivity, Value,
+    Values,
 };
 use a2m_expr::{Bindings, Normalizer, Program, names};
 
@@ -21,36 +22,37 @@ pub const CURRENT: &str = names::CURRENT;
 pub const RECORD: &str = names::RECORD;
 
 pub(crate) struct Loaded {
-    pub plan: Arc<Plan>,
+    pub compiled_target: Arc<CompiledTarget>,
     pub hash: Digest,
     programs: Vec<Program>,
     normalizers: Vec<Option<Normalizer>>,
 }
 
 impl Loaded {
-    /// Checks the plan against the hash the job names, and loads it.
-    pub fn load(plan: Arc<Plan>, expected: &Digest) -> Result<Self, Failure> {
+    /// Checks the compiled target against the hash the job names, and loads
+    /// it.
+    pub fn load(compiled_target: Arc<CompiledTarget>, expected: &Digest) -> Result<Self, Failure> {
         let unverified = || {
             codes::fail(
-                &codes::row::PLAN_UNVERIFIED,
-                "The plan handed to the engine is not the plan the job names by its hash.",
+                &codes::row::COMPILED_TARGET_UNVERIFIED,
+                "The compiled target handed to the engine is not the compiled target the job names by its hash.",
                 "Publish the target again from its stored sources.",
             )
         };
-        let encoded = plan.encode().map_err(|_| unverified())?;
+        let encoded = compiled_target.encode().map_err(|_| unverified())?;
         if encoded.hash != *expected {
             return Err(unverified());
         }
-        let programs = plan
+        let programs = compiled_target
             .expressions
             .iter()
             .map(Program::load)
             .collect::<Result<Vec<_>, _>>()?;
-        let mut normalizers = Vec::with_capacity(plan.field_types.len());
-        for field_type in &plan.field_types {
+        let mut normalizers = Vec::with_capacity(compiled_target.field_types.len());
+        for field_type in &compiled_target.field_types {
             let normalizer = match field_type.normalizer {
                 Some(index) => {
-                    let expr = plan.expression(index).ok_or_else(unverified)?;
+                    let expr = compiled_target.expression(index).ok_or_else(unverified)?;
                     Some(Normalizer::load(expr)?)
                 }
                 None => None,
@@ -58,7 +60,7 @@ impl Loaded {
             normalizers.push(normalizer);
         }
         Ok(Self {
-            plan,
+            compiled_target,
             hash: *expected,
             programs,
             normalizers,
@@ -67,7 +69,7 @@ impl Loaded {
 
     pub fn eval(&self, index: ExprIndex, scope: &Scope) -> Result<Value, Failure> {
         let program = self.programs.get(index.get()).ok_or_else(|| {
-            codes::job_invalid("The plan refers to an expression it does not hold.")
+            codes::job_invalid("The compiled target refers to an expression it does not hold.")
         })?;
         let bindings = Bindings::new()
             .with(names::INPUT, &scope.input)
@@ -97,7 +99,7 @@ impl Loaded {
         self.eval(index, scope)?.as_bool().ok_or_else(|| {
             codes::fail(
                 &codes::row::CONDITION_NOT_BOOLEAN,
-                "A condition of the plan gave a value that is neither true nor false.",
+                "A condition of the compiled target gave a value that is neither true nor false.",
                 "Compare the condition in the target files with what the system returns.",
             )
         })
@@ -105,7 +107,7 @@ impl Loaded {
 
     pub fn sensitivity(&self, field_type: Option<FieldTypeIndex>) -> Sensitivity {
         field_type
-            .and_then(|index| self.plan.field_type(index))
+            .and_then(|index| self.compiled_target.field_type(index))
             .map_or(Sensitivity::Internal, |field_type| field_type.sensitivity)
     }
 
@@ -125,7 +127,7 @@ impl Loaded {
     /// Validates the inputs of an operation or a pipeline against their
     /// declarations, and normalizes each by its field type. Every problem
     /// is reported at once, by the name of its input and never by a value.
-    pub fn inputs(&self, declared: &[InputPlan], given: &Values) -> Result<Values, Failure> {
+    pub fn inputs(&self, declared: &[CompiledInput], given: &Values) -> Result<Values, Failure> {
         self.inputs_waiting(declared, given, &[])
     }
 
@@ -134,7 +136,7 @@ impl Loaded {
     /// be missing.
     pub fn inputs_waiting(
         &self,
-        declared: &[InputPlan],
+        declared: &[CompiledInput],
         given: &Values,
         waiting: &[String],
     ) -> Result<Values, Failure> {

@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-17
 
-**Settles:** the open point of [spec section 206](../spec/2-kernel/206-the-compiler-and-the-plan.md) on the plan's encoding, and two open points of the [`a2m-core` design](../architecture/crates/a2m-core.md): whether the encoding is a second outside crate there, and how `KeyedDigest` is keyed. **Changes a sentence of section 206.**
+**Settles:** the open point of [spec section 206](../spec/2-kernel/206-the-compiler-and-the-compiled-target.md) on the plan's encoding, and two open points of the [`a2m-core` design](../architecture/crates/a2m-core.md): whether the encoding is a second outside crate there, and how `KeyedDigest` is keyed. **Changes a sentence of section 206.**
 
 ## Context
 
@@ -53,7 +53,7 @@ Plan loading misses its budget once measured, or a pack's payload is large enoug
 
 ## Spec sections
 
-- [206-the-compiler-and-the-plan.md](../spec/2-kernel/206-the-compiler-and-the-plan.md)
+- [206-the-compiler-and-the-compiled-target.md](../spec/2-kernel/206-the-compiler-and-the-compiled-target.md)
 - [224-when-the-engine-itself-fails.md](../spec/2-kernel/224-when-the-engine-itself-fails.md)
 - [216-the-vault-and-its-keys.md](../spec/2-kernel/216-the-vault-and-its-keys.md)
 - [The `a2m-core` design](../architecture/crates/a2m-core.md)

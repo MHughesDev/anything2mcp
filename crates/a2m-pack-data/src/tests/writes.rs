@@ -37,14 +37,14 @@ fn update(length: &str, price: &str, version: i64) -> Values {
 /// comparison the engine makes of the intended value and the read-back.
 fn agree(scene: &Scene, field_type: &str, intended: &Value, read_back: &Value) -> bool {
     let field_type = scene
-        .plan
+        .compiled_target
         .field_types
         .iter()
         .find(|known| known.name == field_type)
         .unwrap();
     let normalizer = Normalizer::load(
         scene
-            .plan
+            .compiled_target
             .expression(field_type.normalizer.unwrap())
             .unwrap(),
     )
@@ -66,10 +66,10 @@ async fn an_update_is_written_once_and_reads_back() {
     // offline test's `request.json` can hold them (field finding 22).
     let commit = &binding.act[3];
     assert!(commit.commits);
-    let carried = super::args_of(&scene.plan, commit, &wanted);
+    let carried = super::args_of(&scene.compiled_target, commit, &wanted);
     assert_eq!(
         carried,
-        super::args_of(&scene.plan, &binding.act[1], &wanted)
+        super::args_of(&scene.compiled_target, &binding.act[1], &wanted)
     );
     assert_eq!(carried.get("length"), Some(&decimal("151.25")));
     assert_eq!(carried.get("unit_price"), Some(&decimal("13.10")));
@@ -481,7 +481,7 @@ async fn nothing_is_committed_but_one_statement_whose_one_row_was_counted() {
     assert_eq!(failed(second), out_of_order);
     assert_eq!(scene.db.write_count(Table::OrderLines, &LINE).unwrap(), 0);
 
-    // A plan that asks for a count other than one row.
+    // A compiled target that asks for a count other than one row.
     let mut many = binding.act[2].clone();
     many.payload = a2m_core::PackPayload::encode(&crate::model::StepDetail {
         rows: Some(0),
@@ -948,7 +948,7 @@ async fn a_commit_not_marked_as_the_commit_point_is_refused_and_nothing_lands() 
         run: a2m_core::RunId::from_bytes([7; 16]),
         epoch: a2m_core::Epoch::new(1),
         surface: &scene.surface,
-        plan: &scene.plan,
+        compiled_target: &scene.compiled_target,
         posture: TEST_RECORDS,
         deadline: a2m_provider::Deadline::after(Duration::from_secs(30)),
         redact: &NoSecrets,

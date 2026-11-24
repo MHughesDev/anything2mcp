@@ -1,21 +1,22 @@
-//! The compiler: located documents to a checked, hashed plan (spec section
-//! 206). Stage 1, parsing, is the loader's; this module runs stages 2 to 9
-//! and reports every problem it can find in one pass.
+//! The compiler: located documents to a checked, hashed compiled target (spec
+//! section 206). Stage 1, parsing, is the loader's; this module runs stages 2
+//! to 9 and reports every problem it can find in one pass.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use a2m_core::{
-    AddressOverride, ApproveWrites, AuthPlan, AuthProviderName, AuthSetting, BindingPlan,
-    BindingStatus, CanonicalJson, CaptureLevel, Checkpoint, CredentialRef, CredentialUse, Date,
-    Decimal, DecisionPoint, DeclaredProgram, DescriptionBy, Digest, DriftRisk, EffectClass,
-    EncodedPlan, Environment, EnvironmentIndex, EnvironmentKind, EnvironmentPlan, FieldOf,
-    FieldTypeIndex, FileKindName, Hazard, IdentityPlan, IdentityStrategy, InputIndex, InputPlan,
-    LintCode, Millis, Mode, OperationIndex, OperationName, OperationPlan, OutputPlan, PLAN_FORMAT,
-    PackPayload, PackRef, PackSection, PermissionManifest, PipelineIndex, PipelineLimits,
-    PipelinePlan, PipelineStep, Plan, PlanHeader, ProbePlan, RatePlan, RecordKey, SectionIndex,
-    SignInMode, SourcePlan, Stands, Step, StepArg, StepKind, SurfaceIndex, SurfaceKind,
-    SurfaceName, SurfacePlan, TargetName, TargetPlan, TestKind, TestPlan, ToolAnnotations,
-    ToolIndex, ToolPlan, ToolRuns, Value, ValueType, Values, Verb, Version, WriteEvidence,
+    AddressOverride, ApproveWrites, AuthProviderName, AuthSetting, BindingStatus,
+    COMPILED_TARGET_FORMAT, CanonicalJson, CaptureLevel, Checkpoint, CompiledAuth, CompiledBinding,
+    CompiledEnvironment, CompiledIdentity, CompiledInput, CompiledOperation, CompiledOutput,
+    CompiledPipeline, CompiledProbe, CompiledRate, CompiledSource, CompiledSurface, CompiledTarget,
+    CompiledTargetHeader, CompiledTest, CompiledTool, CredentialRef, CredentialUse, Date, Decimal,
+    DecisionPoint, DeclaredProgram, DescriptionBy, Digest, DriftRisk, EffectClass,
+    EncodedCompiledTarget, Environment, EnvironmentIndex, EnvironmentKind, FieldOf, FieldTypeIndex,
+    FileKindName, Hazard, IdentityStrategy, InputIndex, LintCode, Millis, Mode, OperationIndex,
+    OperationName, PackPayload, PackRef, PackSection, PermissionManifest, PipelineIndex,
+    PipelineLimits, PipelineStep, RecordKey, SectionIndex, SignInMode, Stands, Step, StepArg,
+    StepKind, SurfaceIndex, SurfaceKind, SurfaceName, TargetName, TargetSection, TestKind,
+    ToolAnnotations, ToolIndex, ToolRuns, Value, ValueType, Values, Verb, Version, WriteEvidence,
 };
 use a2m_expr::{TypeEnv, names};
 
@@ -43,9 +44,9 @@ use crate::view::{
     record_type, type_env, unknown_env,
 };
 
-/// The version of this compiler, which a plan's header names.
+/// The version of this compiler, which a compiled target's header names.
 pub const COMPILER_VERSION: Version = Version::new(0, 0, 1);
-/// The oldest engine that may run a plan this compiler makes.
+/// The oldest engine that may run a compiled target this compiler makes.
 pub const MINIMUM_ENGINE: Version = Version::new(0, 0, 1);
 /// The version a draft is compiled as.
 pub const DRAFT_VERSION: Version = Version::new(0, 0, 0);
@@ -53,27 +54,27 @@ pub const DRAFT_VERSION: Version = Version::new(0, 0, 0);
 /// A compiled target.
 #[derive(Debug, Clone)]
 pub struct Compiled {
-    /// The plan.
-    pub plan: Plan,
-    /// The plan's bytes and hash, from `a2m-core`'s one encoding.
-    pub encoded: EncodedPlan,
+    /// The compiled target.
+    pub compiled_target: CompiledTarget,
+    /// The compiled target's bytes and hash, from `a2m-core`'s one encoding.
+    pub encoded: EncodedCompiledTarget,
     /// What the developer should look at; nothing here stopped the compile.
     pub warnings: Diagnostics,
     /// What each tool may do, ordered by risk.
     pub review: ReviewSummary,
-    /// For each test of the plan, in the plan's order: the place, from 0,
-    /// of the binding of its operation the test names with `binding:`, or
-    /// `None` where it names none and tests the binding that would act
-    /// live. The plan's test does not carry it; the test file does, and
-    /// its digest is among the plan's sources.
+    /// For each test of the compiled target, in the compiled target's order:
+    /// the place, from 0, of the binding of its operation the test names with
+    /// `binding:`, or `None` where it names none and tests the binding that
+    /// would act live. The compiled target's test does not carry it; the test
+    /// file does, and its digest is among the compiled target's sources.
     pub test_bindings: Vec<Option<usize>>,
 }
 
-/// Compiles a target's files into a plan.
+/// Compiles a target's files into a compiled target.
 ///
-/// `version` is the version the plan is published as; a draft passes
-/// [`DRAFT_VERSION`]. The same sources, set, mode, and version give the same
-/// bytes on every machine.
+/// `version` is the version the compiled target is published as; a draft
+/// passes [`DRAFT_VERSION`]. The same sources, set, mode, and version give
+/// the same bytes on every machine.
 ///
 /// # Errors
 ///
@@ -96,11 +97,11 @@ pub fn compile(
         default_limits: PipelineLimits::default(),
         auth: Vec::new(),
         operations: Vec::new(),
-        op_plans: Vec::new(),
+        compiled_ops: Vec::new(),
         described_by: BTreeMap::new(),
         binding_files: BTreeMap::new(),
         pipelines: Vec::new(),
-        source_plans: BTreeMap::new(),
+        compiled_sources: BTreeMap::new(),
         tools: Vec::new(),
         tests: Vec::new(),
         test_bindings: Vec::new(),
@@ -136,7 +137,7 @@ pub fn lint_one(previous: &Sources, edited: SourceFile, set: &CompilerSet) -> Di
 const MOST_DESCRIPTION_CHARACTERS: usize = 1024;
 
 struct PipelineInfo {
-    plan: PipelinePlan,
+    compiled: CompiledPipeline,
     title: String,
     description: String,
     at: Place,
@@ -148,25 +149,25 @@ struct Compiler<'a> {
     mode: CompileMode,
     problems: Vec<Diagnostic>,
     model: Model,
-    environments: Vec<EnvironmentPlan>,
+    environments: Vec<CompiledEnvironment>,
     /// What `target.yaml` states for the target as a whole.
-    about: Option<TargetPlan>,
+    about: Option<TargetSection>,
     /// `defaults.limits`: what a pipeline that states no limit takes.
     default_limits: PipelineLimits,
-    auth: Vec<AuthPlan>,
+    auth: Vec<CompiledAuth>,
     operations: Vec<OpInfo>,
-    op_plans: Vec<(OperationPlan, String, String)>,
+    compiled_ops: Vec<(CompiledOperation, String, String)>,
     /// Who wrote each tool's description, by tool name; a tool not here is
     /// a builder's.
     described_by: BTreeMap<String, DescriptionBy>,
     /// For each operation, the place in its file of each binding of its
-    /// plan, in the plan's order: the two differ where the compiler ordered
-    /// the bindings by rank.
+    /// compiled target, in the compiled target's order: the two differ where
+    /// the compiler ordered the bindings by rank.
     binding_files: BTreeMap<OperationName, Vec<usize>>,
     pipelines: Vec<PipelineInfo>,
-    source_plans: BTreeMap<String, (SourcePlan, ValueType)>,
-    tools: Vec<ToolPlan>,
-    tests: Vec<TestPlan>,
+    compiled_sources: BTreeMap<String, (CompiledSource, ValueType)>,
+    tools: Vec<CompiledTool>,
+    tests: Vec<CompiledTest>,
     test_bindings: Vec<Option<usize>>,
     tool_names: BTreeMap<String, Place>,
     /// For the review summary: what each operation's packs stated, and its
@@ -358,7 +359,7 @@ impl<'a> Compiler<'a> {
                         .model
                         .surfaces
                         .iter()
-                        .map(|surface| surface.plan.name.as_str())
+                        .map(|surface| surface.compiled.name.as_str())
                         .collect();
                     self.error(
                         codes::SURFACE_NOT_DECLARED,
@@ -379,7 +380,7 @@ impl<'a> Compiler<'a> {
     /// The field type with this name, or a diagnostic at the name.
     fn field_type(&mut self, name: &Located<String>) -> Option<(FieldTypeIndex, ValueType)> {
         if let Some(found) = self.model.field_type(&name.value) {
-            return Some((found.index, found.plan.ty.clone()));
+            return Some((found.index, found.compiled.ty.clone()));
         }
         if let Some(needs) = self.model.incomplete_types.get(&name.value).cloned() {
             self.error(
@@ -419,9 +420,9 @@ impl<'a> Compiler<'a> {
     ) -> Option<(a2m_core::ExprIndex, ValueType)> {
         let text = expr_text(doc)?;
         match check_expr(&text, &doc.at, env, expected) {
-            Ok(plan_expr) => {
-                let ty = plan_expr.result.clone();
-                Some((self.model.exprs.borrow_mut().intern(plan_expr), ty))
+            Ok(compiled_expr) => {
+                let ty = compiled_expr.result.clone();
+                Some((self.model.exprs.borrow_mut().intern(compiled_expr), ty))
             }
             Err(problem) => {
                 self.problems.push(problem);
@@ -433,13 +434,14 @@ impl<'a> Compiler<'a> {
     fn run(&mut self, version: Version) -> Result<Compiled, Diagnostics> {
         if self.mode == CompileMode::Draft && version != DRAFT_VERSION {
             // A draft under a release version would have the bytes and the
-            // hash of the plan published as that version (decision 0161).
+            // hash of the compiled target published as that version (decision
+            // 0161).
             return Err(Diagnostics::from(Diagnostic::error(
                 kernel(codes::DRAFT_UNDER_RELEASE_VERSION),
                 Stage::Emit,
                 &Place::start_of(&RelPath::target_file()),
                 format!(
-                    "A draft was asked for under the version {version}, which a published plan carries."
+                    "A draft was asked for under the version {version}, which a published compiled target carries."
                 ),
                 "Compile a draft under the draft version, or publish to compile a release.",
             )));
@@ -465,9 +467,9 @@ impl<'a> Compiler<'a> {
         let (Some(target), Some(about)) = (self.model.target.clone(), self.about.take()) else {
             return Err(warnings);
         };
-        let plan = Plan {
-            header: PlanHeader {
-                format: PLAN_FORMAT,
+        let compiled_target = CompiledTarget {
+            header: CompiledTargetHeader {
+                format: COMPILED_TARGET_FORMAT,
                 minimum_engine: MINIMUM_ENGINE,
                 compiler: COMPILER_VERSION,
                 target,
@@ -479,41 +481,44 @@ impl<'a> Compiler<'a> {
                 .model
                 .surfaces
                 .iter()
-                .map(|info| info.plan.clone())
+                .map(|info| info.compiled.clone())
                 .collect(),
             environments: std::mem::take(&mut self.environments),
             auth: std::mem::take(&mut self.auth),
             field_types: std::mem::take(&mut self.model.field_types),
             expressions: std::mem::take(&mut self.model.exprs.borrow_mut().exprs),
             operations: self
-                .op_plans
+                .compiled_ops
                 .iter()
-                .map(|(plan, _, _)| plan.clone())
+                .map(|(compiled_target, _, _)| compiled_target.clone())
                 .collect(),
             pipelines: self
                 .pipelines
                 .iter()
-                .map(|info| info.plan.clone())
+                .map(|info| info.compiled.clone())
                 .collect(),
             tools: std::mem::take(&mut self.tools),
             packs: std::mem::take(&mut self.model.sections),
             tests: std::mem::take(&mut self.tests),
         };
-        let review = review_of(&plan, &self.reviews);
-        match plan.encode() {
+        let review = review_of(&compiled_target, &self.reviews);
+        match compiled_target.encode() {
             Ok(encoded) => Ok(Compiled {
-                plan,
+                compiled_target,
                 encoded,
                 warnings,
                 review,
                 test_bindings: std::mem::take(&mut self.test_bindings),
             }),
             Err(failure) => Err(Diagnostics::from(Diagnostic::error(
-                kernel(codes::PLAN_NOT_ENCODABLE),
+                kernel(codes::COMPILED_TARGET_NOT_ENCODABLE),
                 Stage::Emit,
                 &Place::start_of(&RelPath::target_file()),
-                format!("The plan does not hold together: {}", failure.message()),
-                "A registered lowering or file kind returned a reference to something the plan does not hold, or steps that break a rule of a write; correct the pack.",
+                format!(
+                    "The compiled target does not hold together: {}",
+                    failure.message()
+                ),
+                "A registered lowering or file kind returned a reference to something the compiled target does not hold, or steps that break a rule of a write; correct the pack.",
             ))),
         }
     }
@@ -640,7 +645,7 @@ impl<'a> Compiler<'a> {
                     .to_owned(),
             );
         }
-        self.about = Some(TargetPlan {
+        self.about = Some(TargetSection {
             title: doc
                 .text("title")
                 .or_else(|| doc.text("target"))
@@ -760,7 +765,7 @@ impl<'a> Compiler<'a> {
             };
             let Some(payload) = payload else { continue };
             let programs = self.declared_programs(&spec, &pack_part);
-            let rate = doc.get("rate").map(|rate| RatePlan {
+            let rate = doc.get("rate").map(|rate| CompiledRate {
                 requests: to_u32(rate.get("requests").and_then(Located::as_int).unwrap_or(1)),
                 per_ms: to_u32(rate.get("per_ms").and_then(Located::as_int).unwrap_or(1)),
             });
@@ -773,7 +778,7 @@ impl<'a> Compiler<'a> {
                 ));
             }
             self.model.surfaces.push(SurfaceInfo {
-                plan: SurfacePlan {
+                compiled: CompiledSurface {
                     name,
                     kind,
                     address: address.to_owned(),
@@ -792,7 +797,7 @@ impl<'a> Compiler<'a> {
                     .model
                     .surface(&other.value)
                     .map(|surface| surface.index);
-                self.model.surfaces[position].plan.same_session_as = found;
+                self.model.surfaces[position].compiled.same_session_as = found;
             }
         }
         // `stands: {beneath: surface}` names a surface too.
@@ -816,9 +821,9 @@ impl<'a> Compiler<'a> {
                 .model
                 .surfaces
                 .iter()
-                .position(|surface| surface.plan.name.as_str() == entry.key.value)
+                .position(|surface| surface.compiled.name.as_str() == entry.key.value)
             {
-                self.model.surfaces[position].plan.stands = found;
+                self.model.surfaces[position].compiled.stands = found;
             }
         }
     }
@@ -884,7 +889,7 @@ impl<'a> Compiler<'a> {
         let Some(info) = self.model.surfaces.get(surface.get()) else {
             return;
         };
-        let Some(spec) = self.set.surface_kinds.get(&info.plan.kind) else {
+        let Some(spec) = self.set.surface_kinds.get(&info.compiled.kind) else {
             return;
         };
         let Some(field) = spec
@@ -902,9 +907,9 @@ impl<'a> Compiler<'a> {
             .and_then(digest_of);
         if let Some(program) = self.declared_program(address, digest)
             && let Some(info) = self.model.surfaces.get_mut(surface.get())
-            && !info.plan.programs.contains(&program)
+            && !info.compiled.programs.contains(&program)
         {
-            info.plan.programs.push(program);
+            info.compiled.programs.push(program);
         }
     }
 
@@ -1020,7 +1025,7 @@ impl<'a> Compiler<'a> {
                     }
                 }
                 names.insert(name.as_str().to_owned());
-                self.environments.push(EnvironmentPlan {
+                self.environments.push(CompiledEnvironment {
                     name,
                     kind,
                     addresses,
@@ -1037,7 +1042,7 @@ impl<'a> Compiler<'a> {
             && let Ok(name) = Environment::new("production")
         {
             names.insert("production".to_owned());
-            self.environments.push(EnvironmentPlan {
+            self.environments.push(CompiledEnvironment {
                 name,
                 kind: EnvironmentKind::Production,
                 addresses: Vec::new(),
@@ -1075,14 +1080,14 @@ impl<'a> Compiler<'a> {
     fn field_types(&mut self) {
         let start = Place::start_of(&RelPath::target_file());
         for (name, rule) in types::built_ins() {
-            let made = types::plan_of(
+            let made = types::compiled_of(
                 name,
                 &rule,
                 types::built_in_labels(name),
                 &mut self.model.exprs.borrow_mut(),
             );
             match made {
-                Ok(plan) => self.model.field_types.push(plan),
+                Ok(compiled) => self.model.field_types.push(compiled),
                 Err(why) => self.error(
                     codes::FIELD_TYPE_INCOMPLETE,
                     Stage::Resolve,
@@ -1166,13 +1171,14 @@ impl<'a> Compiler<'a> {
                         continue;
                     }
                 };
-                let made = types::plan_of(name, &rule, labels, &mut self.model.exprs.borrow_mut());
+                let made =
+                    types::compiled_of(name, &rule, labels, &mut self.model.exprs.borrow_mut());
                 match made {
-                    Ok(plan) => {
+                    Ok(compiled) => {
                         // A target's type of an incomplete built-in's name
                         // completes it; every other name is the target's own.
                         self.model.incomplete_types.remove(name);
-                        self.model.field_types.push(plan);
+                        self.model.field_types.push(compiled);
                     }
                     Err(why) => self.error(
                         codes::FIELD_TYPE_INCOMPLETE,
@@ -1202,8 +1208,8 @@ impl<'a> Compiler<'a> {
                 continue;
             }
             for entry in doc.get("auth").map(Located::items).unwrap_or_default() {
-                if let Some(plan) = self.auth_entry(entry, &mut covered) {
-                    self.auth.push(plan);
+                if let Some(compiled) = self.auth_entry(entry, &mut covered) {
+                    self.auth.push(compiled);
                 }
             }
         }
@@ -1213,7 +1219,7 @@ impl<'a> Compiler<'a> {
         &mut self,
         entry: &Located<Doc>,
         covered: &mut BTreeMap<SurfaceIndex, Place>,
-    ) -> Option<AuthPlan> {
+    ) -> Option<CompiledAuth> {
         let mut fine = true;
         let mut surfaces = Vec::new();
         for named in entry
@@ -1333,7 +1339,7 @@ impl<'a> Compiler<'a> {
             _ => true,
         };
         let probe = probe?;
-        fine.then(|| AuthPlan {
+        fine.then(|| CompiledAuth {
             surfaces,
             mode,
             provider,
@@ -1355,7 +1361,7 @@ impl<'a> Compiler<'a> {
     /// The probe of one entry of `auth.yaml`: a read operation of the
     /// target, with the inputs the entry gives it, or an entry of a pack's
     /// file kind on one of the entry's surfaces.
-    fn probe(&mut self, entry: &Located<Doc>, surfaces: &[SurfaceIndex]) -> Option<ProbePlan> {
+    fn probe(&mut self, entry: &Located<Doc>, surfaces: &[SurfaceIndex]) -> Option<CompiledProbe> {
         let named = entry.get("probe")?;
         let name = named.as_text()?;
         let given = entry.get("probe_inputs");
@@ -1392,12 +1398,12 @@ impl<'a> Compiler<'a> {
                 let Some(declared) = info
                     .inputs
                     .iter()
-                    .find(|declared| declared.plan.name == input.key.value)
+                    .find(|declared| declared.compiled.name == input.key.value)
                 else {
                     let known: Vec<&str> = info
                         .inputs
                         .iter()
-                        .map(|declared| declared.plan.name.as_str())
+                        .map(|declared| declared.compiled.name.as_str())
                         .collect();
                     let fix = fix_for_unknown(&input.key.value, &known);
                     self.error(
@@ -1410,9 +1416,9 @@ impl<'a> Compiler<'a> {
                     fine = false;
                     continue;
                 };
-                match value_of(&input.value, &declared.plan.ty) {
+                match value_of(&input.value, &declared.compiled.ty) {
                     Some(value) => {
-                        inputs.insert(declared.plan.name.clone(), value);
+                        inputs.insert(declared.compiled.name.clone(), value);
                     }
                     None => {
                         self.error(
@@ -1421,13 +1427,13 @@ impl<'a> Compiler<'a> {
                             &input.value.at,
                             format!(
                                 "The probe gives `{}` a {}, and the input is a {}.",
-                                declared.plan.name,
+                                declared.compiled.name,
                                 input.value.value.kind(),
-                                declared.plan.ty.name()
+                                declared.compiled.ty.name()
                             ),
                             format!(
                                 "Write a {} here; text goes in quotes.",
-                                declared.plan.ty.name()
+                                declared.compiled.ty.name()
                             ),
                         );
                         fine = false;
@@ -1435,26 +1441,26 @@ impl<'a> Compiler<'a> {
                 }
             }
             for declared in &info.inputs {
-                if declared.plan.required
-                    && declared.plan.default.is_none()
-                    && !inputs.contains(&declared.plan.name)
+                if declared.compiled.required
+                    && declared.compiled.default.is_none()
+                    && !inputs.contains(&declared.compiled.name)
                 {
                     invalid(
                         self,
                         &named.at,
                         format!(
                             "The probe `{name}` needs the input `{}`, and the entry does not give it.",
-                            declared.plan.name
+                            declared.compiled.name
                         ),
                         &format!(
                             "Add `probe_inputs: {{{}: ...}}` with a record that always exists, or name a read that needs no input.",
-                            declared.plan.name
+                            declared.compiled.name
                         ),
                     );
                     fine = false;
                 }
             }
-            return fine.then(|| ProbePlan::Operation {
+            return fine.then(|| CompiledProbe::Operation {
                 operation: OperationIndex::new(index(position)),
                 inputs,
             });
@@ -1464,7 +1470,7 @@ impl<'a> Compiler<'a> {
         let kinds: BTreeSet<&SurfaceKind> = surfaces
             .iter()
             .filter_map(|surface| self.model.surfaces.get(surface.get()))
-            .map(|surface| &surface.plan.kind)
+            .map(|surface| &surface.compiled.kind)
             .collect();
         let found: Vec<SectionIndex> = self
             .model
@@ -1494,7 +1500,7 @@ impl<'a> Compiler<'a> {
                     );
                     return None;
                 }
-                Some(ProbePlan::Entry(PackRef {
+                Some(CompiledProbe::Entry(PackRef {
                     section: *section,
                     entry: name.to_owned(),
                 }))
@@ -1508,7 +1514,7 @@ impl<'a> Compiler<'a> {
                 // A system that answers no read before a sign-in leaves
                 // nothing to draft a probe from until the first session: a
                 // draft may name its probe first (decision 0252). A publish
-                // never may, and the plan's own check refuses one.
+                // never may, and the compiled target's own check refuses one.
                 self.problems.push(
                     Diagnostic::error(
                         kernel(codes::PROBE_PENDING),
@@ -1522,7 +1528,7 @@ impl<'a> Compiler<'a> {
                     )
                     .as_warning(),
                 );
-                Some(ProbePlan::Pending {
+                Some(CompiledProbe::Pending {
                     name: name.to_owned(),
                 })
             }
@@ -1794,7 +1800,7 @@ impl<'a> Compiler<'a> {
                 value
             });
             inputs.push(InputInfo {
-                plan: InputPlan {
+                compiled: CompiledInput {
                     name: name.to_owned(),
                     field_type,
                     ty,
@@ -1832,8 +1838,8 @@ impl<'a> Compiler<'a> {
         key: &[String],
         pipeline: Option<&str>,
     ) {
-        for input in inputs.iter().filter(|input| input.plan.precondition) {
-            let name = &input.plan.name;
+        for input in inputs.iter().filter(|input| input.compiled.precondition) {
+            let name = &input.compiled.name;
             let why = if let Some(pipeline) = pipeline {
                 format!(
                     "The input `{name}` of the pipeline `{pipeline}` is marked `precondition`, and a pipeline's input is never one."
@@ -1930,12 +1936,14 @@ impl<'a> Compiler<'a> {
         };
         let mut fine = true;
         for name in &key {
-            let input = inputs.iter().find(|input| input.plan.name == name.value);
+            let input = inputs
+                .iter()
+                .find(|input| input.compiled.name == name.value);
             match input {
                 None => {
                     let known: Vec<&str> = inputs
                         .iter()
-                        .map(|input| input.plan.name.as_str())
+                        .map(|input| input.compiled.name.as_str())
                         .collect();
                     invalid(
                         self,
@@ -1948,7 +1956,7 @@ impl<'a> Compiler<'a> {
                     );
                     fine = false;
                 }
-                Some(input) if !input.plan.required => {
+                Some(input) if !input.compiled.required => {
                     invalid(
                         self,
                         &name.at,
@@ -2105,7 +2113,7 @@ impl<'a> Compiler<'a> {
                         .as_warning(),
                     );
                 }
-                outputs.push(OutputPlan {
+                outputs.push(CompiledOutput {
                     name: entry.key.value.clone(),
                     ty: if list { ValueType::list_of(ty) } else { ty },
                     field_type: Some(field_type),
@@ -2135,15 +2143,15 @@ impl<'a> Compiler<'a> {
             };
             let examples = self.examples(doc, &info);
             let decision_points = self.decision_points(doc);
-            if let (Some(mut plan), Some(examples), Some(decision_points)) =
+            if let (Some(mut compiled), Some(examples), Some(decision_points)) =
                 (self.bindings(&info), examples, decision_points)
             {
-                plan.examples = examples;
-                plan.decision_points = decision_points;
+                compiled.examples = examples;
+                compiled.decision_points = decision_points;
                 let title = doc.text("title").unwrap_or(info.name.as_str()).to_owned();
                 let description = doc.text("description").unwrap_or_default().to_owned();
                 self.note_description_by(doc, info.name.as_str());
-                self.op_plans.push((plan, title, description));
+                self.compiled_ops.push((compiled, title, description));
                 self.operations.push(info);
             }
         }
@@ -2184,12 +2192,12 @@ impl<'a> Compiler<'a> {
                 let Some(input) = info
                     .inputs
                     .iter()
-                    .find(|input| input.plan.name == given.key.value)
+                    .find(|input| input.compiled.name == given.key.value)
                 else {
                     let known: Vec<&str> = info
                         .inputs
                         .iter()
-                        .map(|input| input.plan.name.as_str())
+                        .map(|input| input.compiled.name.as_str())
                         .collect();
                     let fix = fix_for_unknown(&given.key.value, &known);
                     self.error(
@@ -2206,9 +2214,9 @@ impl<'a> Compiler<'a> {
                     fine = false;
                     continue;
                 };
-                match value_of(&given.value, &input.plan.ty) {
+                match value_of(&given.value, &input.compiled.ty) {
                     Some(value) => {
-                        values.insert(input.plan.name.clone(), value);
+                        values.insert(input.compiled.name.clone(), value);
                     }
                     None => {
                         self.error(
@@ -2217,13 +2225,13 @@ impl<'a> Compiler<'a> {
                             &given.value.at,
                             format!(
                                 "The example gives `{}` a {}, and the input is a {}.",
-                                input.plan.name,
+                                input.compiled.name,
                                 given.value.value.kind(),
-                                input.plan.ty.name()
+                                input.compiled.ty.name()
                             ),
                             format!(
                                 "Write a {} here; text goes in quotes.",
-                                input.plan.ty.name()
+                                input.compiled.ty.name()
                             ),
                         );
                         fine = false;
@@ -2267,7 +2275,7 @@ impl<'a> Compiler<'a> {
         fine.then_some(points)
     }
 
-    fn bindings(&mut self, info: &OpInfo) -> Option<OperationPlan> {
+    fn bindings(&mut self, info: &OpInfo) -> Option<CompiledOperation> {
         let set = self.set;
         let doc = &info.doc;
         let kernel_part = k::binding();
@@ -2525,7 +2533,7 @@ impl<'a> Compiler<'a> {
                 Some(surface) => bindings.push({
                     review.bindings.push((mode.clone(), surface, statement));
                     file_places.push(position);
-                    BindingPlan {
+                    CompiledBinding {
                         mode,
                         verb,
                         status,
@@ -2569,7 +2577,7 @@ impl<'a> Compiler<'a> {
             .filter_map(|name| {
                 info.inputs
                     .iter()
-                    .position(|input| &input.plan.name == name)
+                    .position(|input| &input.compiled.name == name)
             })
             .map(|position| InputIndex::new(index(position)))
             .collect();
@@ -2589,20 +2597,24 @@ impl<'a> Compiler<'a> {
                 })
                 .unwrap_or_default()
         };
-        Some(OperationPlan {
+        Some(CompiledOperation {
             name: info.name.clone(),
             effect: info.effect,
             hazard: info.hazard,
-            inputs: info.inputs.iter().map(|input| input.plan.clone()).collect(),
+            inputs: info
+                .inputs
+                .iter()
+                .map(|input| input.compiled.clone())
+                .collect(),
             outputs: info
                 .outputs
                 .iter()
-                .map(|output| OutputPlan {
+                .map(|output| CompiledOutput {
                     may_be_absent: output.may_be_absent || absent.contains(&output.name),
                     ..output.clone()
                 })
                 .collect(),
-            identity: IdentityPlan {
+            identity: CompiledIdentity {
                 strategy: info.strategy,
                 key,
             },
@@ -2880,7 +2892,7 @@ impl<'a> Compiler<'a> {
             && (info.effect == EffectClass::Write
                 || (info.effect == EffectClass::Irreversible
                     && info.strategy != IdentityStrategy::None));
-        // The plan's check asks the same question (decision 0193).
+        // The compiled target's check asks the same question (decision 0193).
         if by.evidence == WriteEvidence::Acknowledged
             && !a2m_core::acknowledgement_may_stand(info.strategy, &lowered.read_back)
         {
@@ -3018,7 +3030,7 @@ impl<'a> Compiler<'a> {
             let Some(name) = template.as_text() else {
                 continue;
             };
-            if self.source_plans.contains_key(name) {
+            if self.compiled_sources.contains_key(name) {
                 self.error(
                     codes::NAME_DEFINED_TWICE,
                     Stage::Resolve,
@@ -3028,15 +3040,17 @@ impl<'a> Compiler<'a> {
                 );
                 continue;
             }
-            if let Some((plan, row)) = self.source(doc, name) {
-                self.source_plans.insert(name.to_owned(), (plan, row));
+            if let Some((compiled, row)) = self.source(doc, name) {
+                self.compiled_sources
+                    .insert(name.to_owned(), (compiled, row));
             }
         }
     }
 
-    /// One source definition: the plan's source, whose payload is the shape
-    /// the source readers load (decision 0087), and the type of a row.
-    fn source(&mut self, doc: &Located<Doc>, name: &str) -> Option<(SourcePlan, ValueType)> {
+    /// One source definition: the compiled target's source, whose payload is
+    /// the shape the source readers load (decision 0087), and the type of a
+    /// row.
+    fn source(&mut self, doc: &Located<Doc>, name: &str) -> Option<(CompiledSource, ValueType)> {
         let mut fine = true;
         let reader = doc.text("reader").unwrap_or_default();
         let texts = |key: &str| -> Vec<Located<String>> {
@@ -3092,7 +3106,8 @@ impl<'a> Compiler<'a> {
             fine = false;
         }
 
-        // Row fields: a bare column is data; an expression goes to the plan.
+        // Row fields: a bare column is data; an expression goes to the
+        // compiled target.
         let mut fields = Vec::new();
         let mut row = Vec::new();
         let mut written: Vec<(String, &Located<Doc>)> = Vec::new();
@@ -3300,7 +3315,7 @@ impl<'a> Compiler<'a> {
         let payload = PackPayload::encode(&payload).ok()?;
         fine.then(|| {
             (
-                SourcePlan {
+                CompiledSource {
                     template: name.to_owned(),
                     reader: reader.to_owned(),
                     mapping,
@@ -3326,12 +3341,15 @@ impl<'a> Compiler<'a> {
             let Some(name) = doc.get("pipeline").and_then(|name| self.tool_name(name)) else {
                 continue;
             };
-            if let Some(plan) = self.pipeline(doc, name) {
-                let title = doc.text("title").unwrap_or(plan.name.as_str()).to_owned();
+            if let Some(compiled) = self.pipeline(doc, name) {
+                let title = doc
+                    .text("title")
+                    .unwrap_or(compiled.name.as_str())
+                    .to_owned();
                 let description = doc.text("description").unwrap_or_default().to_owned();
-                self.note_description_by(doc, plan.name.as_str());
+                self.note_description_by(doc, compiled.name.as_str());
                 self.pipelines.push(PipelineInfo {
-                    plan,
+                    compiled,
                     title,
                     description,
                     at: doc.at.clone(),
@@ -3340,7 +3358,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn pipeline(&mut self, doc: &Located<Doc>, name: OperationName) -> Option<PipelinePlan> {
+    fn pipeline(&mut self, doc: &Located<Doc>, name: OperationName) -> Option<CompiledPipeline> {
         let mut fine = true;
         let mut inputs = self.inputs(doc);
         self.preconditions(&inputs, EffectClass::Write, &[], Some(name.as_str()));
@@ -3350,10 +3368,11 @@ impl<'a> Compiler<'a> {
         if let Some(template) = doc.get("source").and_then(|source| source.get("template"))
             && let Some(text) = template.as_text()
         {
-            match self.source_plans.get(text).cloned() {
-                Some((plan, row)) => {
-                    if plan.reader != OPERATION_READER {
-                        if let Some(taken) = inputs.iter().find(|input| input.plan.name == "source")
+            match self.compiled_sources.get(text).cloned() {
+                Some((compiled, row)) => {
+                    if compiled.reader != OPERATION_READER {
+                        if let Some(taken) =
+                            inputs.iter().find(|input| input.compiled.name == "source")
                         {
                             let at = taken.at.clone();
                             self.error(
@@ -3366,10 +3385,10 @@ impl<'a> Compiler<'a> {
                             fine = false;
                         } else if let Some(file) = self.model.field_type("file") {
                             inputs.push(InputInfo {
-                                plan: InputPlan {
+                                compiled: CompiledInput {
                                     name: "source".to_owned(),
                                     field_type: file.index,
-                                    ty: file.plan.ty.clone(),
+                                    ty: file.compiled.ty.clone(),
                                     required: true,
                                     default: None,
                                     description: format!("The file to read, in the form of the source template `{text}`."),
@@ -3379,11 +3398,12 @@ impl<'a> Compiler<'a> {
                             });
                         }
                     }
-                    source = Some(plan);
+                    source = Some(compiled);
                     row_type = Some(row);
                 }
                 None => {
-                    let known: Vec<&str> = self.source_plans.keys().map(String::as_str).collect();
+                    let known: Vec<&str> =
+                        self.compiled_sources.keys().map(String::as_str).collect();
                     let fix = fix_for_unknown(text, &known);
                     self.error(
                         codes::UNKNOWN_NAME,
@@ -3540,12 +3560,12 @@ impl<'a> Compiler<'a> {
                 let Some(input) = info
                     .inputs
                     .iter()
-                    .find(|input| input.plan.name == arg.key.value)
+                    .find(|input| input.compiled.name == arg.key.value)
                 else {
                     let known: Vec<&str> = info
                         .inputs
                         .iter()
-                        .map(|input| input.plan.name.as_str())
+                        .map(|input| input.compiled.name.as_str())
                         .collect();
                     let fix = fix_for_unknown(&arg.key.value, &known);
                     self.error(
@@ -3563,7 +3583,7 @@ impl<'a> Compiler<'a> {
                     continue;
                 };
                 given.insert(arg.key.value.clone());
-                match self.step_expr(&arg.value, &env, &relaxed, Some(&input.plan.ty)) {
+                match self.step_expr(&arg.value, &env, &relaxed, Some(&input.compiled.ty)) {
                     Some((value, _)) => with.push(StepArg {
                         name: arg.key.value.clone(),
                         value,
@@ -3572,16 +3592,16 @@ impl<'a> Compiler<'a> {
                 }
             }
             for input in &info.inputs {
-                if input.plan.required
-                    && input.plan.default.is_none()
-                    && !given.contains(&input.plan.name)
+                if input.compiled.required
+                    && input.compiled.default.is_none()
+                    && !given.contains(&input.compiled.name)
                 {
                     self.error(
                         codes::MISSING_FIELD,
                         Stage::Resolve,
                         &step.at,
-                        format!("The step `{id}` does not pass the required input `{}` of `{}`.", input.plan.name, info.name),
-                        format!("Add `{}:` under `with`; inputs are passed only there, never by matching names.", input.plan.name),
+                        format!("The step `{id}` does not pass the required input `{}` of `{}`.", input.compiled.name, info.name),
+                        format!("Add `{}:` under `with`; inputs are passed only there, never by matching names.", input.compiled.name),
                     );
                     fine = false;
                 }
@@ -3651,8 +3671,8 @@ impl<'a> Compiler<'a> {
             }
             effect = effect.max(class);
         }
-        // A limit the pipeline does not state is the target's default, so
-        // the plan holds the limit and the engine applies no default.
+        // A limit the pipeline does not state is the target's default, so the
+        // compiled target holds the limit and the engine applies no default.
         let limits = PipelineLimits {
             max_records: doc
                 .get("limits")
@@ -3688,11 +3708,11 @@ impl<'a> Compiler<'a> {
                 None => fine = false,
             }
         }
-        fine.then(|| PipelinePlan {
+        fine.then(|| CompiledPipeline {
             name,
             effect,
             hazard,
-            inputs: inputs.into_iter().map(|input| input.plan).collect(),
+            inputs: inputs.into_iter().map(|input| input.compiled).collect(),
             source,
             limits,
             steps,
@@ -3716,9 +3736,9 @@ impl<'a> Compiler<'a> {
     ) -> Option<(a2m_core::ExprIndex, ValueType)> {
         let text = expr_text(doc)?;
         match check_expr(&text, &doc.at, env, expected) {
-            Ok(plan_expr) => {
-                let ty = plan_expr.result.clone();
-                Some((self.model.exprs.borrow_mut().intern(plan_expr), ty))
+            Ok(compiled_expr) => {
+                let ty = compiled_expr.result.clone();
+                Some((self.model.exprs.borrow_mut().intern(compiled_expr), ty))
             }
             Err(problem) => {
                 if check_expr(&text, &doc.at, relaxed, expected).is_ok() {
@@ -3742,22 +3762,27 @@ impl<'a> Compiler<'a> {
     fn describe(&mut self) {
         let mut tools = Vec::new();
         let mut places = Vec::new();
-        let operations: Vec<(usize, OperationPlan, String, String)> = self
-            .op_plans
+        let operations: Vec<(usize, CompiledOperation, String, String)> = self
+            .compiled_ops
             .iter()
             .enumerate()
-            .map(|(position, (plan, title, description))| {
-                (position, plan.clone(), title.clone(), description.clone())
+            .map(|(position, (compiled, title, description))| {
+                (
+                    position,
+                    compiled.clone(),
+                    title.clone(),
+                    description.clone(),
+                )
             })
             .collect();
-        for (position, plan, title, description) in operations {
-            let idempotent = plan.effect == EffectClass::Read
-                || (plan.effect == EffectClass::Write
+        for (position, compiled, title, description) in operations {
+            let idempotent = compiled.effect == EffectClass::Read
+                || (compiled.effect == EffectClass::Write
                     && matches!(
-                        plan.identity.strategy,
+                        compiled.identity.strategy,
                         IdentityStrategy::Natural | IdentityStrategy::Composite
                     ));
-            let output: serde_json::Map<String, serde_json::Value> = plan
+            let output: serde_json::Map<String, serde_json::Value> = compiled
                 .outputs
                 .iter()
                 .map(|output| {
@@ -3786,60 +3811,60 @@ impl<'a> Compiler<'a> {
                 })
                 .collect();
             // Every output is in every result, so every output is required.
-            let required: Vec<&str> = plan
+            let required: Vec<&str> = compiled
                 .outputs
                 .iter()
                 .map(|output| output.name.as_str())
                 .collect();
             let at = self.operations[position].doc.at.clone();
             let tool = self.tool(
-                plan.name.clone(),
+                compiled.name.clone(),
                 ToolRuns::Operation(OperationIndex::new(index(position))),
                 title,
                 description,
-                &plan.inputs,
+                &compiled.inputs,
                 serde_json::json!({"type": "object", "properties": output, "required": required}),
                 ToolAnnotations {
-                    read_only: plan.effect == EffectClass::Read,
-                    destructive: plan.effect == EffectClass::Irreversible
-                        || plan.hazard != Hazard::None,
+                    read_only: compiled.effect == EffectClass::Read,
+                    destructive: compiled.effect == EffectClass::Irreversible
+                        || compiled.hazard != Hazard::None,
                     idempotent,
-                    open_world: plan.hazard == Hazard::SendsOutside
-                        || !plan.manifest.destinations.is_empty(),
+                    open_world: compiled.hazard == Hazard::SendsOutside
+                        || !compiled.manifest.destinations.is_empty(),
                 },
                 &at,
             );
             tools.extend(tool);
             places.push(at);
         }
-        let pipelines: Vec<(usize, PipelinePlan, String, String, Place)> = self
+        let pipelines: Vec<(usize, CompiledPipeline, String, String, Place)> = self
             .pipelines
             .iter()
             .enumerate()
             .map(|(position, info)| {
                 (
                     position,
-                    info.plan.clone(),
+                    info.compiled.clone(),
                     info.title.clone(),
                     info.description.clone(),
                     info.at.clone(),
                 )
             })
             .collect();
-        for (position, plan, title, description, at) in pipelines {
+        for (position, compiled, title, description, at) in pipelines {
             let tool = self.tool(
-                plan.name.clone(),
+                compiled.name.clone(),
                 ToolRuns::Pipeline(PipelineIndex::new(index(position))),
                 title,
                 description,
-                &plan.inputs,
+                &compiled.inputs,
                 serde_json::json!({"type": "object"}),
                 ToolAnnotations {
-                    read_only: plan.effect == EffectClass::Read,
-                    destructive: plan.effect == EffectClass::Irreversible
-                        || plan.hazard != Hazard::None,
-                    idempotent: plan.effect == EffectClass::Read,
-                    open_world: plan.hazard == Hazard::SendsOutside,
+                    read_only: compiled.effect == EffectClass::Read,
+                    destructive: compiled.effect == EffectClass::Irreversible
+                        || compiled.hazard != Hazard::None,
+                    idempotent: compiled.effect == EffectClass::Read,
+                    open_world: compiled.hazard == Hazard::SendsOutside,
                 },
                 &at,
             );
@@ -3935,11 +3960,11 @@ impl<'a> Compiler<'a> {
         runs: ToolRuns,
         title: String,
         description: String,
-        inputs: &[InputPlan],
+        inputs: &[CompiledInput],
         output_schema: serde_json::Value,
         annotations: ToolAnnotations,
         at: &Place,
-    ) -> Option<ToolPlan> {
+    ) -> Option<CompiledTool> {
         let length = description.trim().chars().count();
         if length > MOST_DESCRIPTION_CHARACTERS
             || description
@@ -3999,7 +4024,7 @@ impl<'a> Compiler<'a> {
             .get(name.as_str())
             .copied()
             .unwrap_or_default();
-        Some(ToolPlan {
+        Some(CompiledTool {
             name,
             runs,
             module,
@@ -4042,11 +4067,12 @@ impl<'a> Compiler<'a> {
             .and_then(|position| position.as_int())
             .and_then(|position| usize::try_from(position).ok())
             .and_then(|position| position.checked_sub(1));
-        let plan = &self.op_plans[operation.get()].0;
-        let bindings = &plan.bindings;
-        // A test counts positions in the operation's file, whatever order
-        // the compiler put the bindings in; the plan's place is what it keeps.
-        let in_file = self.binding_files.get(&plan.name);
+        let compiled = &self.compiled_ops[operation.get()].0;
+        let bindings = &compiled.bindings;
+        // A test counts positions in the operation's file, whatever order the
+        // compiler put the bindings in; the compiled target's place is what
+        // it keeps.
+        let in_file = self.binding_files.get(&compiled.name);
         let of_mode: Vec<usize> = bindings
             .iter()
             .enumerate()
@@ -4174,12 +4200,12 @@ impl<'a> Compiler<'a> {
                     .text("kind")
                     .and_then(|kind| kind.parse::<TestKind>().ok())
                     .unwrap_or(TestKind::Offline);
-                let inputs: Vec<InputPlan> = match self.tools[tool].runs {
+                let inputs: Vec<CompiledInput> = match self.tools[tool].runs {
                     ToolRuns::Operation(operation) => {
-                        self.op_plans[operation.get()].0.inputs.clone()
+                        self.compiled_ops[operation.get()].0.inputs.clone()
                     }
                     ToolRuns::Pipeline(pipeline) => {
-                        self.pipelines[pipeline.get()].plan.inputs.clone()
+                        self.pipelines[pipeline.get()].compiled.inputs.clone()
                     }
                 };
                 let mut values = Values::new();
@@ -4271,7 +4297,7 @@ impl<'a> Compiler<'a> {
                     tested.insert(tool_name.to_owned());
                 }
                 self.test_bindings.push(binding);
-                self.tests.push(TestPlan {
+                self.tests.push(CompiledTest {
                     name,
                     tool: ToolIndex::new(index(tool)),
                     kind,
@@ -4294,7 +4320,7 @@ impl<'a> Compiler<'a> {
             .chain(
                 self.pipelines
                     .iter()
-                    .map(|info| (info.plan.name.as_str().to_owned(), info.at.clone())),
+                    .map(|info| (info.compiled.name.as_str().to_owned(), info.at.clone())),
             )
             .filter(|(name, _)| !tested.contains(name))
             .collect();

@@ -576,7 +576,7 @@
    "group": "Kernel",
    "where": "a2m-actions",
    "state": "p",
-   "text": "Every authoring and administration action is defined here once: its name, inputs, effect, and who may run it. Its command, MCP tool, REST route, and client method are generated, never written by hand. It asks the policy engine before anything happens, and it answers the engine loop's requests for plans, sessions, and the ledger. The actions for capture and for trying a write are not built. The toolset listing takes only built actions, in catalog order, to the cap.",
+   "text": "Every authoring and administration action is defined here once: its name, inputs, effect, and who may run it. Its command, MCP tool, REST route, and client method are generated, never written by hand. It asks the policy engine before anything happens, and it answers the engine loop's requests for compiled targets, sessions, and the ledger. The actions for capture and for trying a write are not built. The toolset listing takes only built actions, in catalog order, to the cap.",
    "decided": [
     "Lint now fails when it lists an error, as trying a tool already did.",
     "An action with no handler is never listed up front in a toolset; it stays in the catalog and answers that it is not built. Not: raise the toolset's cap (0306)."
@@ -1205,7 +1205,7 @@
    "group": "Kernel",
    "where": "a2m-engine",
    "state": "b",
-   "text": "Runs a compiled plan step by step, with no model and no improvising. For a write: reads the current values, builds the change, waits for approval, records the intent, has the pack act once, reads the value back, and compares. After a crash it reads the system before it writes anything again. A step it cannot do as written is a named stop.",
+   "text": "Runs a compiled target step by step, with no model and no improvising. For a write: reads the current values, builds the change, waits for approval, records the intent, has the pack act once, reads the value back, and compares. After a crash it reads the system before it writes anything again. A step it cannot do as written is a named stop.",
    "weighing": [
     "Kill at a random step and resume, a hundred seeds: not yet a test."
    ],
@@ -1288,7 +1288,7 @@
     [
      "engine-guard",
      "engine-choose",
-     "a plan whose hash matches",
+     "a compiled target whose hash matches",
      "path",
      1
     ],
@@ -1365,7 +1365,7 @@
    ],
    "steps": [
     {
-     "text": "Guard: five checks in order. The plan hash is checked, the kernel must be healthy, the session must be in a state that allows the call, policy must allow the call, and the surface must not be blocked at its edge.",
+     "text": "Guard: five checks in order. The compiled target hash is checked, the kernel must be healthy, the session must be in a state that allows the call, policy must allow the call, and the surface must not be blocked at its edge.",
      "at": [
       "engine-guard"
      ]
@@ -2353,7 +2353,7 @@
     "No two drafted tools share a name or a file."
    ],
    "weighing": [
-    "Should a tool's output schema say beforehand which outputs may be absent? Leaning yes; the shape already knows, nothing carries it into the plan."
+    "Should a tool's output schema say beforehand which outputs may be absent? Leaning yes; the shape already knows, nothing carries it into the compiled target."
    ],
    "rows": [
     {
@@ -3095,7 +3095,7 @@
    ],
    "steps": [
     {
-     "text": "Every statement any binding may run is text in a statements file, reviewed and hashed with the plan. An input only fills a bound parameter.",
+     "text": "Every statement any binding may run is text in a statements file, reviewed and hashed with the compiled target. An input only fills a bound parameter.",
      "at": [
       "data-statements"
      ]
@@ -3748,12 +3748,12 @@
    ],
    "stepsTitle": "Target Layout"
   },
-  "plan": {
-   "name": "Plan",
+  "compiled-target": {
+   "name": "Compiled Target",
    "group": "Stored State",
    "where": "a2m-files compiles it; a2m-core checks it",
    "state": "b",
-   "text": "The compiler checks a target's files and writes one file, the plan, with a hash of its exact bytes. The engine runs only plans and refuses one whose hash does not match. Every run records the hash, and a publish is tied to it.",
+   "text": "The compiler checks a target's files and writes one file, the compiled target, with a hash of its exact bytes. The engine runs only compiled targets and refuses one whose hash does not match. Every run records the hash, and a publish is tied to it.",
    "decided": [
     "0298, reworked the same day: the compiler stays all-or-nothing. A draft with an open question waits in a holding folder that the compiler never reads."
    ],
@@ -3767,25 +3767,25 @@
       {
        "title": "Reading Stages",
        "ids": [
-        "plan-parse",
-        "plan-validate",
-        "plan-resolve"
+        "compiled-target-parse",
+        "compiled-target-validate",
+        "compiled-target-resolve"
        ]
       },
       {
        "title": "Checking Stages",
        "ids": [
-        "plan-typecheck",
-        "plan-lower",
-        "plan-analyze"
+        "compiled-target-typecheck",
+        "compiled-target-lower",
+        "compiled-target-analyze"
        ]
       },
       {
        "title": "Finishing Stages",
        "ids": [
-        "plan-lint",
-        "plan-describe",
-        "plan-emit"
+        "compiled-target-lint",
+        "compiled-target-describe",
+        "compiled-target-emit"
        ]
       }
      ]
@@ -3795,10 +3795,10 @@
      "cols": [
       {
        "ids": [
-        "plan-contents",
-        "plan-hash",
-        "plan-whole",
-        "plan-versions"
+        "compiled-target-contents",
+        "compiled-target-hash",
+        "compiled-target-whole",
+        "compiled-target-versions"
        ]
       }
      ]
@@ -3806,84 +3806,84 @@
    ],
    "edges": [
     [
-     "plan-parse",
-     "plan-validate",
+     "compiled-target-parse",
+     "compiled-target-validate",
      "values, with file, line and column",
      "path",
      1
     ],
     [
-     "plan-validate",
-     "plan-resolve",
+     "compiled-target-validate",
+     "compiled-target-resolve",
      "files that fit their schemas",
      "path",
      2
     ],
     [
-     "plan-resolve",
-     "plan-typecheck",
+     "compiled-target-resolve",
+     "compiled-target-typecheck",
      "names linked to their definitions",
      "path",
      3
     ],
     [
-     "plan-typecheck",
-     "plan-lower",
+     "compiled-target-typecheck",
+     "compiled-target-lower",
      "expressions that type-check",
      "path",
      4
     ],
     [
-     "plan-lower",
-     "plan-analyze",
+     "compiled-target-lower",
+     "compiled-target-analyze",
      "a fixed list of steps per binding",
      "path",
      5
     ],
     [
-     "plan-analyze",
-     "plan-lint",
+     "compiled-target-analyze",
+     "compiled-target-lint",
      "commit counts and effect classes",
      "path",
      6
     ],
     [
-     "plan-lint",
-     "plan-describe",
+     "compiled-target-lint",
+     "compiled-target-describe",
      "a target that passes the lints",
      "path",
      7
     ],
     [
-     "plan-describe",
-     "plan-emit",
+     "compiled-target-describe",
+     "compiled-target-emit",
      "each tool's name and schemas",
      "path",
      8
     ],
     [
-     "plan-emit",
-     "plan-hash",
-     "the plan's exact bytes",
+     "compiled-target-emit",
+     "compiled-target-hash",
+     "the compiled target's exact bytes",
      "path",
      9
     ],
     [
-     "plan-emit",
-     "plan-contents",
-     "what the plan holds",
+     "compiled-target-emit",
+     "compiled-target-contents",
+     "what the compiled target holds",
      "use"
     ],
     [
-     "plan-whole",
-     "plan-emit",
+     "compiled-target-whole",
+     "compiled-target-emit",
      "no problem left standing",
      "use"
     ],
     [
-     "plan-contents",
-     "plan-versions",
-     "the plan bytes of each version",
+     "compiled-target-contents",
+     "compiled-target-versions",
+     "the compiled target bytes of each version",
      "store"
     ]
    ],
@@ -3891,47 +3891,47 @@
     {
      "text": "The target's files are parsed with the place of every value kept, then checked against their schemas.",
      "at": [
-      "plan-parse",
-      "plan-validate"
+      "compiled-target-parse",
+      "compiled-target-validate"
      ]
     },
     {
      "text": "Names are linked: operations to screens, endpoints and field types; pipelines to operations and sources.",
      "at": [
-      "plan-resolve"
+      "compiled-target-resolve"
      ]
     },
     {
      "text": "Every expression is type-checked. There is no float type; numbers are decimals.",
      "at": [
-      "plan-typecheck"
+      "compiled-target-typecheck"
      ]
     },
     {
      "text": "Each binding is lowered into a fixed list of steps by its pack.",
      "at": [
-      "plan-lower"
+      "compiled-target-lower"
      ]
     },
     {
      "text": "Commit points are counted from those steps, and each operation's effect class and permission manifest are worked out.",
      "at": [
-      "plan-analyze"
+      "compiled-target-analyze"
      ]
     },
     {
      "text": "Lint rules run, then each tool's name, description and schemas are generated.",
      "at": [
-      "plan-lint",
-      "plan-describe"
+      "compiled-target-lint",
+      "compiled-target-describe"
      ]
     },
     {
-     "text": "If every stage passed, the plan is written as canonical JSON and its hash is taken. If any problem stood, nothing is emitted.",
+     "text": "If every stage passed, the compiled target is written as canonical JSON and its hash is taken. If any problem stood, nothing is emitted.",
      "at": [
-      "plan-emit",
-      "plan-whole",
-      "plan-hash"
+      "compiled-target-emit",
+      "compiled-target-whole",
+      "compiled-target-hash"
      ]
     }
    ],
@@ -3943,33 +3943,33 @@
       {
        "text": "Every file is parsed with the place of each value kept, then checked against its schema.",
        "at": [
-        "plan-parse",
-        "plan-validate"
+        "compiled-target-parse",
+        "compiled-target-validate"
        ]
       },
       {
        "text": "Resolution fails: an operation names an endpoint that does not exist. The problem gets a code, a place and a fix.",
        "at": [
-        "plan-resolve"
+        "compiled-target-resolve"
        ]
       },
       {
        "text": "Type-Checking fails too: an expression uses a float name, which is refused.",
        "at": [
-        "plan-typecheck"
+        "compiled-target-typecheck"
        ]
       },
       {
        "text": "The problems from the stages are reported together, not one at a time.",
        "at": [
-        "plan-whole"
+        "compiled-target-whole"
        ]
       },
       {
-       "text": "Nothing is emitted. There is no plan and no hash, so nothing can run or be published.",
+       "text": "Nothing is emitted. There is no compiled target and no hash, so nothing can run or be published.",
        "at": [
-        "plan-emit",
-        "plan-hash"
+        "compiled-target-emit",
+        "compiled-target-hash"
        ]
       }
      ]
@@ -4417,7 +4417,7 @@
    "group": "Foundation",
    "where": "a2m-core",
    "state": "b",
-   "text": "The shared words as types: archetypes, effect classes, hazards, failure classes, evidence levels, statuses, and the plan's shape. A test holds their names to the documents.",
+   "text": "The shared words as types: archetypes, effect classes, hazards, failure classes, evidence levels, statuses, and the compiled target's shape. A test holds their names to the documents.",
    "rows": [
     {
      "title": "Vocabulary Types",
@@ -4448,7 +4448,7 @@
        "ids": [
         "core-failure",
         "core-finding",
-        "core-plan"
+        "core-compiled-target"
        ]
       }
      ]
@@ -4485,9 +4485,9 @@
      "use"
     ],
     [
-     "core-plan",
+     "core-compiled-target",
      "core-values",
-     "typed values inside the plan",
+     "typed values inside the compiled target",
      "use"
     ]
    ],
@@ -4518,9 +4518,9 @@
      ]
     },
     {
-     "text": "A compiled plan is immutable data with one encoding and a hash check. A secret is a wrapper that cannot be printed.",
+     "text": "A compiled target is immutable data with one encoding and a hash check. A secret is a wrapper that cannot be printed.",
      "at": [
-      "core-plan",
+      "core-compiled-target",
       "core-secret"
      ]
     }
@@ -4569,7 +4569,7 @@
     [
      "expr-compile",
      "expr-eval",
-     "the checked expression, in plan form",
+     "the checked expression, in compiled target form",
      "path",
      2
     ],
@@ -4600,7 +4600,7 @@
      ]
     },
     {
-     "text": "The checked expression goes into the plan in its parsed form.",
+     "text": "The checked expression goes into the compiled target in its parsed form.",
      "at": [
       "expr-compile"
      ]
@@ -4700,7 +4700,7 @@
      ]
     },
     {
-     "text": "A capture level, set by the plan and policy, says which artifacts are kept.",
+     "text": "A capture level, set by the compiled target and policy, says which artifacts are kept.",
      "at": [
       "tel-capture"
      ]
@@ -5133,7 +5133,7 @@
       },
       {
        "ids": [
-        "plan"
+        "compiled-target"
        ]
       },
       {
@@ -5300,7 +5300,7 @@
     [
      "engine-loop",
      "contract",
-     "one step of the plan",
+     "one step of the compiled target",
      "path",
      8
     ],
@@ -5400,14 +5400,14 @@
     ],
     [
      "project",
-     "plan",
+     "compiled-target",
      "target files, compiled whole",
      "store"
     ],
     [
-     "plan",
+     "compiled-target",
      "engine-loop",
-     "the plan, checked by its hash",
+     "the compiled target, checked by its hash",
      "store"
     ],
     [
@@ -5470,11 +5470,11 @@
        ]
       },
       {
-       "text": "The engine loop loads the plan and refuses it if its hash does not match.",
+       "text": "The engine loop loads the compiled target and refuses it if its hash does not match.",
        "at": [
         "scheduler",
         "engine-loop",
-        "plan"
+        "compiled-target"
        ]
       },
       {
@@ -5523,12 +5523,12 @@
        ]
       },
       {
-       "text": "The run is admitted and the plan is checked.",
+       "text": "The run is admitted and the compiled target is checked.",
        "at": [
         "registry",
         "scheduler",
         "engine-loop",
-        "plan"
+        "compiled-target"
        ]
       },
       {
@@ -5611,10 +5611,10 @@
        ]
       },
       {
-       "text": "The target's files compile into one plan, all of them or none.",
+       "text": "The target's files compile into one compiled target, all of them or none.",
        "at": [
         "project",
-        "plan"
+        "compiled-target"
        ]
       },
       {
@@ -5623,7 +5623,7 @@
         "registry",
         "scheduler",
         "engine-loop",
-        "plan"
+        "compiled-target"
        ]
       },
       {
@@ -5742,21 +5742,21 @@
    "name": "Guard",
    "group": "Kernel",
    "state": "b",
-   "text": "Five checks, in this order, and the first to fail names the stop. The plan's hash against the published version; the engine checks it. The kernel's health, where a write needs full health; the engine checks it. The session's state for the call; the session keeper answers and the engine asks. The decision for this caller and this call; the policy engine decides and records it, and Guard asks through Control and does not decide. That the surface has no block at its edge, from what drivers reported; the engine checks it. A driver's own stop for a missing session stays as a second line. Package GD1 holds the code to this order.",
+   "text": "Five checks, in this order, and the first to fail names the stop. The compiled target's hash against the published version; the engine checks it. The kernel's health, where a write needs full health; the engine checks it. The session's state for the call; the session keeper answers and the engine asks. The decision for this caller and this call; the policy engine decides and records it, and Guard asks through Control and does not decide. That the surface has no block at its edge, from what drivers reported; the engine checks it. A driver's own stop for a missing session stays as a second line. Package GD1 holds the code to this order.",
    "where": "a2m-engine: src/tool.rs, loaded.rs",
    "never": [
-    "Run a plan whose hash does not match.",
+    "Run a compiled target whose hash does not match.",
     "Decide whether a call is allowed."
    ],
    "decided": [
-    "Guard checks five things, in this order, each with one owner: the plan's hash, the kernel's health, the session's state, the policy decision, and the edge block. Not: either document's old list of four (0309)."
+    "Guard checks five things, in this order, each with one owner: the compiled target's hash, the kernel's health, the session's state, the policy decision, and the edge block. Not: either document's old list of four (0309)."
    ]
   },
   "engine-choose": {
    "name": "Binding Selector",
    "group": "Kernel",
    "state": "b",
-   "text": "Takes the plan's bindings in the order written and picks the first that is verified, has a ready driver, has not drifted and has a valid session. It records why. A binding in shadow is never chosen. A read may fall to the next binding after drift; a write never switches binding inside a job.",
+   "text": "Takes the compiled target's bindings in the order written and picks the first that is verified, has a ready driver, has not drifted and has a valid session. It records why. A binding in shadow is never chosen. A read may fall to the next binding after drift; a write never switches binding inside a job.",
    "where": "a2m-engine: src/run.rs",
    "never": [
     "Name a mode, a driver or a pack."
@@ -6303,7 +6303,7 @@
    "name": "Control",
    "group": "Kernel",
    "state": "b",
-   "text": "The one interface through which the engine reaches everything outside its loop: the plan by hash, the policy decision, a session lease, rate budgets, locks, intents, acted, verified, approval. In one process the action registry answers; on another machine a runner answers over a link. The same tests run against both.",
+   "text": "The one interface through which the engine reaches everything outside its loop: the compiled target by hash, the policy decision, a session lease, rate budgets, locks, intents, acted, verified, approval. In one process the action registry answers; on another machine a runner answers over a link. The same tests run against both.",
    "where": "a2m-engine: src/control.rs",
    "never": [
     "Open the store, call policy or read a target file directly."
@@ -6387,7 +6387,7 @@
    "name": "Versions",
    "group": "Ledger",
    "state": "b",
-   "text": "Each published version of a target and its plan bytes. The plan's hash is checked on every load.",
+   "text": "Each published version of a target and its compiled target bytes. The compiled target's hash is checked on every load.",
    "where": "a2m-ledger: src/version.rs"
   },
   "ledger-audit": {
@@ -7253,52 +7253,52 @@
     "Every draft from a capture waits here until a person answers its question. Not: write the drafts in place (0308)."
    ]
   },
-  "plan-parse": {
+  "compiled-target-parse": {
    "name": "Parsing",
    "group": "Compiler",
    "state": "b",
    "text": "Reads every YAML file and keeps the file, line and column of each value. Fails on malformed YAML.",
    "where": "a2m-files: src/load.rs"
   },
-  "plan-validate": {
+  "compiled-target-validate": {
    "name": "Schema Validation",
    "group": "Compiler",
    "state": "b",
    "text": "Checks each file against its published schema and the target's schema version. Fails on unknown or missing fields.",
    "where": "a2m-files: src/schema.rs"
   },
-  "plan-resolve": {
+  "compiled-target-resolve": {
    "name": "Resolution",
    "group": "Compiler",
    "state": "b",
    "text": "Links names: an operation to its screens, endpoints and types, a pipeline to its operations and sources. Fails on a name that does not exist or is defined twice.",
    "where": "a2m-files: src/compile.rs"
   },
-  "plan-typecheck": {
+  "compiled-target-typecheck": {
    "name": "Type-Checking",
    "group": "Compiler",
    "state": "b",
    "text": "Checks every expression against input and output schemas and field types. A double literal, a float name or a function returning a float is refused.",
    "where": "a2m-files: src/compile.rs"
   },
-  "plan-lower": {
+  "compiled-target-lower": {
    "name": "Lowering",
    "group": "Compiler",
    "state": "b",
    "text": "Turns each binding's verb into the fixed list of steps its driver will run, using the lowering its pack registered. Fails on a mode or verb nobody registered.",
    "where": "a2m-files: src/compile.rs"
   },
-  "plan-analyze": {
-   "name": "Plan Analysis",
+  "compiled-target-analyze": {
+   "name": "Compiled Target Analysis",
    "group": "Compiler",
    "state": "b",
-   "text": "Counts the steps marked as commits in each write binding, works out each pipeline's effect class and each operation's manifest. A write with no key that is not irreversible, or a declared effect lower than the derived one, fails. A plan whose effect is a read and which holds a step that can change the system is refused. A read whose binding holds a step of a kind its pack marks as able to change the system is refused as kernel.read_acts; each kind is marked never, as declared, or can, and an unmarked kind counts as can (decision 0312).",
+   "text": "Counts the steps marked as commits in each write binding, works out each pipeline's effect class and each operation's manifest. A write with no key that is not irreversible, or a declared effect lower than the derived one, fails. A compiled target whose effect is a read and which holds a step that can change the system is refused. A read whose binding holds a step of a kind its pack marks as able to change the system is refused as kernel.read_acts; each kind is marked never, as declared, or can, and an unmarked kind counts as can (decision 0312).",
    "where": "a2m-files: src/compile.rs",
    "decided": [
-    "The kernel refuses a read plan that holds a step which can change the system, whichever pack lowered it; a pack says so where it registers a step kind. Not: leave the check to each pack (0307)."
+    "The kernel refuses a read compiled target that holds a step which can change the system, whichever pack lowered it; a pack says so where it registers a step kind. Not: leave the check to each pack (0307)."
    ]
   },
-  "plan-lint": {
+  "compiled-target-lint": {
    "name": "Linting",
    "group": "Compiler",
    "state": "b",
@@ -7308,8 +7308,8 @@
     "The refusal of a secret in a file does not change; the HTTP drafter now asks the same function, so it never writes a file the compiler would refuse. Not: loosen the check for a path into an answer (0302)."
    ]
   },
-  "plan-describe": {
-   "name": "Plan Description",
+  "compiled-target-describe": {
+   "name": "Compiled Target Description",
    "group": "Compiler",
    "state": "b",
    "text": "Generates each tool's name, description, input and output schemas and annotations. Two indistinguishable tools fail.",
@@ -7319,36 +7319,36 @@
     "A tool's description is plain text of at most 1,024 characters with no control characters, and the engine adds nothing to it. Not: unbounded text (0307)."
    ]
   },
-  "plan-emit": {
+  "compiled-target-emit": {
    "name": "Emission",
    "group": "Compiler",
    "state": "b",
-   "text": "Writes the plan as canonical JSON (sorted keys, no spaces, whole numbers only) and takes its hash. The same files and compiler version give identical bytes.",
+   "text": "Writes the compiled target as canonical JSON (sorted keys, no spaces, whole numbers only) and takes its hash. The same files and compiler version give identical bytes.",
    "where": "a2m-files: src/compile.rs"
   },
-  "plan-contents": {
-   "name": "Plan Contents",
-   "group": "Plan",
+  "compiled-target-contents": {
+   "name": "Compiled Target Contents",
+   "group": "Compiled Target",
    "state": "b",
    "text": "A header, the target and its surfaces and environments, sign-in settings (never a credential), field types, one opaque section per pack file kind, operations with their steps in binding order, pipelines, parsed expressions, tool descriptions, permission manifests and tests. Each output also says whether it may be absent.",
-   "where": "a2m-core: src/plan.rs",
+   "where": "a2m-core: src/compiled_target.rs",
    "decided": [
     "Each output of an operation says whether it may be absent, set by the pack's lowering and not worked out by the kernel; an absent output is returned as null under its own name. Not: leave the key out of the result (0305). Not built yet; roadmap package FT7."
    ]
   },
-  "plan-hash": {
-   "name": "Plan Hash",
-   "group": "Plan",
+  "compiled-target-hash": {
+   "name": "Compiled Target Hash",
+   "group": "Compiled Target",
    "state": "b",
-   "text": "The digest of all the plan's bytes. The engine checks it again before running, and refuses a plan that does not match. It names exactly what ran.",
+   "text": "The digest of all the compiled target's bytes. The engine checks it again before running, and refuses a compiled target that does not match. It names exactly what ran.",
    "where": "a2m-core: src/digest.rs",
    "never": [
-    "Run a plan whose hash does not match."
+    "Run a compiled target whose hash does not match."
    ]
   },
-  "plan-whole": {
+  "compiled-target-whole": {
    "name": "Atomic Compilation",
-   "group": "Plan",
+   "group": "Compiled Target",
    "state": "b",
    "text": "A target compiles whole or not at all. Problems from stages 2 to 8 are reported together with a code, a place and a fix. The holding folder keeps open drafts out of the compile, so a target is never compiled around a missing piece (decision 0298).",
    "where": "a2m-files: src/compile.rs",
@@ -7356,11 +7356,11 @@
     "Compile a target with a part set aside."
    ]
   },
-  "plan-versions": {
+  "compiled-target-versions": {
    "name": "Drafts and Versions",
-   "group": "Plan",
+   "group": "Compiled Target",
    "state": "b",
-   "text": "A draft compiles in memory and test rules are warnings. A published version compiles once in a clean mode, stores the plan, the source files and the gate evidence together and immutably, and gets a review summary ordered by risk. Nobody but a person publishes. The review also shows each tool's evidence and which gates ran.",
+   "text": "A draft compiles in memory and test rules are warnings. A published version compiles once in a clean mode, stores the compiled target, the source files and the gate evidence together and immutably, and gets a review summary ordered by risk. Nobody but a person publishes. The review also shows each tool's evidence and which gates ran.",
    "where": "a2m-files: src/compile.rs",
    "decided": [
     "The review of a version shows each tool's evidence level, names every tool below executed first, and shows each gate as passed, failed or not built. Publishing a tool below executed stays the person's choice. Not: refuse to publish it (0307)."
@@ -8903,7 +8903,7 @@
    "name": "Nullable Rule",
    "group": "HTTP Pack",
    "state": "b",
-   "text": "Decision 0297: a property not under required is written nullable, at any depth. It applies to an answer's shape only, not to request bodies or parameters. The check does not change. The plan's output will say beforehand that such an output may be absent, and the output schema will admit null for it (decision 0305, roadmap package FT7); this is not built yet.",
+   "text": "Decision 0297: a property not under required is written nullable, at any depth. It applies to an answer's shape only, not to request bodies or parameters. The check does not change. The compiled target's output will say beforehand that such an output may be absent, and the output schema will admit null for it (decision 0305, roadmap package FT7); this is not built yet.",
    "where": "a2m-pack-http: src/openapi.rs",
    "decided": [
     "In the HTTP pack an output may be absent exactly when its extract path is not certain in the answer's shape; a person may declare it by hand with may_be_absent. Not: mark every output as possibly absent (0305)."
@@ -9111,7 +9111,7 @@
    "name": "HTTP Refusals",
    "group": "HTTP Pack",
    "state": "b",
-   "text": "Sending to an origin the plan did not resolve, following a redirect, using a proxy, a secret in a template or trace, retrying inside a step, drafting for an unsafe method, using http on an endpoint whose requests the page computes or signs, imitating another application's client, and getting past an edge's bot defence.",
+   "text": "Sending to an origin the compiled target did not resolve, following a redirect, using a proxy, a secret in a template or trace, retrying inside a step, drafting for an unsafe method, using http on an endpoint whose requests the page computes or signs, imitating another application's client, and getting past an edge's bot defence.",
    "where": "a2m-pack-http: src/driver.rs",
    "never": [
     "Imitate another client.",
@@ -9724,14 +9724,14 @@
    "text": "What discovery returns, as data: a subject, a kind, what was found, the level, who vouches, coverage and limitations. Its id is a digest of its content.",
    "where": "a2m-core: src/finding.rs"
   },
-  "core-plan": {
-   "name": "Plan Types",
+  "core-compiled-target": {
+   "name": "Compiled Target Types",
    "group": "Kernel",
    "state": "b",
-   "text": "The compiled plan and its steps as immutable data, their one encoding as canonical JSON, and the check of a plan's hash. The compiler that makes one is elsewhere.",
-   "where": "a2m-core: src/plan.rs",
+   "text": "The compiled target and its steps as immutable data, their one encoding as canonical JSON, and the check of a compiled target's hash. The compiler that makes one is elsewhere.",
+   "where": "a2m-core: src/compiled_target.rs",
    "decided": [
-    "The plan's output carries a may-be-absent flag, set by the pack's lowering. A null in an output that may not be absent stops the run. Not: mark every output as possibly absent (0305). Not built yet."
+    "The compiled target's output carries a may-be-absent flag, set by the pack's lowering. A null in an output that may not be absent stops the run. Not: mark every output as possibly absent (0305). Not built yet."
    ]
   },
   "core-secret": {
@@ -9762,7 +9762,7 @@
    "name": "Capture Levels",
    "group": "Kernel",
    "state": "b",
-   "text": "Given a level, decides which artifacts are kept and in what form, before anything is written. It applies a level; the plan and policy choose it.",
+   "text": "Given a level, decides which artifacts are kept and in what form, before anything is written. It applies a level; the compiled target and policy choose it.",
    "where": "a2m-telemetry: src/collect.rs"
   },
   "tel-signature": {
@@ -9939,7 +9939,7 @@
    "name": "Expression Compilation",
    "group": "Kernel",
    "state": "b",
-   "text": "Parses and checks an expression and turns it into the plan's own expression form. There is no float type.",
+   "text": "Parses and checks an expression and turns it into the compiled target's own expression form. There is no float type.",
    "where": "a2m-expr: src/parse.rs",
    "never": [
     "Produce or compare a float."

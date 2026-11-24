@@ -176,12 +176,13 @@ fn calls_are_measured_per_tool_version() {
     telemetry.record_retry(&tool(), &first);
 
     let metrics = telemetry.metrics();
-    let version = |plan: Digest| [Attr::Tool(tool()), Attr::Plan(plan)];
+    let version =
+        |compiled_target: Digest| [Attr::Tool(tool()), Attr::CompiledTarget(compiled_target)];
     assert_eq!(metrics.counter(CALL_COUNT, &version(first)), 2);
     assert_eq!(metrics.counter(CALL_COUNT, &version(second)), 1);
     let drifted = [
         Attr::Tool(tool()),
-        Attr::Plan(first),
+        Attr::CompiledTarget(first),
         Attr::Class(FailureClass::Drift),
     ];
     assert_eq!(metrics.counter(CALL_COUNT, &drifted), 1);

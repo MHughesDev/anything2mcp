@@ -1,11 +1,12 @@
 //! The compiler and the readers, joined: the `example` target under
-//! `targets/example/` compiles to a plan, and the source that plan carries
-//! reads the target's fixture sheet into typed rows. The two crates share
-//! the source definition's types, and this is the test that they agree.
+//! `targets/example/` compiles to a compiled target, and the source that
+//! compiled target carries reads the target's fixture sheet into typed rows.
+//! The two crates share the source definition's types, and this is the test
+//! that they agree.
 
 use std::path::Path;
 
-use a2m_core::{Decimal, Plan, Value, Version};
+use a2m_core::{CompiledTarget, Decimal, Value, Version};
 use a2m_files::testing::{example_root, stand_set};
 use a2m_files::{CompileMode, Compiled, RelPath, TargetRoot, compile, load, load_files};
 use a2m_sources::{Limits, LoadedSource, SOURCE_TEMPLATE_UNKNOWN, Sources, ValidatedRecords};
@@ -58,20 +59,24 @@ fn example_files() -> Vec<(RelPath, Vec<u8>)> {
 }
 
 /// Reads `sheet` through the source of the compiled target's one pipeline,
-/// from the plan as the engine receives it: decoded from its bytes.
+/// from the compiled target as the engine receives it: decoded from its
+/// bytes.
 fn read(compiled: &Compiled, sheet: &[u8]) -> Result<ValidatedRecords, a2m_sources::Rejected> {
-    let plan = must(
-        Plan::decode(&compiled.encoded.bytes, &compiled.encoded.hash),
-        "the plan's bytes",
+    let compiled_target = must(
+        CompiledTarget::decode(&compiled.encoded.bytes, &compiled.encoded.hash),
+        "the compiled target's bytes",
     );
-    let Some(source) = plan
+    let Some(source) = compiled_target
         .pipelines
         .first()
         .and_then(|pipeline| pipeline.source.as_ref())
     else {
         panic!("the example target's pipeline has a source");
     };
-    let definition = must(LoadedSource::load(&plan, source), "the source definition");
+    let definition = must(
+        LoadedSource::load(&compiled_target, source),
+        "the source definition",
+    );
     assert_eq!(definition.template(), "order_sheet_v2");
     assert_eq!(definition.reader(), "csv");
     Sources::builtin().read(&definition, sheet, &LIMITS)
@@ -103,7 +108,8 @@ fn the_example_target_compiles_and_its_source_reads_its_fixture_sheet_into_typed
     assert_eq!(records.rows.len(), 2);
     let first = &records.rows[0].fields;
     // A bare column, typed by its field type; a measurement, in the stored
-    // unit; and a row field worked out by an expression of the plan.
+    // unit; and a row field worked out by an expression of the compiled
+    // target.
     assert_eq!(first.get("code"), Some(&Value::from("L-101")));
     assert_eq!(first.get("length"), Some(&inches("90.5")));
     assert_eq!(first.get("label"), Some(&Value::from("L-101")));

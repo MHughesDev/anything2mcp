@@ -274,7 +274,7 @@ fn a_registry_orders_an_operations_bindings_by_the_ranks_its_manifest_states() {
     let compiled = compile(&sources, &set, CompileMode::Publish, Version::new(1, 0, 0))
         .unwrap_or_else(|problems| panic!("{problems}"));
     let modes: Vec<String> = compiled
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_order_get")

@@ -74,7 +74,7 @@ a2m_core::failure_codes! {
         meaning "A value that cannot stand in one segment of a path.",
         next "Give a value that is one plain name or number, as the system shows it.";
     STEP_NOT_USABLE = Input, "step_not_usable",
-        meaning "A step this driver cannot carry out as the plan wrote it.",
+        meaning "A step this driver cannot carry out as the compiled target wrote it.",
         next "Compile the target again with the version of the HTTP pack that is enabled.";
     TLS_NOT_ENABLED = Input, "tls_not_enabled",
         meaning "The surface is reached over HTTPS, and TLS is not in this build.",
@@ -117,7 +117,7 @@ pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
     StepFailure::not_sent(failure(
         &row::STEP_NOT_USABLE,
         format!(
-            "The HTTP driver cannot carry out this step as the plan wrote it: {}.",
+            "The HTTP driver cannot carry out this step as the compiled target wrote it: {}.",
             why.into()
         ),
         "Compile the target again with the version of the HTTP pack that is enabled.",

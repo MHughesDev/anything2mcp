@@ -1,6 +1,7 @@
 //! What the `commands/` files compile to: the pack's own section of the
-//! plan, and the payload of each step. The file kind encodes these, the
-//! driver decodes them, and the kernel carries them without reading them.
+//! compiled target, and the payload of each step. The file kind encodes
+//! these, the driver decodes them, and the kernel carries them without
+//! reading them.
 //!
 //! Nothing here is a float, and every map is ordered, so the same files
 //! give the same bytes.
@@ -428,9 +429,9 @@ pub enum StepPayload {
         /// is `absent`, more is ambiguous.
         one: bool,
         /// The outputs of the command that its output form leaves possibly
-        /// absent (decision 0305): the plan states them, and the driver
-        /// returns a `null` for each when the program printed no value.
-        /// Left out of the text when empty.
+        /// absent (decision 0305): the compiled target states them, and the
+        /// driver returns a `null` for each when the program printed no
+        /// value. Left out of the text when empty.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         absent: Vec<String>,
     },
