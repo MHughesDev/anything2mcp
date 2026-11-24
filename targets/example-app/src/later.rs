@@ -9,6 +9,9 @@
 //! - `/cases/export` (case 24): "Start export" starts a job that is ready
 //!   after a moment; the page then offers "Download export", a link the
 //!   browser would save as a file.
+//! - `/cases/export/ready` (package 9.3s): the same page after the export
+//!   is ready, so that one run can press the link; the file it offers holds
+//!   [`EXPORT_MARKER`], a text no other thing of the application says.
 //! - `/cases/layout/{flag}` (case 25): one form in one of two layouts, `a`
 //!   (a label) and `b` (a placeholder); any other flag is a layout nobody
 //!   declared.
@@ -39,6 +42,8 @@ use crate::cases::{TELL, page};
 const SIGNING_KEY: &str = "example-page-key-0001";
 /// How long the export takes.
 const EXPORT_TAKES: Duration = Duration::from_millis(1500);
+/// A text only the exported file of `/cases/export/ready` holds.
+pub const EXPORT_MARKER: &str = "marker-7f3a9c1e-export-bytes";
 /// The most a memo may be.
 const MOST: usize = 4096;
 
@@ -51,6 +56,8 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/cases/export/status", get(export_status))
         .route("/cases/export/file", get(export_file))
         .route("/cases/export/large", get(export_large))
+        .route("/cases/export/ready", get(export_ready))
+        .route("/cases/export/marked", get(export_marked))
         .route("/cases/layout/{flag}", get(layout))
         .route("/cases/locale", get(locale))
         .route("/cases/note", get(note))
@@ -167,6 +174,34 @@ async fn export_start(State(state): State<AppState>) -> StatusCode {
     state.lock().await.export_started = Some(std::time::Instant::now());
     tell(&state, "export: started".to_owned()).await;
     StatusCode::NO_CONTENT
+}
+
+async fn export_ready() -> Html<String> {
+    page(
+        "Export",
+        "<h1>Export</h1>\n<p id=\"status\" role=\"status\">Export ready.</p>\n<p id=\"offer\">\
+         <a id=\"file\" href=\"/cases/export/marked\" download=\"export.csv\">Download export</a></p>\n\
+         <script>\n\
+         document.getElementById(\"file\").addEventListener(\"click\", () => {\n\
+           document.getElementById(\"status\").textContent = \"Export downloaded.\";\n\
+         });\n\
+         </script>",
+    )
+}
+
+async fn export_marked(State(state): State<AppState>) -> Response {
+    tell(&state, "export: marked file requested".to_owned()).await;
+    (
+        [
+            (header::CONTENT_TYPE, "text/csv"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"export.csv\"",
+            ),
+        ],
+        format!("order,quantity\nA-100,4\n{EXPORT_MARKER}\n"),
+    )
+        .into_response()
 }
 
 async fn export_status(State(state): State<AppState>) -> axum::Json<serde_json::Value> {
