@@ -361,21 +361,56 @@ impl DraftingRule for DescribedReadRule {
                 )
             })
             .collect();
-        let mut binding = vec![
-            ("mode", DraftValue::text(crate::HTTP_MODE)),
-            (
-                "verb",
-                DraftValue::text(if listed { "list" } else { "read" }),
-            ),
-            (
-                "endpoint",
-                if operation.endpoint_shared {
-                    cx.open_question(NAME_ENDPOINT_SHARED)
-                } else {
-                    DraftValue::text(&endpoint)
-                },
-            ),
-        ];
+        let verb_value = DraftValue::text(if listed { "list" } else { "read" });
+        // A read whose operation is pinned with the description's digest
+        // binds the operation itself, in the `api` mode; any other binds
+        // its endpoint entry (decision 0399).
+        let pinned_to = crate::described::pinned_draft(finding, &operation, cx);
+        let pinned = pinned_to.is_some();
+        let mut binding = match pinned_to {
+            Some((description, _)) => {
+                let mut binding = vec![
+                    ("mode", DraftValue::text(crate::API_MODE)),
+                    ("verb", verb_value),
+                    ("description", DraftValue::text(&description)),
+                ];
+                match &operation.operation_id {
+                    Some(id) => binding.push(("operation_id", DraftValue::text(id))),
+                    None => {
+                        binding.push(("method", DraftValue::text(&operation.method)));
+                        binding.push(("path", DraftValue::text(&operation.path)));
+                    }
+                }
+                // A placeholder is taken from the input of its own name;
+                // a parameter whose name is not that name is given it.
+                let args: Vec<(String, DraftValue)> = placeholders
+                    .iter()
+                    .filter(|(name, parameter)| *name != parameter.name)
+                    .map(|(name, parameter)| {
+                        (
+                            parameter.name.clone(),
+                            DraftValue::text(&format!("input.{name}")),
+                        )
+                    })
+                    .collect();
+                if !args.is_empty() {
+                    binding.push(("args", DraftValue::Map(args)));
+                }
+                binding
+            }
+            None => vec![
+                ("mode", DraftValue::text(crate::HTTP_MODE)),
+                ("verb", verb_value),
+                (
+                    "endpoint",
+                    if operation.endpoint_shared {
+                        cx.open_question(NAME_ENDPOINT_SHARED)
+                    } else {
+                        DraftValue::text(&endpoint)
+                    },
+                ),
+            ],
+        };
         if !extract.is_empty() {
             binding.push(("extract", DraftValue::Map(extract)));
         }
@@ -401,13 +436,25 @@ impl DraftingRule for DescribedReadRule {
         doc.push((
             "description",
             DraftValue::text(&{
+                // An `api` read names the described operation; any other
+                // its endpoint entry.
+                let (what, endpoint) = if pinned {
+                    (
+                        "operation",
+                        operation.operation_id.clone().unwrap_or_else(|| {
+                            format!("{} {}", operation.method, operation.path)
+                        }),
+                    )
+                } else {
+                    ("endpoint", endpoint.clone())
+                };
                 let mut text = if listed {
                     format!(
-                        "Lists what the endpoint `{endpoint}` answers, as the service's published description states it. Drafted by rule; its name is provisional."
+                        "Lists what the {what} `{endpoint}` answers, as the service's published description states it. Drafted by rule; its name is provisional."
                     )
                 } else {
                     format!(
-                        "Reads what the endpoint `{endpoint}` answers for one key, as the service's published description states it. Drafted by rule; its name is provisional, and its example is the description's own."
+                        "Reads what the {what} `{endpoint}` answers for one key, as the service's published description states it. Drafted by rule; its name is provisional, and its example is the description's own."
                     )
                 };
                 if !secrets.is_empty() {

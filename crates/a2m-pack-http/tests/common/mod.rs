@@ -226,7 +226,12 @@ impl Scene {
     }
 
     pub fn handle(&self) -> DriverHandle {
-        self.registry.driver(&http_mode()).unwrap()
+        self.handle_of(&http_mode())
+    }
+
+    /// The handle of the driver of one mode of the pack.
+    pub fn handle_of(&self, mode: &Mode) -> DriverHandle {
+        self.registry.driver(mode).unwrap()
     }
 
     pub async fn try_prepare(
@@ -235,7 +240,19 @@ impl Scene {
         fence: Option<Fence>,
         posture: Posture,
     ) -> Result<(DriverHandle, Prepared), StepFailure> {
-        let handle = self.handle();
+        self.try_prepare_mode(&http_mode(), lease, fence, posture)
+            .await
+    }
+
+    /// As [`Self::try_prepare`], for the driver of one mode.
+    pub async fn try_prepare_mode(
+        &self,
+        mode: &Mode,
+        lease: Option<&SessionLease>,
+        fence: Option<Fence>,
+        posture: Posture,
+    ) -> Result<(DriverHandle, Prepared), StepFailure> {
+        let handle = self.handle_of(mode);
         let fence = fence.unwrap_or(Fence {
             run: RunId::from_bytes([7; 16]),
             epoch: Epoch::new(1),
@@ -262,7 +279,14 @@ impl Scene {
         self.try_prepare(None, None, Posture::Live).await.unwrap()
     }
 
-    /// The first `http` binding of an operation.
+    /// A driver prepared for reading in one mode, with no session.
+    pub async fn reader_of(&self, mode: &str) -> (DriverHandle, Prepared) {
+        self.try_prepare_mode(&Mode::new(mode).unwrap(), None, None, Posture::Live)
+            .await
+            .unwrap()
+    }
+
+    /// The first `http` or `api` binding of an operation.
     pub fn binding(&self, operation: &str) -> &BindingPlan {
         self.plan
             .operations
@@ -271,7 +295,7 @@ impl Scene {
             .unwrap_or_else(|| panic!("no operation named `{operation}`"))
             .bindings
             .iter()
-            .find(|binding| binding.mode == http_mode())
+            .find(|binding| binding.mode == http_mode() || binding.mode.as_str() == "api")
             .unwrap()
     }
 

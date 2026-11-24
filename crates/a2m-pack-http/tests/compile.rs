@@ -23,9 +23,14 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     let first = registry(&folder, Arc::new(NoSecrets));
     let second = registry(&folder, Arc::new(NoSecrets));
     assert_eq!(first.digest(), second.digest());
-    assert_eq!(first.modes().collect::<Vec<_>>(), vec![&http_mode()]);
-    let handle = first.driver(&http_mode()).unwrap();
-    assert_eq!(handle.choice().provider.as_str(), "http");
+    let api = a2m_core::Mode::new(a2m_pack_http::API_MODE).unwrap();
+    let mut modes: Vec<_> = first.modes().collect();
+    modes.sort();
+    assert_eq!(modes, vec![&api, &http_mode()]);
+    for mode in [&http_mode(), &api] {
+        let handle = first.driver(mode).unwrap();
+        assert_eq!(handle.choice().provider.as_str(), "http");
+    }
 
     // The manifest declares every failure code this pack produces, each in
     // its one class, and nothing it does not produce.

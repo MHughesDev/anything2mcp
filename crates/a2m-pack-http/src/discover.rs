@@ -374,6 +374,7 @@ impl Discoverer for HttpDescription {
                     "Put the description in the project's `sources` folder and run `anything2mcp scout run <target> --files '{\"description\": \"sources/<file>\"}'`.",
                 )
             };
+            let mut served_at = None;
             let bytes = if let Some(file) = scope.paths.get(DESCRIPTION_FILE) {
                 file.read(scope.bounds.bytes)?
             } else {
@@ -392,6 +393,7 @@ impl Discoverer for HttpDescription {
                         // place tried by convention only on a success.
                         Some(body) if named.is_some() || (200..300).contains(&status) => {
                             read = Some(body.to_owned());
+                            served_at = Some(path.to_owned());
                             break;
                         }
                         _ => statuses.push(status.to_string()),
@@ -414,8 +416,13 @@ impl Discoverer for HttpDescription {
             // The redactor comes first, whichever way the description
             // arrived: before the text is parsed, cut, or quoted.
             let text = openapi::redacted(&bytes, scope.redact)?;
-            let operations = openapi::operations(text.as_bytes())?;
-            for operation in &operations {
+            let mut operations = openapi::operations(text.as_bytes())?;
+            // What an `api` binding is pinned to: the digest of the text as
+            // it was read, and where it was served (decision 0399).
+            let digest = crate::described::digest_of(&text);
+            for operation in &mut operations {
+                operation.digest = Some(digest.clone());
+                operation.served_at.clone_from(&served_at);
                 out.found(self.finding(&origin, operation, scope.redact)?)?;
             }
             for sign in openapi::sign_in_signs(text.as_bytes())? {

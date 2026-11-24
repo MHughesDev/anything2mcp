@@ -11,8 +11,12 @@
 //! The product crate registers the pack with one call:
 //! [`add_to`], or `builder.add_pack(&HttpPack)`.
 //!
-//! Not built yet, and so not declared in the pack's manifest: the `api`
-//! mode, a token taken from another endpoint's answer, a challenge
+//! The `api` mode binds a read to an operation of a published description
+//! the import pinned, with the description's digest, in `descriptions/`;
+//! a description changed since is named drift (decision 0399).
+//!
+//! Not built yet, and so not declared in the pack's manifest: writes
+//! through `api`, a token taken from another endpoint's answer, a challenge
 //! page, uploads and downloads, pagers, identity by a stamp or a search,
 //! the digest and integrated Windows exchanges, a client certificate,
 //! GraphQL and OData.
@@ -28,6 +32,7 @@
 //! crate's design is `docs/architecture/crates/a2m-pack-http.md`.
 
 pub mod codes;
+mod described;
 mod discover;
 mod draft;
 mod driver;
@@ -48,10 +53,11 @@ use a2m_core::{Failure, Mode};
 use a2m_files::{JsonSchema, SurfaceKindSpec};
 use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar, RegistryBuilder};
 
+pub use described::{API_MODE, DESCRIPTION_KIND};
 pub use discover::{DESCRIPTION_FILE, DESCRIPTION_PATH};
 pub use endpoints::{ENDPOINT_KIND, HTTP_SURFACE, PACK, WEB_SURFACE};
 pub use link::{ACCEPTED, UNENCRYPTED_CREDENTIALS};
-pub use lower::{EXTRACT, PROBE, REQUEST, TOKEN, VALIDATE};
+pub use lower::{CALL, EXTRACT, PROBE, REQUEST, TOKEN, VALIDATE};
 
 /// The name of the mode this pack drives.
 pub const HTTP_MODE: &str = "http";
@@ -86,13 +92,19 @@ impl Pack for HttpPack {
             .and_then(a2m_core::Value::as_int)
             .and_then(|number| u64::try_from(number).ok())
             .unwrap_or(DEFAULT_MAX_RESPONSE_BYTES);
+        let api = Mode::new(API_MODE)?;
+        // One driver for both modes: an `api` call is sent as an `http`
+        // request is, and the reads left running are counted once for the
+        // pack (decision 0399).
+        let driver = Arc::new(driver::HttpDriver::new(
+            Arc::clone(cx.redact()),
+            max_response_bytes,
+        ));
         to.driver(
             mode.clone(),
-            Arc::new(driver::HttpDriver::new(
-                Arc::clone(cx.redact()),
-                max_response_bytes,
-            )),
+            Arc::clone(&driver) as Arc<dyn a2m_provider::Driver>,
         )?;
+        to.driver(api.clone(), driver)?;
         to.compiler(
             CompilerRegistrations::new()
                 .surface_kind(
@@ -115,7 +127,9 @@ impl Pack for HttpPack {
                     ),
                 )
                 .file_kind(Arc::new(endpoints::EndpointKind::new()))
+                .file_kind(Arc::new(described::DescriptionKind::new()))
                 .lowering(Arc::new(lower::HttpLowering::new(mode)))
+                .lowering(Arc::new(described::ApiLowering::new(api)))
                 .lint_rule(Arc::new(endpoints::SecretLiteral))
                 .lint_rule(Arc::new(endpoints::NoResponseSchema))
                 .lint_rule(Arc::new(endpoints::EffectMethod))
@@ -125,6 +139,9 @@ impl Pack for HttpPack {
                     kind: openapi::described_operation()?,
                 }))
                 .drafting_rule(Arc::new(draft::DescribedReadRule {
+                    kind: openapi::described_operation()?,
+                }))
+                .drafting_rule(Arc::new(described::PinnedDescriptionRule {
                     kind: openapi::described_operation()?,
                 })),
         )?;

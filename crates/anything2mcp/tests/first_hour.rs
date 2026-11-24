@@ -256,7 +256,7 @@ impl Desk {
         // version, by operation and mode.
         assert!(
             text.contains(&format!(
-                "First to act in this version: {READ} (read), through the mode http."
+                "First to act in this version: {READ} (read), through the mode api."
             )),
             "{text}"
         );
@@ -316,8 +316,13 @@ fn tried(report: &Json, proven: bool) -> Vec<String> {
 }
 
 /// The drafted files a scout of the test application writes for the read
-/// this hour is for: its endpoint and its operation.
-const KEPT: [&str; 2] = ["endpoints/get_order.yaml", "operations/api_orders_get.yaml"];
+/// this hour is for: its operation, the description it is pinned to in the
+/// `api` mode (decision 0399), and the operation's endpoint entry.
+const KEPT: [&str; 3] = [
+    "descriptions/http.yaml",
+    "endpoints/get_order.yaml",
+    "operations/api_orders_get.yaml",
+];
 
 /// What a scout's report says, checked the same way for every scout of the
 /// test application: what was found, what was drafted, what was proven.
@@ -569,8 +574,8 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
         std::fs::read(&fixture_file).unwrap(),
     );
     let by_hand = operation_before.replacen(
-        "    mode: \"http\"\n",
-        "    mode: \"http\"\n    status: \"verified\"\n",
+        "    mode: \"api\"\n",
+        "    mode: \"api\"\n    status: \"verified\"\n",
         1,
     );
     assert_ne!(by_hand, operation_before, "no draft status to mark by hand");
@@ -615,7 +620,7 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
     // a read; the file's status is rewritten through the checked write.
     let promoted = desk
         .ok(&[
-            "binding", "promote", "example", "--tool", READ, "--mode", "http",
+            "binding", "promote", "example", "--tool", READ, "--mode", "api",
         ])
         .await;
     assert_eq!(promoted["result"]["promoted"], true, "{promoted}");
@@ -656,6 +661,37 @@ async fn the_first_hour_from_an_empty_folder_to_a_published_read_an_agent_calls(
         serde_json::to_value(held.status).unwrap(),
         "{called}"
     );
+    // 9. The service's description is revised after the version was
+    // published: the published read is pinned to the text it was drafted
+    // from, so the call stops as named drift and nothing of it is sent
+    // (decision 0399). Served as it was pinned again, the call reads.
+    app.revise_description(true).await.unwrap();
+    let before = app.seen().await.unwrap().len();
+    let (code, drifted) = desk.run(&["call", READ, "--input", ORDER_INPUT]).await;
+    assert_ne!(code, Some(0), "{drifted}");
+    let failure = serde_json::to_string(&drifted).unwrap();
+    assert!(failure.contains("\"drift\""), "{drifted}");
+    assert!(failure.contains("description_changed"), "{drifted}");
+    let heard = app.seen().await.unwrap().split_off(before);
+    assert!(
+        heard.iter().all(|line| line == "GET /api/openapi.json"),
+        "{heard:?}"
+    );
+    // The engine holds the binding drifted from then on: served as it was
+    // pinned again, the stopped run is still not carried out until the
+    // binding is repaired and published again.
+    app.revise_description(false).await.unwrap();
+    let run = drifted["result"]["run_id"].as_str().unwrap().to_owned();
+    let (code, again) = desk.run(&["run", "resume", &run]).await;
+    assert_ne!(code, Some(0), "{again}");
+    assert_eq!(again["error"]["class"], "drift", "{again}");
+    assert_eq!(again["error"]["code"], "binding_drifted", "{again}");
+    let heard = app.seen().await.unwrap().split_off(before);
+    assert!(
+        heard.iter().all(|line| line == "GET /api/openapi.json"),
+        "{heard:?}"
+    );
+
     // Nothing in the hour wrote to the application.
     assert!(app.writes().await.unwrap().is_empty());
     assert_eq!(app.stored_order("A-100").await.unwrap().unwrap(), held);

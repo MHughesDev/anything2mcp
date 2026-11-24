@@ -831,7 +831,7 @@ async fn a_read_with_an_open_question_is_held_and_the_sound_read_is_tried_with_n
     assert_eq!(recorded["test_state"], "passed", "{recorded}");
     let promoted = world
         .ok(&[
-            "binding", "promote", "example", "--tool", read, "--mode", "http",
+            "binding", "promote", "example", "--tool", read, "--mode", "api",
         ])
         .await;
     assert_eq!(promoted["promoted"], true, "{promoted}");
