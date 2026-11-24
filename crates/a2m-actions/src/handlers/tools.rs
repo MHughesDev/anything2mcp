@@ -1967,11 +1967,20 @@ handler!(
             .await?
         };
         let binding = named_binding(&plan, &found.tool, &call, file_modes.as_deref())?;
+        let surface = binding_surface(&plan, &found.tool, binding.as_ref());
         kernel.keep_draft(&target, compiled.encoded.hash, std::sync::Arc::clone(&plan));
         let run = submit_trial(kernel, &call, &found, &input, environment, binding).await?;
         let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
+        let waits = row.state == RunState::NeedsLogin;
         let output = run_output(kernel, &call, row, Tell::Person).await?;
         let mut output = output;
+        // A trial that waits for a sign-in names the one action that signs
+        // in, as the scout's report does (decision 0303). A trial is never
+        // resumed: the same trial is made again once the person is signed
+        // in.
+        if waits && let Some(surface) = &surface {
+            output.next = Some(sign_in_next(&target, surface));
+        }
         if let Json::Object(answer) = &mut output.result {
             answer.insert("sandbox".to_owned(), json!(true));
             answer.insert("published".to_owned(), json!(false));
@@ -1980,6 +1989,35 @@ handler!(
         Ok(output.warn("This was a trial of a draft in the sandbox; nothing was published."))
     }
 );
+
+/// The surface the binding a trial runs acts on: the one named, or the one
+/// the engine chooses by default.
+pub(crate) fn binding_surface(
+    plan: &a2m_core::Plan,
+    tool: &a2m_core::ToolPlan,
+    binding: Option<&a2m_engine::BindingPin>,
+) -> Option<a2m_core::SurfaceName> {
+    let ToolRuns::Operation(index) = tool.runs else {
+        return None;
+    };
+    let operation = plan.operations.get(index.get())?;
+    let position = match binding {
+        Some(pin) => pin.position,
+        None => a2m_engine::default_binding(operation)?,
+    };
+    let acted = operation.bindings.get(position)?;
+    plan.surface(acted.surface).map(|surface| surface.name.clone())
+}
+
+/// The one action that signs in to `surface` of `target`, for a read that
+/// waits for a sign-in (decision 0303).
+pub(crate) fn sign_in_next(target: &a2m_core::TargetName, surface: &a2m_core::SurfaceName) -> Next {
+    Next::new(
+        "session.login",
+        json!({"target": target.as_str(), "surface": surface.as_str()}),
+        "then make the same trial again",
+    )
+}
 
 /// Keeps the call of a trial of one drafted read and submits it as a `Try`
 /// job of a run of its own; the plan must be kept in memory already

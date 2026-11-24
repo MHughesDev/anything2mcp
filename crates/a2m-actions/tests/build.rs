@@ -1880,6 +1880,12 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
     assert_eq!(result["failure"]["class"], "session_expired", "{result}");
     assert_eq!(result["failure"]["code"], "needs_login", "{result}");
     assert!(world.reached.lock().unwrap().is_empty());
+    // A trial that waits for a sign-in names the one action that signs in
+    // to the surface it reads, as the scout's report does (decision 0303),
+    // and is not resumed.
+    let next = tried.next.as_ref().unwrap();
+    assert_eq!(next.action, "session.login");
+    assert_eq!(next.args, json!({"target": "example", "surface": "desk"}));
     let nothing = world.call(&agent, "tool.search", json!({})).await;
     assert_eq!(
         nothing.result.unwrap()["total"],

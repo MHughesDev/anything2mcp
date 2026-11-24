@@ -303,6 +303,25 @@ fn rendered(report: &Json) -> String {
         ));
     }
     let tools: Vec<&Json> = list(&content["tried"]["tools"]).collect();
+    let counts = &content["tried"]["counts"];
+    if counts.is_object() {
+        let count = |name: &str| counts[name].as_u64().unwrap_or(0);
+        lines.push(format!(
+            "Drafted reads: {}: {} proven, {} waiting for a sign-in, {} failed, {} not tried, {} held.",
+            count("drafted"),
+            count("proven"),
+            count("waiting"),
+            count("failed"),
+            count("not_tried"),
+            count("held")
+        ));
+    }
+    for tool in tools.iter().filter(|tool| tool["state"] == "waiting").take(1) {
+        lines.push(format!(
+            "Waiting: the reads of surface `{}` wait for a sign-in: `session.login` with this target and that surface signs in, and `draft.try` then tries each again.",
+            tool["surface"].as_str().unwrap_or_default()
+        ));
+    }
     if tools.len() > TEXT_LINES {
         lines.push(format!(
             "Tried: {} reads ({}); the first {TEXT_LINES} follow, and `scout.report` with `part` `tried.tools` lists the rest.",

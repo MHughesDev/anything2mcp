@@ -10,6 +10,7 @@ lists and functions say. Nothing here starts a container. Run from the repositor
 Standard library only; Python 3.11 or newer.
 """
 import asyncio
+import json
 import re
 import subprocess
 import sys
@@ -523,6 +524,16 @@ class PersonStep(unittest.TestCase):
             with self.assertRaises(field_test.CannotRun):
                 field_test.press({"link": link, "approve": HASH}, field_test.Run("e"), FakeHarness(None))
 
+    def test_a_sign_in_types_each_credential_into_its_field_of_the_page(self):
+        shown, harness, asked = self.press(
+            {"link": self.LINK, "approve": HASH, "signs_in": {"token": "an invented/token&1"}},
+            f"Carry out | Act {SHORT}",
+            DONE,
+        )
+        self.assertTrue(shown["ok"], shown)
+        self.assertTrue(asked[1].endswith("once=0e0e&secret.token=an%20invented%2Ftoken%261"), asked[1])
+        self.assertNotIn("invented", shown["output"])
+
     def test_a_press_needs_a_hash_to_send(self):
         with self.assertRaises(field_test.CannotRun):
             field_test.press({"link": self.LINK, "approve": "{change}"}, field_test.Run("e"), FakeHarness(None))
@@ -570,6 +581,49 @@ class HarnessProcess(unittest.TestCase):
                     field_test.do_step({"a2m": ["init"]}, {"project": "/p"}, {}, field_test.Run("e"), None, harness)
             ran.assert_not_called()
             self.assertIn("field_harness_gone", str(stop.exception))
+
+
+class Secrets(unittest.TestCase):
+    TOKEN = "an-invented-token-0042"
+
+    def test_a_secret_the_system_issued_is_kept_by_name_and_shown_nowhere(self):
+        names, secrets = {"direct": "http://10.0.0.2:3000"}, {}
+        answer = json.dumps({"name": "trial", "sha1": self.TOKEN})
+        with mock.patch.object(field_test, "request", return_value=(201, answer)):
+            shown = field_test.do_step(
+                {"http": {"method": "POST", "path": "/tokens"}, "secret": {"name": "token", "path": "sha1"}},
+                names, {}, field_test.Run("e"), secrets=secrets,
+            )
+        self.assertEqual((names["token"], secrets["token"]), (self.TOKEN, self.TOKEN))
+        self.assertTrue(shown["ok"])
+        self.assertNotIn(self.TOKEN, json.dumps(shown))
+
+    def test_an_answer_with_no_secret_at_the_path_stops_the_run(self):
+        with mock.patch.object(field_test, "request", return_value=(201, "{}")):
+            with self.assertRaises(field_test.CannotRun):
+                field_test.do_step(
+                    {"http": {"path": "/tokens"}, "secret": {"name": "token", "path": "sha1"}},
+                    {"direct": "http://10.0.0.2:3000"}, {}, field_test.Run("e"), secrets={},
+                )
+
+    def test_what_a_step_showed_is_cleared_of_every_secret(self):
+        shown = {"output": f"Bearer {self.TOKEN}", "list": [self.TOKEN], "n": 1}
+        cleared = field_test.scrubbed(shown, {"token": self.TOKEN})
+        self.assertEqual(cleared, {"output": "Bearer [secret token]", "list": ["[secret token]"], "n": 1})
+
+    def test_unseen_names_every_file_that_holds_the_secret(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as project:
+            Path(home, "store").write_bytes(b"nothing here")
+            names = {"home": home, "project": project, "log": ""}
+            step = {"unseen": "token"}
+            shown = field_test.do_step(step, names, {}, field_test.Run("e"), secrets={"token": self.TOKEN})
+            self.assertTrue(shown["ok"], shown)
+            Path(project, "trace").write_text(f"sent {self.TOKEN}")
+            shown = field_test.do_step(step, names, {}, field_test.Run("e"), secrets={"token": self.TOKEN})
+            self.assertFalse(shown["ok"])
+            self.assertIn("trace", shown["output"])
+            with self.assertRaises(field_test.CannotRun):
+                field_test.do_step(step, names, {}, field_test.Run("e"), secrets={})
 
 
 class Expectations(unittest.TestCase):

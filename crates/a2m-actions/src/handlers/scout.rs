@@ -1327,7 +1327,7 @@ async fn try_reads(
     let left_out = json!(held_back);
     if tools.is_empty() {
         return Ok(Tried {
-            result: json!({"tools": tried, "left_out": left_out}),
+            result: json!({"tools": tried, "left_out": left_out, "counts": tried_counts(&tried, &left_out)}),
             runs,
             complete: true,
         });
@@ -1346,7 +1346,7 @@ async fn try_reads(
                 tried.push(json!({"tool": tool, "file": file, "state": "not_tried", "why": "The drafts do not compile."}));
             }
             return Ok(Tried {
-                result: json!({"tools": tried, "left_out": left_out, "problems": marked_problems(&problems)}),
+                result: json!({"tools": tried, "left_out": left_out, "counts": tried_counts(&tried, &left_out), "problems": marked_problems(&problems)}),
                 runs,
                 complete: true,
             });
@@ -1486,15 +1486,8 @@ async fn try_reads(
         let same = results
             .windows(2)
             .all(|pair| pair[0]["result"] == pair[1]["result"]);
-        let state = if not_ended {
-            "not_ended"
-        } else if completed == TRIES && same {
-            "proven"
-        } else if completed == TRIES {
-            "differs"
-        } else {
-            "failed"
-        };
+        let state = trial_state(&results, not_ended);
+        let waits = state == "waiting";
         let mut entry = json!({
             "tool": name,
             "file": file,
@@ -1510,6 +1503,13 @@ async fn try_reads(
                 "A trial did not end within {} seconds of its submission, and was cancelled.",
                 TRIAL_BOUND.as_secs()
             ));
+        }
+        if waits
+            && let Some(surface) = super::tools::binding_surface(&plan, &found.tool, Some(&binding))
+        {
+            let next = super::tools::sign_in_next(target, &surface);
+            entry["surface"] = json!(surface.as_str());
+            entry["next"] = json!({"action": next.action, "input": next.args});
         }
         if let Some((list, output)) = &from {
             // Where the input came from, never its value.
@@ -1558,10 +1558,57 @@ async fn try_reads(
     }
     // In the order of the drafted tools, whatever order they were tried in.
     tried.sort_by(|a, b| a["tool"].as_str().cmp(&b["tool"].as_str()));
+    let counts = tried_counts(&tried, &left_out);
     Ok(Tried {
-        result: json!({"tools": tried, "left_out": left_out}),
+        result: json!({"tools": tried, "left_out": left_out, "counts": counts}),
         runs,
         complete: true,
+    })
+}
+
+/// What the trials of one drafted read came to. A read whose last trial
+/// rests waiting for a sign-in is not a failed read: it waits, with the
+/// surface to sign in to (decision 0303).
+fn trial_state(results: &[Json], not_ended: bool) -> &'static str {
+    let completed = results
+        .iter()
+        .filter(|result| result["status"] == "completed")
+        .count();
+    let same = results
+        .windows(2)
+        .all(|pair| pair[0]["result"] == pair[1]["result"]);
+    let waits = results
+        .last()
+        .is_some_and(|result| result["status"] == "needs_login");
+    if not_ended {
+        "not_ended"
+    } else if waits {
+        "waiting"
+    } else if completed == TRIES && same {
+        "proven"
+    } else if completed == TRIES {
+        "differs"
+    } else {
+        "failed"
+    }
+}
+
+/// What became of the drafted reads, counted so that they add up (decision
+/// 0303): every drafted read is proven, waiting for a sign-in, failed (a
+/// trial that failed, differed, or did not end), not tried (with its
+/// reason in its entry), or held back with an open question.
+fn tried_counts(tried: &[Json], left_out: &Json) -> Json {
+    let state = |name: &str| tried.iter().filter(|tool| tool["state"] == name).count();
+    let (proven, waiting, not_tried) = (state("proven"), state("waiting"), state("not_tried"));
+    let failed = tried.len() - proven - waiting - not_tried;
+    let held = left_out.as_array().map_or(0, Vec::len);
+    json!({
+        "drafted": tried.len() + held,
+        "proven": proven,
+        "waiting": waiting,
+        "failed": failed,
+        "not_tried": not_tried,
+        "held": held,
     })
 }
 
@@ -2087,6 +2134,30 @@ handler!(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_read_that_waits_for_a_sign_in_is_waiting_and_the_counts_add_up() {
+        use super::{TRIES, json, trial_state, tried_counts};
+        let rest = |status: &str| json!({"status": status, "result": {"n": 1}});
+        assert_eq!(trial_state(&[rest("needs_login")], false), "waiting");
+        assert_eq!(trial_state(&[rest("needs_login")], true), "not_ended");
+        assert_eq!(trial_state(&[rest("failed")], false), "failed");
+        let proven: Vec<_> = (0..TRIES).map(|_| rest("completed")).collect();
+        assert_eq!(trial_state(&proven, false), "proven");
+        let tried = [
+            json!({"state": "proven"}),
+            json!({"state": "waiting"}),
+            json!({"state": "waiting"}),
+            json!({"state": "failed"}),
+            json!({"state": "differs"}),
+            json!({"state": "not_tried"}),
+        ];
+        let counts = tried_counts(&tried, &json!(["held/a.yaml"]));
+        assert_eq!(
+            counts,
+            json!({"drafted": 7, "proven": 1, "waiting": 2, "failed": 2, "not_tried": 1, "held": 1})
+        );
+    }
+
     use super::{COPY_MOST_FILES, copy_target};
 
     fn folder(name: &str) -> std::path::PathBuf {

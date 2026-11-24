@@ -57,14 +57,23 @@ and `note`:
                                       hash of `approve`, the change's hash or the act's
                                       identifier the recipe means to pass. `"send":
                                       "other"` writes another hash instead, to show that
-                                      a wrong answer passes nothing
+                                      a wrong answer passes nothing. `"signs_in": {role:
+                                      value}` types each value into the page's field for
+                                      that credential's role, as a person signs in on
+                                      the page of `session.login`
+    "unseen":  "name"                 the secret kept as `{name}` is in no file under the
+                                      engine's home, the project, or the harness's log
 
 `expect` may hold `ok` (true or false), `code` (the failure code of a product
 command), `status` (of a request), `contains` and `lacks` (text in the output),
 `count` (`{"text", "times"}`: the text is in the output exactly that many times), and
 `rows` (of a query). A step of the product may say `keep`, a map from a name to a
 dotted path into its answer, such as `{"run": "result.run_id"}`; later steps use the
-value as `{run}`. A step with `gap` expects what the product does today
+value as `{run}`. An `http` step may say `secret`, `{"name", "path"}`: the value at that
+dotted path of the system's answer, such as a token the system issued, is kept as
+`{name}` and is a secret of the run. What every step showed is cleared of each secret
+before it is printed or written to the report, and the `http` step that made it shows
+nothing of its answer. A step with `gap` expects what the product does today
 where that is not what it should do; the report lists these apart, and such a
 step failing means the gap has closed and the recipe is to be updated.
 
@@ -72,7 +81,7 @@ Text in `{braces}` is filled in: `{system}` the system's address on the run's cl
 network (its container's name and port), `{host}` that name, `{base}` the address the
 product's own traffic uses (the system's, or the proxy's when there is one), `{port}` the
 system's port, `{project}` the project folder, `{data}` the system's data folder,
-`{recipe}` the recipe folder, `{direct}` an address of the system that the runner itself
+`{recipe}` the recipe folder, `{home}` the engine's home, `{direct}` an address of the system that the runner itself
 can reach. `{direct}` exists only after the system has started, so it cannot be used in
 `system.env`: a recipe that does so is refused before anything is started.
 
@@ -174,6 +183,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import field_proxy
@@ -662,8 +672,15 @@ def press(spec, active, harness, execute=None, wait=PROMPT_WAIT):
         return {"ok": False, "status": status, "output": f"the page has no press for {press_path}"}
     stray = harness.stray()
     result = {}
+    # What the person types into the page's fields, one for each credential's role.
+    typed = "".join(
+        f"&{urllib.parse.quote('secret.' + str(role))}={urllib.parse.quote(str(value), safe='')}"
+        for role, value in sorted(spec.get("signs_in", {}).items())
+    )
     worker = threading.Thread(
-        target=lambda: result.update(done=execute(active.page_argv(port), page_request("POST", port, press_path, f"once={once}")))
+        target=lambda: result.update(
+            done=execute(active.page_argv(port), page_request("POST", port, press_path, f"once={once}{typed}"))
+        )
     )
     worker.start()
     asked = None
@@ -704,7 +721,40 @@ def kept(answer, path):
     return value if isinstance(value, str) else json.dumps(value)
 
 
-def do_step(step, names, env, active, proxy=None, harness=None):
+def holders(secret, places):
+    """Every file under `places` (folders, or one file each) whose bytes hold `secret`."""
+    needle = secret.encode()
+    found = []
+    for place in places:
+        if not place:
+            continue
+        files = [place] if os.path.isfile(place) else [
+            os.path.join(folder, name) for folder, _, names in os.walk(place) for name in names
+        ]
+        for path in files:
+            try:
+                with open(path, "rb") as handle:
+                    if needle in handle.read():
+                        found.append(path)
+            except OSError:
+                continue
+    return found
+
+
+def scrubbed(value, secrets):
+    """`value` with every secret of the run in its strings replaced by its name."""
+    if isinstance(value, str):
+        for name, secret in (secrets or {}).items():
+            value = value.replace(secret, f"[secret {name}]")
+        return value
+    if isinstance(value, list):
+        return [scrubbed(item, secrets) for item in value]
+    if isinstance(value, dict):
+        return {key: scrubbed(item, secrets) for key, item in value.items()}
+    return value
+
+
+def do_step(step, names, env, active, proxy=None, harness=None, secrets=None):
     """Carry one step out. Returns what it showed, as a dict."""
     if "fault" in step or "proxied" in step:
         if proxy is None:
@@ -734,7 +784,26 @@ def do_step(step, names, env, active, proxy=None, harness=None):
         return {"ok": code == 0, "output": (out + err)[-2000:]}
     if "http" in step:
         status, body = request(names["direct"], step["http"])
+        if "secret" in step:
+            name = step["secret"]["name"]
+            try:
+                value = kept(json.loads(body), step["secret"]["path"])
+            except ValueError:
+                value = None
+            if not value or not 200 <= status < 300:
+                raise CannotRun(f"The system's answer holds no `{step['secret']['path']}` to keep as the secret `{{{name}}}`.")
+            names[name] = value
+            if secrets is not None:
+                secrets[name] = value
+            return {"ok": True, "status": status, "output": f"the answer held a secret, kept as `{{{name}}}`; nothing of it is shown"}
         return {"ok": 200 <= status < 300, "status": status, "output": body[:2000]}
+    if "unseen" in step:
+        name = step["unseen"]
+        value = (secrets or {}).get(name)
+        if not value:
+            raise CannotRun(f"No secret was kept as `{{{name}}}` before this step.")
+        holding = holders(value, [names["home"], names["project"], names.get("log", "")])
+        return {"ok": not holding, "output": "in none of the files" if not holding else "held by: " + ", ".join(holding)}
     if "person" in step:
         return press(step["person"], active, harness)
     if "a2m" in step:
@@ -873,7 +942,10 @@ def main():
         "recipe": recipe_dir,
         "project": os.path.join(run_dir, "project"),
         "data": os.path.join(run_dir, "data"),
+        "log": os.path.join(run_dir, "harness.log"),
     }
+    # The secrets the run made, by name: cleared from everything a step showed.
+    secrets = {}
     if not a_folder:
         names["port"] = str(system["port"])
         names["host"] = "127.0.0.1" if system.get("network") == "box" else active.system
@@ -883,6 +955,7 @@ def main():
         os.makedirs(folder)
     home = os.path.abspath(args.home) if args.home else os.path.join(run_dir, "home")
     os.makedirs(home, exist_ok=True)
+    names["home"] = home
     env = dict(os.environ)
     env.update(
         A2M_HOME=home,
@@ -945,7 +1018,7 @@ def main():
             step = fill(raw, {**names, "base": names["direct"]} if straight and "direct" in names else names)
             if "a2m" in step and harness is None:
                 harness = start_engine(harness_binary)
-            shown = do_step(step, names, env, active, proxy, harness)
+            shown = do_step(step, names, env, active, proxy, harness, secrets)
             answer = shown.pop("answer", None)
             for name, path in step.get("keep", {}).items():
                 value = kept(answer or {}, path)
@@ -956,9 +1029,10 @@ def main():
                     )
                 names[name] = value
             why = met(step.get("expect", {"ok": True}), shown)
+            shown = scrubbed(shown, secrets)
             entry = {
                 "step": number,
-                "what": next(key for key in step if key not in ("expect", "gap", "note", "as", "keep")),
+                "what": next(key for key in step if key not in ("expect", "gap", "note", "as", "keep", "secret")),
                 "note": step.get("note"),
                 "gap": step.get("gap"),
                 "passed": why is None,
@@ -971,7 +1045,7 @@ def main():
             if why is not None:
                 failed += 1
     except CannotRun as stop:
-        print(f"The field test could not be run: {stop}")
+        print(f"The field test could not be run: {scrubbed(str(stop), secrets)}")
         report["could_not_run"] = str(stop)
         failed = -1
     finally:
@@ -993,6 +1067,7 @@ def main():
                 report.setdefault("not_removed", []).extend(left)
         gaps = [entry for entry in report["steps"] if entry["gap"]]
         report["gaps"] = [{"step": entry["step"], "gap": entry["gap"], "still_open": entry["passed"]} for entry in gaps]
+        report = scrubbed(report, secrets)
         with open(os.path.join(run_dir, "report.json"), "w", encoding="utf-8") as handle:
             json.dump(report, handle, indent=1)
     for gap in report["gaps"]:
