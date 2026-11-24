@@ -967,8 +967,8 @@ pub const SCHEMA: &[SettingDef] = &[
             NextStart,
             "Whether recording may be started at all.",
         ),
-        "Recording cannot be started: `capture.start` is not built.",
-        "recording, `capture.start`",
+        "A capture is not switched off by a setting: any builder may ask for one, and only its person begins it, on the engine's page.",
+        "a setting that switches captures off",
     ),
     not_built(
         protected(
@@ -982,8 +982,8 @@ pub const SCHEMA: &[SettingDef] = &[
             ),
             Safer::Off,
         ),
-        "Recording cannot be started: `capture.start` is not built.",
-        "recording, `capture.start`",
+        "A capture keeps the structure of what its person uses and never a value (decision 0392); there is no way to keep values.",
+        "a decision that a capture may keep values, which none has made",
     ),
     not_built(
         def(
@@ -997,8 +997,8 @@ pub const SCHEMA: &[SettingDef] = &[
             NextStart,
             "The longest one recording may run. A draft.",
         ),
-        "Recording cannot be started: `capture.start` is not built.",
-        "recording, `capture.start`",
+        "A capture ends at the bound its discoverer's manifest declares, or sooner when its person or the one who asked ends it.",
+        "a limit of the installation's on every capture",
     ),
     not_built(
         def(
@@ -1009,8 +1009,8 @@ pub const SCHEMA: &[SettingDef] = &[
             NextStart,
             "The most one recording may keep, in bytes. A draft.",
         ),
-        "Recording cannot be started: `capture.start` is not built.",
-        "recording, `capture.start`",
+        "What a capture keeps is held to the bound in bytes its discoverer's manifest declares.",
+        "a limit of the installation's on every capture",
     ),
     not_built(
         def(
@@ -1024,8 +1024,8 @@ pub const SCHEMA: &[SettingDef] = &[
             NextStart,
             "The most exchanges one recording may keep. A draft.",
         ),
-        "Recording cannot be started: `capture.start` is not built.",
-        "recording, `capture.start`",
+        "What a capture sees is held by its discoverer's own bounds; nothing counts exchanges across captures.",
+        "a limit of the installation's on every capture",
     ),
     // Evidence and telemetry.
     def(

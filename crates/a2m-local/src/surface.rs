@@ -54,6 +54,10 @@ const APPROVAL_PAGE: &str = include_str!("pages/approval.html");
 const ANSWER_PAGE: &str = include_str!("pages/answer.html");
 const ACT_PAGE: &str = include_str!("pages/act.html");
 const CODE_PAGE: &str = include_str!("pages/code.html");
+const CAPTURE_PAGE: &str = include_str!("pages/capture.html");
+/// How long past a capture's own bound its page stays, so that a person
+/// who presses Stop recording late is told it had ended.
+const CAPTURE_PAGE_MARGIN: Duration = Duration::from_secs(60);
 /// The most characters of what an act came to that its answer page shows.
 const RESULT_SHOWN: usize = 2_000;
 
@@ -157,6 +161,22 @@ struct Waiting {
     /// The code pages that wait for a person's one-time code, by the code
     /// in their address.
     codes: BTreeMap<String, CodePage>,
+    /// The pages of captures that record, by the code in their address:
+    /// where their person ends them (decision 0392, point 2).
+    captures: BTreeMap<String, CapturePage>,
+}
+
+/// The page of one capture its person began: it says what is kept, and
+/// its one press ends the recording.
+struct CapturePage {
+    capture: String,
+    person: PrincipalId,
+    target: String,
+    surface: String,
+    bound_seconds: u64,
+    /// The one-time value of the page served last. A press takes it.
+    once: Option<String>,
+    timer: JoinHandle<()>,
 }
 
 /// A press of Carry out being carried out. While it is, the session
@@ -386,13 +406,14 @@ impl Inner {
     fn settle(&self, state: &mut Waiting) {
         if state.pages.is_empty()
             && state.acts.is_empty()
+            && state.captures.is_empty()
             && let Some(listening) = state.listening.take()
         {
             let _ = listening.stop.send(());
             state.closing.push(listening.task);
         }
         self.waiting
-            .send_replace(state.pages.len() + state.acts.len());
+            .send_replace(state.pages.len() + state.acts.len() + state.captures.len());
     }
 
     /// The window of an act's page ended: silence is a decline.
@@ -1823,6 +1844,13 @@ fn nothing_done(status: StatusCode, detail: &str) -> (bool, Response) {
     (false, answer(status, "Nothing was done", detail))
 }
 
+/// As [`nothing_done`], naming the failure code, as a refusal of an
+/// approval does, so that whatever pressed, a person's browser or a
+/// program, is told by name why nothing was done.
+fn nothing_done_coded(status: StatusCode, code: &FailureCode, detail: &str) -> (bool, Response) {
+    (false, refused(status, code, "Nothing was done", detail))
+}
+
 /// What the act came to, as its answer page says it: the engine's own
 /// words, and the result as text.
 fn act_answer(done: &a2m_actions::Response) -> Response {
@@ -1859,7 +1887,7 @@ fn act_answer(done: &a2m_actions::Response) -> Response {
     }
 }
 
-async fn act_confirm_pressed(inner: &Inner, pressed: &mut ActPressed) -> (bool, Response) {
+async fn act_confirm_pressed(inner: &Arc<Inner>, pressed: &mut ActPressed) -> (bool, Response) {
     let Some(desk) = inner.desk.get() else {
         return nothing_done(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1885,8 +1913,9 @@ async fn act_confirm_pressed(inner: &Inner, pressed: &mut ActPressed) -> (bool, 
         );
     }
     let Ok(_up) = inner.prompting.try_lock() else {
-        return nothing_done(
+        return nothing_done_coded(
             StatusCode::SERVICE_UNAVAILABLE,
+            &codes::PROMPT_BUSY,
             "Another presence prompt is up on this machine. Answer or close it first, then open the link again and press once more.",
         );
     };
@@ -1909,26 +1938,30 @@ async fn act_confirm_pressed(inner: &Inner, pressed: &mut ActPressed) -> (bool, 
     let prompt = match asked {
         PromptAnswer::Present(prompt) => prompt,
         PromptAnswer::Confirmed => {
-            return nothing_done(
+            return nothing_done_coded(
                 StatusCode::FORBIDDEN,
+                &codes::PRESENCE_FAILED,
                 "A confirmation dialog was answered, which proves no person, so nothing was done.",
             );
         }
         PromptAnswer::Dismissed => {
-            return nothing_done(
+            return nothing_done_coded(
                 StatusCode::FORBIDDEN,
+                &codes::PRESENCE_FAILED,
                 "The prompt on this machine was closed, or its time ended. Open the link again to answer once more.",
             );
         }
         PromptAnswer::Denied => {
-            return nothing_done(
+            return nothing_done_coded(
                 StatusCode::FORBIDDEN,
+                &codes::PRESENCE_FAILED,
                 "The prompt on this machine was answered and not passed. Open the link again to answer once more.",
             );
         }
         PromptAnswer::NotAvailable(why) => {
-            return nothing_done(
+            return nothing_done_coded(
                 StatusCode::FORBIDDEN,
+                &codes::PRESENCE_FAILED,
                 &format!(
                     "No presence prompt is available on this machine, so nothing is done here. {} {} You can decline the act from the page.",
                     why.message, why.remedy
@@ -1946,8 +1979,174 @@ async fn act_confirm_pressed(inner: &Inner, pressed: &mut ActPressed) -> (bool, 
         desk.carry_out_with(pressed.act, proof, given).await
     };
     match carried {
-        Ok(done) => (true, act_answer(&done)),
+        Ok(done) => match recording(&done) {
+            // A capture its person has just begun: the answer is its page,
+            // where they end it (decision 0392, point 2).
+            Some(begun) => (true, capture_page_opened(inner, pressed.person, begun)),
+            None => (true, act_answer(&done)),
+        },
         Err(failure) => nothing_done(StatusCode::FORBIDDEN, failure.message()),
+    }
+}
+
+/// A capture an act has just begun, as the engine answered it: its
+/// identifier, target, surface, and bound.
+struct Begun {
+    capture: String,
+    target: String,
+    surface: String,
+    bound_seconds: u64,
+}
+
+fn recording(done: &a2m_actions::Response) -> Option<Begun> {
+    if !done.ok || done.action != "capture.start" {
+        return None;
+    }
+    let result = done.result.as_ref()?;
+    if result.get("state")?.as_str()? != "recording" {
+        return None;
+    }
+    let text = |name: &str| {
+        result
+            .get(name)
+            .and_then(|value| value.as_str())
+            .map(str::to_owned)
+    };
+    Some(Begun {
+        capture: text("capture_id")?,
+        target: text("target")?,
+        surface: text("surface")?,
+        bound_seconds: result
+            .get("bound_seconds")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
+    })
+}
+
+/// Serves a capture's page, with a new one-time value.
+fn capture_html(code: &str, page: &CapturePage, once: &str) -> Response {
+    page_html(fill(
+        CAPTURE_PAGE,
+        &[
+            ("capture", &escape(&page.capture)),
+            ("target", &escape(&page.target)),
+            ("surface", &escape(&page.surface)),
+            ("bound", &page.bound_seconds.to_string()),
+            ("code", &escape(code)),
+            ("once", &escape(once)),
+        ],
+    ))
+}
+
+fn page_html(html: String) -> Response {
+    page(StatusCode::OK, html)
+}
+
+/// Opens the page of a capture its person has just begun, for as long as
+/// the capture may record and a margin.
+fn capture_page_opened(inner: &Arc<Inner>, person: PrincipalId, begun: Begun) -> Response {
+    let (Ok(code), Ok(once)) = (inner.code(), inner.code()) else {
+        return answer(
+            StatusCode::OK,
+            "Recording",
+            "The capture records. This machine gave no random value for its page, so it cannot be ended here: the program that asked ends it, or it ends at its bound.",
+        );
+    };
+    let life = Duration::from_secs(begun.bound_seconds).saturating_add(CAPTURE_PAGE_MARGIN);
+    let ending = Arc::downgrade(inner);
+    let at = code.clone();
+    let timer = tokio::spawn(async move {
+        tokio::time::sleep(life).await;
+        if let Some(inner) = ending.upgrade() {
+            let mut state = inner.state();
+            state.captures.remove(&at);
+            inner.settle(&mut state);
+        }
+    });
+    let page = CapturePage {
+        capture: begun.capture,
+        person,
+        target: begun.target,
+        surface: begun.surface,
+        bound_seconds: begun.bound_seconds,
+        once: Some(once.clone()),
+        timer,
+    };
+    let shown = capture_html(&code, &page, &once);
+    let mut state = inner.state();
+    state.captures.insert(code, page);
+    inner.settle(&mut state);
+    shown
+}
+
+async fn capture_show(State(inner): State<Arc<Inner>>, Path(code): Path<String>) -> Response {
+    let Ok(once) = inner.code() else {
+        return answer(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "The page cannot be shown",
+            "This machine gave no random value for the page. Nothing was done. Open the link again.",
+        );
+    };
+    let mut state = inner.state();
+    let Some(found) = state.captures.get_mut(&code) else {
+        return nothing_here();
+    };
+    found.once = Some(once.clone());
+    capture_html(&code, found, &once)
+}
+
+/// A press of Stop recording: the page's one-time value, then the end of
+/// the capture, once.
+async fn capture_stop(
+    State(inner): State<Arc<Inner>>,
+    Path(code): Path<String>,
+    body: Bytes,
+) -> Response {
+    let (capture, person) = {
+        let mut state = inner.state();
+        let Some(found) = state.captures.get_mut(&code) else {
+            return nothing_here();
+        };
+        let expected = found.once.take();
+        let fits = match (expected.as_deref(), once_of(&body)) {
+            (Some(expected), Some(given)) => same(expected, given),
+            _ => false,
+        };
+        if !fits {
+            return refused(
+                StatusCode::FORBIDDEN,
+                &codes::REQUEST_NOT_FROM_PAGE,
+                "Nothing was done",
+                "The press did not come from the page as it was last shown. Open the page again and press there.",
+            );
+        }
+        let (capture, person) = (found.capture.clone(), found.person);
+        if let Some(gone) = state.captures.remove(&code) {
+            gone.timer.abort();
+        }
+        inner.settle(&mut state);
+        (capture, person)
+    };
+    let Some(desk) = inner.desk.get() else {
+        return refused(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &codes::SURFACE_UNAVAILABLE,
+            "Nothing was done",
+            "The engine cannot end the capture now. It ends at its bound.",
+        );
+    };
+    match desk.end_capture(&capture, person) {
+        Ok(()) => answer(
+            StatusCode::OK,
+            "Recording ended",
+            "The capture ended, and what it found is stored as findings. The program that asked can call `capture.stop` to be told what it found. You can close this page.",
+        ),
+        Err(failure) => refused(
+            StatusCode::CONFLICT,
+            failure.code(),
+            "Nothing was done",
+            failure.message(),
+        ),
     }
 }
 
@@ -2204,6 +2403,8 @@ impl LocalSurface {
             .route("/act/{code}/confirm", post(act_confirm))
             .route("/act/{code}/decline", post(act_decline))
             .route("/code/{code}", post(code_given))
+            .route("/capture/{code}", get(capture_show))
+            .route("/capture/{code}/stop", post(capture_stop))
             .fallback(|| async { nothing_here() })
             .layer(axum::middleware::from_fn_with_state(port, guard))
             .with_state(Arc::clone(&self.inner));

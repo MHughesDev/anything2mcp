@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recording your use</title>
+<style>
+body { font-family: system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+code { font-family: ui-monospace, monospace; }
+button { font: inherit; padding: 0.6rem 1.4rem; min-width: 9rem; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+<h1>Recording your use</h1>
+<p>The capture <code>{{capture}}</code> of the surface <code>{{surface}}</code> of the target <code>{{target}}</code> records from now. Use the system in the engine's own browser as you always do: the engine sends nothing while it records, and every request is yours.</p>
+<p>What is kept: the structure of what you use, such as the paths, methods, and field names of the requests and the screens you visit, never a value you type or are shown.</p>
+<p>It ends when you press Stop recording, when the program that asked ends it, or after {{bound}} seconds at most, whichever is first.</p>
+<form method="post" action="/capture/{{code}}/stop">
+<input type="hidden" name="once" value="{{once}}">
+<button type="submit">Stop recording</button>
+</form>
+</main>
+</body>
+</html>

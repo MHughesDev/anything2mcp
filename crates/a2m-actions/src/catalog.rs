@@ -226,6 +226,39 @@ fn watch_output() -> JsonSchema {
         .optional("condition", text())
 }
 
+/// A capture of a person's use, as `capture.start` and `capture.stop`
+/// return it: never a value it saw (decision 0392, point 2).
+fn capture_output() -> JsonSchema {
+    JsonSchema::object()
+        .required("capture_id", text())
+        .required("target", text())
+        .required("surface", text())
+        .required("environment", text())
+        .required("compiled_target_hash", text())
+        .required("state", JsonSchema::words(&["asked", "recording", "ended"]))
+        .required("asked_at", JsonSchema::int())
+        .required("bound_seconds", JsonSchema::int())
+        .optional("began_at", JsonSchema::int())
+        .optional("ended_at", JsonSchema::int())
+        .optional(
+            "ended_by",
+            JsonSchema::words(&[
+                "asked",
+                "person",
+                "bound",
+                "not_begun",
+                "engine_closed",
+                "returned",
+            ]),
+        )
+        .optional("findings", JsonSchema::int())
+        .optional("discoverers", list_of(any_map()))
+        .optional("act", text())
+        .optional("link", text())
+        .optional("person", text())
+        .optional("expires_at", JsonSchema::int())
+}
+
 /// One change a watch recorded, as `watch.changes` returns it: its kind,
 /// the checks and their runs, and never a value.
 fn watch_change() -> JsonSchema {
@@ -523,14 +556,20 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .opt("limit", COUNT, LIMIT)
             .opt("offset", OFFSET, OFFSET_HELP)
             .done(),
-        act("capture.start", "Begin recording actions and traffic on a surface, redacted as it is recorded.", BUILDER, Build, "4", Observe)
+        act("capture.start", "Ask for a capture of your person's own use of a surface. Nothing records until the person begins it on the engine's page; then only the structure of what they use is kept, never a value.", BUILDER, Build, "4", Observe)
             .pos("target", TEXT, TARGET)
-            .opt("surface", TEXT, "The surface to record.")
+            .opt("surface", TEXT, "The surface to record. The first one a pack can watch when left out.")
+            .opt("capture", TEXT, "The capture to begin. Only the press on its page gives it, with the person's proof of presence; an agent leaves it out.")
             .writes()
+            .output(capture_output())
+            .example(r#"{"target": "example"}"#)
             .done(),
-        act("capture.stop", "End the recording and store it.", BUILDER, Build, "4", Observe)
+        act("capture.stop", "End a capture you asked for, or read how it ended, and store what it found as findings.", BUILDER, Build, "4", Observe)
             .pos("target", TEXT, TARGET)
+            .opt("capture", TEXT, "The capture, as `capture.start` gave it. The newest of the target when left out.")
             .writes()
+            .output(capture_output())
+            .example(r#"{"target": "example"}"#)
             .done(),
         act("endpoints.infer", "Endpoint templates, schemas, and dependencies worked out from stored recordings.", BUILDER, Build, "4", Inspect)
             .pos("target", TEXT, TARGET)
