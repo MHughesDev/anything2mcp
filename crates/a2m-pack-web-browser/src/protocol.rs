@@ -142,6 +142,12 @@ pub(crate) enum EventKind {
     MoveStarted(MoveStarted),
     /// A download is about to begin.
     DownloadBegins(DownloadBegins),
+    /// The page registered tools (research note 25).
+    ToolsAdded(Value),
+    /// The page took tools away.
+    ToolsRemoved(Value),
+    /// A call of a page's tool ended.
+    ToolResponded(Value),
     /// A request's answer has arrived whole.
     LoadingFinished(Loading),
     /// A request failed, or was ended.
@@ -183,6 +189,9 @@ impl EventKind {
             "Page.frameRequestedNavigation" => Self::MoveAsked(of(params)?),
             "Page.frameStartedNavigating" => Self::MoveStarted(of(params)?),
             "Page.downloadWillBegin" => Self::DownloadBegins(of(params)?),
+            "WebMCP.toolsAdded" => Self::ToolsAdded(params),
+            "WebMCP.toolsRemoved" => Self::ToolsRemoved(params),
+            "WebMCP.toolResponded" => Self::ToolResponded(params),
             "Network.loadingFinished" => Self::LoadingFinished(of(params)?),
             "Network.loadingFailed" => Self::LoadingFailed(of(params)?),
             _ => return None,
@@ -1056,6 +1065,34 @@ pub(crate) struct ResponseBody {
     #[serde(default)]
     pub base64_encoded: bool,
 }
+
+// ---- WebMCP: the tools a page publishes ----
+
+#[derive(Debug, Serialize)]
+pub(crate) struct WebMcpEnable {}
+command!(WebMcpEnable, "WebMCP.enable" => Nothing);
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WebMcpInvoke<'a> {
+    pub frame_id: &'a str,
+    pub tool_name: &'a str,
+    pub input: &'a Value,
+}
+command!(WebMcpInvoke<'_>, "WebMCP.invokeTool" => WebMcpInvoked);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WebMcpInvoked {
+    pub invocation_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WebMcpCancel<'a> {
+    pub invocation_id: &'a str,
+}
+command!(WebMcpCancel<'_>, "WebMCP.cancelInvocation" => Nothing);
 
 // ---- Input ----
 

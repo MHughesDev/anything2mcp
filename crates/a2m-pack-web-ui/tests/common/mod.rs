@@ -293,6 +293,10 @@ pub fn ui_mode() -> Mode {
     Mode::new("ui").unwrap()
 }
 
+pub fn site_tools_mode() -> Mode {
+    Mode::new("site_tools").unwrap()
+}
+
 pub fn page_http_mode() -> Mode {
     Mode::new("page_http").unwrap()
 }

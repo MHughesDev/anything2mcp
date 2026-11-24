@@ -30,10 +30,13 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     let second = stand("registry");
     assert_eq!(first.registry.digest(), second.registry.digest());
     let page_http = common::page_http_mode();
+    let site_tools = common::site_tools_mode();
     assert_eq!(
         first.registry.modes().collect::<Vec<_>>(),
-        vec![&page_http, &ui_mode()]
+        vec![&page_http, &site_tools, &ui_mode()]
     );
+    let handle = first.registry.driver(&site_tools).unwrap();
+    assert_eq!(handle.choice().provider.as_str(), "web");
     let handle = first.registry.driver(&page_http).unwrap();
     assert_eq!(handle.choice().provider.as_str(), "web");
     let handle = first.registry.driver(&ui_mode()).unwrap();
@@ -96,6 +99,21 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         &vec![a2m_pack_web_ui::GOTO, a2m_pack_web_ui::REQUEST]
     );
     assert!(manifest.modes[1].commit_steps.is_empty());
+    // And those of `site_tools`: the call is the one step that saves.
+    let tool_steps = &manifest.modes[2].steps;
+    assert_eq!(manifest.modes[2].name, site_tools);
+    assert_eq!(
+        tool_steps,
+        &vec![
+            a2m_pack_web_ui::GOTO,
+            a2m_pack_web_ui::WAIT,
+            a2m_pack_web_ui::CALL_TOOL
+        ]
+    );
+    assert_eq!(
+        manifest.modes[2].commit_steps,
+        vec![a2m_pack_web_ui::CALL_TOOL]
+    );
     // Every place the browser engine looks for a browser is declared, so
     // that the supervisor will start what is found there.
     let declared: Vec<&str> = manifest.requirements[0]

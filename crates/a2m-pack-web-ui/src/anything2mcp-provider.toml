@@ -43,13 +43,29 @@ session_reads = 4
 session_writes = 1
 exclusive = "none"
 
+# A tool the page registers in the browser for agents (WebMCP), called by
+# name from an acting tab. A tool runs the page's own script, so what it does
+# is whatever that script does: the binding is held to the least effect that
+# cannot be taken back, and the page's own hints are never evidence
+# (decision 0399, the `site_tools` record).
+[[modes]]
+name = "site_tools"
+archetype = "request"
+verbs = ["call", "submit"]
+steps = ["goto", "wait", "call_tool"]
+commit_steps = ["call_tool"]
+rank = 30
+session_reads = 4
+session_writes = 1
+exclusive = "none"
+
 [[surface_kinds]]
 name = "web"
 archetype = "interface"
 session = true
 
 [points]
-driver = ["ui", "page_http"]
+driver = ["ui", "page_http", "site_tools"]
 # A sign-in through the application's own sign-in page with a stored
 # credential (decision 0245), and a sign-in the person carries out in a
 # window, on the application's pages or an identity provider's (decision 0254).
@@ -246,6 +262,18 @@ code = "forbidden_by_edge"
 [[failure_codes]]
 class = "busy"
 code = "surface_in_maintenance"
+
+[[failure_codes]]
+class = "drift"
+code = "site_tool_not_offered"
+
+[[failure_codes]]
+class = "drift"
+code = "site_tool_changed"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "site_tools_unavailable"
 
 [[failure_codes]]
 class = "input"

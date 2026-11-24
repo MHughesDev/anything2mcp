@@ -72,7 +72,7 @@ use a2m_pack_web_browser::BrowserSettings;
 use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar, RegistryBuilder};
 
 pub use a2m_pack_web_browser::SharedBrowsers;
-pub use lower::{GOTO, INVOKE, READ, SET, WAIT};
+pub use lower::{CALL_TOOL, GOTO, INVOKE, READ, SET, WAIT};
 pub use page_http::{PAGE_HTTP_MODE, REQUEST};
 pub use requests::REQUEST_KIND;
 pub use screens::{CONTROLS, PACK, SCREEN_KIND, WEB_SURFACE};
@@ -80,6 +80,8 @@ pub use sign_in::FORM_LOGIN;
 
 /// The name of the mode this pack drives.
 pub const UI_MODE: &str = "ui";
+/// The name of the mode that calls the tools a page registers.
+pub const SITE_TOOLS_MODE: &str = "site_tools";
 
 /// The key of a surface of the kind `web` that holds its address.
 pub const ADDRESS_KEY: &str = "origin";
@@ -149,13 +151,16 @@ impl Pack for WebUiPack {
             page_http.clone(),
             Arc::new(page_http::PageHttpDriver::new(browsers.clone())),
         )?;
-        to.driver(
-            mode.clone(),
-            Arc::new(driver::UiDriver::new(
-                browsers,
-                setting("max_snapshot_elements").unwrap_or(400),
-            )),
-        )?;
+        // One driver serves the two modes that run in a page of the
+        // interface: they share its tabs, its screens, and what it holds
+        // of the surfaces the edge refused.
+        let interface = Arc::new(driver::UiDriver::new(
+            browsers,
+            setting("max_snapshot_elements").unwrap_or(400),
+        ));
+        to.driver(mode.clone(), interface.clone())?;
+        let site_tools = Mode::new(SITE_TOOLS_MODE)?;
+        to.driver(site_tools.clone(), interface)?;
         let mut compiler = CompilerRegistrations::new()
             .surface_kind(SurfaceKindSpec::new(
                 WEB_SURFACE,
@@ -166,6 +171,7 @@ impl Pack for WebUiPack {
             .file_kind(Arc::new(requests::RequestKind::new()))
             .lowering(Arc::new(lower::UiLowering::new(mode)))
             .lowering(Arc::new(page_http::PageHttpLowering::new(page_http)))
+            .lowering(Arc::new(lower::SiteToolsLowering::new(site_tools)))
             .lint_rule(Arc::new(screens::CssNotLast))
             .lint_rule(Arc::new(screens::CssUsed))
             .lint_rule(Arc::new(screens::NoFingerprint))

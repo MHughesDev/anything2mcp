@@ -1,0 +1,7 @@
+# Package 8.2a: a page that registers tools for agents in the browser. The
+# screen only says where the page is and when it is ready; the tools are the
+# page's own.
+screen: tools
+surface: app
+reach: {url: "/cases/site-tools"}
+ready: {visible: {role: heading, name: "Site tools"}}

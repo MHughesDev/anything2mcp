@@ -973,6 +973,10 @@ pub(crate) struct Page {
     nav: watch::Sender<Nav>,
     /// How many dialogs of the page have closed.
     dialogs_closed: watch::Sender<u64>,
+    /// The tools the page registered, and the answers of calls of them.
+    site: Mutex<SiteState>,
+    /// How many times what the page announced of its tools changed.
+    site_changes: watch::Sender<u64>,
     /// The dialog that is open, as the browser says it: its kind and what it
     /// says, redacted.
     open_dialog: Mutex<Option<OpenDialog>>,
@@ -1015,6 +1019,10 @@ pub(crate) struct Page {
     released: AtomicBool,
     browser: Arc<BrowserInner>,
 }
+
+mod site_tools;
+use site_tools::SiteState;
+pub use site_tools::{SiteAnswer, SiteTool, digest_of};
 
 /// Clears the mark of a `goto` under way when the `goto` ends, however it
 /// ends.
@@ -2492,6 +2500,9 @@ impl Page {
                     });
                 }
             }
+            EventKind::ToolsAdded(params) if own => self.tools_added(&params),
+            EventKind::ToolsRemoved(params) if own => self.tools_removed(&params),
+            EventKind::ToolResponded(params) if own => self.tool_responded(&params),
             EventKind::ContextCreated(created) if own => {
                 let context = created.context;
                 if context.name == WORLD
@@ -3259,6 +3270,8 @@ pub(crate) async fn open_page(
         status: watch::Sender::new(Status::Open),
         nav: watch::Sender::new(Nav::default()),
         dialogs_closed: watch::Sender::new(0),
+        site: Mutex::new(SiteState::default()),
+        site_changes: watch::Sender::new(0),
         open_dialog: Mutex::new(None),
         blocked: Mutex::new(Vec::new()),
         changes: watch::Sender::new(0),

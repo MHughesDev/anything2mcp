@@ -1,0 +1,75 @@
+operation: example_page_note_save
+title: Save a note through the page's own tool
+effect: irreversible
+commit_points: 1
+inputs:
+  text: {type: text, description: "The note"}
+outputs:
+  saying: {type: untrusted_text}
+bindings:
+  - mode: site_tools
+    verb: submit
+    status: shadow
+    screen: tools
+    tool: example_note_save
+    digest: "0000000000000000000000000000000000000000000000000000000000000000"
+    args:
+      text: input.text
+    result: saying
+description: >
+  Calls the tool the page registers to save a note, and returns what the page says.
+---
+operation: example_page_total_get
+title: Ask the page's own tool for a total
+effect: irreversible
+commit_points: 1
+inputs:
+  order: {type: text, description: "The order"}
+outputs:
+  saying: {type: untrusted_text}
+bindings:
+  - mode: site_tools
+    verb: submit
+    status: shadow
+    screen: tools
+    tool: example_total_get
+    digest: "0000000000000000000000000000000000000000000000000000000000000000"
+    args:
+      order: input.order
+    result: saying
+description: >
+  Calls a tool the page marks as only reading; the binding is held to what cannot be taken back all the same.
+---
+operation: example_page_fail_call
+title: Call the tool that fails
+effect: irreversible
+commit_points: 1
+inputs: {}
+outputs: {}
+bindings:
+  - mode: site_tools
+    verb: submit
+    status: shadow
+    screen: tools
+    tool: example_fail
+    digest: "0000000000000000000000000000000000000000000000000000000000000000"
+description: >
+  Calls a tool that always fails.
+---
+operation: example_page_late_call
+title: Call the tool the page registers late
+effect: irreversible
+commit_points: 1
+inputs: {}
+outputs:
+  saying: {type: untrusted_text}
+bindings:
+  - mode: site_tools
+    verb: submit
+    status: shadow
+    screen: tools
+    tool: example_late_tool
+    digest: "0000000000000000000000000000000000000000000000000000000000000000"
+    result: saying
+description: >
+  Calls a tool the page registers a moment after it loads.

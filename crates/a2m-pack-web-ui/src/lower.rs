@@ -15,7 +15,7 @@
 
 use a2m_core::{
     EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef, SectionIndex,
-    Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
+    Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb, WriteEvidence,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
@@ -24,8 +24,8 @@ use a2m_files::{
 
 use crate::codes::{self, shown};
 use crate::model::{
-    GotoStep, InvokeStep, PAYLOAD_FORMAT, ReadItem, ReadStep, Screen, ScreenSection, SetStep,
-    TabKind, WaitStep,
+    CallToolStep, GotoStep, InvokeStep, PAYLOAD_FORMAT, ReadItem, ReadStep, Screen, ScreenSection,
+    SetStep, TabKind, WaitStep,
 };
 use crate::screens::{SCREEN_KIND, WEB_SURFACE, problem};
 
@@ -719,6 +719,284 @@ impl Lowering for UiLowering {
         }
         if lower.problems.is_empty() {
             Ok(lowered)
+        } else {
+            Err(lower.problems)
+        }
+    }
+}
+
+/// The step that calls a tool the page registered.
+pub const CALL_TOOL: StepKind = StepKind::fixed("call_tool");
+/// What the name of a tool argument's step argument starts with.
+pub(crate) const TOOL_ARG: &str = "arg.";
+
+/// The lowering of the `site_tools` mode: one binding into `goto` in an
+/// acting tab, `wait` for the screen it names, and `call_tool`, the commit
+/// point. A tool runs the page's own script, so the binding is held to the
+/// least effect that cannot be taken back (decision 0399, the `site_tools`
+/// record): the page's hints are its own claims and are never evidence.
+pub(crate) struct SiteToolsLowering {
+    mode: Mode,
+    schema: JsonSchema,
+    verbs: Vec<Verb>,
+    step_kinds: Vec<StepKind>,
+}
+
+impl SiteToolsLowering {
+    pub(crate) fn new(mode: Mode) -> Self {
+        Self {
+            mode,
+            schema: JsonSchema::object()
+                .required("screen", JsonSchema::name())
+                .required("tool", JsonSchema::text())
+                .required("digest", JsonSchema::text())
+                .optional("args", JsonSchema::map_of(JsonSchema::expression()))
+                .optional("result", JsonSchema::name()),
+            verbs: ["call", "submit"]
+                .iter()
+                .map(|verb| Verb::fixed(verb))
+                .collect(),
+            step_kinds: vec![GOTO, WAIT, CALL_TOOL],
+        }
+    }
+}
+
+impl Lower<'_, '_> {
+    /// The `call_tool` step of a binding.
+    fn call_tool(&mut self, found: &Found<'_>, binding: &Located<Doc>) -> Option<Step> {
+        let tool = binding.get("tool")?.as_text()?.to_owned();
+        let digest_at = binding.get("digest")?;
+        let digest = digest_at.as_text()?.to_owned();
+        if digest.len() != 64
+            || !digest
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            self.refuse(
+                "digest_invalid",
+                Stage::Resolve,
+                &digest_at.at,
+                "The `digest` of a tool is 64 lowercase hexadecimal characters.".to_owned(),
+                "Copy the digest the engine gives for the tool the page offers.",
+            );
+            return None;
+        }
+        let mut args = Vec::new();
+        let mut names = Vec::new();
+        for entry in binding
+            .get("args")
+            .map(Located::entries)
+            .unwrap_or_default()
+        {
+            let name = entry.key.value.clone();
+            let index = match self.cx.expr(&entry.value, None) {
+                Ok(index) => index,
+                Err(wrong) => {
+                    self.problems.push(wrong);
+                    continue;
+                }
+            };
+            let fits = self.cx.expr_type(index).is_some_and(|ty| {
+                matches!(
+                    ty,
+                    ValueType::Text
+                        | ValueType::Choice
+                        | ValueType::Int
+                        | ValueType::Decimal
+                        | ValueType::Bool
+                )
+            });
+            if !fits {
+                self.refuse(
+                    "value_type",
+                    Stage::TypeCheck,
+                    &entry.value.at,
+                    format!(
+                        "The argument `{}` is not text, a code, a number, or a truth value.",
+                        shown(&name)
+                    ),
+                    "Give the argument a value of one of those types.",
+                );
+                continue;
+            }
+            args.push(StepArg {
+                name: format!("{TOOL_ARG}{name}"),
+                value: index,
+            });
+            names.push(name);
+        }
+        let result = binding
+            .get("result")
+            .and_then(Located::as_text)
+            .map(str::to_owned);
+        if let Some(result) = &result
+            && !self
+                .cx
+                .operation()
+                .outputs()
+                .iter()
+                .any(|output| &output.name == result)
+        {
+            self.refuse(
+                "unknown_output",
+                Stage::Resolve,
+                &binding.at,
+                format!(
+                    "The `result` names the output `{}`, which the operation does not have.",
+                    shown(result)
+                ),
+                "Name an output of the operation, whose field type is untrusted text.",
+            );
+            return None;
+        }
+        let mut step = self.step(
+            CALL_TOOL,
+            found,
+            FailsAs::from(&a2m_provider::codes::row::NO_CONFIRMATION),
+        );
+        step.args = args;
+        step.commits = true;
+        step.payload = self.encoded(
+            &CallToolStep {
+                tool,
+                digest,
+                args: names,
+                result,
+            },
+            &binding.at,
+        );
+        Some(step)
+    }
+}
+
+impl Lowering for SiteToolsLowering {
+    fn mode(&self) -> Mode {
+        self.mode.clone()
+    }
+
+    /// A call sends to the page's own origin, as the page's script does
+    /// whatever it does; the browser holds the tab to the origins declared.
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        _lowered: &Lowered,
+        _cx: &LowerContext<'_>,
+    ) -> Statement {
+        web_statement()
+    }
+
+    fn verbs(&self) -> &[Verb] {
+        &self.verbs
+    }
+
+    fn reads(&self) -> &[(FileKindName, SurfaceKind)] {
+        &[]
+    }
+
+    fn step_kinds(&self) -> &[StepKind] {
+        &self.step_kinds
+    }
+
+    /// The call is the commit point, and the only step that saves.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == CALL_TOOL {
+            StepCommits::Always
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == CALL_TOOL {
+            StepChanges::Can
+        } else {
+            StepChanges::Never
+        }
+    }
+
+    /// What a page's own script does is not known, and the page's hint that
+    /// a tool only reads is its own word: the least effect is the one that
+    /// cannot be taken back.
+    fn least_effect(&self, _binding: &ResolvedBinding<'_>) -> EffectClass {
+        EffectClass::Irreversible
+    }
+
+    fn binding_schema(&self) -> &JsonSchema {
+        &self.schema
+    }
+
+    /// A call of a page's tool has nothing to read back: what the page
+    /// says it did is its own word, so the evidence is the page's
+    /// acknowledgement, the operation is held to `irreversible`, and the
+    /// engine ends its record acted, never verified.
+    fn evidence(&self, _binding: &ResolvedBinding<'_>, _lowered: &Lowered) -> WriteEvidence {
+        WriteEvidence::Acknowledged
+    }
+
+    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+        match strategy {
+            IdentityStrategy::None => Possible::Yes,
+            _ => Possible::No(
+                "a call of a page's tool names no read of the record it changes, so no identity is known."
+                    .to_owned(),
+            ),
+        }
+    }
+
+    fn lower(
+        &self,
+        binding: &ResolvedBinding<'_>,
+        cx: &LowerContext<'_>,
+    ) -> Result<Lowered, Diagnostics> {
+        let mut lower = Lower {
+            cx,
+            section: None,
+            problems: Diagnostics::new(),
+        };
+        if let Some((index, section)) = cx.section(&SCREEN_KIND, &WEB_SURFACE) {
+            let decoded = if section.format == PAYLOAD_FORMAT {
+                section.payload.decode::<ScreenSection>()
+            } else {
+                Err(codes::row::STEP_NOT_USABLE.failure(
+                    "The screens were compiled in another format.",
+                    "Compile the target again.",
+                ))
+            };
+            match decoded {
+                Ok(decoded) => lower.section = Some((index, decoded)),
+                Err(failure) => lower.refuse(
+                    "not_encodable",
+                    Stage::Lower,
+                    &binding.doc.at,
+                    failure.message().to_owned(),
+                    "Report this to the web pack's author.",
+                ),
+            }
+        }
+        let Some(found) = lower.screen(binding.doc) else {
+            return Err(lower.problems);
+        };
+        let surface = SurfaceName::new(&found.screen.surface).map_err(|_| {
+            Diagnostics::from(problem(
+                "unknown_screen",
+                Stage::Resolve,
+                found.at,
+                "The screen's surface has no well-formed name.",
+                "Name a surface the target declares.",
+            ))
+        })?;
+        let mut act = vec![lower.goto(&found, TabKind::Act), lower.wait(&found, false)];
+        act.extend(lower.call_tool(&found, binding.doc));
+        if lower.problems.is_empty() {
+            Ok(Lowered {
+                surface,
+                act,
+                confirm: Vec::new(),
+                read_back: Vec::new(),
+                lookup: Vec::new(),
+                settle_ms: 0,
+                prefer_response: false,
+            })
         } else {
             Err(lower.problems)
         }

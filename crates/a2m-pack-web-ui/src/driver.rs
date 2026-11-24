@@ -35,8 +35,9 @@ use a2m_provider::{
 use a2m_telemetry::{Acting, Detail};
 
 use crate::codes::{self, shown};
-use crate::lower::{GOTO, INVOKE, REACH_ARG, READ, ROW_ARG, SET, VALUE_ARG, WAIT};
+use crate::lower::{CALL_TOOL, GOTO, INVOKE, REACH_ARG, READ, ROW_ARG, SET, VALUE_ARG, WAIT};
 
+mod site_tools;
 mod widgets;
 use crate::model::{
     Action, Cond, Field, Fingerprint, GotoStep, Handling, InvokeStep, Locator, PAYLOAD_FORMAT,
@@ -2223,6 +2224,8 @@ impl Driver for UiDriver {
                 session.set(step, input).await
             } else if step.kind == INVOKE {
                 session.invoke(step, input).await
+            } else if step.kind == CALL_TOOL {
+                session.call_tool(step, input).await
             } else {
                 return Err(codes::not_usable(format!(
                     "the interface driver has no step of the kind `{}`",

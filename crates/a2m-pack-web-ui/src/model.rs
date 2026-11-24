@@ -442,6 +442,22 @@ pub(crate) struct SetStep {
     pub field: String,
 }
 
+/// The payload of a `call_tool` step: the tool a page registered, called
+/// by its name, once the page shows the digest the binding holds. Each
+/// argument arrives as the step's argument `arg.<name>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CallToolStep {
+    /// The tool's name.
+    pub tool: String,
+    /// The digest of the tool's name, description, and input schema, as 64
+    /// lowercase hexadecimal characters.
+    pub digest: String,
+    /// The names of the arguments, in the order the binding wrote them.
+    pub args: Vec<String>,
+    /// The output that takes the tool's text, when the operation has one.
+    pub result: Option<String>,
+}
+
 /// The payload of an `invoke` step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct InvokeStep {

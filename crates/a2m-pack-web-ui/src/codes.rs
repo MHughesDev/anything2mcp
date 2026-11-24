@@ -74,6 +74,15 @@ a2m_core::failure_codes! {
         meaning "The surface answered 503: it is being worked on. Nothing is retried, and the surface is left alone for a while.",
         next "Try again after the maintenance ends.",
         passes by_itself;
+    SITE_TOOL_NOT_OFFERED = Drift, "site_tool_not_offered",
+        meaning "The page registered no tool of the name the binding calls, in the time given.",
+        next "Look at which tools the page offers now; the page may have stopped offering the tool, or the binding names another.";
+    SITE_TOOL_CHANGED = Drift, "site_tool_changed",
+        meaning "The tool the page registered under the name is not the tool the binding was written for: its description or its input schema differs from the digest the binding holds. Nothing was sent.",
+        next "Look at the tool the page offers now, and, if it is the one meant, pin the digest this message gives in the binding.";
+    SITE_TOOLS_UNAVAILABLE = UnknownVariant, "site_tools_unavailable",
+        meaning "The browser has no tools of pages to offer: the browser the engine owns does not carry the experimental domain they are called through.",
+        next "Use a browser of a version that carries it, or bind the operation through the interface.";
     FILE_NOT_STAGED = Input, "file_not_staged",
         meaning "A file input was given a name that is not the name of a file in the staging folder: it holds no file of that name, or the name is not one plain name.",
         next "Put the file in the staging folder under the name, and give that name; no path is taken.";

@@ -80,5 +80,5 @@ pub use tab::{
     ActTab, BROWSER_DEFAULT_HEADERS, BROWSER_HEADERS, By, CREDENTIAL_HEADER_WORDS, DialogAnswer,
     EXCHANGES_KEPT, Element, Input, Key, Loaded, Look, OUTSIDE, ObserveTab, OpenDialog,
     PageEnvironment, PageExchange, PageExchanges, PageRequest, PageResponse, Primitive, Query,
-    RawValue, ReadWhat, SafeRequest, SafeRequests, TextMatch,
+    RawValue, ReadWhat, SafeRequest, SafeRequests, SiteAnswer, SiteTool, TextMatch, digest_of,
 };
