@@ -387,6 +387,10 @@ fn cases() -> Vec<(&'static str, Case)> {
             Case::Remove("tests/order_get.yaml"),
         ),
         (
+            "kernel.no_binding_may_act",
+            Case::Edit(ORDER_GET, "    status: verified\n", ""),
+        ),
+        (
             "kernel.fixture_not_scrubbed",
             Case::Edit(
                 "fixtures/order_get/fixture.yaml",
@@ -908,6 +912,38 @@ fn test_rules_are_warnings_for_a_draft_and_errors_for_a_publish() {
     );
     let publish = problems_with(&files, &set, CompileMode::Publish);
     assert!(publish.has_errors());
+}
+
+/// Field test 7, finding 47: an operation whose bindings state no status
+/// is all `draft`, and a published version in which no binding of an
+/// operation may act is refused; a draft is warned.
+#[test]
+fn an_operation_with_no_binding_that_may_act_is_warned_in_a_draft_and_refused_at_publish() {
+    let set = stand_set().unwrap();
+    for (find, replace) in [
+        ("    status: verified\n", ""),
+        ("    status: verified\n", "    status: draft\n"),
+        ("    status: verified\n", "    status: retired\n"),
+    ] {
+        let files = changed(&Case::Edit(ORDER_GET, find, replace));
+        let draft = problems_with(&files, &set, CompileMode::Draft);
+        assert!(!draft.has_errors(), "{draft}");
+        let warned = draft
+            .find("kernel.no_binding_may_act")
+            .unwrap_or_else(|| panic!("not warned:\n{draft}"));
+        assert_eq!(warned.level, Level::Warning);
+        assert_eq!(warned.at.file.as_str(), ORDER_GET);
+        let publish = problems_with(&files, &set, CompileMode::Publish);
+        let refused = publish
+            .find("kernel.no_binding_may_act")
+            .unwrap_or_else(|| panic!("not refused:\n{publish}"));
+        assert_eq!(refused.level, Level::Error);
+        assert!(refused.message.contains("example_order_get"), "{refused:?}");
+    }
+    // A shadow binding beside nothing verified is not refused here: the
+    // example keeps one, and the engine fails its call for good.
+    let clean = problems_with(&example_files(), &set, CompileMode::Publish);
+    assert!(clean.find("kernel.no_binding_may_act").is_none(), "{clean}");
 }
 
 #[test]

@@ -327,14 +327,17 @@ fn a_binding_names_registers_of_its_map_and_declares_what_it_could_harm() {
         "device.physical_not_built",
         DOSING,
     );
-    // The fixtures themselves have one kind of warning: a draft has no
-    // offline tests yet.
+    // The fixtures themselves have two kinds of warning: a draft has no
+    // offline tests yet, and the one read kept as a draft, to show a
+    // refusal, has no binding that may act once published (decision 0998).
     let clean = problems(&files());
     assert!(!clean.has_errors(), "{clean}");
     assert!(
-        clean
-            .iter()
-            .all(|found| found.code.as_str() == "kernel.operation_without_test"),
+        clean.iter().all(|found| {
+            found.code.as_str() == "kernel.operation_without_test"
+                || (found.code.as_str() == "kernel.no_binding_may_act"
+                    && found.at.file.as_str() == "operations/absent_point_get.yaml")
+        }),
         "{clean}"
     );
 }

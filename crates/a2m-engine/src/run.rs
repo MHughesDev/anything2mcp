@@ -359,6 +359,7 @@ impl<'a> Run<'a> {
         let mut qualified = Vec::new();
         let mut passed_over: Vec<PassedOver> = Vec::new();
         let mut best: Option<Failure> = None;
+        let mut by_status: Option<Failure> = None;
         let mut pass_over = |mode: &Mode, failure: Failure, list: &mut Vec<PassedOver>| {
             list.push(PassedOver {
                 mode: mode.clone(),
@@ -404,11 +405,25 @@ impl<'a> Run<'a> {
                 status_qualifies(binding.status, self.posture)
             };
             if !qualifies {
-                let why = format!(
-                    "The binding of `{}` through the mode `{}` is `{}` and may not act.",
-                    operation.name, binding.mode, binding.status
+                // A run is held to its compiled target, whose statuses never
+                // change: a binding passed over for its status alone never
+                // qualifies on this version. It is the reason given only
+                // where no binding was passed over for anything else, which
+                // may pass (field test 7, finding 47).
+                let failure = codes::fail(
+                    &codes::row::NO_BINDING_MAY_ACT,
+                    format!(
+                        "The binding of `{}` through the mode `{}` is `{}` and may not act, so no call of it on this version can run.",
+                        operation.name, binding.mode, binding.status
+                    ),
+                    "Promote a binding of the operation once its offline test passes with `anything2mcp binding promote`, publish the target again, and call the tool again.",
                 );
-                pass_over(&binding.mode, no_binding(why), &mut passed_over);
+                passed_over.push(PassedOver {
+                    mode: binding.mode.clone(),
+                    class: failure.class(),
+                    code: failure.code().clone(),
+                });
+                by_status.get_or_insert(failure);
                 continue;
             }
             let handle = match self.admits(operation, binding, scope)? {
@@ -434,7 +449,7 @@ impl<'a> Run<'a> {
             });
         }
         if qualified.is_empty() {
-            return Err(best.unwrap_or_else(|| {
+            return Err(best.or(by_status).unwrap_or_else(|| {
                 codes::fail(
                     &codes::row::NO_BINDING,
                     format!(

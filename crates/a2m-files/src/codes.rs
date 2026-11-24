@@ -85,6 +85,7 @@ kernel_codes! {
     PROBE_INVALID = "probe_invalid": "A sign-in's probe is a read that can be made as the file gives it, and no surface is signed in to twice.",
     PROBE_PENDING = "probe_pending": "A sign-in's probe names a read that is drafted; in a draft, a probe nothing defines yet is a warning, and the sign-in is marked as not confirmed.",
     OPERATION_WITHOUT_TEST = "operation_without_test": "Every operation and pipeline has an offline test.",
+    NO_BINDING_MAY_ACT = "no_binding_may_act": "An operation of a published version has a binding that is not `draft` or `retired`, so that a call of it can run; in a draft, one with none is a warning.",
     FIXTURE_NOT_SCRUBBED = "fixture_not_scrubbed": "A fixture a test names exists and carries the scrubbed marker.",
     TEST_BINDING_UNKNOWN = "test_binding_unknown": "A test that names the binding it tests names one binding of its operation, by mode and, where two share the mode, by position, and not a retired one.",
     TOOL_NAME_SCHEME = "tool_name_scheme": "A tool name starts with the target's name, then its module where the target has modules.",

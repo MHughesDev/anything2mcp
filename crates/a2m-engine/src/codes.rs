@@ -8,8 +8,10 @@
 //!
 //! - `engine_degraded` does not: what degraded the kernel is repaired by a
 //!   person, as `anything2mcp doctor run` names it.
-//! - `no_binding` does not: a provider is enabled, or a binding's status is
-//!   changed, by a person.
+//! - `no_binding` does not: a provider is enabled by a person. A binding
+//!   whose status may not act is `no_binding_may_act`, of the class
+//!   `policy`: a run is held to the compiled target it started on, whose
+//!   statuses never change, so it fails and offers no resume.
 //! - `run_time_exceeded` does not: the same run takes as long again; it is
 //!   resumed, which keeps what it verified.
 //! - `blocked_by_parent` does not: the parent record failed, and is settled
@@ -34,6 +36,9 @@ a2m_core::failure_codes! {
         meaning "A write was asked of a kernel that takes reads only, or the kernel has stopped.",
         next "Run `anything2mcp doctor run`, repair what it names, then call again.",
         passes not_by_itself;
+    NO_BINDING_MAY_ACT = Policy, "no_binding_may_act",
+        meaning "Every binding of the operation the version holds is of a status that may not act here, so no call of it on this version can run; the run fails and is not resumed.",
+        next "Promote a binding of the operation once its offline test passes, publish the target again, and call the tool again.";
     NO_BINDING = Busy, "no_binding",
         meaning "No binding qualifies, for a reason that is not a session, an edge block, or drift.",
         next "Check the binding's status and its provider with `anything2mcp engine status`, and enable a provider that drives a mode of the surface.",
