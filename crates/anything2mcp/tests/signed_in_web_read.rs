@@ -18,12 +18,13 @@
 //! of a version the person publishes first: a stored password is filled in
 //! only on a sign-in page a published version declares (decision 0245).
 //!
-//! Not here: a sign-in the person carries out in a window of the engine's
-//! own browser through the product. The provider `window_login` asks the
-//! person, through the keeper, whether they are there before it opens the
-//! window, and the person's page on one machine answers only a request for
-//! a one-time code; it is proven in the web pack's own tests, with the
-//! keeper driven directly.
+//! A second test signs in in a window of the engine's own browser (the
+//! provider `window_login`): the person presses Carry out on the engine's
+//! page, which answers the provider's question whether they are there; the
+//! window opens on the application's own sign-in page, a script of the test
+//! application types into it as a person would, and the engine types
+//! nothing and reads nothing from it. The engine runs in a child process of
+//! this test binary, on a virtual display, because a window needs a screen.
 
 #![allow(
     clippy::unwrap_used,
@@ -39,10 +40,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use a2m_actions::{BoxFuture, Paths, PersonSurface};
 use a2m_local::{Availability, PresencePrompt, PromptAnswer, PromptName, PromptText, StopReason};
+use a2m_pack_web_browser::test_support::{Screen, screen_required};
 use anything2mcp::{EngineOptions, LocalEngine, PASSPHRASE_VARIABLE};
 use common::{
     Folder, IN_PROCESS_VARIABLE, PASSPHRASE, Surface, USER, copy_changed, project_source,
 };
+use example_app::auth::AuthSettings;
 use example_app::harness::{PASSWORD, TestApp, USERNAME};
 use serde_json::Value as Json;
 
@@ -333,6 +336,171 @@ async fn a_person_signs_in_on_the_engines_page_by_form_once_and_a_ui_read_then_w
     texts_under(desk.home.path(), &mut files);
     texts_under(desk.project.path(), &mut files);
     assert!(!files.is_empty());
+    for (path, text) in &files {
+        assert!(!text.contains(PASSWORD), "{}", path.display());
+        assert!(!text.contains(COOKIE_PREFIX), "{}", path.display());
+    }
+}
+
+/// The name of the test that runs in the child process below.
+const WINDOW_CHILD: &str =
+    "a_person_signs_in_in_a_window_and_a_read_then_works_on_the_display_it_is_given";
+
+/// The sign-in of the project in a window of the engine's own browser, in
+/// place of the form the engine fills.
+const WINDOW_SIGN_IN: &str = "\
+auth:
+  - surfaces: [app]
+    mode: custom
+    provider: window_login
+    probe: example_account_get
+    expiry_signals:
+      - {screen: sign_in}
+    settings:
+      screen: sign_in
+      signed_in: orders
+      wait_ms: 60000
+    attempt_limit: 1
+";
+
+/// A person signs in in a window through the product, and a read then
+/// works. A window needs a screen: the engine runs in a child process of
+/// this test binary with the display of a virtual screen of its own. Where
+/// no screen can be had the test says so and passes, unless
+/// `A2M_REQUIRE_DESKTOP=1`.
+#[test]
+fn a_person_signs_in_in_a_window_and_a_read_then_works() {
+    let screen = match Screen::start() {
+        Ok(screen) => screen,
+        Err(why) if !screen_required() => {
+            eprintln!("NOT RUN, no screen on this machine: {why}");
+            return;
+        }
+        Err(why) => panic!("no screen, and A2M_REQUIRE_DESKTOP=1 says one must be had: {why}"),
+    };
+    let mut child = Command::new(std::env::current_exe().unwrap());
+    child.args([
+        WINDOW_CHILD,
+        "--exact",
+        "--ignored",
+        "--test-threads=1",
+        "--nocapture",
+    ]);
+    child.env_remove("WAYLAND_DISPLAY");
+    match screen.display() {
+        Some(display) => child.env("DISPLAY", display),
+        None => child.env_remove("DISPLAY"),
+    };
+    let output = child.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "the child did not sign in in a window:\n{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Run only by the test above, in a child process that has a display.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "run by `a_person_signs_in_in_a_window_and_a_read_then_works` in a child process"]
+async fn a_person_signs_in_in_a_window_and_a_read_then_works_on_the_display_it_is_given() {
+    let app = TestApp::start().await.unwrap();
+    // The page of the application types the person's username and password
+    // as a person would, and presses its button; the engine sends no key.
+    app.set_auth_settings(&AuthSettings {
+        person_at_the_window: true,
+        ..AuthSettings::default()
+    })
+    .await
+    .unwrap();
+    let desk = Desk::new(&app);
+    std::fs::write(
+        desk.project.path().join("targets/example/auth.yaml"),
+        WINDOW_SIGN_IN,
+    )
+    .unwrap();
+    let prompt = Arc::new(Passed(AtomicU32::new(0)));
+    let local = desk.engine(&prompt).await;
+    let serving = tokio::spawn(local.serve());
+    let http = browser();
+
+    // The target is published first, by the person on the engine's page.
+    let (code, asked) = desk
+        .run(&["publish", "example", "--version", "1.0.0"])
+        .await;
+    assert_eq!(code, Some(3), "{asked}");
+    let link = asked["result"]["link"].as_str().unwrap().to_owned();
+    let text = http.get(&link).send().await.unwrap().text().await.unwrap();
+    let origin = link[..link.find("/act/").unwrap()].to_owned();
+    let said = http
+        .post(format!("{link}/confirm"))
+        .header("origin", &origin)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("once={}", once_of(&text)))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(said.contains("was carried out as you, once"), "{said}");
+
+    // The agent asks for the sign-in, naming the target and no secret. The
+    // engine's page asks for no credential: the person signs in in the
+    // window.
+    let login = ["session", "login", "example"];
+    let (code, asked) = desk.run(&login).await;
+    assert_eq!(code, Some(3), "{asked}");
+    assert_eq!(asked["result"]["state"], "needs_person", "{asked}");
+    let link = asked["result"]["link"].as_str().unwrap().to_owned();
+    let text = http.get(&link).send().await.unwrap().text().await.unwrap();
+    assert!(text.contains("<code>session.login</code>"), "{text}");
+    assert!(!text.contains("name=\"secret."), "{text}");
+    let origin = link[..link.find("/act/").unwrap()].to_owned();
+    let said = http
+        .post(format!("{link}/confirm"))
+        .header("origin", &origin)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("once={}", once_of(&text)))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(said.contains("was carried out as you, once"), "{said}");
+    assert!(!said.contains(PASSWORD), "{said}");
+
+    let signed = desk.ok(&login).await;
+    assert_eq!(signed["result"]["state"], "signed_in", "{signed}");
+    let report = app.auth_report().await.unwrap();
+    assert_eq!(report.sign_ins, 1, "{report:?}");
+
+    let call = ["call", READ, "--input", "{}"];
+    let read = desk.ok(&call).await;
+    assert_eq!(read["result"]["status"], "completed", "{read}");
+    let held = app.stored_order("A-100").await.unwrap().unwrap();
+    let values = &read["result"]["result"];
+    let orders = values["order_ids"].as_array().unwrap();
+    let at = orders
+        .iter()
+        .position(|order| order == "A-100")
+        .unwrap_or_else(|| panic!("{read}"));
+    assert_eq!(values["customers"][at], held.customer.as_str(), "{read}");
+    assert!(app.writes().await.unwrap().is_empty());
+
+    // Nothing the person typed or the application set is in anything a
+    // command printed, or any file of the home or the project.
+    let (code, _) = desk.run(&["engine", "stop"]).await;
+    assert_eq!(code, Some(0));
+    assert_eq!(serving.await.unwrap(), StopReason::Asked);
+    for printed in desk.printed.lock().unwrap().iter() {
+        assert!(!printed.contains(PASSWORD), "{printed}");
+        assert!(!printed.contains(COOKIE_PREFIX), "{printed}");
+    }
+    let mut files = Vec::new();
+    texts_under(desk.home.path(), &mut files);
+    texts_under(desk.project.path(), &mut files);
     for (path, text) in &files {
         assert!(!text.contains(PASSWORD), "{}", path.display());
         assert!(!text.contains(COOKIE_PREFIX), "{}", path.display());
