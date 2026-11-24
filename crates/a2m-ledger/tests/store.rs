@@ -124,6 +124,102 @@ async fn a_migration_applied_twice_is_a_no_op_and_a_store_from_the_future_is_ref
     assert_eq!(applied(&folder).len(), first.len() + 1);
 }
 
+/// Every table, index, and trigger the database holds, by kind and name.
+fn schema(raw: &rusqlite::Connection) -> Vec<(String, String)> {
+    let mut statement = raw
+        .prepare("SELECT type, name FROM sqlite_master ORDER BY type, name")
+        .unwrap();
+    let rows = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap();
+    rows.map(Result::unwrap).collect()
+}
+
+fn recorded(raw: &rusqlite::Connection) -> i64 {
+    raw.query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
+        row.get(0)
+    })
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_half_migrated_store_is_refused_and_left_as_it_was() {
+    // Section 224: the engine refuses to start on a half-migrated store. A
+    // migration runs in one transaction with the row that records it, so
+    // an interruption leaves neither, and the next start applies it.
+    let carried = migrations().unwrap();
+    let middle = i64::from(carried[carried.len() / 2].number);
+
+    // A store that holds what the later migrations made, without the rows
+    // that record them: it was half migrated outside this engine's order,
+    // or changed by another program.
+    let folder = Folder::new("half");
+    drop(open_with(Some(folder.path()), key_store()).await);
+    let raw = folder.raw();
+    raw.execute("DELETE FROM schema_migrations WHERE number >= ?1", [middle])
+        .unwrap();
+    let (before, rows) = (schema(&raw), recorded(&raw));
+    let refused = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.class(), FailureClass::Busy, "{refused:?}");
+    assert_eq!(
+        refused.code(),
+        &codes::STORE_VERSION_UNSUPPORTED,
+        "{refused:?}"
+    );
+    assert!(refused.message().contains("half migrated"), "{refused:?}");
+    // Nothing was applied: the store is as it was.
+    assert_eq!(schema(&raw), before);
+    assert_eq!(recorded(&raw), rows);
+
+    // A store that holds a later migration without an earlier one.
+    let folder = Folder::new("gap");
+    drop(open_with(Some(folder.path()), key_store()).await);
+    let raw = folder.raw();
+    raw.execute("DELETE FROM schema_migrations WHERE number = ?1", [middle])
+        .unwrap();
+    let (before, rows) = (schema(&raw), recorded(&raw));
+    let refused = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refused.code(),
+        &codes::STORE_VERSION_UNSUPPORTED,
+        "{refused:?}"
+    );
+    assert!(
+        refused.message().contains("without an earlier"),
+        "{refused:?}"
+    );
+    assert_eq!(schema(&raw), before);
+    assert_eq!(recorded(&raw), rows);
+}
+
+#[tokio::test]
+async fn a_damaged_database_file_fails_the_integrity_check_at_start() {
+    let folder = Folder::new("damaged");
+    drop(open_with(Some(folder.path()), key_store()).await);
+    let file = folder.path().join(a2m_ledger::DATABASE_FILE_NAME);
+    let mut bytes = std::fs::read(&file).unwrap();
+    // The first page, the file's header, is left whole; every byte of the
+    // pages after it is overwritten, as a failing disk would leave them.
+    let page = usize::from(u16::from_be_bytes([bytes[16], bytes[17]]));
+    assert!(bytes.len() > 3 * page, "{} bytes", bytes.len());
+    for byte in &mut bytes[page..] {
+        *byte = 0x5a;
+    }
+    std::fs::write(&file, &bytes).unwrap();
+
+    let refused = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.class(), FailureClass::Busy, "{refused:?}");
+    assert_eq!(refused.code(), &codes::STORE_CORRUPT, "{refused:?}");
+    // The file is kept as it is, for its restore.
+    assert_eq!(std::fs::read(&file).unwrap(), bytes);
+}
+
 #[tokio::test]
 async fn a_crate_reaches_its_own_tables_and_no_others() {
     let store = memory().await;
