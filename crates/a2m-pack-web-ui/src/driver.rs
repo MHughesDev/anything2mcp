@@ -125,7 +125,7 @@ impl Held {
 }
 
 /// What the edge's answer to a page was, when it was a refusal.
-fn edge_refusal(loaded: &Loaded) -> Option<&'static a2m_core::CodeEntry> {
+pub(crate) fn edge_refusal(loaded: &Loaded) -> Option<&'static a2m_core::CodeEntry> {
     if loaded.challenged {
         return Some(&codes::row::CHALLENGE_PAGE);
     }

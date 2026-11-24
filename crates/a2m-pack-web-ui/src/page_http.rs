@@ -59,7 +59,8 @@ use serde_json::Value as Json;
 
 use crate::codes::{self, shown};
 use crate::driver::{
-    TabSetup, acting, browser_failure, fail, refusal, segment, tab_setup, until, within_pattern,
+    TabSetup, acting, browser_failure, edge_refusal, fail, refusal, segment, tab_setup, until,
+    within_pattern,
 };
 use crate::lower::{GOTO, REACH_ARG};
 use crate::model::{GotoStep, PAYLOAD_FORMAT, ReadItem, ScreenSection, TabKind};
@@ -899,6 +900,21 @@ impl Session {
             _ => self.looking.goto(&address, deadline).await,
         }
         .map_err(|error| browser_failure(&error, &what))?;
+        // An answer of the edge is a stop that keeps what it was, as the
+        // `ui` driver's: never retried, a challenge never answered (rule 5),
+        // and nothing is sent from the page it gave.
+        if let Some(row) = edge_refusal(&loaded) {
+            return Err(StepFailure::answered(fail(
+                row,
+                format!(
+                    "{what} was answered by the edge of the site with status {}, and not by the application. Nothing was sent from it.",
+                    loaded
+                        .status
+                        .map_or_else(|| "none".to_owned(), |status| status.to_string())
+                ),
+                row.next,
+            )));
+        }
         let Some(rest) = loaded.address.strip_prefix(&self.origin) else {
             return Err(StepFailure::answered(codes::surface_not_declared(
                 "The address the page moved to",
