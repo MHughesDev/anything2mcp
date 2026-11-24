@@ -1,4 +1,4 @@
-# 0999. An observing tab reads a safe request's body from the interception's parts, and refuses every reading two systems could differ on
+# 0407. An observing tab reads a safe request's body from the interception's parts, and refuses every reading two systems could differ on
 
 **Status:** Accepted. Design decision, made by the worker who built package E7b, under the lead's brief. The owner had not read this record when it was merged. It changes a public interface of [`a2m-pack-web-browser`](../architecture/crates/a2m-pack-web-browser.md), `SafeRequest`, as [decision 0394](0394-an-asserted-read-of-a-web-surface-is-a-page-request-matched-by-one-shared-shape-and-shown-at-publish.md) says it must.
 
