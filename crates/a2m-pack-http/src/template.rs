@@ -946,6 +946,105 @@ mod tests {
     }
 
     #[test]
+    fn a_value_that_cannot_ride_in_a_header_is_refused_unsent() {
+        // The stamp, the version read, and the anti-forgery token fill a
+        // header. Each is refused, and nothing is built, when it holds a
+        // control character or a byte outside printable ASCII, and a
+        // plain value of the same kind is carried.
+        let args = Values::new();
+        let step = RequestStep::default();
+        let version_of = |text: &str| crate::json::Json::Text(text.to_owned());
+        let anti_forgery = || super::AntiForgery {
+            page: Vec::new(),
+            page_trailing_slash: false,
+            from: super::TokenSource::Meta("csrf".to_owned()),
+            to: super::TokenSink::Header("x-csrf-token".to_owned()),
+        };
+        for bad in [
+            "a\r\nHost: other.example.test",
+            "a\nb",
+            "a\rb",
+            "a\0b",
+            "a\u{7f}b",
+            "a\tb",
+            "caf\u{e9}",
+            "a\u{202e}b",
+        ] {
+            let stamped = template("/api/items", Method::Get);
+            let failure = build(
+                &stamped,
+                &step,
+                &args,
+                Extras {
+                    stamp: Some(bad),
+                    ..Extras::default()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(failure.code(), &codes::STEP_NOT_USABLE, "stamp {bad:?}");
+
+            let mut versioned = template("/api/items", Method::Get);
+            versioned.version.send = Some(super::VersionSink::Header("if-match".to_owned()));
+            let version = version_of(bad);
+            let failure = build(
+                &versioned,
+                &step,
+                &args,
+                Extras {
+                    version: Some(&version),
+                    ..Extras::default()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(failure.code(), &codes::STEP_NOT_USABLE, "version {bad:?}");
+
+            let mut guarded = template("/api/items", Method::Post);
+            guarded.anti_forgery = Some(anti_forgery());
+            let failure = build(
+                &guarded,
+                &step,
+                &args,
+                Extras {
+                    token: Some(bad),
+                    ..Extras::default()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(failure.code(), &codes::STEP_NOT_USABLE, "token {bad:?}");
+        }
+
+        // A plain value of each kind is carried, so the refusals above are
+        // about the value and not about the position.
+        let mut all = template("/api/items", Method::Post);
+        all.version.send = Some(super::VersionSink::Header("if-match".to_owned()));
+        all.anti_forgery = Some(anti_forgery());
+        let version = version_of("7");
+        let built = build(
+            &all,
+            &step,
+            &args,
+            Extras {
+                stamp: Some("stamp-1"),
+                version: Some(&version),
+                token: Some("tok-1"),
+            },
+        )
+        .unwrap();
+        for pair in [
+            ("idempotency-key", "stamp-1"),
+            ("if-match", "7"),
+            ("x-csrf-token", "tok-1"),
+        ] {
+            assert!(
+                built
+                    .headers
+                    .contains(&(pair.0.to_owned(), pair.1.to_owned())),
+                "{pair:?}"
+            );
+        }
+    }
+
+    #[test]
     fn query_values_and_body_values_are_encoded_for_their_own_positions() {
         let template = template("/api/items", Method::Put);
         let step = RequestStep {

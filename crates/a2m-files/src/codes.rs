@@ -90,6 +90,8 @@ kernel_codes! {
     TOOL_NAMES_TOO_ALIKE = "tool_names_too_alike": "No two tools differ only by a suffix.",
     DESCRIPTION_WEAK = "description_weak": "A description says what the tool does, in at least twenty characters.",
     DESCRIPTION_UNBOUNDED = "description_unbounded": "A description is plain text of at most 1,024 characters, with no control character.",
+    FIELD_TEXT_UNBOUNDED = "field_text_unbounded": "A field description, an enum label, or a text default of a tool's definition is plain text of at most 1,024 characters, with no control, bidirectional, or invisible character but a newline and a tab.",
+    DEFINITION_UNBOUNDED = "definition_unbounded": "A tool's definition holds at most 8,192 characters of free text in all.",
     OUTPUT_NOT_MARKED = "output_not_marked": "Free text that came from the system is of a field type marked untrusted.",
     // Stage 8: describe.
     TOOL_INDISTINGUISHABLE = "tool_indistinguishable": "No two tools have the same description and the same inputs.",

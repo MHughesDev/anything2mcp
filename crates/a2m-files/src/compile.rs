@@ -136,6 +136,40 @@ pub fn lint_one(previous: &Sources, edited: SourceFile, set: &CompilerSet) -> Di
 /// point 6).
 const MOST_DESCRIPTION_CHARACTERS: usize = 1024;
 
+/// The most characters a tool's definition holds in all, its description
+/// and every other free text of it together (decision 0325, point 2).
+const MOST_DEFINITION_CHARACTERS: usize = 8192;
+
+/// Every free text of a JSON Schema a caller sees: each field description
+/// and each text member of an enum, at any depth.
+fn schema_texts(schema: &serde_json::Value, out: &mut Vec<(&'static str, String)>) {
+    match schema {
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                match (key.as_str(), value) {
+                    ("description", serde_json::Value::String(text)) => {
+                        out.push(("a field description", text.clone()));
+                    }
+                    ("enum", serde_json::Value::Array(members)) => {
+                        for member in members {
+                            if let serde_json::Value::String(text) = member {
+                                out.push(("an enum label", text.clone()));
+                            }
+                        }
+                    }
+                    _ => schema_texts(value, out),
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                schema_texts(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 struct PipelineInfo {
     compiled: CompiledPipeline,
     title: String,
@@ -1171,6 +1205,11 @@ impl<'a> Compiler<'a> {
                         continue;
                     }
                 };
+                if let a2m_expr::FieldRule::Choice { codes } = &rule {
+                    for pair in codes {
+                        self.hold_label_to_its_bounds(name, &pair.label, &entry.value.at);
+                    }
+                }
                 let made =
                     types::compiled_of(name, &rule, labels, &mut self.model.exprs.borrow_mut());
                 match made {
@@ -3991,6 +4030,7 @@ impl<'a> Compiler<'a> {
                 .as_warning(),
             );
         }
+        self.hold_definition_to_its_bounds(&name, &description, inputs, &output_schema, at);
         let mut properties = serde_json::Map::new();
         let mut required = Vec::new();
         for input in inputs {
@@ -4035,6 +4075,85 @@ impl<'a> Compiler<'a> {
             output_schema,
             annotations,
         })
+    }
+
+    /// Holds the label of one code of a field type to the bound of an enum
+    /// label (decision 0325, point 2): at most
+    /// [`MOST_DESCRIPTION_CHARACTERS`] characters, and no character a result
+    /// would write as an escape but a newline and a tab.
+    fn hold_label_to_its_bounds(&mut self, type_name: &str, label: &str, at: &Place) {
+        let length = label.chars().count();
+        let hides = label
+            .chars()
+            .any(|c| a2m_core::said_hides(c) && c != '\n' && c != '\t');
+        if length > MOST_DESCRIPTION_CHARACTERS || hides {
+            self.problems.push(Diagnostic::error(
+                kernel(codes::FIELD_TEXT_UNBOUNDED),
+                Stage::Lint,
+                at,
+                format!("In the field type `{type_name}`, an enum label has {length} characters or a character that hides or reorders text; each is plain text of at most {MOST_DESCRIPTION_CHARACTERS} characters."),
+                "Shorten the label and take out any control, bidirectional, or invisible character; a newline and a tab are allowed.",
+            ));
+        }
+    }
+
+    /// Holds every free text of a tool's definition to decision 0325,
+    /// point 2: the field descriptions of its input and output schemas, the
+    /// labels of its enums, and its text defaults are each at most
+    /// [`MOST_DESCRIPTION_CHARACTERS`] characters and show no character a
+    /// result would write as an escape (a newline and a tab are allowed), and
+    /// the whole definition, the tool's description included, is at most
+    /// [`MOST_DEFINITION_CHARACTERS`]. The tool's own description is held to
+    /// its bound by its caller.
+    fn hold_definition_to_its_bounds(
+        &mut self,
+        name: &OperationName,
+        description: &str,
+        inputs: &[CompiledInput],
+        output_schema: &serde_json::Value,
+        at: &Place,
+    ) {
+        let mut texts: Vec<(&'static str, String)> = Vec::new();
+        for input in inputs {
+            let mut schema = self.schema_of_type(&input.ty, Some(input.field_type));
+            if let (false, Some(map)) = (input.description.is_empty(), schema.as_object_mut()) {
+                map.insert(
+                    "description".to_owned(),
+                    serde_json::Value::from(input.description.clone()),
+                );
+            }
+            schema_texts(&schema, &mut texts);
+            if let Some(a2m_core::Value::Text(text)) = &input.default {
+                texts.push(("a text default", text.clone()));
+            }
+        }
+        schema_texts(output_schema, &mut texts);
+        let mut total = description.trim().chars().count();
+        for (what, text) in &texts {
+            let length = text.chars().count();
+            total += length;
+            let hides = text
+                .chars()
+                .any(|c| a2m_core::said_hides(c) && c != '\n' && c != '\t');
+            if length > MOST_DESCRIPTION_CHARACTERS || hides {
+                self.problems.push(Diagnostic::error(
+                    kernel(codes::FIELD_TEXT_UNBOUNDED),
+                    Stage::Lint,
+                    at,
+                    format!("In the definition of `{name}`, {what} has {length} characters or a character that hides or reorders text; each is plain text of at most {MOST_DESCRIPTION_CHARACTERS} characters."),
+                    "Shorten the text and take out any control, bidirectional, or invisible character; a newline and a tab are allowed.",
+                ));
+            }
+        }
+        if total > MOST_DEFINITION_CHARACTERS {
+            self.problems.push(Diagnostic::error(
+                kernel(codes::DEFINITION_UNBOUNDED),
+                Stage::Lint,
+                at,
+                format!("The definition of `{name}` holds {total} characters of text; it holds at most {MOST_DEFINITION_CHARACTERS} in all."),
+                "Shorten the descriptions of its fields, or split the tool in two.",
+            ));
+        }
     }
 
     // ---- tests/ and fixtures/ ----
