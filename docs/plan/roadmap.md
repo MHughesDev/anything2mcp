@@ -350,7 +350,7 @@ Lanes that do not share a crate. Within a lane, packages run in order.
 | Packs | One agent per pack, once the package it needs is done | Each pack is its own crates |
 | Design | Design review rounds; a pack's section before its crates | Documents only; indexes are edited last and in small edits |
 
-Right now, the packages marked `ready` are W2d and FT5: two. Of the work added after the plan, N1, N2a, W1, W2a, W2b, W2c, X4a, X4b, X6, P1, P3, FC1, and FC2 are done. E6 is withdrawn. Several held rows carry a note of what is built so far: the crate exists, and the row's proof waits on crates above it. Package 1.5 no longer waits on 0.5.
+Right now, the packages marked `ready` are W2d, and FT5: two. Of the work added after the plan, N1, N2a, W1, W2a, W2b, W2c, X4a, X4b, X6, P1, P3, FC1, and FC2 are done. E6 is withdrawn. Several held rows carry a note of what is built so far: the crate exists, and the row's proof waits on crates above it. Package 1.5 no longer waits on 0.5.
 
 ## Rules for changing this document
 
