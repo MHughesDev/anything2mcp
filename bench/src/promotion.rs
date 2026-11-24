@@ -226,9 +226,15 @@ pub(crate) struct Machine {
 
 impl Machine {
     pub(crate) async fn open(address: &str) -> Result<Self, BenchError> {
+        Self::open_project(address, Path::new(PROJECT)).await
+    }
+
+    /// The same machine over another project of target files, whose files
+    /// give the application's address as the placeholder.
+    pub(crate) async fn open_project(address: &str, from: &Path) -> Result<Self, BenchError> {
         let home = Folder::new("benchhome")?;
         let project = Folder::new("benchproject")?;
-        copy_project(Path::new(PROJECT), &project.0, address)?;
+        copy_project(from, &project.0, address)?;
         let person = Arc::new(Person {
             desk: Mutex::new(None),
             clock: Arc::new(SystemClock::new()),
@@ -287,11 +293,23 @@ impl Machine {
         scenario: &str,
         input: (&str, &str),
     ) -> Result<Value, BenchError> {
-        let text = json!({"order_id": input.0, "item_code": input.1}).to_string();
+        let input = json!({"order_id": input.0, "item_code": input.1});
+        self.read_tool(scenario, TOOL, &input).await
+    }
+
+    /// Calls a tool with an input, as an agent, in production, and gives
+    /// the result it completed with.
+    pub(crate) async fn read_tool(
+        &self,
+        scenario: &str,
+        tool: &str,
+        input: &Value,
+    ) -> Result<Value, BenchError> {
+        let text = input.to_string();
         let args: Vec<String> = [
             "tool",
             "call",
-            TOOL,
+            tool,
             "--environment",
             "production",
             "--input",

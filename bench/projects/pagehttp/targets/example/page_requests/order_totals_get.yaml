@@ -1,0 +1,17 @@
+# An order's totals, asked for by the order's summary page by itself, read
+# from inside that page (decision 0190).
+endpoint: example_order_totals_get
+surface: app
+method: GET
+path: "/api/orders/{order_id}/totals"
+page: "/orders/{order_id}/summary"
+effect: read
+responses: {absent: [404]}
+response_schema:
+  type: object
+  required: [order_id, lines, total_quantity, total_length_in]
+  properties:
+    order_id: {type: string}
+    lines: {type: integer}
+    total_quantity: {type: integer}
+    total_length_in: {type: string}

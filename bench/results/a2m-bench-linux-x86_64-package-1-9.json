@@ -1,0 +1,226 @@
+{
+  "schema": "a2m-bench-result",
+  "version": 1,
+  "commit": "585bad5c89834ee4cc156ebc254c52ecc428f614",
+  "os": "linux",
+  "arch": "x86_64",
+  "plan": {
+    "warmup_iterations": 50,
+    "iterations": 500
+  },
+  "scenarios": [
+    {
+      "name": "direct_read",
+      "operation": {
+        "count": 500,
+        "min_ns": 58297,
+        "median_ns": 82446,
+        "p95_ns": 123036,
+        "p99_ns": 170001,
+        "max_ns": 238584
+      },
+      "baseline": null,
+      "overhead": null
+    },
+    {
+      "name": "list_tools",
+      "operation": {
+        "count": 500,
+        "min_ns": 572590,
+        "median_ns": 1112743,
+        "p95_ns": 1737857,
+        "p99_ns": 4552588,
+        "max_ns": 5583881
+      },
+      "baseline": null,
+      "overhead": null
+    },
+    {
+      "name": "http_operation",
+      "operation": {
+        "count": 500,
+        "min_ns": 6105543,
+        "median_ns": 8927770,
+        "p95_ns": 12159991,
+        "p99_ns": 14756920,
+        "max_ns": 24952745
+      },
+      "baseline": {
+        "count": 500,
+        "min_ns": 46087,
+        "median_ns": 241053,
+        "p95_ns": 506563,
+        "p99_ns": 651761,
+        "max_ns": 737568
+      },
+      "overhead": {
+        "median_ns": 8686717,
+        "p95_ns": 11653428,
+        "p99_ns": 14105159
+      }
+    },
+    {
+      "name": "api_operation",
+      "operation": {
+        "count": 500,
+        "min_ns": 6467402,
+        "median_ns": 9203906,
+        "p95_ns": 12624034,
+        "p99_ns": 16704424,
+        "max_ns": 34282601
+      },
+      "baseline": {
+        "count": 500,
+        "min_ns": 40143,
+        "median_ns": 243248,
+        "p95_ns": 460051,
+        "p99_ns": 590103,
+        "max_ns": 999712
+      },
+      "overhead": {
+        "median_ns": 8960658,
+        "p95_ns": 12163983,
+        "p99_ns": 16114321
+      }
+    },
+    {
+      "name": "page_http_operation",
+      "operation": {
+        "count": 40,
+        "min_ns": 389119916,
+        "median_ns": 443631198,
+        "p95_ns": 577894971,
+        "p99_ns": 611457387,
+        "max_ns": 611457387
+      },
+      "baseline": {
+        "count": 40,
+        "min_ns": 200646126,
+        "median_ns": 201532917,
+        "p95_ns": 202166971,
+        "p99_ns": 203327770,
+        "max_ns": 203327770
+      },
+      "overhead": {
+        "median_ns": 242098281,
+        "p95_ns": 375728000,
+        "p99_ns": 408129617
+      }
+    },
+    {
+      "name": "ui_step",
+      "operation": {
+        "count": 40,
+        "min_ns": 220245184,
+        "median_ns": 411750947,
+        "p95_ns": 785714583,
+        "p99_ns": 1056742141,
+        "max_ns": 1056742141
+      },
+      "baseline": {
+        "count": 40,
+        "min_ns": 50507,
+        "median_ns": 255613,
+        "p95_ns": 910083,
+        "p99_ns": 2078321,
+        "max_ns": 2078321
+      },
+      "overhead": {
+        "median_ns": 411495334,
+        "p95_ns": 784804500,
+        "p99_ns": 1054663820
+      }
+    },
+    {
+      "name": "cold_browser_start",
+      "operation": {
+        "count": 40,
+        "min_ns": 607672082,
+        "median_ns": 1211607180,
+        "p95_ns": 2145611057,
+        "p99_ns": 2335606407,
+        "max_ns": 2335606407
+      },
+      "baseline": null,
+      "overhead": null
+    },
+    {
+      "name": "start_to_ready",
+      "operation": {
+        "count": 20,
+        "min_ns": 298533369,
+        "median_ns": 369392611,
+        "p95_ns": 437741948,
+        "p99_ns": 515913735,
+        "max_ns": 515913735
+      },
+      "baseline": null,
+      "overhead": null
+    },
+    {
+      "name": "start_to_ready_vault_closed",
+      "operation": {
+        "count": 20,
+        "min_ns": 96122572,
+        "median_ns": 116159548,
+        "p95_ns": 133551274,
+        "p99_ns": 134737969,
+        "max_ns": 134737969
+      },
+      "baseline": null,
+      "overhead": null
+    },
+    {
+      "name": "idle_memory",
+      "operation": {
+        "count": 20,
+        "min_ns": 300331146,
+        "median_ns": 367617033,
+        "p95_ns": 426001021,
+        "p99_ns": 438186172,
+        "max_ns": 438186172
+      },
+      "baseline": null,
+      "overhead": null,
+      "resident_bytes": 38416384
+    },
+    {
+      "name": "program_size",
+      "operation": {
+        "count": 1,
+        "min_ns": 0,
+        "median_ns": 0,
+        "p95_ns": 0,
+        "p99_ns": 0,
+        "max_ns": 0
+      },
+      "baseline": null,
+      "overhead": null,
+      "size_bytes": 24434288
+    },
+    {
+      "name": "promotion_speedup",
+      "operation": {
+        "count": 40,
+        "min_ns": 8983205,
+        "median_ns": 15145471,
+        "p95_ns": 30478052,
+        "p99_ns": 78097852,
+        "max_ns": 78097852
+      },
+      "baseline": {
+        "count": 40,
+        "min_ns": 170912974,
+        "median_ns": 228407160,
+        "p95_ns": 329547058,
+        "p99_ns": 401181070,
+        "max_ns": 401181070
+      },
+      "overhead": {
+        "median_ns": -213261689,
+        "p95_ns": -299069006,
+        "p99_ns": -323083218
+      }
+    }
+  ]
+}
