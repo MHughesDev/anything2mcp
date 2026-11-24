@@ -69,6 +69,9 @@ a2m_core::failure_codes! {
     PROGRAM_NOT_FOUND = Input, "program_not_found",
         meaning "A program to start was not found where it was declared.",
         next "Install the program at the absolute path that is declared, or correct the declaration.";
+    DECOMPILER_SPEC_INVALID = Input, "decompiler_spec_invalid",
+        meaning "A decompiling engine is stated with no pinned digest, or without one `{file}` argument.",
+        next "State the digests of the engine's releases and one `{file}` argument.";
     EFFECT_NOT_DECLARED = Policy, "effect_not_declared",
         meaning "A registration, a start, or a root beyond what the manifest declares.",
         next "Declare it in the provider's manifest, where a person can review it, or keep to what the manifest declares.";
@@ -81,12 +84,19 @@ a2m_core::failure_codes! {
     READ_ONLY_POSTURE = Policy, "read_only_posture",
         meaning "A step that commits was asked for where nothing may be written.",
         next "Run the operation live, or against a declared test record.";
+    DECOMPILER_NOT_PINNED = Policy, "decompiler_not_pinned",
+        meaning "The program named as the decompiling engine has a digest the product does not pin, or it changed after it was looked at. It is not started.",
+        next "Install a release of the engine the product pins, or use a product version that pins the one you have.";
     ENGINE_VARIABLE_REFUSED = Policy, "engine_variable_refused",
         meaning "A launch names a variable that belongs to the engine.",
         next "Remove the variable from the launch; a program is given only variables of its own.";
     VARIABLE_REFUSED = Policy, "variable_refused",
         meaning "A launch names a variable that makes a program load code other than its own.",
         next "Remove the variable from the target's files: a program is never told through its environment to load other code.";
+    DECOMPILER_NOT_INSTALLED = Busy, "decompiler_not_installed",
+        meaning "No decompiling engine is installed where the settings say, or none is named. The scout reports it and goes on.",
+        next "Install the engine yourself and name its program in the settings; the product never fetches one.",
+        passes not_by_itself;
     PROVIDER_UNAVAILABLE = Busy, "provider_unavailable",
         meaning "The provider is not ready here, now.",
         next "Run `anything2mcp doctor` to see what the provider needs, or name another provider for the mode.",
@@ -119,6 +129,12 @@ a2m_core::failure_codes! {
         meaning "The disk, or the user's share of it, is full.",
         next "Free space on the disk, then call again.",
         passes not_by_itself;
+    DECOMPILER_FAILED = Rejected, "decompiler_failed",
+        meaning "A decompiling engine ended without success on the file it was handed. Nothing it printed was used.",
+        next "Try the file again, or hand the engine a file it can read.";
+    DECOMPILER_OUTPUT_UNKNOWN = UnknownVariant, "decompiler_output_unknown",
+        meaning "A decompiling engine printed something that is not in the form the product reads; none of it was used.",
+        next "Use an engine and an adapter that print one JSON object to a line, as the decompiler's documentation says.";
     HANDSHAKE_FAILED = UnknownVariant, "handshake_failed",
         meaning "A subsystem failed its handshake.",
         next "Check that the subsystem's version is one this engine supports, and report it to the provider's author if it is.";

@@ -115,6 +115,7 @@ dependencies = [
  "a2m-telemetry",
  "a2m-vault",
  "example-app",
+ "example-decompiler",
  "reqwest",
  "serde",
  "serde_json",
@@ -478,6 +479,7 @@ dependencies = [
  "a2m-vault",
  "command-fds",
  "example-cli",
+ "example-decompiler",
  "getrandom 0.4.3",
  "rustix",
  "serde",
@@ -1090,6 +1092,13 @@ name = "example-db"
 version = "0.0.1"
 dependencies = [
  "rusqlite",
+]
+
+[[package]]
+name = "example-decompiler"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

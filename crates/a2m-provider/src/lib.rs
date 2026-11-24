@@ -24,6 +24,7 @@
 
 mod action;
 pub mod codes;
+pub mod decompiler;
 mod discover;
 mod driver;
 mod entry_point;

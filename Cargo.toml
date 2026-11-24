@@ -6,6 +6,7 @@ members = [
     "targets/example-broker",
     "targets/example-cli",
     "targets/example-db",
+    "targets/example-decompiler",
     "targets/example-desk",
     "targets/example-device",
     "targets/example-files",
