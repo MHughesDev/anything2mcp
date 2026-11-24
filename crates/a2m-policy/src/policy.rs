@@ -12,7 +12,7 @@ use a2m_ledger::{Durability, PolicyKey, Store, Tx, WriteClearance};
 use crate::approval::{ApprovalSurface, PresenceCheck};
 use crate::failure::{self, DECISION_NOT_FOUND, POLICY_TESTS_FAILED};
 use crate::model::{
-    Context, PrincipalRef, Question, Request, Resource, RuleId, ToolRef, ToolsetName, word,
+    Context, PrincipalRef, Question, Request, Resource, Role, RuleId, ToolRef, ToolsetName, word,
 };
 use crate::rules::{self, Answer, RuleKind, Verdict};
 use crate::set::{
@@ -472,13 +472,21 @@ impl Policy {
     }
 
     /// How hard a decision about `request` may be pushed to disk when its
-    /// caller asks for `asked`: relaxed only for a request that reads and is
-    /// bound to no diff, and synced otherwise.
+    /// caller asks for `asked`: relaxed only for a request that reads, is
+    /// bound to no diff, and is not an action only an administrator may
+    /// perform, and synced otherwise. An administrator's action, such as
+    /// setting the kill switch, is synced even where its effect is labelled
+    /// a read, so that no caller's request can relax it (decision 0386).
     #[must_use]
     pub fn durability_for(request: &Request, asked: Durability) -> Durability {
+        let administrators = matches!(
+            &request.resource,
+            Resource::Action(action) if action.needs == Role::Admin
+        );
         if asked == Durability::Relaxed
             && request.context.effect == a2m_core::EffectClass::Read
             && request.diff_hash.is_none()
+            && !administrators
         {
             Durability::Relaxed
         } else {

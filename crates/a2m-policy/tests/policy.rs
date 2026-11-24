@@ -389,6 +389,12 @@ async fn only_the_decision_about_a_read_is_recorded_without_a_sync_and_it_is_rec
         Policy::durability_for(&bound, Durability::Relaxed),
         Durability::Synced
     );
+    // An administrator's action is synced even where its effect is
+    // labelled a read: no caller can ask it relaxed.
+    assert_eq!(
+        Policy::durability_for(&admin_action(1), Durability::Relaxed),
+        Durability::Synced
+    );
 
     // Relaxed or not, the decision commits before its answer is given.
     let stand = local("decide-relaxed").await;
