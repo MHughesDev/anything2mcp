@@ -319,11 +319,6 @@ impl a2m_auth::AuthProvider for CodeProvider {
         cx: &'a a2m_auth::SignInContext<'a>,
     ) -> a2m_auth::BoxFuture<'a, Result<a2m_auth::Material, a2m_core::Failure>> {
         Box::pin(async move {
-            let answer = cx
-                .ask_person(a2m_auth::PersonAsk::EnterCode {
-                    reason: a2m_auth::PersonReason::SecondFactor,
-                })
-                .await;
             let refused = || {
                 a2m_core::Failure::new(
                     a2m_core::FailureClass::SessionExpired,
@@ -332,6 +327,22 @@ impl a2m_auth::AuthProvider for CodeProvider {
                     "Sign in again and type the code you are given.",
                 )
             };
+            // As a sign-in in a window does first: ask whether the person
+            // is there. The person's own press of Carry out answers it.
+            if !matches!(
+                cx.ask_person(a2m_auth::PersonAsk::Notify {
+                    reason: a2m_auth::PersonReason::SignIn,
+                })
+                .await,
+                a2m_auth::PersonAnswer::Done(_)
+            ) {
+                return Err(refused());
+            }
+            let answer = cx
+                .ask_person(a2m_auth::PersonAsk::EnterCode {
+                    reason: a2m_auth::PersonReason::SecondFactor,
+                })
+                .await;
             match answer {
                 a2m_auth::PersonAnswer::Done(returned) => match returned.get("code") {
                     Some(code) if code.expose() == RIGHT_CODE => {

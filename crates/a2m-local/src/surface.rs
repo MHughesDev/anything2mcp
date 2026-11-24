@@ -2394,13 +2394,32 @@ impl PersonSurface for LocalSurface {
 
     fn ask_session(&self, ask: SessionAsk) -> BoxFuture<'_, PersonAnswer> {
         Box::pin(async move {
-            // A one-time code is asked for on the page of the person's own
-            // press of Carry out, while it is carried out (decision 0205):
-            // the person is at the page then, and nobody else is asked. No
-            // notification and no return address are built on one machine
-            // yet, so any other request cannot reach the person from here.
-            let (PersonAsk::EnterCode { .. }, Identity::Person(person)) = (&ask.ask, &ask.identity)
-            else {
+            // A request reaches the person only through the page of their own
+            // press of Carry out on a sign-in, while it is carried out
+            // (decision 0205): the person is at the page then, and nobody
+            // else is asked. No notification and no return address are built
+            // on one machine yet.
+            let Identity::Person(person) = &ask.identity else {
+                return PersonAnswer::Unreachable;
+            };
+            if matches!(ask.ask, PersonAsk::Notify { .. }) {
+                // The person who pressed is the person told: a sign-in in a
+                // window is theirs to carry out, and the engine types nothing
+                // in it. Nothing is asked of them, and no press is used up.
+                let there = self
+                    .inner
+                    .state()
+                    .presses
+                    .iter()
+                    .any(|press| press.signs_in && press.person == *person);
+                return if there {
+                    PersonAnswer::Done(a2m_auth::Returned::new())
+                } else {
+                    PersonAnswer::Unreachable
+                };
+            }
+            // A one-time code is asked for on that page.
+            let PersonAsk::EnterCode { .. } = &ask.ask else {
                 return PersonAnswer::Unreachable;
             };
             let inner = &self.inner;
