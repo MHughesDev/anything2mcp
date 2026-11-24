@@ -201,6 +201,9 @@ struct Identified {
     complete: bool,
     /// Why nothing was observed, when the drafts do not compile.
     not_compiled: Option<String>,
+    /// The `sign_in_method` findings of each surface's discovery, for the
+    /// rules that recommend a sign-in.
+    sign_in_findings: BTreeMap<String, Vec<Finding>>,
 }
 
 /// The files of the project's `sources` folder a scout hands its
@@ -273,6 +276,7 @@ async fn identify(
     }
     let workspace = call.caller.principal.workspace;
     let mut surfaces = Vec::new();
+    let mut sign_in_findings: BTreeMap<String, Vec<Finding>> = BTreeMap::new();
     let mut complete = true;
     for look in looks {
         // The scout waits for a discovery to its end, as long as its
@@ -357,6 +361,14 @@ async fn identify(
                         .or_default() += 1;
                 }
                 entry["findings_by_kind"] = json!(by_kind);
+                sign_in_findings.insert(
+                    look.name.to_string(),
+                    found
+                        .iter()
+                        .filter(|finding| finding.kind().as_str() == a2m_auth::SIGN_IN_METHOD)
+                        .cloned()
+                        .collect(),
+                );
                 entry["ended"] = Json::Array(
                     reported
                         .iter()
@@ -382,6 +394,7 @@ async fn identify(
         runs,
         complete,
         not_compiled: None,
+        sign_in_findings,
     })
 }
 
@@ -496,6 +509,16 @@ fn sign_ins(identified: &Identified, declared: Option<&BTreeMap<String, Vec<Json
                 declared.get(name).cloned().unwrap_or_default()
             });
             let first = declared_here.as_ref().and_then(|entries| entries.first());
+            // The fixed rules of `a2m-auth` over what this surface's
+            // discovery found. Always marked inferred; what the files
+            // declare is kept as declared, and the recommendation stands
+            // beside it (decision 0399).
+            let recommendation = a2m_auth::recommend(
+                identified
+                    .sign_in_findings
+                    .get(name)
+                    .map_or(&[][..], Vec::as_slice),
+            );
             let mut unknown = Vec::new();
             if first.is_none() {
                 unknown.push("identity_mode");
@@ -509,8 +532,15 @@ fn sign_ins(identified: &Identified, declared: Option<&BTreeMap<String, Vec<Json
                 "failure": surface.get("failure"),
                 "method": first.map(|entry| entry["provider"].clone()),
                 "identity_mode": first.map(|entry| entry["mode"].clone()),
-                "level": if first.is_some() { "declared" } else { "unknown" },
+                "level": if first.is_some() {
+                    "declared"
+                } else if recommendation.first().is_some() {
+                    "inferred"
+                } else {
+                    "unknown"
+                },
                 "unknown": unknown,
+                "recommendation": recommendation.to_json(),
                 "confirm": "A claim for a person to confirm by signing in; the engine never holds a credential it was told here.",
             })
         })
@@ -520,8 +550,10 @@ fn sign_ins(identified: &Identified, declared: Option<&BTreeMap<String, Vec<Json
 handler!(
     /// `auth.detect`: how each surface signs in, as claims to be confirmed
     /// by a person: whether its kind keeps a session, what the target's
-    /// files declare, and what its discovery met. No rule recommends an
-    /// identity mode the files do not declare, so none is guessed.
+    /// files declare, and what its discovery met. The fixed rules of
+    /// `a2m-auth` recommend a mode and a provider from what was met,
+    /// marked `inferred`, for a person to confirm; what the files declare
+    /// is kept as declared, and a sign no rule covers is a question.
     auth_detect,
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
@@ -1851,6 +1883,7 @@ handler!(
                     runs: BTreeMap::new(),
                     complete: true,
                     not_compiled: Some(failure.message().to_owned()),
+                    sign_in_findings: BTreeMap::new(),
                 },
                 Err(failure) => return Err(failure),
             };
