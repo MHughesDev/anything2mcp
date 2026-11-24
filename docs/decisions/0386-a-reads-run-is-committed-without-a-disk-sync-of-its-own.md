@@ -18,6 +18,8 @@ A run of a tool that only reads commits its own rows relaxed. Each such commit i
 
 Measured on one Linux machine, release build, in the same session, the read alone through the product (the `http_operation` setup, 300 calls, three runs of each build interleaved): median 11.1, 11.4, and 10.8 ms before; 8.6, 8.6, and 8.8 ms with the relaxed commits; and about 0.3 ms less again with the command tree kept. The promotion exit test, five runs with both changes: median factor 16.0, 15.3, 14.8, 14.3, 17.6, and per-pair median factor 16.4, 15.7, 14.6, 13.9, 16.7, with the request read at 10.9 to 13.3 ms by the median; five runs with the relaxed commits alone: 15.4, 15.2, 12.1, 15.7, 13.9 and 14.0, 15.2, 12.1, 15.0, 13.2, at 12.0 to 15.7 ms; four runs before, the same day: 13.7, 11.7, 12.0, 10.9 and 12.9, 11.9, 11.6, 11.5, at 16.7 to 18.7 ms (an earlier run that day: 10.8 and 12.6, at 22.1 ms). The bar of the test and the test are unchanged.
 
+- `Policy::durability_for` relaxes a decision only when its request reads, is bound to no diff, and is not an action only an administrator may perform. The dispatcher labels some actions that are not tool calls, setting the kill switch among them, with the effect `read`, and asks a relaxed decision only for calls of tools; the rule holds the line itself, so that no caller can ask an administrator's action relaxed, and a test of the policy crate says so.
+
 ## Rejected
 
 - **Batch the read's commits into fewer transactions.** The state moves, events, result, and trace are separate calls across the `Control` contract, which is public; merging them would change that contract for about 0.1 ms a commit, now that none of them syncs.
