@@ -27,4 +27,4 @@ In field test 7 a read of one item's level from a retained channel of a broker, 
 
 ## Proof
 
-`a_read_that_declares_found_answers_a_key_with_no_message_as_found_false`, in `crates/a2m-pack-stream/tests/nats.rs`, against the stand's NATS server: a held key returns its status and `found: true`, a missing key `found: false` and no status, the status is the one output that may be absent, and a read without `found` still says absent. `the_drafted_reads_return_what_the_broker_holds`, in `tests/discover.rs`, drafts the read with `found` and reads a missing key as `found: false`.
+`a_read_that_declares_found_answers_a_key_with_no_message_as_found_false`, in `crates/a2m-pack-stream/tests/nats.rs`, against the stand's test server: a held key returns its status and `found: true`, a missing key `found: false` and no status, the status is the one output that may be absent, and a read without `found` still says absent. `the_drafted_reads_return_what_the_broker_holds`, in `tests/discover.rs`, drafts the read with `found` and reads a missing key as `found: false`.
