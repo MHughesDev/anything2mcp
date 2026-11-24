@@ -1,0 +1,16 @@
+surface: price_files
+file: stock.csv
+format: delimited
+dialect: {delimiter: ",", header: true, encoding: utf-8}
+fingerprint: {headers: [item_code, description, on_hand, note]}
+may_be_open: true
+lock_signal: {sibling: stock.csv.lock}
+records:
+  stock:
+    rows: all
+    key: [item_code]
+    fields:
+      item_code: {header: item_code, type: identifier}
+      description: {header: description, type: text}
+      on_hand: {header: on_hand, type: integer, writable: true}
+      note: {header: note, type: note, writable: true}

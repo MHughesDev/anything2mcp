@@ -1,0 +1,5 @@
+test: example_stock_set
+kind: offline
+fixture: stock_set
+inputs: {item_code: "EX-1001", on_hand: 30}
+expect: {on_hand: 30}
