@@ -411,3 +411,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0417 | [The key a local person's runs are sealed under is opened at the start and held for the life of the process](0417-the-key-a-local-persons-runs-are-sealed-under-is-opened-at-the-start-and-held-for-the-life-of-the-process.md) | Accepted (design decision) |
 | 0418 | [The publish page lists the surfaces first, and marks each new address where it lists it](0418-the-publish-page-lists-the-surfaces-first-and-marks-each-new-address-where-it-lists-it.md) | Accepted (design decision) |
 | 0419 | [A declared download is written beside the downloads folder, and moved in once whole](0419-a-declared-download-is-written-beside-the-downloads-folder-and-moved-in-once-whole.md) | Accepted (design decision) |
+| 0999 | [The API description says which actions have a client method](0999-the-api-description-says-which-actions-have-a-client-method.md) | Accepted (design decision) |

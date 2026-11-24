@@ -332,6 +332,11 @@ pub struct RestRouteFace {
     /// The input fields taken from the path. The rest come from the query
     /// of a `GET`, or the JSON body of a `POST`.
     pub path_fields: Vec<String>,
+    /// Whether the action has an SDK method (its `faces.sdk`). The API
+    /// description carries it as `x-sdk`, so the generators of the clients,
+    /// which read the description, write no method for an action without
+    /// one.
+    pub sdk: bool,
     /// One line for the API description.
     pub summary: String,
     /// The input schema, as a JSON Schema document.
@@ -352,6 +357,7 @@ pub fn rest_routes(registry: &ActionRegistry) -> Vec<RestRouteFace> {
             action: def.name.to_string(),
             alias,
             path_fields,
+            sdk: def.faces.sdk,
             summary: def.summary.clone(),
             input_schema: def.input.schema.to_json(),
             output_schema: def.output.to_json(),
