@@ -393,7 +393,7 @@ mod faces_tests {
     }
 
     /// A client's method calls the action's REST route, so an SDK face
-    /// without a REST face is refused (decision 0999).
+    /// without a REST face is refused (decision 0420).
     #[test]
     fn an_action_with_an_sdk_method_and_no_rest_route_is_refused() {
         let mut defs = kernel_definitions();

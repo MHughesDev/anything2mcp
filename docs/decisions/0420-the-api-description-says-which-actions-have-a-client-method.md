@@ -1,4 +1,4 @@
-# 0999. The API description says which actions have a client method
+# 0420. The API description says which actions have a client method
 
 **Status:** Accepted. Design decision, made by the design architect. The owner had not read this record when it was merged. Built in `a2m-actions` (`RestRouteFace::sdk`, and the registry's check), `a2m-api` (`x-sdk` in the OpenAPI document), and both generators in `bindings/`.
 
