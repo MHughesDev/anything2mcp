@@ -486,6 +486,7 @@ dependencies = [
  "example-cli",
  "example-decompiler",
  "getrandom 0.4.3",
+ "libc",
  "rustix",
  "serde",
  "serde_json",

@@ -1122,3 +1122,118 @@ fn the_search_for_a_resolution_finds_each_call_and_no_longer_name() {
     assert_eq!(resolutions("fn canonicalize_name(x: &str)"), 0);
     assert_eq!(resolutions("let uncanonicalized = 1;"), 0);
 }
+
+/// Every way in to a file's bytes, for reading and for replacing it, and
+/// what each gave.
+#[cfg(any(windows, target_os = "macos"))]
+fn ways_in(file: &a2m_provider::CheckedPath) -> Vec<(&'static str, Result<(), a2m_core::Failure>)> {
+    vec![
+        ("open", file.open().map(drop)),
+        ("read", file.read(1024).map(drop)),
+        ("write", file.write(b"two")),
+        ("save", file.create_temporary().map(drop)),
+        ("may_write", file.may_write().map(drop)),
+    ]
+}
+
+/// On Windows a file given the offline attribute, which a program of the
+/// user may set, is a file whose bytes are not on this machine: it is
+/// refused by every read and every write before anything is read, and is
+/// left as it was (decision 0430).
+#[cfg(windows)]
+#[test]
+#[allow(
+    unsafe_code,
+    reason = "two calls into the system, each explained where it is made"
+)]
+fn an_offline_file_is_neither_read_nor_replaced() {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_OFFLINE, GetFileAttributesW, INVALID_FILE_ATTRIBUTES, SetFileAttributesW,
+    };
+    let (folder, roots) = scene();
+    let orders = folder.path().join("project").join("orders");
+    let wide: Vec<u16> = orders
+        .join("one.txt")
+        .as_os_str()
+        .encode_wide()
+        .chain([0])
+        .collect();
+    // SAFETY: `wide` is a path ending in a nul, alive for both calls.
+    let attributes = unsafe { GetFileAttributesW(wide.as_ptr()) };
+    assert_ne!(attributes, INVALID_FILE_ATTRIBUTES);
+    // SAFETY: as above.
+    let set = unsafe { SetFileAttributesW(wide.as_ptr(), attributes | FILE_ATTRIBUTE_OFFLINE) };
+    assert_ne!(set, 0, "the offline attribute could not be set");
+    let one = roots
+        .check(&root("project"), "orders/one.txt", Access::Write)
+        .unwrap();
+    assert_eq!(one.entry_kind().unwrap(), EntryKind::NotOnThisMachine);
+    let found = std::fs::symlink_metadata(orders.join("one.txt")).unwrap();
+    assert_eq!(EntryKind::of_metadata(&found), EntryKind::NotOnThisMachine);
+    for (way, given) in ways_in(&one) {
+        let failure = given.expect_err(way);
+        assert_eq!(
+            (failure.class(), failure.code()),
+            (FailureClass::Policy, &codes::FILE_NOT_ON_THIS_MACHINE),
+            "{way}: {failure:?}"
+        );
+        assert!(failure.message().contains("orders/one.txt"), "{way}");
+    }
+    // SAFETY: as above.
+    let cleared = unsafe { SetFileAttributesW(wide.as_ptr(), attributes) };
+    assert_ne!(cleared, 0);
+    // The file is as it was, and nothing was left beside it.
+    assert_eq!(std::fs::read(orders.join("one.txt")).unwrap(), b"one");
+    let names: Vec<_> = std::fs::read_dir(&orders)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["one.txt"]);
+    assert_eq!(one.entry_kind().unwrap(), EntryKind::File);
+}
+
+/// On macOS a dataless file is made only by a file provider: the kernel
+/// refuses `SF_DATALESS` to `chflags`, even to the superuser. Where it
+/// refuses, this proves the flags are read and a file written here is a
+/// file; where a system ever allows it, the file is refused as on Windows
+/// (decision 0430).
+#[cfg(target_os = "macos")]
+#[test]
+#[allow(
+    unsafe_code,
+    reason = "two calls into the system, each explained where it is made"
+)]
+fn a_dataless_file_is_neither_read_nor_replaced_where_one_can_be_made() {
+    use std::os::macos::fs::MetadataExt as _;
+    use std::os::unix::ffi::OsStrExt as _;
+    const SF_DATALESS: u32 = 0x4000_0000;
+    let (folder, roots) = scene();
+    let path = folder.path().join("project").join("orders").join("one.txt");
+    let before = std::fs::symlink_metadata(&path).unwrap().st_flags();
+    assert_eq!(before & SF_DATALESS, 0);
+    let one = roots
+        .check(&root("project"), "orders/one.txt", Access::Write)
+        .unwrap();
+    assert_eq!(one.entry_kind().unwrap(), EntryKind::File);
+    let text = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `text` is a path ending in a nul, alive for the call.
+    let set = unsafe { libc::chflags(text.as_ptr(), before | SF_DATALESS) };
+    if set != 0 {
+        // Refused, as the kernel refuses it: the file is as it was.
+        assert_eq!(std::fs::read(&path).unwrap(), b"one");
+        assert_eq!(one.read(1024).unwrap(), b"one");
+        return;
+    }
+    assert_eq!(one.entry_kind().unwrap(), EntryKind::NotOnThisMachine);
+    for (way, given) in ways_in(&one) {
+        let failure = given.expect_err(way);
+        assert_eq!(
+            (failure.class(), failure.code()),
+            (FailureClass::Policy, &codes::FILE_NOT_ON_THIS_MACHINE),
+            "{way}: {failure:?}"
+        );
+    }
+    // SAFETY: as above.
+    assert_eq!(unsafe { libc::chflags(text.as_ptr(), before) }, 0);
+}
