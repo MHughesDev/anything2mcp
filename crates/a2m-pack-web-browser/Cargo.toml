@@ -21,7 +21,7 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
 
 # The memory a browser's processes hold, measured by the system calls of
-# each operating system (decision 0999); Linux reads its own tables.
+# each operating system (decision 0425); Linux reads its own tables.
 [target.'cfg(target_os = "macos")'.dependencies]
 libc.workspace = true
 

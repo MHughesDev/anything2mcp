@@ -230,7 +230,7 @@ As built. Every failure says whether input reached the page.
 | `policy` | `password_read_refused` | The base's: a password input was asked for its value | Not sent |
 | `policy` | `read_only_posture` | The contract's: a `set` or an `invoke` in a run that may only look, or an `invoke` that is not the commit point in a run against a test record | Not sent |
 | `busy` | `browser_unavailable` | The base's: no browser is installed | Not sent |
-| `busy` | `memory_short` | The base's: the engine's browsers hold their memory ceiling, or one cannot be measured, so no browser work is started; with a retry time (decision 0999) | Not sent |
+| `busy` | `memory_short` | The base's: the engine's browsers hold their memory ceiling, or one cannot be measured, so no browser work is started; with a retry time (decision 0425) | Not sent |
 | `input` | `step_not_usable` | A step or a payload this driver cannot carry out as written; a session whose provider hands over a credential to place | Not sent |
 | `input` | `address_invalid` | The surface's `origin` is more than a scheme, a host, and a port | Not sent |
 | `input` | `address_value_refused` | A value that cannot stand in one segment of a screen's address, or that holds a word of an action | Not sent |

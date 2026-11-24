@@ -545,7 +545,7 @@ pub(crate) struct Version {
 }
 
 /// The browser's processes, by the browser's own word: itself and each of
-/// its children, such as a page's renderer (decision 0999).
+/// its children, such as a page's renderer (decision 0425).
 #[derive(Debug, Serialize)]
 pub(crate) struct GetProcessInfo {}
 command!(GetProcessInfo, "SystemInfo.getProcessInfo" => ProcessInfos);

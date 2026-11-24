@@ -2,7 +2,7 @@
 //! browsers hold their ceiling, a new run's browser work is not started and
 //! the open answers `busy` with a retry time; with the ceiling raised the
 //! run goes; and a browser past its own limit is replaced between two runs,
-//! never inside one (decision 0999).
+//! never inside one (decision 0425).
 
 use crate::tab::Status;
 use crate::{ActTab, MEMORY_CEILING, Primitive, test_support::launches_under};

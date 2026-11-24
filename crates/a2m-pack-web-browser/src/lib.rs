@@ -40,7 +40,7 @@
 //! A browser is recycled between runs after repeated hangs of its tabs
 //! (decision 0422) and once past its memory limit; while the browsers hold
 //! their memory ceiling, no new browser work is started and the open
-//! answers `busy`, `memory_short`, with a retry time (decision 0999).
+//! answers `busy`, `memory_short`, with a retry time (decision 0425).
 //!
 //! Not built yet: page storage in a session's state, frames, the stream of every network exchange,
 //! declared pop-ups and downloads (an undeclared one is refused and

@@ -1,4 +1,4 @@
-# 0999. A browser's memory is measured from its own list of its processes, and past a ceiling no new browser work starts
+# 0425. A browser's memory is measured from its own list of its processes, and past a ceiling no new browser work starts
 
 **Status:** Accepted. Design decision, made by the worker on package 9.3g under the lead's brief. The owner had not read this record when it was written. It adds to the browser engine's interface, all additions: `BrowserSettings::memory_limit`, `memory_ceiling`, and `memory_retry`, with the named defaults `MEMORY_LIMIT`, `MEMORY_CEILING`, and `MEMORY_RETRY`; `LaunchReason::MemoryShort` and its `MemoryShort`; and the failure code `busy`/`memory_short`, which the web pack passes on.
 

@@ -8,7 +8,7 @@
 //!
 //! The pack has no `busy` code of its own; the browser engine's
 //! `browser_unavailable` does not pass by itself, and its `memory_short`
-//! does (decision 0999).
+//! does (decision 0425).
 
 use a2m_core::{CodeEntry, Failure, FailureCode};
 use a2m_provider::StepFailure;

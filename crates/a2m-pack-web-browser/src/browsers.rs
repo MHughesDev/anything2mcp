@@ -61,19 +61,19 @@ pub const HANG_PROBE: Duration = Duration::from_secs(5);
 
 /// The most memory one browser may hold, its processes together, before it
 /// is recycled between runs, when the settings say nothing else (decision
-/// 0999): two gibibytes. A draft, set when first measured on a long run
+/// 0425): two gibibytes. A draft, set when first measured on a long run
 /// (spec section 226); a browser of the test application with one tab was
 /// measured at about 300 MB on Linux.
 pub const MEMORY_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 
 /// The most memory the engine's browsers may hold together for new browser
-/// work to start, when the settings say nothing else (decision 0999): four
+/// work to start, when the settings say nothing else (decision 0425): four
 /// gibibytes, two browsers at their limit. A draft, as [`MEMORY_LIMIT`] is.
 pub const MEMORY_CEILING: u64 = 4 * 1024 * 1024 * 1024;
 
 /// How long a call refused because memory runs short is told to wait
 /// before it asks again, when the settings say nothing else (decision
-/// 0999).
+/// 0425).
 pub const MEMORY_RETRY: Duration = Duration::from_secs(30);
 
 /// The version of the DevTools protocol the engine speaks.
@@ -460,7 +460,7 @@ impl BrowserInner {
     /// processes hold, by the browser's own list of them, each measured by
     /// its operating system. A browser that does not answer within `wait`,
     /// or names no process, or a process that cannot be measured, is an
-    /// error, and the caller fails closed on it (decision 0999).
+    /// error, and the caller fails closed on it (decision 0425).
     pub(crate) async fn memory(&self, wait: Duration) -> Result<u64, String> {
         let listed = self
             .client
@@ -571,7 +571,7 @@ impl Shared {
 
     /// Refuses new browser work while the browsers measured hold the
     /// ceiling or more, or one of them could not be measured: `busy`,
-    /// `memory_short`, with the retry time (decision 0999).
+    /// `memory_short`, with the retry time (decision 0425).
     fn room(&self, measured: &Measured) -> Result<(), BrowserError> {
         let ceiling = self.memory_ceiling.load(Ordering::SeqCst);
         let retry = self.settings.memory_retry;
@@ -1043,7 +1043,7 @@ impl Browsers {
         let window = notice.is_some();
         // An open that finds a tab of its profile's browser held is a run's
         // work going on, and is let go on; every other open begins browser
-        // work, and memory is measured for it (decision 0999).
+        // work, and memory is measured for it (decision 0425).
         let begins = window
             || existing
                 .as_ref()

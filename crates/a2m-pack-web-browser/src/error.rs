@@ -22,7 +22,7 @@ pub mod codes {
             next "Install Chrome, Edge, or Chromium, or name the browser program in the settings.",
             passes not_by_itself;
         MEMORY_SHORT = Busy, "memory_short",
-            meaning "The engine's browsers hold their memory ceiling or more, or one of them could not be measured, so no new browser work is started (decision 0999).",
+            meaning "The engine's browsers hold their memory ceiling or more, or one of them could not be measured, so no new browser work is started (decision 0425).",
             next "Call again after the wait the failure gives; a browser past its own limit is recycled between runs. If it persists, close other work on the machine, or raise the ceiling in the settings.",
             passes by_itself;
         BROWSER_NOT_OWNED = UnknownVariant, "browser_not_owned",
@@ -119,7 +119,7 @@ pub enum LaunchReason {
     DataDirectory(Failure),
     /// Memory runs short: the engine's browsers hold their ceiling or
     /// more, or one could not be measured. Nothing was started, and no
-    /// browser was handed out (decision 0999).
+    /// browser was handed out (decision 0425).
     MemoryShort(MemoryShort),
 }
 
