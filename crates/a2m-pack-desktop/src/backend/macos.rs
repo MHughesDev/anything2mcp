@@ -77,8 +77,10 @@ const CALL_LIMIT: Duration = Duration::from_secs(5);
 const MOST_PROCESSES: usize = 100_000;
 /// The most comparisons one walk makes to find what labels what.
 const MOST_COMPARISONS: usize = 20_000;
-/// The number of window listings and walks whose elements are kept.
+/// The number of walks whose elements are kept.
 const KEPT: u64 = 4;
+/// The most windows of one application whose elements are kept.
+const MOST_WINDOWS: usize = 1_000;
 
 /// Every call into the accessibility interface this back end may make.
 /// Each one reads, or sets up this client's own side: a check of this
@@ -520,8 +522,12 @@ struct Proven {
 struct Ax {
     user: u32,
     proven: BTreeMap<i32, Proven>,
-    /// The windows of the last listings, by listing.
-    listings: BTreeMap<u64, Vec<CFRetained<AXUIElement>>>,
+    /// Each window a listing found, with its process, by a number of its
+    /// own that stays the same for as long as the window is listed: a
+    /// window found once keeps its key through later listings, as a
+    /// window's handle does on Windows (decision 0409).
+    windows: BTreeMap<u64, (i32, CFRetained<AXUIElement>)>,
+    next_window: u64,
     /// The elements of the last walks, by walk.
     walks: BTreeMap<u64, Vec<CFRetained<AXUIElement>>>,
     next: u64,
@@ -573,7 +579,8 @@ impl Ax {
         Ok(Self {
             user: my_user(),
             proven: BTreeMap::new(),
-            listings: BTreeMap::new(),
+            windows: BTreeMap::new(),
+            next_window: 0,
             walks: BTreeMap::new(),
             next: 0,
             #[cfg(test)]
@@ -679,20 +686,23 @@ impl Ax {
 
     /// The element a key names, proved again to be the application's.
     fn element(&self, el: &El) -> Result<CFRetained<AXUIElement>, AxError> {
-        let proven = self.again(process_of(el)?)?;
+        let process = process_of(el)?;
+        let proven = self.again(process)?;
         if el.path == "application" {
             return Ok(proven.element.clone());
         }
-        let kept = |store: &BTreeMap<u64, Vec<CFRetained<AXUIElement>>>, rest: &str| {
-            let (which, at) = rest.split_once('.')?;
-            let which = which.parse::<u64>().ok()?;
-            let at = at.parse::<usize>().ok()?;
-            store.get(&which)?.get(at).cloned()
-        };
         let found = if let Some(rest) = el.path.strip_prefix("window:") {
-            kept(&self.listings, rest)
+            rest.parse::<u64>()
+                .ok()
+                .and_then(|key| self.windows.get(&key))
+                .filter(|(owner, _)| *owner == process)
+                .map(|(_, window)| window.clone())
         } else if let Some(rest) = el.path.strip_prefix("walk:") {
-            kept(&self.walks, rest)
+            rest.split_once('.').and_then(|(which, at)| {
+                let which = which.parse::<u64>().ok()?;
+                let at = at.parse::<usize>().ok()?;
+                self.walks.get(&which)?.get(at).cloned()
+            })
         } else {
             None
         };
@@ -704,25 +714,42 @@ impl Ax {
     /// The application's windows.
     fn windows(&mut self, app: &App) -> Result<Vec<Window>, AxError> {
         let element = self.element(&app.root)?;
-        let windows = elements_of(&element, "AXWindows", 1_000)?;
-        let listing = self.next;
-        self.next += 1;
+        let process = process_of(&app.root)?;
+        let windows = elements_of(&element, "AXWindows", MOST_WINDOWS)?;
+        // Each window listed keeps the key it was given when first listed,
+        // the same element as the system compares elements, which asks no
+        // application; a window no longer listed is let go.
+        let mut listed: Vec<u64> = Vec::with_capacity(windows.len());
+        for window in &windows {
+            let theirs: &CFType = window;
+            let known = self.windows.iter().find_map(|(key, (owner, mine))| {
+                let mine: &CFType = mine;
+                (*owner == process && theirs == mine && !listed.contains(key)).then_some(*key)
+            });
+            let key = known.unwrap_or_else(|| {
+                let key = self.next_window;
+                self.next_window += 1;
+                self.windows.insert(key, (process, window.clone()));
+                key
+            });
+            listed.push(key);
+        }
+        self.windows
+            .retain(|key, (owner, _)| *owner != process || listed.contains(key));
         let mut out = Vec::new();
-        for (at, window) in windows.iter().enumerate() {
+        for (window, key) in windows.iter().zip(&listed) {
             let role = text_of(window, "AXRole")?.unwrap_or_default();
             let subrole = text_of(window, "AXSubrole")?.unwrap_or_default();
             let title = text_of(window, "AXTitle")?.unwrap_or_default();
             out.push(Window {
                 el: El {
                     bus: app.root.bus.clone(),
-                    path: format!("window:{listing}.{at}"),
+                    path: format!("window:{key}"),
                 },
                 role: role_word(&role, &subrole, Place::Plain),
                 title,
             });
         }
-        self.listings.insert(listing, windows);
-        self.listings.retain(|known, _| known + KEPT > listing);
         Ok(out)
     }
 
@@ -2033,6 +2060,15 @@ mod tests {
             .map(|window| (window.role, window.title.as_str()))
             .collect();
         assert_eq!(titles, [("frame", example_desk::WINDOW)], "{titles:?}");
+        // A window keeps its key through later listings, as many as a
+        // write makes between its `goto` and its last act (decision 0409).
+        for _ in 0..2 * KEPT {
+            let again = look.windows(&app).await.unwrap();
+            assert_eq!(
+                again.iter().map(|window| &window.el).collect::<Vec<_>>(),
+                [&windows[0].el]
+            );
+        }
         let tree = look
             .tree(
                 &windows[0].el,
