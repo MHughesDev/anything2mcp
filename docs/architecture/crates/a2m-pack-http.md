@@ -290,6 +290,8 @@ The edge's answers are `rate_limited_by_edge` (status 429, with the seconds it a
 
 15. Done ([decision 0264](../../decisions/0264-the-publish-page-renders-the-typed-review-sign-ins-first-from-one-keeper-call.md)): `Lowering::statement` for the review summary: a binding starts nothing, sets nothing, and sends to its surface's address and no other, since an endpoint's path is relative to the surface, the driver refuses any other address, follows no redirect, and uses no proxy. Test: `the_review_states_what_the_http_pack_runs_and_where_it_sends` (`tests/compile.rs`).
 
+16. Done (package E7d, [decision 0426](../../decisions/0426-the-publish-page-names-each-asserted-read-after-the-sign-ins-from-what-each-file-kind-says-it-asserts.md)): the `endpoint` kind answers `FileKind::asserts` for an endpoint marked `read` whose method HTTP does not mark safe and that says `read_asserted: true`, with its name, method, path, and the fields of its `request_schema`, so the publish page names it. Test: `tests/compile.rs`.
+
 ## Open points
 
 - How the schema of `endpoints/` and of the `endpoint` finding is versioned, so that `a2m-pack-web-ui` and `a2m-pack-web-probe` are held to the version they read or write by a test. The payload carries the format number 1, and each finding's `found` carries `format`.

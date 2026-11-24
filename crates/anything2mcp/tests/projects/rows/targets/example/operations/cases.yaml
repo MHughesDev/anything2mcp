@@ -1,0 +1,14 @@
+operation: example_case_list
+title: List the open cases
+effect: read
+inputs: {}
+outputs:
+  case_ids: {type: identifier, list: true}
+  statuses: {type: identifier, list: true}
+bindings:
+  - mode: ui
+    verb: list
+    status: verified
+    screen: cases
+description: >
+  Lists the key and the status of every open case.

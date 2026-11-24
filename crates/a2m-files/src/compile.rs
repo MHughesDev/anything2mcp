@@ -31,7 +31,9 @@ use crate::register::{
     CompileMode, CompilerSet, Lowered, Lowering, Possible, StepChanges, StepCommits,
     SurfaceKindSpec,
 };
-use crate::review::{OpReview, PlaceReview, ReviewSummary, review_of};
+use crate::review::{
+    ASSERTED_NOTICE, AssertedReview, OpReview, PlaceReview, ReviewSummary, review_of,
+};
 use crate::schema::{JsonSchema, Reference, fix_for_unknown, shown};
 use crate::source::{
     Fingerprint, FingerprintPart, HiddenRule, Locate, OPERATION_READER, ReaderOptions, RowField,
@@ -107,6 +109,7 @@ pub fn compile(
         test_bindings: Vec::new(),
         tool_names: BTreeMap::new(),
         reviews: BTreeMap::new(),
+        asserted: Vec::new(),
     };
     compiler.run(version)
 }
@@ -207,6 +210,8 @@ struct Compiler<'a> {
     /// For the review summary: what each operation's packs stated, and its
     /// fixed place.
     reviews: BTreeMap<OperationName, OpReview>,
+    /// The reads the pack files assert, for the review summary.
+    asserted: Vec<AssertedReview>,
 }
 
 fn index(position: usize) -> u32 {
@@ -535,7 +540,11 @@ impl<'a> Compiler<'a> {
             packs: std::mem::take(&mut self.model.sections),
             tests: std::mem::take(&mut self.tests),
         };
-        let review = review_of(&compiled_target, &self.reviews);
+        let review = review_of(
+            &compiled_target,
+            &self.reviews,
+            std::mem::take(&mut self.asserted),
+        );
         match compiled_target.encode() {
             Ok(encoded) => Ok(Compiled {
                 compiled_target,
@@ -1638,6 +1647,7 @@ impl<'a> Compiler<'a> {
                     continue;
                 };
                 let surface_kind = surface.kind.clone();
+                let surface_name = surface.name.clone();
                 let Some(owner) = set.file_kind(&file.kind, &surface_kind) else {
                     let kinds: Vec<&str> = set
                         .surface_kinds_of(&file.kind)
@@ -1700,6 +1710,19 @@ impl<'a> Compiler<'a> {
                     );
                     self.model.owners.insert(key.clone(), owner.pack.clone());
                     self.model.entries.entry(key).or_default().push(doc.clone());
+                    self.asserted
+                        .extend(
+                            owner
+                                .item
+                                .asserts(doc)
+                                .into_iter()
+                                .map(|read| AssertedReview {
+                                    kind: file.kind.clone(),
+                                    surface: surface_name.clone(),
+                                    read,
+                                    says: ASSERTED_NOTICE,
+                                }),
+                        );
                 }
             }
         }

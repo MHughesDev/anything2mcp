@@ -796,3 +796,215 @@ fn the_summary_is_ordered_by_hazard_then_effect_then_exposure_then_name() {
     let entries: Vec<usize> = sign_ins.iter().map(|sign_in| sign_in.entry).collect();
     assert_eq!(entries, [1, 3, 0, 2]);
 }
+
+// ---- 4. The reads a person asserted (decision 0394, point 5) ----
+
+/// A file kind of requests, under a name and folder of the test's choice,
+/// that answers `asserts` from `read_asserted` and `request_schema` as the
+/// web pack's `page_request` and the HTTP pack's `endpoint` do.
+struct Requests {
+    name: &'static str,
+    folder: &'static str,
+    kinds: Vec<SurfaceKind>,
+    schema: JsonSchema,
+}
+
+impl Requests {
+    fn new(name: &'static str, folder: &'static str) -> Self {
+        Self {
+            name,
+            folder,
+            kinds: vec![testing::surface_kind()],
+            schema: JsonSchema::object()
+                .required("endpoint", JsonSchema::name())
+                .optional("surface", JsonSchema::surface())
+                .required("method", JsonSchema::words(&["GET", "POST"]))
+                .required("path", JsonSchema::text())
+                .optional("read_asserted", JsonSchema::bool())
+                .optional("request_schema", JsonSchema::any()),
+        }
+    }
+}
+
+impl crate::FileKind for Requests {
+    fn name(&self) -> FileKindName {
+        FileKindName::new(self.name).unwrap()
+    }
+    fn surface_kinds(&self) -> &[SurfaceKind] {
+        &self.kinds
+    }
+    fn folder(&self) -> &str {
+        self.folder
+    }
+    fn schema(&self) -> &JsonSchema {
+        &self.schema
+    }
+    fn names(&self, doc: &crate::Located<crate::Doc>) -> Vec<crate::Located<crate::DefinedName>> {
+        doc.get("endpoint")
+            .map(|name| {
+                crate::Located::new(
+                    crate::DefinedName {
+                        name: name.as_text().unwrap_or_default().to_owned(),
+                    },
+                    name.at.clone(),
+                )
+            })
+            .into_iter()
+            .collect()
+    }
+    fn expressions(&self, _doc: &crate::Located<crate::Doc>) -> Vec<crate::ExprSite> {
+        Vec::new()
+    }
+    fn compile(
+        &self,
+        _docs: &[crate::Located<crate::Doc>],
+        _cx: &crate::KindContext<'_>,
+    ) -> Result<crate::CompiledSection, Diagnostics> {
+        Ok(crate::CompiledSection {
+            format: 1,
+            payload: a2m_core::PackPayload::encode(&serde_json::json!({})).unwrap(),
+        })
+    }
+    fn asserts(&self, doc: &crate::Located<crate::Doc>) -> Vec<crate::AssertedRead> {
+        if doc.get("read_asserted").and_then(crate::Located::as_bool) != Some(true) {
+            return Vec::new();
+        }
+        let fields = doc
+            .get("request_schema")
+            .and_then(|shape| shape.get("properties"))
+            .map(|properties| {
+                properties
+                    .entries()
+                    .iter()
+                    .map(|field| crate::AssertedField {
+                        name: field.key.value.clone(),
+                        kind: field.value.text("type").unwrap_or_default().to_owned(),
+                        one_of: field
+                            .value
+                            .get("enum")
+                            .map(|words| {
+                                words
+                                    .items()
+                                    .iter()
+                                    .filter_map(|word| word.as_text().map(str::to_owned))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        vec![crate::AssertedRead {
+            entry: doc.text("endpoint").unwrap_or_default().to_owned(),
+            method: doc.text("method").unwrap_or_default().to_owned(),
+            path: doc.text("path").unwrap_or_default().to_owned(),
+            fields,
+        }]
+    }
+}
+
+/// The stand pack, with the two kinds of request beside its own.
+fn asserting_set() -> CompilerSet {
+    let mut builder = CompilerSet::builder();
+    testing::register_stand(&mut builder).unwrap();
+    builder
+        .file_kind(
+            testing::PACK,
+            Arc::new(Requests::new("page_request", "page_requests")),
+        )
+        .unwrap();
+    builder
+        .file_kind(
+            testing::PACK,
+            Arc::new(Requests::new("endpoint", "endpoints")),
+        )
+        .unwrap();
+    builder.build()
+}
+
+const PAGE_REQUESTS: &str = "endpoint: rows_search
+method: POST
+path: \"/api/cases/rows/search\"
+read_asserted: true
+request_schema:
+  type: object
+  additionalProperties: false
+  properties:
+    query: {type: string}
+    order: {type: string, enum: [newest, oldest]}
+---
+endpoint: rows_list
+method: GET
+path: \"/api/cases/rows\"
+";
+
+const ENDPOINTS: &str = "endpoint: totals_compute
+method: POST
+path: \"/api/totals\"
+read_asserted: true
+---
+endpoint: totals_store
+method: POST
+path: \"/api/totals/store\"
+";
+
+#[test]
+fn each_asserted_read_is_one_item_with_its_request_its_fields_and_the_sentence() {
+    let set = asserting_set();
+    let mut files = example_files();
+    add(&mut files, "page_requests/rows.yaml", PAGE_REQUESTS);
+    add(&mut files, "endpoints/totals.yaml", ENDPOINTS);
+    let compiled = compiled_target_with(&files, &set, CompileMode::Draft)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    let desk: a2m_core::SurfaceName = "desk".parse().unwrap();
+    let field = |name: &str, one_of: &[&str]| crate::AssertedField {
+        name: name.to_owned(),
+        kind: "string".to_owned(),
+        one_of: one_of.iter().map(|word| (*word).to_owned()).collect(),
+    };
+    assert_eq!(
+        compiled.review.asserted,
+        [
+            crate::AssertedReview {
+                kind: FileKindName::new("endpoint").unwrap(),
+                surface: desk.clone(),
+                read: crate::AssertedRead {
+                    entry: "totals_compute".to_owned(),
+                    method: "POST".to_owned(),
+                    path: "/api/totals".to_owned(),
+                    fields: Vec::new(),
+                },
+                says: crate::ASSERTED_NOTICE,
+            },
+            crate::AssertedReview {
+                kind: FileKindName::new("page_request").unwrap(),
+                surface: desk,
+                read: crate::AssertedRead {
+                    entry: "rows_search".to_owned(),
+                    method: "POST".to_owned(),
+                    path: "/api/cases/rows/search".to_owned(),
+                    fields: vec![field("query", &[]), field("order", &["newest", "oldest"])],
+                },
+                says: crate::ASSERTED_NOTICE,
+            },
+        ]
+    );
+    // Every text of an asserted read passes through the function given;
+    // the sentence stays.
+    let mapped = compiled.review.map_text(&|_| "hidden-text".to_owned());
+    let after = serde_json::to_string(&mapped).unwrap();
+    for text in ["/api/cases/rows/search", "rows_search", "newest", "query"] {
+        assert!(!after.contains(text), "{text}: {after}");
+    }
+    assert!(after.contains(crate::ASSERTED_NOTICE), "{after}");
+    // A target that asserts none has none.
+    let mut plain = example_files();
+    add(
+        &mut plain,
+        "page_requests/rows.yaml",
+        "endpoint: rows_list\nmethod: GET\npath: \"/api/cases/rows\"\n",
+    );
+    let compiled = compiled_target_with(&plain, &set, CompileMode::Draft)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    assert!(compiled.review.asserted.is_empty());
+}

@@ -1,0 +1,5 @@
+test: example_case_list
+kind: offline
+fixture: case_list
+inputs: {}
+expect: {case_ids: ["C-1", "C-2"], statuses: ["open", "open"]}
