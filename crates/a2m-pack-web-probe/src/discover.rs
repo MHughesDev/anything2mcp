@@ -871,7 +871,7 @@ impl WebCapture {
         let mut out = Once::new(out);
         let tab = core.tab(scope).await?;
         // The page's own requests reach this discoverer through the
-        // contract's traffic capture, and pass its check (decision 0399).
+        // contract's traffic capture, and pass its check (decision 0391).
         TrafficCapture::start(&tab);
         let mut exchanges: Vec<(Exchange, Vec<(LimitationCode, String)>)> = Vec::new();
         while let Some((address, _, focused)) = pages.next(core.max_pages, scope) {

@@ -1,5 +1,5 @@
 //! The observing tab as a traffic capture of the provider contract
-//! (decision 0399): what [`ObserveTab::exchanges`] records, in the
+//! (decision 0391): what [`ObserveTab::exchanges`] records, in the
 //! contract's form. A pack that holds observing tabs offers the capability
 //! by declaring it and registering a source that opens one.
 

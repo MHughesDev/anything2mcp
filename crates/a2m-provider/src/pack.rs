@@ -293,7 +293,7 @@ impl<'a> Registrar<'a> {
 
     /// Registers the pack's one capture source, which offers traffic
     /// capture of the surface kinds the manifest lists under
-    /// `points.traffic_capture` (decision 0399).
+    /// `points.traffic_capture` (decision 0391).
     ///
     /// # Errors
     ///

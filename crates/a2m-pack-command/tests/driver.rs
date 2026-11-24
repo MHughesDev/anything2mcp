@@ -1665,7 +1665,7 @@ async fn found_by_help(scene: &Scene) -> Vec<a2m_core::Finding> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_command_a_person_declared_a_read_is_drafted_as_an_operation_that_reads_the_stand() {
-    // Decision 0399. The help does not say what a command does, so the
+    // Decision 0387. The help does not say what a command does, so the
     // drafter drafts an operation only over a command whose `commands/`
     // file a person wrote with `effect: read`.
     let mut scene = Scene::new();

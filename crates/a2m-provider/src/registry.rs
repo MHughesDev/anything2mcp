@@ -1178,7 +1178,7 @@ impl Registry {
 
     /// The traffic captures offered for a kind of surface, in order of
     /// provider: only those of packs whose manifest declares the kind under
-    /// `points.traffic_capture` (decision 0399). A pack that declares none
+    /// `points.traffic_capture` (decision 0391). A pack that declares none
     /// is never asked.
     #[must_use]
     pub fn captures_for(&self, kind: &SurfaceKind) -> Vec<CaptureHandle> {

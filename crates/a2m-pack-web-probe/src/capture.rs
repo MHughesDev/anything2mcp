@@ -1,4 +1,4 @@
-//! The pack's traffic capture source (decision 0399): an observing tab of
+//! The pack's traffic capture source (decision 0391): an observing tab of
 //! the base, opened on the surface's own address and recording the
 //! requests its page makes by itself. The manifest declares it under
 //! `points.traffic_capture` for `web` surfaces; what it yields reaches a

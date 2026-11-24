@@ -1,5 +1,5 @@
 //! Traffic capture: a capability a pack may offer, and the form of what a
-//! capture yields (decisions 0390, point 10, and 0399).
+//! capture yields (decisions 0390, point 10, and 0391).
 //!
 //! A pack that offers it lists the surface kinds it captures under
 //! `points.traffic_capture` in its manifest and registers one

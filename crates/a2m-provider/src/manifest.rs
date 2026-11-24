@@ -365,7 +365,7 @@ pub struct Points {
     /// The widget drivers it brings. No trait exists for these yet.
     pub widget_driver: BTreeSet<String>,
     /// The surface kinds whose traffic it captures, through the one
-    /// [`crate::CaptureSource`] it registers (decision 0399). Empty: it
+    /// [`crate::CaptureSource`] it registers (decision 0391). Empty: it
     /// offers no capture and is asked for none.
     pub traffic_capture: BTreeSet<SurfaceKind>,
 }

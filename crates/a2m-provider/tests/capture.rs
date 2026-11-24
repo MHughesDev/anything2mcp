@@ -1,4 +1,4 @@
-//! Traffic capture as a capability of the contract (decision 0399): only a
+//! Traffic capture as a capability of the contract (decision 0391): only a
 //! pack whose manifest declares it is asked, and what a capture yields
 //! keeps structure and no secret, whatever the pack hands over.
 

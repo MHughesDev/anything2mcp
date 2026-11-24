@@ -1,4 +1,4 @@
-# 0399. Traffic capture is a capability of the provider contract that yields structure only
+# 0391. Traffic capture is a capability of the provider contract that yields structure only
 
 **Status:** Accepted. Design decision; it changes a public contract, the provider manifest and the extension points of [`a2m-provider`](../architecture/crates/a2m-provider.md). Carries out point 10 of [decision 0390](0390-the-open-questions-of-2026-11-24-are-settled-by-the-lead-and-the-first-release-is-what-progress-counts-toward.md). The owner had not read this record when it was merged.
 

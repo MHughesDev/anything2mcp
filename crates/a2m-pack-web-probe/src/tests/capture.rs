@@ -1,4 +1,4 @@
-//! Traffic capture through the provider contract (decision 0399), against
+//! Traffic capture through the provider contract (decision 0391), against
 //! the test application with one page of this file's own beside it: a
 //! page whose script sets a cookie and makes its own requests with a
 //! bearer token in a header, a token in the address, and a secret in the
