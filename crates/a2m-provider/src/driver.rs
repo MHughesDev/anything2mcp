@@ -653,6 +653,8 @@ pub(crate) struct HandleFacts {
     pub commit_steps: BTreeSet<StepKind>,
     /// The kinds of step whose "absent" is authoritative.
     pub absence_steps: BTreeSet<StepKind>,
+    /// The longest one `prepare` may take, as the manifest states it.
+    pub prepare_within: Option<Duration>,
     pub codes: BTreeMap<FailureCode, FailureClass>,
     pub choice: ProviderChoice,
     pub supervisor: ScopedSupervisor,
@@ -715,6 +717,15 @@ impl DriverHandle {
     #[must_use]
     pub fn choice(&self) -> &ProviderChoice {
         &self.facts.choice
+    }
+
+    /// The longest one `prepare` of this mode's driver may take, as the
+    /// provider's manifest states it (`prepare_within_ms`), never more than
+    /// [`crate::PREPARE_CEILING`]; `None` where the manifest states none,
+    /// and the engine then gives its own default (decision 0999).
+    #[must_use]
+    pub fn prepare_within(&self) -> Option<Duration> {
+        self.facts.prepare_within
     }
 
     /// Whether "absent" from these steps proves that a record is not there:

@@ -812,6 +812,54 @@ async fn a_driver_that_never_gets_ready_is_given_up() {
     assert_eq!(scene.hooks.count("get_order"), 0);
 }
 
+/// A scene whose one read, `order_get`, is bound to the spare mode, whose
+/// manifest states that one `prepare` may take two minutes.
+async fn slow_to_prepare(takes: Duration) -> Scene {
+    let scene = Scene::new(ORDER_GET, |compiled_target| {
+        for binding in &mut compiled_target.operations[0].bindings {
+            binding.mode = Mode::new(SECOND_MODE).unwrap();
+        }
+    })
+    .await;
+    *scene.hooks.prepare_takes.lock().unwrap() = Some(takes);
+    scene
+}
+
+#[tokio::test]
+async fn a_prepare_slower_than_the_default_is_given_the_time_its_manifest_states() {
+    // Past the engine's default of thirty seconds, within the two minutes
+    // the mode states: a slow first start on a cold machine.
+    let scene = slow_to_prepare(Duration::from_secs(90)).await;
+    let outcome = scene.work(JobKind::Execute, ORDER_GET, order()).await;
+    assert!(completed(&outcome), "{outcome:?}");
+    assert_eq!(scene.hooks.count("get_order"), 1);
+}
+
+#[tokio::test]
+async fn a_prepare_past_the_time_its_manifest_states_is_given_up() {
+    let scene = slow_to_prepare(Duration::from_secs(150)).await;
+    let outcome = scene.work(JobKind::Execute, ORDER_GET, order()).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::Transient, "prepare_timed_out".to_owned())
+    );
+    assert_eq!(scene.hooks.count("get_order"), 0);
+}
+
+#[tokio::test]
+async fn a_mode_that_states_no_time_to_prepare_is_given_the_engines_default() {
+    // The first mode states none: forty-five seconds is past the default.
+    let scene = Scene::new(ORDER_GET, |_| {}).await;
+    *scene.pin.lock().unwrap() = Some(Mode::new(FIRST_MODE).unwrap());
+    *scene.hooks.prepare_takes.lock().unwrap() = Some(Duration::from_secs(45));
+    let outcome = scene.work(JobKind::Execute, ORDER_GET, order()).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::Transient, "prepare_timed_out".to_owned())
+    );
+    assert_eq!(scene.hooks.count("get_order"), 0);
+}
+
 // ---- the lease and cancellation ----
 
 #[tokio::test]

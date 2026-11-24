@@ -156,6 +156,7 @@ name = "app_json_spare"
 archetype = "request"
 verbs = ["read", "upsert"]
 steps = ["get_order", "get_item", "put_item", "get_stock", "add_item", "reserve_code", "find_item", "check_item", "taken", "scan"]
+prepare_within_ms = 120000
 rank = 50
 session_reads = 4
 
@@ -300,6 +301,9 @@ pub struct Hooks {
     pub hangs_on: Mutex<Option<String>>,
     /// Preparing a driver never ends.
     pub prepare_hangs: AtomicBool,
+    /// Preparing a driver takes this long, in the test's time: as a browser
+    /// on a cold machine is slow to start.
+    pub prepare_takes: Mutex<Option<std::time::Duration>>,
     /// The next lookups find nothing, this many times, whatever is stored.
     pub lookup_lags: AtomicU32,
     /// The next step of this kind is carried out, and then fails with this
@@ -1123,6 +1127,17 @@ impl Driver for AppDriver {
             );
             if self.hooks.prepare_hangs.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
+            }
+            let takes = *self.hooks.prepare_takes.lock().unwrap();
+            if let Some(takes) = takes {
+                // Only this wait is made in the test's time: the clock of
+                // the runtime stops, and, with nothing else to do, the
+                // runtime moves it on to whichever ends first, this wait or
+                // the engine's limit on preparing. It runs again when the
+                // wait ends or the engine drops the preparation.
+                tokio::time::pause();
+                let _runs_again = ClockRunsAgain;
+                tokio::time::sleep(takes).await;
             }
             Ok(Prepared::new(AppState {
                 base: cx.surface.surface.address.clone(),

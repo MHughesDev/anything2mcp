@@ -846,6 +846,32 @@ async fn absence_is_proved_only_by_the_kinds_the_manifest_states() {
     assert!(handle.release(prepared, false).await.complete);
 }
 
+/// The handle gives the time the mode's manifest states one `prepare` may
+/// take, at the ceiling too, and nothing where it states none
+/// (decision 0999).
+#[tokio::test]
+async fn the_handle_gives_the_time_the_manifest_states_for_a_prepare() {
+    let plain = scene();
+    let (handle, prepared) = plain.prepared(None, Posture::Live).await;
+    assert_eq!(handle.prepare_within(), None);
+    assert!(handle.release(prepared, false).await.complete);
+
+    let declares = manifest("alpha", "request", "").replace(
+        "steps = [\"fetch\", \"send\"]",
+        &format!(
+            "steps = [\"fetch\", \"send\"]\nprepare_within_ms = {}",
+            a2m_provider::PREPARE_CEILING.as_millis()
+        ),
+    );
+    let scene = scene_of(
+        TestPack::with_manifest("alpha", declares),
+        Arc::new(a2m_core::NoSecrets),
+    );
+    let (handle, prepared) = scene.prepared(None, Posture::Live).await;
+    assert_eq!(handle.prepare_within(), Some(a2m_provider::PREPARE_CEILING));
+    assert!(handle.release(prepared, false).await.complete);
+}
+
 /// A code that states the kernel's own bookkeeping never comes from a
 /// driver, also where a step's own `fails_as` would let it pass.
 #[tokio::test]
