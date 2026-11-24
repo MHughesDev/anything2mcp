@@ -13,7 +13,7 @@ kind = "pack"
 name = "http"
 archetype = "request"
 verbs = ["read", "list", "search", "create", "update", "upsert", "delete", "submit", "call"]
-steps = ["request", "validate", "extract", "probe"]
+steps = ["token", "request", "validate", "extract", "probe"]
 # No `commit_steps`: no step kind of this mode always saves. A `request`
 # saves exactly when its endpoint is marked `write`, and the lowering marks
 # it `commits` then; the driver refuses an endpoint that writes from a step
@@ -132,6 +132,26 @@ code = "answer_holds_secret"
 [[failure_codes]]
 class = "transient"
 code = "upstream_unavailable"
+
+[[failure_codes]]
+class = "stale"
+code = "token_not_read"
+
+[[failure_codes]]
+class = "drift"
+code = "anti_forgery_not_found"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "anti_forgery_unreadable"
+
+[[failure_codes]]
+class = "edge_blocked"
+code = "rate_limited_by_edge"
+
+[[failure_codes]]
+class = "edge_blocked"
+code = "forbidden_by_edge"
 
 [[failure_codes]]
 class = "policy"

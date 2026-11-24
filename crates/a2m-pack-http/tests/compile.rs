@@ -59,6 +59,7 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     // The step kinds the lowering and the discoverers make are the mode's.
     let steps = &manifest.modes[0].steps;
     for kind in [
+        a2m_pack_http::TOKEN,
         a2m_pack_http::REQUEST,
         a2m_pack_http::VALIDATE,
         a2m_pack_http::EXTRACT,
@@ -66,8 +67,8 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     ] {
         assert!(steps.contains(&kind), "{kind}");
     }
-    assert_eq!(steps.len(), 4);
-    assert!(!steps.contains(&StepKind::fixed("token")));
+    assert_eq!(steps.len(), 5);
+    assert_eq!(a2m_pack_http::TOKEN, StepKind::fixed("token"));
 }
 
 #[test]
@@ -227,7 +228,7 @@ fn what_an_endpoint_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
     // What is not built is refused by name, not ignored.
     let not_built = refused(
         orders,
-        |text| text.replacen("auth: none", "auth: none\nanti_forgery: {cookie: xsrf}", 1),
+        |text| text.replacen("auth: none", "auth: none\ngraphql: {query: orders}", 1),
         "http.not_built",
     );
     assert_eq!(not_built.at.line, 6);

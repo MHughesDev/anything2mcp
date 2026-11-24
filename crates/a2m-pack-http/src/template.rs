@@ -202,6 +202,41 @@ pub(crate) struct VersionRule {
     pub send: Option<VersionSink>,
 }
 
+/// Where a page holds the anti-forgery token it gives (decision 0399).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TokenSource {
+    /// The `content` of the `meta` element of this name.
+    Meta(String),
+    /// The `value` of the hidden `input` element of this name.
+    Input(String),
+    /// The cookie of this name, as the page's answer sets it.
+    Cookie(String),
+}
+
+/// Where the token goes in the write.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TokenSink {
+    /// A request header, by lowercase name.
+    Header(String),
+    /// A top-level field of the JSON body.
+    Field(String),
+}
+
+/// The anti-forgery bootstrap of a write: which page gives the token, where
+/// the page holds it, and where the write carries it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AntiForgery {
+    /// The path of the page, on the endpoint's own surface. Its holes are
+    /// holes of the endpoint's own path.
+    pub page: Vec<Segment>,
+    pub page_trailing_slash: bool,
+    pub from: TokenSource,
+    pub to: TokenSink,
+}
+
 /// One endpoint, compiled. This is the pack's entry in its section of the
 /// plan, keyed by the endpoint's name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -236,6 +271,10 @@ pub(crate) struct EndpointTemplate {
     pub answers: Answers,
     /// The header that carries the record's idempotency token.
     pub idempotency_header: Option<String>,
+    /// The anti-forgery bootstrap of a write. Left out of the payload when
+    /// there is none, so other endpoints compile as before (decision 0399).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anti_forgery: Option<AntiForgery>,
     pub version: VersionRule,
     /// Whether the front end computes or signs the request.
     pub signed: bool,
@@ -265,23 +304,28 @@ impl EndpointTemplate {
 
     /// The path as the target file wrote it, for a message or a trace.
     pub(crate) fn path_text(&self) -> String {
-        let mut text = String::new();
-        for segment in &self.path {
-            text.push('/');
-            match segment {
-                Segment::Literal(literal) => text.push_str(literal),
-                Segment::Hole(name) => {
-                    text.push('{');
-                    text.push_str(name);
-                    text.push('}');
-                }
+        path_text_of(&self.path, self.trailing_slash)
+    }
+}
+
+/// A path template as the target file wrote it.
+pub(crate) fn path_text_of(path: &[Segment], trailing_slash: bool) -> String {
+    let mut text = String::new();
+    for segment in path {
+        text.push('/');
+        match segment {
+            Segment::Literal(literal) => text.push_str(literal),
+            Segment::Hole(name) => {
+                text.push('{');
+                text.push_str(name);
+                text.push('}');
             }
         }
-        if self.trailing_slash || self.path.is_empty() {
-            text.push('/');
-        }
-        text
     }
+    if trailing_slash || path.is_empty() {
+        text.push('/');
+    }
+    text
 }
 
 /// The section of the plan this pack owns: every endpoint of one surface
@@ -485,23 +529,13 @@ pub(crate) struct Extras<'a> {
     pub stamp: Option<&'a str>,
     /// The version last read for the record.
     pub version: Option<&'a Json>,
+    /// The anti-forgery token the page gave for this write.
+    pub token: Option<&'a str>,
 }
 
-/// Builds the request of a `request` step from its endpoint's template and
-/// the step's arguments.
-///
-/// # Errors
-///
-/// `input`/`path_value_refused` for a path value that is empty, a dot
-/// segment, or holds a separator or a control character;
-/// `input`/`step_not_usable` for an argument that is missing or of a kind
-/// its position cannot carry.
-pub(crate) fn build(
-    template: &EndpointTemplate,
-    step: &RequestStep,
-    args: &Values,
-    extras: Extras<'_>,
-) -> Result<Built, Failure> {
+/// The path of a request: literal segments as written, each hole filled by
+/// its `path.<name>` argument as one whole segment, encoded.
+fn path_of(segments: &[Segment], trailing_slash: bool, args: &Values) -> Result<String, Failure> {
     let unusable = |why: String| {
         codes::failure(
             &codes::row::STEP_NOT_USABLE,
@@ -509,9 +543,8 @@ pub(crate) fn build(
             "Compile the target again with the version of the HTTP pack that is enabled.",
         )
     };
-
     let mut path = String::new();
-    for segment in &template.path {
+    for segment in segments {
         path.push('/');
         match segment {
             Segment::Literal(literal) => path.push_str(literal),
@@ -538,9 +571,63 @@ pub(crate) fn build(
             }
         }
     }
-    if template.trailing_slash || template.path.is_empty() {
+    if trailing_slash || segments.is_empty() {
         path.push('/');
     }
+    Ok(path)
+}
+
+/// The request that fetches the page which gives an endpoint's token: a
+/// GET of the page's path, with no query and no body, that asks for a page.
+///
+/// # Errors
+///
+/// The same refusals of a path value as [`build`]; `input`/`step_not_usable`
+/// for an endpoint that declares no anti-forgery bootstrap.
+pub(crate) fn build_token_page(
+    template: &EndpointTemplate,
+    args: &Values,
+) -> Result<Built, Failure> {
+    let Some(forgery) = &template.anti_forgery else {
+        return Err(codes::failure(
+            &codes::row::STEP_NOT_USABLE,
+            "The HTTP driver cannot carry out this step as the plan wrote it: the endpoint declares no anti-forgery bootstrap.",
+            "Compile the target again with the version of the HTTP pack that is enabled.",
+        ));
+    };
+    Ok(Built {
+        method: Method::Get,
+        path: path_of(&forgery.page, forgery.page_trailing_slash, args)?,
+        query: String::new(),
+        headers: vec![("accept".to_owned(), "text/html".to_owned())],
+        body: None,
+    })
+}
+
+/// Builds the request of a `request` step from its endpoint's template and
+/// the step's arguments.
+///
+/// # Errors
+///
+/// `input`/`path_value_refused` for a path value that is empty, a dot
+/// segment, or holds a separator or a control character;
+/// `input`/`step_not_usable` for an argument that is missing or of a kind
+/// its position cannot carry.
+pub(crate) fn build(
+    template: &EndpointTemplate,
+    step: &RequestStep,
+    args: &Values,
+    extras: Extras<'_>,
+) -> Result<Built, Failure> {
+    let unusable = |why: String| {
+        codes::failure(
+            &codes::row::STEP_NOT_USABLE,
+            format!("The HTTP driver cannot carry out this step as the plan wrote it: {why}."),
+            "Compile the target again with the version of the HTTP pack that is enabled.",
+        )
+    };
+
+    let path = path_of(&template.path, template.trailing_slash, args)?;
 
     let mut query = String::new();
     let mut add_query = |name: &str, value: &str| {
@@ -607,6 +694,17 @@ pub(crate) fn build(
             entries.retain(|(name, _)| name != field);
             entries.push((field.clone(), version.clone()));
         }
+        if let (
+            Some(AntiForgery {
+                to: TokenSink::Field(field),
+                ..
+            }),
+            Some(token),
+        ) = (&template.anti_forgery, extras.token)
+        {
+            entries.retain(|(name, _)| name != field);
+            entries.push((field.clone(), Json::Text(token.to_owned())));
+        }
         body = Some(Json::Object(entries).to_text());
         headers.retain(|(name, _)| name != "content-type");
         headers.push(("content-type".to_owned(), "application/json".to_owned()));
@@ -619,6 +717,23 @@ pub(crate) fn build(
             unusable("the version read for the record cannot be carried in a header".to_owned())
         })?;
         headers.push((header.clone(), text));
+    }
+
+    if let (
+        Some(AntiForgery {
+            to: TokenSink::Header(header),
+            ..
+        }),
+        Some(token),
+    ) = (&template.anti_forgery, extras.token)
+    {
+        if token.is_empty() || !token.bytes().all(|byte| (0x21..0x7f).contains(&byte)) {
+            return Err(unusable(
+                "the anti-forgery token cannot be carried in a header".to_owned(),
+            ));
+        }
+        headers.retain(|(name, _)| name != header);
+        headers.push((header.clone(), token.to_owned()));
     }
 
     // The compiler refuses a header the connection sets; a plan that holds
@@ -692,6 +807,7 @@ mod tests {
             answer: crate::forms::AnswerSpec::default(),
             answers: Answers::default(),
             idempotency_header: Some("idempotency-key".to_owned()),
+            anti_forgery: None,
             version: VersionRule::default(),
             signed: false,
             max_response_bytes: None,
@@ -816,6 +932,7 @@ mod tests {
             let extras = Extras {
                 stamp: Some("stamp-1"),
                 version: Some(&version),
+                token: None,
             };
             for template in [written, stamped, versioned] {
                 let failure = build(&template, &step, &args, extras).unwrap_err();
@@ -862,6 +979,7 @@ mod tests {
             Extras {
                 stamp: Some("stamp-1"),
                 version: None,
+                token: None,
             },
         )
         .unwrap();

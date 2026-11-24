@@ -12,9 +12,9 @@ use a2m_files::{
 use crate::forms;
 use crate::shape::{Kind, Shape};
 use crate::template::{
-    Answer, Answers, Auth, EndpointSection, EndpointTemplate, Method, PAYLOAD_FORMAT, VersionRule,
-    VersionSink, VersionSource, is_connection_header, is_override_field, is_override_header,
-    override_may_change, parse_path,
+    Answer, Answers, AntiForgery, Auth, EndpointSection, EndpointTemplate, Method, PAYLOAD_FORMAT,
+    Segment, TokenSink, TokenSource, VersionRule, VersionSink, VersionSource, is_connection_header,
+    is_override_field, is_override_header, override_may_change, parse_path,
 };
 
 /// The name of this pack, as its manifest gives it.
@@ -244,6 +244,186 @@ fn answers_of(list: Option<&Located<Doc>>) -> Vec<Answer> {
         .collect()
 }
 
+/// Whether text is a plain name: a letter, then letters, digits, `-`, and
+/// `_`, in at most 64 bytes.
+fn is_plain_name(text: &str) -> bool {
+    text.len() <= 64
+        && text.bytes().next().is_some_and(|b| b.is_ascii_alphabetic())
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
+/// A header a token may not go in: the credential's own places, and the
+/// product's own headers.
+fn is_reserved_for_credentials(name: &str) -> bool {
+    matches!(name, "cookie" | "authorization" | "proxy-authorization") || name.starts_with("a2m-")
+}
+
+/// Reads the `anti_forgery` of a write: the page that gives the token, the
+/// one place on it that holds it, and the one place in the write that
+/// carries it (decision 0399). The word `none` says the endpoint checks no
+/// token. The form is the one `page_http` reads, with `page` added: where
+/// the request is made from is the page that gives the token.
+fn anti_forgery_of(
+    doc: &Located<Doc>,
+    method: Method,
+    path: &[Segment],
+    request: Option<&Shape>,
+    problems: &mut Diagnostics,
+) -> Option<AntiForgery> {
+    let declared = doc.get("anti_forgery")?;
+    if declared.as_text() == Some("none") {
+        return None;
+    }
+    let mut refuse = |at: &Place, message: String, fix: &str| {
+        problems.push(problem(
+            "anti_forgery_invalid",
+            Stage::Lower,
+            at,
+            message,
+            fix,
+        ));
+        None
+    };
+    if doc.text("effect") != Some("write") {
+        return refuse(
+            &declared.at,
+            "A read sends no token: `anti_forgery` belongs to an endpoint marked `write`."
+                .to_owned(),
+            "Remove it, or correct the endpoint's `effect`.",
+        );
+    }
+    for entry in declared.entries() {
+        if !matches!(
+            entry.key.value.as_str(),
+            "page" | "from" | "header" | "field"
+        ) {
+            return refuse(
+                &entry.key.at,
+                format!(
+                    "`anti_forgery` of an `http` endpoint takes `page`, `from`, and one of `header` or `field`; `{}` is none of them.",
+                    crate::codes::shown(&entry.key.value)
+                ),
+                "Remove the key.",
+            );
+        }
+    }
+    let Some(written) = declared.get("page") else {
+        return refuse(
+            &declared.at,
+            "`anti_forgery` names no `page`: the path, on the endpoint's surface, of the page that gives the token."
+                .to_owned(),
+            "Add `page: \"/orders/{order_id}/note\"`, with the path of the page.",
+        );
+    };
+    let (page, page_trailing_slash) = match parse_path(written.as_text().unwrap_or_default()) {
+        Ok(parsed) => parsed,
+        Err(why) => {
+            return refuse(
+                &written.at,
+                format!("The page is not a path this pack sends: {why}."),
+                "Write the path from the root of the surface, with each placeholder as one whole segment.",
+            );
+        }
+    };
+    for segment in &page {
+        if let Segment::Hole(name) = segment
+            && !path.contains(&Segment::Hole(name.clone()))
+        {
+            return refuse(
+                &written.at,
+                format!(
+                    "The page's placeholder `{name}` is not a placeholder of the endpoint's own path, so no value is known for it."
+                ),
+                "Use only placeholders the endpoint's path has.",
+            );
+        }
+    }
+    let from = declared.get("from")?;
+    let [source] = from.entries() else {
+        return refuse(
+            &from.at,
+            "`from` names exactly one place on the page: `meta`, `input`, or `cookie`, and its name."
+                .to_owned(),
+            "Write `from: {meta: csrf-token}`.",
+        );
+    };
+    let name = source.value.as_text().unwrap_or_default();
+    if !is_plain_name(name) {
+        return refuse(
+            &source.value.at,
+            "Where the page holds the token is named by a letter, then letters, digits, `-`, and `_`."
+                .to_owned(),
+            "Name the meta element, the hidden input, or the cookie as the page does.",
+        );
+    }
+    let from = match source.key.value.as_str() {
+        "meta" => TokenSource::Meta(name.to_owned()),
+        "input" => TokenSource::Input(name.to_owned()),
+        "cookie" => TokenSource::Cookie(name.to_owned()),
+        _ => {
+            return refuse(
+                &source.key.at,
+                "The token is read from a `meta` element, a hidden `input`, or a `cookie`; another endpoint's answer is not built.".to_owned(),
+                "Write `from: {meta: ...}`, `{input: ...}`, or `{cookie: ...}`.",
+            );
+        }
+    };
+    let to = match (declared.text("header"), declared.text("field")) {
+        (Some(header), None) => {
+            let lower = header.to_ascii_lowercase();
+            if is_header_name(&lower)
+                && !is_connection_header(&lower)
+                && !is_reserved_for_credentials(&lower)
+            {
+                TokenSink::Header(lower)
+            } else {
+                return refuse(
+                    &declared.get("header")?.at,
+                    "The token's header is not a header's name, or is one the connection, the session, or the product sets.".to_owned(),
+                    "Write the header's name, such as `X-CSRF-Token`.",
+                );
+            }
+        }
+        (None, Some(field)) => {
+            if !is_plain_name(field)
+                || request.is_some_and(|shape| shape.properties.contains_key(field))
+            {
+                return refuse(
+                    &declared.get("field")?.at,
+                    "The token's field is a plain name, and not a field of the body the endpoint declares.".to_owned(),
+                    "Name the one field the application reads the token from.",
+                );
+            }
+            if !method.has_body() {
+                return refuse(
+                    &declared.get("field")?.at,
+                    format!(
+                        "A {} request carries no body to put the token's field in.",
+                        method.word()
+                    ),
+                    "Send the token in a `header`, or correct the method.",
+                );
+            }
+            TokenSink::Field(field.to_owned())
+        }
+        _ => {
+            return refuse(
+                &declared.at,
+                "The token goes in exactly one `header` or one `field`.".to_owned(),
+                "Name the one header, or the one field, the application reads the token from.",
+            );
+        }
+    };
+    Some(AntiForgery {
+        page,
+        page_trailing_slash,
+        from,
+        to,
+    })
+}
+
 /// Compiles one endpoint entry into its template. Every refusal has the
 /// place of the value at fault and says how to correct it.
 pub(crate) fn template_of(
@@ -312,18 +492,13 @@ pub(crate) fn template_of(
         })
         .collect();
 
-    for (key, what) in [
-        ("anti_forgery", "The anti-forgery bootstrap"),
-        ("graphql", "A GraphQL endpoint"),
-    ] {
-        if let Some(written) = doc.get(key) {
-            refuse(
-                "not_built",
-                &written.at,
-                format!("{what} is not built in this version of the HTTP pack."),
-                "Remove the key, or bind the operation through another mode.",
-            );
-        }
+    if let Some(written) = doc.get("graphql") {
+        refuse(
+            "not_built",
+            &written.at,
+            "A GraphQL endpoint is not built in this version of the HTTP pack.".to_owned(),
+            "Remove the key, or bind the operation through another mode.",
+        );
     }
 
     let answer = forms::answer_of(doc, problems).unwrap_or_default();
@@ -491,6 +666,8 @@ pub(crate) fn template_of(
         }
     });
 
+    let anti_forgery = anti_forgery_of(doc, method, &path, request.as_ref(), problems);
+
     if problems.len() > before {
         return None;
     }
@@ -513,6 +690,7 @@ pub(crate) fn template_of(
         answer,
         answers,
         idempotency_header,
+        anti_forgery,
         version,
         signed: doc.get("signed").and_then(Located::as_bool) == Some(true),
         max_response_bytes: doc

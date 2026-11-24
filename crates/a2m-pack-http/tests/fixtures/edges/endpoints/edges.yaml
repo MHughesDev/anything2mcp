@@ -1,0 +1,51 @@
+endpoint: blocked_get
+surface: api
+method: GET
+path: "/edge/blocked"
+auth: none
+effect: read
+response_schema:
+  type: object
+  required: [order_id]
+  properties:
+    order_id: {type: string}
+---
+endpoint: limited_get
+surface: api
+method: GET
+path: "/edge/limited"
+auth: none
+effect: read
+response_schema:
+  type: object
+  required: [order_id]
+  properties:
+    order_id: {type: string}
+---
+endpoint: limited_declared_get
+surface: api
+method: GET
+path: "/edge/limited"
+auth: none
+effect: read
+responses:
+  unavailable:
+    - {status: 429}
+response_schema:
+  type: object
+  required: [order_id]
+  properties:
+    order_id: {type: string}
+---
+endpoint: order_get
+surface: api
+method: GET
+path: "/api/orders/{order_id}"
+auth: none
+effect: read
+headers: {accept: "application/json"}
+response_schema:
+  type: object
+  required: [order_id]
+  properties:
+    order_id: {type: string}

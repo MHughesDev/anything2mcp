@@ -1,0 +1,36 @@
+operation: example_note_get
+title: Get the note of an order
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+outputs:
+  note: {type: text}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: note_get
+description: >
+  Reads the note of one order.
+---
+operation: example_note_put
+title: Write the note of an order, with the token in a header, from a meta element
+effect: write
+key: order_id
+commit_points: 1
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+  note: {type: text, description: "The note"}
+outputs:
+  note: {type: text}
+bindings:
+  - mode: http
+    verb: upsert
+    status: verified
+    endpoint: note_put
+    body:
+      note: input.note
+    read_back: {endpoint: note_get}
+description: >
+  Writes the note of one order, sending the page's token in a header; prefer it for a system that reads the token there.

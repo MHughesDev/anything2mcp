@@ -1,0 +1,57 @@
+operation: example_edge_blocked_get
+title: Get what an edge blocks
+effect: read
+inputs: {}
+outputs:
+  order_id: {type: identifier}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: blocked_get
+description: >
+  Reads a path the edge answers with a page.
+---
+operation: example_edge_limited_get
+title: Get what an edge limits
+effect: read
+inputs: {}
+outputs:
+  order_id: {type: identifier}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: limited_get
+description: >
+  Reads a path the edge answers with a limit.
+---
+operation: example_edge_limited_declared_get
+title: Get what the endpoint declares as not now
+effect: read
+inputs: {}
+outputs:
+  order_id: {type: identifier}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: limited_declared_get
+description: >
+  Reads a path whose endpoint declares the limit as its own answer.
+---
+operation: example_order_get
+title: Get an order
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order, such as A-100"}
+outputs:
+  order_id: {type: identifier}
+bindings:
+  - mode: http
+    verb: read
+    status: verified
+    endpoint: order_get
+description: >
+  Reads one order, to be answered with a status nothing declares.

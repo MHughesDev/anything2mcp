@@ -27,6 +27,10 @@ use crate::template::{
     VersionSink,
 };
 
+/// The step that fetches the page which gives a write's anti-forgery
+/// token, and keeps the token for the `request` step that follows
+/// (decision 0399).
+pub const TOKEN: StepKind = StepKind::fixed("token");
 /// The step that sends one request built from an endpoint's template.
 pub const REQUEST: StepKind = StepKind::fixed("request");
 /// The step that checks the answer's status and shape.
@@ -82,7 +86,7 @@ impl HttpLowering {
                 .chain(WRITE_VERBS)
                 .map(|verb| Verb::fixed(verb))
                 .collect(),
-            step_kinds: vec![REQUEST, VALIDATE, EXTRACT],
+            step_kinds: vec![TOKEN, REQUEST, VALIDATE, EXTRACT],
         }
     }
 }
@@ -134,7 +138,7 @@ impl<'a> Lower<'a, '_> {
     }
 
     fn step(&self, kind: StepKind, found: &Found<'_>, fails_as: FailsAs) -> Step {
-        let timeout_ms = if kind == REQUEST {
+        let timeout_ms = if kind == REQUEST || kind == TOKEN {
             self.timeout_ms
         } else {
             HELD_ANSWER_TIMEOUT_MS
@@ -829,6 +833,22 @@ impl Lowering for HttpLowering {
             act.commits = true;
             act.idempotent = found.template.idempotency_header.is_some();
             lowered.act = vec![act];
+            if found.template.anti_forgery.is_some() {
+                // The page is fetched in the same pass, before the write,
+                // with the values the write's own path holds.
+                let mut token = lower.step(
+                    TOKEN,
+                    &found,
+                    FailsAs::from(&codes::row::ANTI_FORGERY_NOT_FOUND),
+                );
+                token.args = lowered.act[0]
+                    .args
+                    .iter()
+                    .filter(|arg| arg.name.starts_with("path."))
+                    .cloned()
+                    .collect();
+                lowered.act.insert(0, token);
+            }
             lowered.confirm = vec![lower.validate(&found)];
             if let Some(read_back) = read_back {
                 lowered.prefer_response = read_back.text("prefer") == Some("response");

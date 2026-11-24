@@ -25,15 +25,16 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::codes;
 use crate::endpoints::{ENDPOINT_KIND, PACK};
+use crate::forgery;
 use crate::forms::{AnswerSpec, Charset, Form, Unread, ascii_if_said, refused_control};
 use crate::json::Json;
 use crate::link;
-use crate::lower::{EXTRACT, PROBE, REQUEST, VALIDATE};
+use crate::lower::{EXTRACT, PROBE, REQUEST, TOKEN, VALIDATE};
 use crate::shape::Shape;
 use crate::template::{
     Auth, Built, EndpointSection, EndpointTemplate, ExtractStep, Extras, Method, PAYLOAD_FORMAT,
-    ProbeStep, RequestStep, Take, VersionSource, build, is_override_field, is_override_header,
-    override_may_change, parse_path,
+    ProbeStep, RequestStep, Take, TokenSink, VersionSource, build, build_token_page,
+    is_override_field, is_override_header, override_may_change, parse_path,
 };
 
 /// The most warm clients the driver keeps.
@@ -199,6 +200,11 @@ struct Answer {
     /// Whether the request was a commit point: a write that was sent, whose
     /// verdict the steps that follow are to read.
     wrote: bool,
+    /// The anti-forgery token the request carried, when the answer's body
+    /// holds it in any letter case. What the answer says is then never
+    /// quoted, and no value taken from it may hold the token (decision
+    /// 0399).
+    echoed: Option<Secret>,
 }
 
 /// An answer's headers and body can hold a cookie or a token. What is
@@ -222,6 +228,15 @@ impl Answer {
             .iter()
             .find(|(known, _)| known == name)
             .map(|(_, value)| value.as_str())
+    }
+
+    /// Whether the answer says it is a page (`text/html`), not data.
+    fn is_a_page(&self) -> bool {
+        self.headers_named("content-type").iter().any(|value| {
+            let kind = value.split(';').next().unwrap_or("").trim();
+            kind.eq_ignore_ascii_case("text/html")
+                || kind.eq_ignore_ascii_case("application/xhtml+xml")
+        })
     }
 
     /// Every value of a header the answer carries, in order.
@@ -251,6 +266,9 @@ struct Session {
     /// What this pass knows of a record's version: by the endpoint that
     /// read the record and the record's key.
     versions: BTreeMap<(String, Vec<u8>), Known>,
+    /// The anti-forgery token each write's page gave this pass, by the
+    /// endpoint and the record's key. A token is sent once and then gone.
+    tokens: BTreeMap<(String, Vec<u8>), Secret>,
     /// What the run may do to the system: the driver's own read-only guard
     /// (decision 0249).
     posture: Posture,
@@ -486,6 +504,7 @@ impl HttpDriver {
             expiry,
             answer: None,
             versions: BTreeMap::new(),
+            tokens: BTreeMap::new(),
             posture: cx.posture,
             asserted_reads: published(cx.plan)
                 && cx
@@ -636,6 +655,7 @@ impl Session {
         credentials: Option<&Held>,
         most: u64,
         until: tokio::time::Instant,
+        secret_header: Option<&str>,
     ) -> Result<Received, NotReceived> {
         let refused = |why: &str| {
             NotReceived::Refused(failure_of(
@@ -648,12 +668,15 @@ impl Session {
 
         let mut headers = HeaderMap::new();
         for (name, value) in &built.headers {
-            let (Ok(name), Ok(value)) = (
+            let (Ok(name), Ok(mut value)) = (
                 HeaderName::from_bytes(name.as_bytes()),
                 HeaderValue::from_str(value),
             ) else {
                 return Err(refused("a header of the endpoint cannot be sent"));
             };
+            if secret_header.is_some_and(|secret| name.as_str() == secret) {
+                value.set_sensitive(true);
+            }
             headers.insert(name, value);
         }
         if let Some(held) = credentials {
@@ -823,12 +846,12 @@ impl HttpDriver {
     /// present and masked.
     fn captures(
         &self,
-        endpoint: &str,
-        template_path: &str,
+        (endpoint, template_path): (&str, &str),
         built: &Built,
         credentials: Option<&Held>,
         unencrypted: bool,
         received: &Received,
+        secret_header: Option<&str>,
     ) -> Vec<Capture> {
         let mut means = vec![
             Detail::new("endpoint", endpoint),
@@ -868,12 +891,20 @@ impl HttpDriver {
                 names
             })
             .unwrap_or_default();
-        sent.retain(|(name, _)| !names.iter().any(|credential| credential == name));
+        sent.retain(|(name, _)| {
+            !names.iter().any(|credential| credential == name) && Some(*name) != secret_header
+        });
         let mut request_headers = record_headers(sent, redact);
-        request_headers.extend(names.iter().map(|name| a2m_telemetry::RecordedHeader {
-            name: name.clone(),
-            value: None,
-        }));
+        request_headers.extend(
+            names
+                .iter()
+                .map(String::as_str)
+                .chain(secret_header)
+                .map(|name| a2m_telemetry::RecordedHeader {
+                    name: name.to_owned(),
+                    value: None,
+                }),
+        );
         let exchange = serde_json::json!({
             "request": {
                 "method": built.method.word(),
@@ -896,6 +927,141 @@ impl HttpDriver {
                 bytes: serde_json::to_vec(&exchange).unwrap_or_default(),
             },
         ]
+    }
+
+    /// Fetches the page which gives a write's anti-forgery token, and keeps
+    /// the one text it holds where the endpoint says, for the `request`
+    /// step that follows. It is a GET with no body, sent where the
+    /// endpoint's own requests go, and it writes nothing. A page that holds
+    /// no token, or two, stops the write before it is sent (decision 0399).
+    async fn token(
+        &self,
+        session: &mut Session,
+        step: &Step,
+        input: &StepInput<'_>,
+    ) -> Result<StepOutcome, StepFailure> {
+        session.answer = None;
+        let (name, template) = endpoint(session, step).map_err(codes::not_usable)?;
+        if template.surface != session.surface {
+            return Err(StepFailure::not_sent(codes::surface_not_declared(
+                &format!("The surface of the endpoint `{name}`"),
+            )));
+        }
+        let Some(forgery) = template.anti_forgery.clone() else {
+            return Err(codes::not_usable(format!(
+                "the endpoint `{name}` declares no anti-forgery bootstrap"
+            )));
+        };
+        if step.commits {
+            return Err(codes::not_usable(
+                "a token is fetched by a step that is not a commit point",
+            ));
+        }
+        let built = build_token_page(&template, input.args).map_err(StepFailure::not_sent)?;
+        self.overruns
+            .check(&session.reading_place)
+            .map_err(StepFailure::not_sent)?;
+        let credentials = match template.auth {
+            Auth::None => None,
+            Auth::Session | Auth::Token => Some(session.held.as_ref().ok_or_else(|| {
+                StepFailure::not_sent(needs_login(
+                    "the endpoint takes the session's credential, and the run has no session",
+                ))
+            })?),
+        };
+        let most = template
+            .max_response_bytes
+            .unwrap_or(self.max_response_bytes);
+        let received = session
+            .send(&built, credentials, most, until(step, input), None)
+            .await
+            .map_err(|not| match not {
+                // Nothing of the write was sent, whatever became of the page.
+                NotReceived::Lost(_) => StepFailure::not_sent(failure_of(
+                    &a2m_provider::codes::row::CONNECTION_LOST,
+                    format!(
+                        "The page that gives the token of the endpoint `{name}` could not be fetched; the write was not sent."
+                    ),
+                    "Check that the system is reachable, then run the tool again.",
+                )),
+                NotReceived::Refused(failure) => StepFailure::not_sent(failure),
+                NotReceived::TooLarge => StepFailure::not_sent(failure_of(
+                    &codes::row::RESPONSE_TOO_LARGE,
+                    format!(
+                        "The page that gives the token of the endpoint `{name}` is larger than {most} bytes; the write was not sent."
+                    ),
+                    "Raise `max_response_bytes` on the endpoint if the page is meant to be that large.",
+                )),
+            })?;
+        match session.stopped_by(Some(&template), &built, &received) {
+            Some(Stop::Expired(failure)) => return Err(StepFailure::not_sent(failure)),
+            Some(Stop::LeftSurface) => {
+                return Err(StepFailure::not_sent(codes::surface_not_declared(
+                    "The address the system redirected the page of the token to",
+                )));
+            }
+            None => {}
+        }
+        let held = Answer {
+            endpoint: name.clone(),
+            status: received.status,
+            headers: received.headers,
+            body: received.body,
+            json: None,
+            absent: false,
+            sent_version: None,
+            wrote: false,
+            echoed: None,
+        };
+        // Nothing of the write was sent, so none of these is in doubt.
+        if let Some(edge) = edge_failure(&name, held.status, &held) {
+            return Err(StepFailure::not_sent(edge));
+        }
+        let gone = |why: &str| {
+            StepFailure::not_sent(failure_of(
+                &codes::row::ANTI_FORGERY_NOT_FOUND,
+                format!(
+                    "The page that gives the token of the endpoint `{name}` {why}; the write was not sent."
+                ),
+                "Look at where the page holds its token now, and correct the endpoint's `anti_forgery`.",
+            ))
+        };
+        if held.status != 200 {
+            return Err(gone(&format!("answered with status {}", held.status)));
+        }
+        let cookies = held.headers_named("set-cookie");
+        let token = match forgery::read(&forgery.from, &held.body, &cookies) {
+            forgery::Found::Token(token) => token,
+            forgery::Found::Missing => return Err(gone("holds no token where the endpoint says")),
+            forgery::Found::Unreadable => {
+                return Err(StepFailure::not_sent(failure_of(
+                    &codes::row::ANTI_FORGERY_UNREADABLE,
+                    format!(
+                        "The page that gives the token of the endpoint `{name}` holds two different tokens where the endpoint says, or one that cannot be sent; the write was not sent."
+                    ),
+                    "Look at the page; a token is read from one place that holds one text.",
+                )));
+            }
+        };
+        session
+            .tokens
+            .insert(token_slot(&name, input), Secret::new(token));
+        let captures = vec![Capture::acting(&Acting {
+            means: vec![
+                Detail::new("endpoint", name.as_str()),
+                Detail::new("method", "GET"),
+                Detail::new(
+                    "path",
+                    crate::template::path_text_of(&forgery.page, forgery.page_trailing_slash),
+                ),
+                Detail::new("status", held.status.to_string()),
+            ],
+            measured: vec![Detail::new("response_bytes", held.body.len().to_string())],
+        })];
+        Ok(StepOutcome::Done(Observed {
+            captures,
+            ..Observed::default()
+        }))
     }
 
     async fn request(
@@ -949,6 +1115,27 @@ impl HttpDriver {
                 None => return Err(StepFailure::not_sent(codes::version_not_read(&name))),
             }
         }
+        // The anti-forgery token the page gave for this write. A write that
+        // sends one is never sent without it, and a token is used once: it is
+        // kept until a request may have reached the system.
+        let token_slot = template
+            .anti_forgery
+            .as_ref()
+            .map(|_| token_slot(&name, input));
+        let token = match &token_slot {
+            Some(slot) => Some(
+                session
+                    .tokens
+                    .get(slot)
+                    .map(|held| held.expose().to_owned())
+                    .ok_or_else(|| StepFailure::not_sent(codes::token_not_read(&name)))?,
+            ),
+            None => None,
+        };
+        let secret_header = match template.anti_forgery.as_ref().map(|forgery| &forgery.to) {
+            Some(TokenSink::Header(header)) => Some(header.clone()),
+            _ => None,
+        };
         let built = build(
             &template,
             &payload,
@@ -956,6 +1143,7 @@ impl HttpDriver {
             Extras {
                 stamp: input.stamp,
                 version: version.as_ref(),
+                token: token.as_deref(),
             },
         )
         .map_err(StepFailure::not_sent)?;
@@ -984,7 +1172,13 @@ impl HttpDriver {
             session.versions.remove(own);
         }
         let outcome = session
-            .send(&built, credentials, most, until(step, input))
+            .send(
+                &built,
+                credentials,
+                most,
+                until(step, input),
+                secret_header.as_deref(),
+            )
             .await;
         let may_have_arrived = !matches!(
             outcome,
@@ -993,6 +1187,10 @@ impl HttpDriver {
         if may_have_arrived && let Some(slot) = &taken_from {
             // The version went out with a request: it is used up.
             session.versions.remove(slot);
+        }
+        if may_have_arrived && let Some(slot) = &token_slot {
+            // So is the token.
+            session.tokens.remove(slot);
         }
         let received = outcome.map_err(|not| match not {
             NotReceived::Lost(how) => lost(&how, step.commits, &name),
@@ -1031,17 +1229,20 @@ impl HttpDriver {
             None => {}
         }
         let captures = self.captures(
-            &name,
-            &template.path_text(),
+            (&name, &template.path_text()),
             &built,
             credentials,
             session.origin.plain_remote,
             &received,
+            secret_header.as_deref(),
         );
         let absent = step.lookup && template.answers.absent.contains(&received.status);
         if absent && let Some(own) = own {
             session.versions.insert(own, Known::Absent);
         }
+        let echoed = token
+            .filter(|sent| forgery::mentions(&received.body, sent))
+            .map(Secret::new);
         session.answer = Some(Answer {
             endpoint: name,
             status: received.status,
@@ -1051,6 +1252,7 @@ impl HttpDriver {
             absent,
             sent_version: version.as_ref().and_then(Json::scalar_text),
             wrote: step.commits,
+            echoed,
         });
         let observed = Observed {
             captures,
@@ -1647,10 +1849,23 @@ async fn validate(
             ),
             "Correct the input the system refused, then run the tool again.",
         ));
-        return Err(match said_by_refusal(body.as_ref(), redact.as_ref()) {
+        // A refusal that quotes the token the write carried, in any
+        // letter case, is not quoted back (decision 0399).
+        let said = if answer.echoed.is_some() {
+            None
+        } else {
+            said_by_refusal(body.as_ref(), redact.as_ref())
+        };
+        return Err(match said {
             Some(said) => refused.with_said(said),
             None => refused,
         });
+    }
+    // The edge's own answers, recognized by status and header, never
+    // retried (decision 0399). Only what the endpoint does not declare
+    // gets here, so an endpoint that declares 429 or 403 keeps its meaning.
+    if let Some(edge) = edge_failure(&name, status, answer) {
+        return Err(answered(edge));
     }
     Err(answered(failure_of(
         &codes::row::UNEXPECTED_STATUS,
@@ -1659,6 +1874,50 @@ async fn validate(
         ),
         "Find out what the answer means, and declare it under the endpoint's `responses`.",
     )))
+}
+
+/// The failure of an answer that comes from the edge in front of the
+/// system, recognized by its status and its content type: a limit (429), or
+/// a refusal that is a page (403). The page's own words are never quoted.
+fn edge_failure(endpoint: &str, status: u16, answer: &Answer) -> Option<Failure> {
+    let next = "Look at the surface in a browser, and ask its owner before trying again. The answer is never retried.";
+    if status == 429 {
+        let wait = answer
+            .header("retry-after")
+            .filter(|text| {
+                !text.is_empty() && text.len() <= 9 && text.bytes().all(|b| b.is_ascii_digit())
+            })
+            .map(|seconds| format!(" It asks to wait {seconds} seconds."))
+            .unwrap_or_default();
+        return Some(failure_of(
+            &codes::row::RATE_LIMITED_BY_EDGE,
+            format!(
+                "The endpoint `{endpoint}` answered with status 429, which it does not declare: a limit set in front of the system.{wait}"
+            ),
+            next,
+        ));
+    }
+    (status == 403 && answer.is_a_page()).then(|| {
+        failure_of(
+            &codes::row::FORBIDDEN_BY_EDGE,
+            format!(
+                "The endpoint `{endpoint}` answered with status 403 and a page in place of data, which it does not declare: a refusal in front of the system."
+            ),
+            next,
+        )
+    })
+}
+
+/// Where a pass keeps the token the page of one write gave: by the endpoint
+/// and the record's key, as a version is kept.
+fn token_slot(endpoint: &str, input: &StepInput<'_>) -> (String, Vec<u8>) {
+    (
+        endpoint.to_owned(),
+        input
+            .key
+            .map(a2m_core::RecordKey::canonical_bytes)
+            .unwrap_or_default(),
+    )
 }
 
 /// One value at the end of a path, as the type the plan asks for. `None`
@@ -1718,6 +1977,16 @@ fn holds_control(value: &Value) -> bool {
     match value {
         Value::Text(text) => refused_control(text),
         Value::List(items) => items.iter().any(holds_control),
+        _ => false,
+    }
+}
+
+/// Whether a value taken, or an entry of it, is text that holds the token,
+/// in any letter case.
+fn holds_token(value: &Value, token: &str) -> bool {
+    match value {
+        Value::Text(text) => forgery::mentions(text.as_bytes(), token),
+        Value::List(items) => items.iter().any(|item| holds_token(item, token)),
         _ => false,
     }
 }
@@ -1786,6 +2055,20 @@ impl HttpDriver {
                     "Ask the system's owner why the value carries a control character; a tab and a line break are kept.",
                 )));
             }
+            // An answer that quotes the token the write carried returns no
+            // value that holds it (decision 0399).
+            if let Some(token) = &answer.echoed
+                && holds_token(&value, token.expose())
+            {
+                return Err(StepFailure::answered(failure_of(
+                    &codes::row::ANSWER_HOLDS_SECRET,
+                    format!(
+                        "The answer of the endpoint `{name}` holds the anti-forgery token the write carried, so the value at `{}` is not returned.",
+                        wanted.path.join(".")
+                    ),
+                    "Ask the system's owner why the answer quotes the token, or read the record through another endpoint.",
+                )));
+            }
             values.insert(wanted.name.clone(), value);
         }
         // What the pass now knows of the record's version, read through
@@ -1845,7 +2128,7 @@ impl HttpDriver {
         };
         let most = self.max_response_bytes;
         let received = session
-            .send(&built, None, most, until(step, input))
+            .send(&built, None, most, until(step, input), None)
             .await
             .map_err(|not| match not {
                 NotReceived::Lost(how) => lost(&how, false, &probe.path),
@@ -1914,7 +2197,9 @@ impl Driver for HttpDriver {
             let Some(session) = prepared.state::<Session>() else {
                 return Err(codes::not_usable("it was not prepared by the HTTP driver"));
             };
-            if step.kind == REQUEST {
+            if step.kind == TOKEN {
+                self.token(session, step, input).await
+            } else if step.kind == REQUEST {
                 self.request(session, step, input).await
             } else if step.kind == VALIDATE {
                 validate(session, step, input, &self.redact, &self.overruns).await
@@ -1958,7 +2243,9 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use super::{Answer, Expiry, OffThread, Origin, Overruns, Session, off_thread, taken};
+    use super::{
+        Answer, Expiry, OffThread, Origin, Overruns, Session, holds_token, off_thread, taken,
+    };
     use crate::codes;
     use crate::json::Json;
     use crate::template::{Built, Method, Take};
@@ -1998,6 +2285,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_value_that_quotes_the_token_is_found_in_any_letter_case_and_in_a_list() {
+        let token = "example-token-0001";
+        assert!(holds_token(
+            &Value::from("The token was EXAMPLE-TOKEN-0001."),
+            token
+        ));
+        assert!(holds_token(
+            &Value::List(vec![Value::from("a"), Value::from("example-token-0001")]),
+            token
+        ));
+        assert!(!holds_token(&Value::from("nothing here"), token));
+        assert!(!holds_token(&Value::Int(1), token));
+    }
+
     fn session(address: &str) -> Session {
         let origin = Origin::of(address).unwrap();
         Session {
@@ -2013,6 +2315,7 @@ mod tests {
             expiry: Expiry::default(),
             answer: None,
             versions: BTreeMap::new(),
+            tokens: BTreeMap::new(),
             posture: a2m_provider::Posture::Live,
             asserted_reads: false,
             reading_place: "api http://app.example.test".to_owned(),
@@ -2101,6 +2404,7 @@ mod tests {
             absent: false,
             sent_version: Some("7".to_owned()),
             wrote: false,
+            echoed: None,
         };
         let printed = format!("{answer:?} {answer:#?}");
         assert!(printed.contains("order_get") && printed.contains("200"));
