@@ -59,6 +59,7 @@ mod driver;
 mod lower;
 mod model;
 mod page_http;
+pub mod profiles;
 mod requests;
 mod screens;
 mod sign_in;
@@ -120,6 +121,7 @@ fn surface_fields() -> JsonSchema {
         .optional("color_scheme", JsonSchema::words(&["light", "dark"]))
         .optional("reduced_motion", JsonSchema::bool())
         .optional("refuse_quietly", JsonSchema::list(JsonSchema::text()))
+        .optional("profile", JsonSchema::text())
 }
 
 impl Pack for WebUiPack {
@@ -173,6 +175,8 @@ impl Pack for WebUiPack {
             .lowering(Arc::new(page_http::PageHttpLowering::new(page_http)))
             .lowering(Arc::new(lower::SiteToolsLowering::new(site_tools)))
             .lint_rule(Arc::new(screens::CssNotLast))
+            .lint_rule(Arc::new(screens::GeneratedId))
+            .lint_rule(Arc::new(screens::ProfileUnknown))
             .lint_rule(Arc::new(screens::CssUsed))
             .lint_rule(Arc::new(screens::NoFingerprint))
             .drafting_rule(Arc::new(draft::TableScreenRule {

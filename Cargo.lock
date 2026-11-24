@@ -445,6 +445,7 @@ dependencies = [
  "a2m-telemetry",
  "a2m-vault",
  "example-app",
+ "regex",
  "serde",
  "serde_json",
  "tokio",

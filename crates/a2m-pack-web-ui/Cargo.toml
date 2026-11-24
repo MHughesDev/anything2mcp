@@ -16,6 +16,7 @@ a2m-provider = { path = "../a2m-provider" }
 a2m-telemetry = { path = "../a2m-telemetry" }
 serde.workspace = true
 serde_json.workspace = true
+regex.workspace = true
 
 [dev-dependencies]
 # The reading of the test `every_failure_takes_its_class_from_a_table`.

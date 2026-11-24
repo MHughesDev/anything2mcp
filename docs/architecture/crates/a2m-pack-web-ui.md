@@ -57,11 +57,12 @@ Codes are stable once released. A lint code is the pack's name, a dot, and the r
 | `web.css_not_last` | Error | A `css` locator is allowed only last in a list | Yes |
 | `web.css_used` | Warning | Any `css` locator | Yes |
 | `web.no_fingerprint` | Error | A field, an action, or a table with no fingerprint | Yes |
-| `web.generated_id` | Error | A locator matches a rejected identifier pattern of the surface's profile | No: profiles |
+| `web.generated_id` | Error | A locator matches a rejected identifier pattern of the surface's profile | Yes, for `css` and `test_id` locators of fields and actions ([decision 0399](../../decisions/0399-platform-profiles-are-data-in-profiles-and-the-first-one-applied-is-the-identifiers-a-platform-makes.md)) |
+| `web.profile_unknown` | Error | A surface's `profile` is not the name of a profile or `auto` | Yes |
 | `web.commit_unconfirmed` | Error | An action with `commits: true` and a confirmation that could be true before it acted | No |
 | `web.variant_unhandled` | Error | A variant with no handling | The schema requires a handling |
 | `web.frame_undeclared` | Error | A screen whose locators need a frame and declare none | No: frames |
-| `web.profile_readonly` | Error | A write binding on a surface whose profile's tier is `read_only` or `unsupported` | No: profiles |
+| `web.profile_readonly` | Error | A write binding on a surface whose profile's tier is `read_only` or `unsupported` | No: it reads the profile as `web.generated_id` does, and is the next step |
 | `web.signed_request` | Error | A `page_http` binding on an endpoint marked as signed in the browser, used for a write before it is verified | No: the write half of `page_http` |
 
 The file kind and the lowering refuse, under the same prefix: `locator_invalid`, `condition_invalid`, `within_and_section`, `read_not_fitting`, `column_unknown`, `reach_invalid`, `unknown_screen`, `unknown_field`, `unknown_action`, `placeholder_unbound`, `position_type`, `value_type`, `action_missing`, `read_acts`, `read_back_never_absent`, and `not_encodable`; for `page_http` and its file kind, `unknown_endpoint`, `page_http_writes`, `output_kind`, `output_not_required`, `request_path_invalid`, and `request_shape_invalid`.

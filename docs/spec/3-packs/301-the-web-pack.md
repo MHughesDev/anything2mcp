@@ -151,6 +151,8 @@ Several large business platforms and grid component libraries have not been chec
 
 ### Platform profiles
 
+As built ([decision 0399](../../decisions/0399-platform-profiles-are-data-in-profiles-and-the-first-one-applied-is-the-identifiers-a-platform-makes.md)): the files are in `profiles/` at the root of the repository, read and held to this schema by the `profiles` module of `a2m-pack-web-ui` and embedded in the program (the base does not see the YAML reader, so the loader is not in `a2m-pack-web-browser`). A surface of the kind `web` may name a `profile`, one of the files' names or `auto`; `web.profile_unknown` refuses another, and `web.generated_id` refuses a locator built on an identifier the profile's `reject_id_patterns` match. Detection and `ready` are the probe's and are read and checked, not applied; the input commit, `web.profile_readonly`, the frame mode, and the locator priority as an order are not applied yet.
+
 A profile is data, compiled into `a2m-pack-web-browser` and versioned with it, because both the drivers and the probe need it. Applying a profile to locating and input is `a2m-pack-web-ui`'s work; choosing one for a surface is the probe's. Code never branches on a platform's name where a profile's data can say it.
 
 ```yaml

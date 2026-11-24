@@ -947,6 +947,163 @@ impl LintRule for NoFingerprint {
     }
 }
 
+/// The surface's profile, when the surface names one that exists and is not
+/// `auto`. A name that exists nowhere is `web.profile_unknown`'s.
+fn profile_of(view: &ResolvedView<'_>, surface: &str) -> Option<&'static crate::profiles::Profile> {
+    let named = view
+        .target()
+        .surface(surface)?
+        .doc
+        .get("profile")?
+        .as_text()?;
+    crate::profiles::named(named)
+}
+
+/// The identifiers a selector is built on: `#name`, and `[id=name]`.
+fn ids_of(selector: &str) -> Vec<String> {
+    static IDS: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
+    let Some(pattern) = IDS
+        .get_or_init(|| {
+            regex::Regex::new(r#"#([A-Za-z_][\w-]*)|\[id\s*[~|^$*]?=\s*["']?([^"'\]]+)"#).ok()
+        })
+        .as_ref()
+    else {
+        return Vec::new();
+    };
+    pattern
+        .captures_iter(selector)
+        .filter_map(|found| found.get(1).or_else(|| found.get(2)))
+        .map(|found| found.as_str().to_owned())
+        .collect()
+}
+
+/// `web.generated_id`.
+pub(crate) struct GeneratedId;
+
+impl LintRule for GeneratedId {
+    fn code(&self) -> LintCode {
+        code("generated_id")
+    }
+
+    fn level(&self, _mode: CompileMode) -> Level {
+        Level::Error
+    }
+
+    fn summary(&self) -> &str {
+        "No locator is built on an identifier that the surface's platform profile says the platform makes."
+    }
+
+    fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        for screen in view.entries(&SCREEN_KIND, &WEB_SURFACE) {
+            let Some(profile) = screen
+                .text("surface")
+                .and_then(|surface| profile_of(view, surface))
+            else {
+                continue;
+            };
+            for key in ["fields", "actions"] {
+                for entry in screen.get(key).map(Located::entries).unwrap_or_default() {
+                    for locator in entry
+                        .value
+                        .get("locate")
+                        .map(Located::items)
+                        .unwrap_or_default()
+                    {
+                        Self::look(profile, &entry.key.value, locator, &mut out);
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+impl GeneratedId {
+    fn look(
+        profile: &crate::profiles::Profile,
+        part: &str,
+        locator: &Located<Doc>,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let mut ids = locator
+            .get("css")
+            .and_then(Located::as_text)
+            .map(ids_of)
+            .unwrap_or_default();
+        ids.extend(
+            locator
+                .get("test_id")
+                .and_then(Located::as_text)
+                .map(str::to_owned),
+        );
+        for id in ids {
+            if profile.rejects_id(&id) {
+                out.push(problem(
+                    "generated_id",
+                    Stage::Lint,
+                    &locator.at,
+                    format!(
+                        "A locator of `{}` is built on the identifier `{}`, which the profile `{}` says the platform makes.",
+                        shown(part),
+                        shown(&id),
+                        profile.name
+                    ),
+                    "Locate it by its label, its role and name, or its text; an identifier the platform makes changes when the page does.",
+                ));
+            }
+        }
+        if let Some(inside) = locator.get("within") {
+            Self::look(profile, part, inside, out);
+        }
+    }
+}
+
+/// `web.profile_unknown`.
+pub(crate) struct ProfileUnknown;
+
+impl LintRule for ProfileUnknown {
+    fn code(&self) -> LintCode {
+        code("profile_unknown")
+    }
+
+    fn level(&self, _mode: CompileMode) -> Level {
+        Level::Error
+    }
+
+    fn summary(&self) -> &str {
+        "A surface's `profile` is the name of a platform profile, or `auto`."
+    }
+
+    fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        for surface in view.target().surfaces() {
+            if surface.kind != &WEB_SURFACE {
+                continue;
+            }
+            let Some(named) = surface.doc.get("profile") else {
+                continue;
+            };
+            let text = named.as_text().unwrap_or("");
+            if text != "auto" && crate::profiles::named(text).is_none() {
+                out.push(problem(
+                    "profile_unknown",
+                    Stage::Lint,
+                    &named.at,
+                    format!(
+                        "The surface `{}` names the profile `{}`, which is not one of {}.",
+                        surface.name,
+                        shown(text),
+                        crate::profiles::names().join(", ")
+                    ),
+                    "Name one of the profiles, or `auto` to have the probe name it.",
+                ));
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

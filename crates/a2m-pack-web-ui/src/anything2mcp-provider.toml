@@ -178,6 +178,16 @@ level = "error"
 summary = "A `css` locator is written only last in a list of locators."
 
 [[lint_rules]]
+code = "web.generated_id"
+level = "error"
+summary = "No locator is built on an identifier that the surface's platform profile says the platform makes."
+
+[[lint_rules]]
+code = "web.profile_unknown"
+level = "error"
+summary = "A surface's `profile` is the name of a platform profile, or `auto`."
+
+[[lint_rules]]
 code = "web.css_used"
 level = "warning"
 summary = "No field, action, or table is located by a `css` selector."
