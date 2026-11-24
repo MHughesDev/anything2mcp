@@ -28,6 +28,7 @@ mod leaving;
 mod openapi;
 mod own_requests;
 mod pages;
+pub mod releases;
 pub mod store;
 #[cfg(feature = "tls")]
 pub mod tls;
@@ -72,6 +73,9 @@ pub(crate) struct Inner {
     pub(crate) case_events: Vec<String>,
     /// Case 24: when the export was started.
     pub(crate) export_started: Option<std::time::Instant>,
+    /// Package 9.1: how the form of a line item is changed, as a release
+    /// would change it.
+    pub(crate) line_item_change: releases::ScreenChange,
 }
 
 /// How many requests the application remembers having received.
@@ -91,6 +95,7 @@ impl Default for Inner {
             carrier: answers::CarrierAnswer::default(),
             case_events: Vec::new(),
             export_started: None,
+            line_item_change: releases::ScreenChange::default(),
         }
     }
 }

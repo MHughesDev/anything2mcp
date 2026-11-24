@@ -36,6 +36,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/faults", get(faults).post(add_fault).delete(clear_faults))
         .route("/settings", post(settings))
         .route("/shipment", post(set_carrier))
+        .route("/screens", get(screens).post(change_screen))
         .route("/orders/{order_id}/delivery", get(stored_delivery))
         .route("/auth", get(auth_report))
         .route("/auth/settings", post(auth_settings))
@@ -159,4 +160,26 @@ async fn set_carrier(
 ) -> StatusCode {
     state.lock().await.carrier = answer;
     StatusCode::NO_CONTENT
+}
+
+/// Package 9.1: changes one page as a release would, from now on, until the
+/// next reset or a change to `none`.
+async fn change_screen(
+    State(state): State<AppState>,
+    Json(release): Json<crate::releases::ScreenRelease>,
+) -> StatusCode {
+    let mut inner = state.lock().await;
+    match release.page {
+        crate::releases::ChangedPage::LineItem => inner.line_item_change = release.change,
+    }
+    StatusCode::NO_CONTENT
+}
+
+/// How each page that can be changed is changed now.
+async fn screens(State(state): State<AppState>) -> Json<Value> {
+    let inner = state.lock().await;
+    Json(json!({"screens": [crate::releases::ScreenRelease {
+        page: crate::releases::ChangedPage::LineItem,
+        change: inner.line_item_change,
+    }]}))
 }
