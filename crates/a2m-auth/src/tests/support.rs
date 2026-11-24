@@ -15,7 +15,10 @@ use a2m_core::{
 };
 use a2m_ledger::{Store, StoreConfig};
 use a2m_telemetry::{Clock, LogLevel, ManualClock, Telemetry};
-use a2m_vault::{BoxFuture, MemoryKeyStore, Vault};
+use a2m_vault::{
+    Binding, BoxFuture, KeyMaterial, KeyStore, MemoryKeyStore, StoreDescription, StoreHealth,
+    Vault, Wrapped,
+};
 use tokio::sync::Semaphore;
 
 use crate::failure;
@@ -532,11 +535,80 @@ impl Drop for Folder {
     }
 }
 
+/// A key store that can stop answering, as an operating system's store does
+/// when it is locked or its service is stopped (section 224).
+pub(super) struct SwitchableKeys {
+    inner: MemoryKeyStore,
+    down: AtomicBool,
+}
+
+impl SwitchableKeys {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: MemoryKeyStore::new(),
+            down: AtomicBool::new(false),
+        })
+    }
+
+    fn refused(&self) -> Option<Failure> {
+        self.down.load(Ordering::SeqCst).then(|| {
+            Failure::new(
+                a2m_core::FailureClass::Busy,
+                a2m_vault::codes::KEY_STORE_UNREACHABLE,
+                "The key store does not answer.",
+                "Unlock or start the key store, then try again.",
+            )
+        })
+    }
+}
+
+impl KeyStore for SwitchableKeys {
+    fn describe(&self) -> StoreDescription {
+        self.inner.describe()
+    }
+
+    fn wrap<'a>(
+        &'a self,
+        key: &'a KeyMaterial,
+        bound_to: &'a Binding,
+    ) -> BoxFuture<'a, Result<Wrapped, Failure>> {
+        Box::pin(async move {
+            match self.refused() {
+                Some(failure) => Err(failure),
+                None => self.inner.wrap(key, bound_to).await,
+            }
+        })
+    }
+
+    fn unwrap<'a>(
+        &'a self,
+        wrapped: &'a Wrapped,
+        bound_to: &'a Binding,
+    ) -> BoxFuture<'a, Result<KeyMaterial, Failure>> {
+        Box::pin(async move {
+            match self.refused() {
+                Some(failure) => Err(failure),
+                None => self.inner.unwrap(wrapped, bound_to).await,
+            }
+        })
+    }
+
+    fn health(&self) -> BoxFuture<'_, StoreHealth> {
+        Box::pin(async move {
+            if self.refused().is_some() {
+                StoreHealth::Unreachable
+            } else {
+                self.inner.health().await
+            }
+        })
+    }
+}
+
 /// One engine: a keeper and its worker in one process, over the store, a
 /// key store, and a clock that outlive it.
 pub(super) struct World {
     pub(super) clock: Arc<ManualClock>,
-    keys: Arc<MemoryKeyStore>,
+    keys: Arc<SwitchableKeys>,
     /// Where the store's file is, for a world that can be restarted.
     folder: Option<Folder>,
     pub(super) store: SessionStore,
@@ -568,7 +640,7 @@ impl World {
     async fn fresh(needs: ProviderNeeds, folder: Option<Folder>) -> Self {
         Self::over(
             Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START))),
-            Arc::new(MemoryKeyStore::new()),
+            SwitchableKeys::new(),
             folder,
             Arc::new(Fake::new(needs)),
             Arc::new(Person::new()),
@@ -605,7 +677,7 @@ impl World {
 
     async fn over(
         clock: Arc<ManualClock>,
-        keys: Arc<MemoryKeyStore>,
+        keys: Arc<SwitchableKeys>,
         folder: Option<Folder>,
         fake: Arc<Fake>,
         person: Arc<Person>,
@@ -674,6 +746,11 @@ impl World {
             )
             .await
             .unwrap();
+    }
+
+    /// The key store stops answering, or answers again.
+    pub(super) fn keys_unreachable(&self, down: bool) {
+        self.keys.down.store(down, Ordering::SeqCst);
     }
 
     pub(super) fn is_registered(&self, value: &str) -> bool {

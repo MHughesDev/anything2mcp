@@ -847,3 +847,122 @@ async fn a_credential_opens_only_for_the_target_it_was_stored_for() {
         b"secret-for-tests-target"
     );
 }
+
+/// A key store that can stop answering, as an operating system's store
+/// does when it is locked or its service is stopped.
+struct Switchable {
+    inner: MemoryKeyStore,
+    down: std::sync::atomic::AtomicBool,
+}
+
+impl Switchable {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: MemoryKeyStore::new(),
+            down: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+
+    fn set_down(&self, down: bool) {
+        self.down.store(down, Ordering::SeqCst);
+    }
+
+    fn refused(&self) -> Option<Failure> {
+        self.down.load(Ordering::SeqCst).then(|| {
+            Failure::new(
+                FailureClass::Busy,
+                codes::KEY_STORE_UNREACHABLE,
+                "The key store does not answer.",
+                "Unlock or start the key store, then try again.",
+            )
+        })
+    }
+}
+
+impl KeyStore for Switchable {
+    fn describe(&self) -> a2m_vault::StoreDescription {
+        self.inner.describe()
+    }
+
+    fn wrap<'a>(
+        &'a self,
+        key: &'a KeyMaterial,
+        bound_to: &'a a2m_vault::Binding,
+    ) -> BoxFuture<'a, Result<Wrapped, Failure>> {
+        Box::pin(async move {
+            match self.refused() {
+                Some(failure) => Err(failure),
+                None => self.inner.wrap(key, bound_to).await,
+            }
+        })
+    }
+
+    fn unwrap<'a>(
+        &'a self,
+        wrapped: &'a Wrapped,
+        bound_to: &'a a2m_vault::Binding,
+    ) -> BoxFuture<'a, Result<KeyMaterial, Failure>> {
+        Box::pin(async move {
+            match self.refused() {
+                Some(failure) => Err(failure),
+                None => self.inner.unwrap(wrapped, bound_to).await,
+            }
+        })
+    }
+
+    fn health(&self) -> BoxFuture<'_, StoreHealth> {
+        Box::pin(async move {
+            if self.refused().is_some() {
+                StoreHealth::Unreachable
+            } else {
+                self.inner.health().await
+            }
+        })
+    }
+}
+
+#[tokio::test]
+async fn an_unreachable_key_store_stops_what_needs_it_and_nothing_else_and_recovers_by_itself() {
+    // Section 224: with the key store unreachable, what is already open in
+    // memory keeps working; nothing can be opened or sealed anew; it comes
+    // back by itself when the store answers again.
+    let store = Switchable::new();
+    let records = Arc::new(MemoryKeyRecords::new());
+    let running = Vault::new(Arc::clone(&store) as _, Arc::clone(&records) as _);
+    let sealed = running.seal(&context(), PLAIN).await.unwrap();
+    let count = records.all().len();
+
+    store.set_down(true);
+    assert_eq!(
+        running.health().await.store_health,
+        StoreHealth::Unreachable
+    );
+    // The running vault holds its keys: it opens and seals under them.
+    assert_eq!(
+        running.open(&context(), &sealed).await.unwrap().expose(),
+        PLAIN
+    );
+    running.seal(&context(), b"more").await.unwrap();
+
+    // A vault started now opens nothing and seals nothing, by name, and
+    // makes no key in place of the one it cannot reach.
+    let restarted = Vault::new(Arc::clone(&store) as _, Arc::clone(&records) as _);
+    let failure = restarted.open(&context(), &sealed).await.unwrap_err();
+    assert_eq!(failure.class(), FailureClass::Busy);
+    assert_eq!(failure.code(), &codes::KEY_STORE_UNREACHABLE);
+    let failure = restarted.seal(&context(), PLAIN).await.unwrap_err();
+    assert_eq!(failure.code(), &codes::KEY_STORE_UNREACHABLE);
+    let mut other = context();
+    other.owner = person("ben");
+    let failure = restarted.seal(&other, PLAIN).await.unwrap_err();
+    assert_eq!(failure.code(), &codes::KEY_STORE_UNREACHABLE);
+    assert_eq!(records.all().len(), count);
+
+    // The store answers again: the same vault opens what was sealed.
+    store.set_down(false);
+    assert_eq!(
+        restarted.open(&context(), &sealed).await.unwrap().expose(),
+        PLAIN
+    );
+    assert_eq!(restarted.health().await.store_health, StoreHealth::Ok);
+}

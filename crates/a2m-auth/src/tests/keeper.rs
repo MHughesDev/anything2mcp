@@ -837,6 +837,70 @@ async fn an_identity_service_that_is_down_fails_each_call_once_and_never_loops()
 }
 
 #[tokio::test]
+async fn an_unreachable_key_store_keeps_sessions_in_memory_and_restores_none_until_it_answers() {
+    // Section 224: with the key store unreachable, sessions already in
+    // memory keep working; none can be restored or saved; a call that
+    // needs one fails by name; it recovers by itself.
+    let world = World::on_disk(PERSON_RENEWING).await;
+    let key = person_key(1);
+    let entry = fake_entry();
+    world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), Some(person_id(1)))
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    let before = world
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    let token = placed(&before)[0].1.clone();
+
+    world.keys_unreachable(true);
+    let held = world
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    assert_eq!(placed(&held)[0].1, token);
+
+    // After a restart, the key store stops answering before the session is
+    // back in memory. The saved session cannot be opened: the call fails by
+    // name, and nothing is signed in or thrown away in its place. (A start
+    // while the key store is unreachable leaves the kernel degraded, which
+    // is the kernel's own test.)
+    world.keys_unreachable(false);
+    let after = world.restarted().await;
+    after.keys_unreachable(true);
+    let refused = after
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.class(), FailureClass::Busy, "{refused:?}");
+    assert_eq!(
+        refused.code(),
+        &a2m_vault::codes::KEY_STORE_UNREACHABLE,
+        "{refused:?}"
+    );
+    after.keeper.idle().await;
+    assert_eq!(after.fake.sign_ins(), 1);
+    assert!(after.store.saved(before.session()).await.unwrap().is_some());
+
+    // The key store answers again: the next call restores the same session.
+    after.keys_unreachable(false);
+    let restored = after
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    assert_eq!(restored.session(), before.session());
+    assert_eq!(placed(&restored)[0].1, token);
+    assert_eq!(after.fake.sign_ins(), 1);
+}
+
+#[tokio::test]
 async fn saved_state_survives_a_restart_and_opens_for_its_owner_alone() {
     let world = World::on_disk(PERSON_RENEWING).await;
     let key = person_key(1);
