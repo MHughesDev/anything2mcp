@@ -882,6 +882,121 @@ async fn a_stopped_store_serves_status_and_nothing_else() {
     world.kernel.close(CloseReason::Asked).await;
 }
 
+/// A write the person has not approved, as an agent would send it.
+fn an_upsert() -> Json {
+    json!({"tool": ITEM_UPSERT, "input": {
+        "order_id": "A-102",
+        "item_code": "L-300",
+        "description": "New rail",
+        "quantity": 3,
+        "length_in": "150.5",
+    }})
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_store_that_stops_committing_while_the_engine_runs_stops_the_kernel_and_sends_nothing() {
+    let world = World::ready_with(Options {
+        place: StorePlace::Disk,
+        ..Options::default()
+    })
+    .await;
+    assert_eq!(world.kernel.health().state, HealthState::Ok);
+
+    // Another program holds the database's write lock, as a failing disk or
+    // a stuck process would leave it: the store's own commits fail.
+    let file = Paths::under(world.folder.path())
+        .store
+        .join(a2m_ledger::DATABASE_FILE_NAME);
+    let other = rusqlite::Connection::open(&file).unwrap();
+    other.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let health = world.kernel.recheck().await;
+    assert_eq!(health.state, HealthState::Stopped, "{health:?}");
+    assert!(health.cause().contains("store"), "{}", health.cause());
+    assert_eq!(world.kernel.health().state, HealthState::Stopped);
+
+    // A write answers `busy`, `engine_degraded`, naming the store and the
+    // stop, and the test application is asked what it stored: nothing.
+    let refused = world.call("tool.call", an_upsert()).await;
+    let error = refused.error.unwrap_or_else(|| panic!("the write ran"));
+    assert_eq!(
+        (error.class, error.code.as_str()),
+        (FailureClass::Busy, "engine_degraded")
+    );
+    assert!(error.message.contains("stopped"), "{}", error.message);
+    assert!(error.message.contains("store"), "{}", error.message);
+    assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 0);
+    assert!(world.app.writes().await.unwrap().is_empty());
+
+    // The status says why.
+    let status = world.ok("engine.status", json!({})).await;
+    assert_eq!(status["state"], "stopped");
+    assert_eq!(status["reasons"][0]["part"], "store");
+    assert_eq!(status["reasons"][0]["code"], "store_unavailable");
+    assert!(world.app.writes().await.unwrap().is_empty());
+    drop(other);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// A file that is a database whose pages after the first are overwritten,
+/// as a failing disk would leave it.
+fn a_damaged_database(paths: &Paths) {
+    std::fs::create_dir_all(&paths.store).unwrap();
+    let file = paths.store.join(a2m_ledger::DATABASE_FILE_NAME);
+    let raw = rusqlite::Connection::open(&file).unwrap();
+    raw.query_row("PRAGMA journal_mode = DELETE", [], |_| Ok(()))
+        .unwrap();
+    raw.execute_batch("CREATE TABLE filler (x TEXT)").unwrap();
+    for _ in 0..40 {
+        raw.execute("INSERT INTO filler VALUES (?1)", ["x".repeat(900)])
+            .unwrap();
+    }
+    drop(raw);
+    let mut bytes = std::fs::read(&file).unwrap();
+    let page = usize::from(u16::from_be_bytes([bytes[16], bytes[17]]));
+    assert!(bytes.len() > 3 * page, "{} bytes", bytes.len());
+    for byte in &mut bytes[page..] {
+        *byte = 0x5a;
+    }
+    std::fs::write(&file, &bytes).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_database_file_damaged_before_the_start_leaves_the_kernel_stopped_and_sends_nothing() {
+    let world = world(Options {
+        place: StorePlace::Disk,
+        before_open: Some(a_damaged_database),
+        ..Options::default()
+    })
+    .await;
+    let health = world.kernel.health();
+    assert_eq!(health.state, HealthState::Stopped, "{health:?}");
+    assert!(health.cause().contains("store"), "{}", health.cause());
+
+    // Status names the cause by the store's own code.
+    let status = world.ok("engine.status", json!({})).await;
+    assert_eq!(status["state"], "stopped");
+    assert_eq!(status["reasons"][0]["part"], "store");
+    assert_eq!(status["reasons"][0]["code"], "store_corrupt");
+
+    // A write is refused, and the test application stored nothing.
+    let refused = world.call("tool.call", an_upsert()).await;
+    let error = refused.error.unwrap_or_else(|| panic!("the write ran"));
+    assert_eq!(
+        (error.class, error.code.as_str()),
+        (FailureClass::Busy, "engine_degraded")
+    );
+    assert!(error.message.contains("stopped"), "{}", error.message);
+    assert!(world.app.writes().await.unwrap().is_empty());
+
+    // The damaged file was kept as it was left, for its restore.
+    let file = Paths::under(world.folder.path())
+        .store
+        .join(a2m_ledger::DATABASE_FILE_NAME);
+    let bytes = std::fs::read(&file).unwrap();
+    assert!(bytes.ends_with(&[0x5a; 64]));
+    world.kernel.close(CloseReason::Asked).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_a_key_store_the_kernel_is_degraded_and_writes_nothing() {
     let world = world(Options {

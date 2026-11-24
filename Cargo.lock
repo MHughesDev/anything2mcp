@@ -21,6 +21,7 @@ dependencies = [
  "a2m-vault",
  "example-app",
  "reqwest",
+ "rusqlite",
  "rustix",
  "serde",
  "serde_json",
