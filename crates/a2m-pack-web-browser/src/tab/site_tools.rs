@@ -17,7 +17,7 @@ use a2m_core::Digest;
 use serde_json::Value;
 
 use super::{ActTab, BrowserError, Deadline, Dispatch, Page};
-use crate::protocol::{WebMcpCancel, WebMcpEnable, WebMcpInvoke};
+use crate::protocol::{Evaluate, WebMcpCancel, WebMcpEnable, WebMcpInvoke};
 
 /// The longest text of a tool's description or schema kept.
 const MOST_TEXT: usize = 16 * 1024;
@@ -189,6 +189,30 @@ impl Page {
         self.site_changes.send_modify(|count| *count += 1);
     }
 
+    /// Whether the page has a place to register tools: whether
+    /// `document.modelContext` is there. A browser of a version that does
+    /// not offer it, or one that offers it only to a trial, and a page that
+    /// is not a secure context, have none; a page then registers nothing,
+    /// and that is not the same as a page that registered no tool the call
+    /// wants. A typeof, read in the page's own world and nothing else.
+    async fn has_a_place_for_tools(&self, deadline: Deadline) -> Result<bool, BrowserError> {
+        let answer = self
+            .call(
+                &Evaluate {
+                    expression: "typeof document.modelContext",
+                    context_id: None,
+                    return_by_value: true,
+                    await_promise: false,
+                },
+                deadline,
+            )
+            .await?;
+        Ok(answer
+            .result
+            .read::<String>()
+            .is_some_and(|kind| kind != "undefined"))
+    }
+
     async fn enable_site_tools(&self, deadline: Deadline) -> Result<(), BrowserError> {
         if self.site().enabled {
             return Ok(());
@@ -208,6 +232,17 @@ impl Page {
 }
 
 impl ActTab {
+    /// Whether the page has a place to register tools at all. When it has
+    /// none, a tool that is not announced is not a tool the page dropped but
+    /// a browser that cannot be told of one.
+    ///
+    /// # Errors
+    ///
+    /// As a call of the browser.
+    pub async fn site_tools_possible(&self, deadline: Deadline) -> Result<bool, BrowserError> {
+        self.page.has_a_place_for_tools(deadline).await
+    }
+
     /// The tool the page registered under `name`, once the browser has
     /// announced it: the page may register it a moment after it loads.
     ///

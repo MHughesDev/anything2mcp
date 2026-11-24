@@ -520,7 +520,11 @@ async fn a_declared_download_is_written_into_the_profile_and_a_larger_one_is_can
         "{stopped}"
     );
     handle.release(prepared, true).await;
-    assert_eq!(std::fs::read_dir(&downloads).unwrap().count(), 1);
+    let left: Vec<_> = std::fs::read_dir(&downloads)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(left.len(), 1, "{left:?}");
     // The name the page suggested, which climbs out of a folder, made no file.
     assert!(!scene.stand.folder.path().join("large.csv").exists());
     assert!(

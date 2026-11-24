@@ -73,3 +73,19 @@ bindings:
     result: saying
 description: >
   Calls a tool the page registers a moment after it loads.
+---
+operation: example_page_unsupported_call
+title: Call a tool in a browser that offers pages no place for one
+effect: irreversible
+commit_points: 1
+inputs: {}
+outputs: {}
+bindings:
+  - mode: site_tools
+    verb: submit
+    status: shadow
+    screen: tools_off
+    tool: example_note_save
+    digest: "0000000000000000000000000000000000000000000000000000000000000000"
+description: >
+  Calls a tool on a page whose browser has no `document.modelContext`.

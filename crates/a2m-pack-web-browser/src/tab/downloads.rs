@@ -172,6 +172,16 @@ impl Page {
                 () = tokio::time::sleep_until(until) => break,
             }
         }
+        // The browser clears its own half-written file a moment after it
+        // says the download ended: it is given that moment, on a condition
+        // (the file is gone), before anything is deleted for it.
+        let half = folder.join(format!("{guid}.crdownload"));
+        for _ in 0..40 {
+            if !half.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
         for name in [guid.to_owned(), format!("{guid}.crdownload")] {
             let _ = std::fs::remove_file(folder.join(name));
         }

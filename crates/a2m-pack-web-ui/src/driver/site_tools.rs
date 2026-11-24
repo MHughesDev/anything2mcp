@@ -134,6 +134,18 @@ impl Session {
         let soon = Deadline::after(deadline.remaining().min(OFFERED_WITHIN));
         let tool = match acting_tab.site_tool(&payload.tool, soon).await {
             Ok(tool) => tool,
+            Err(BrowserError::NotFound)
+                if !acting_tab
+                    .site_tools_possible(deadline)
+                    .await
+                    .unwrap_or(true) =>
+            {
+                return Err(StepFailure::not_sent(fail(
+                    &codes::row::SITE_TOOLS_UNAVAILABLE,
+                    "The page has no place to register tools (`document.modelContext` is not there): the browser is of a version that does not offer it, or the page is not a secure context.".to_owned(),
+                    codes::row::SITE_TOOLS_UNAVAILABLE.next,
+                )));
+            }
             Err(BrowserError::NotFound) => {
                 return Err(StepFailure::not_sent(fail(
                     &codes::row::SITE_TOOL_NOT_OFFERED,

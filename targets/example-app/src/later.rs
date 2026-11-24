@@ -55,6 +55,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/cases/locale", get(locale))
         .route("/cases/note", get(note))
         .route("/cases/site-tools", get(site_tools))
+        .route("/cases/site-tools-off", get(site_tools_off))
 }
 
 /// The page's signature: FNV-1a over `time.body.key`, in 64 bits, as hex.
@@ -130,12 +131,14 @@ async fn export() -> Html<String> {
         "<h1>Export</h1>\n<button id=\"start\">Start export</button>\n\
          <p id=\"status\" role=\"status\">No export.</p>\n<p id=\"offer\"></p>\n\
          <script>\n\
+         let finished = false;\n\
          document.getElementById(\"start\").addEventListener(\"click\", async () => {\n\
            await fetch(\"/cases/export/start\", {method: \"POST\"});\n\
            document.getElementById(\"status\").textContent = \"Working.\";\n\
            const timer = setInterval(async () => {\n\
              const answer = await (await fetch(\"/cases/export/status\")).json();\n\
-             if (!answer.ready) return;\n\
+             if (finished || !answer.ready) return;\n\
+             finished = true;\n\
              clearInterval(timer);\n\
              document.getElementById(\"status\").textContent = \"Export ready.\";\n\
              const link = document.createElement(\"a\");\n\
@@ -229,8 +232,9 @@ async fn layout(Path(flag): Path<String>) -> Html<String> {
              <p id=\"status\" role=\"status\">Not saved.</p>\n\
              <script>\n{TELL}\
              document.getElementById(\"save\").addEventListener(\"click\", () => {{\n\
-               tell(\"quantity\", \"{flag} \" + document.getElementById(\"q\").value);\n\
-               document.getElementById(\"status\").textContent = \"Saved.\";\n\
+               tell(\"quantity\", \"{flag} \" + document.getElementById(\"q\").value).then(() => {{\n\
+                 document.getElementById(\"status\").textContent = \"Saved.\";\n\
+               }});\n\
              }});\n\
              </script>",
             flag = flag.replace(|c: char| !c.is_ascii_alphanumeric(), "_")
@@ -264,8 +268,9 @@ async fn locale() -> Html<String> {
              const save = document.getElementById(\"save\");\n\
              save.textContent = words.save;\n\
              save.addEventListener(\"click\", () => {{\n\
-               tell(\"unit\", unit.value);\n\
-               document.getElementById(\"status\").textContent = words.saved;\n\
+               tell(\"unit\", unit.value).then(() => {{\n\
+                 document.getElementById(\"status\").textContent = words.saved;\n\
+               }});\n\
              }});\n\
              </script>"
         ),
@@ -331,5 +336,16 @@ async fn site_tools() -> Html<String> {
              }}\n\
              </script>"
         ),
+    )
+}
+
+/// The same page in a browser that has no place for a page to register
+/// tools: the page takes `document.modelContext` away before it looks.
+async fn site_tools_off() -> Html<String> {
+    page(
+        "Site tools",
+        "<h1>Site tools</h1>\n<script>\n\
+         Object.defineProperty(document, \"modelContext\", {value: undefined, configurable: true});\n\
+         </script>",
     )
 }

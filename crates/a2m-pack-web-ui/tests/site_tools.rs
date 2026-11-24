@@ -282,3 +282,25 @@ async fn a_run_that_may_not_act_calls_no_tool() {
     assert!(app.case_events().await.unwrap().is_empty());
     scene.stand.end().await;
 }
+
+/// A browser that gives a page no place to register tools is not a page
+/// that dropped its tool: the stop says so, with its own code, and nothing
+/// is sent.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_with_no_place_for_tools_is_a_named_stop_and_not_a_missing_tool() {
+    let app = TestApp::start().await.unwrap();
+    let stopped = call(&app, &[], "example_page_unsupported_call", &Values::new())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (stopped.failure.class(), stopped.failure.code().as_str()),
+        (FailureClass::UnknownVariant, "site_tools_unavailable"),
+        "{stopped}"
+    );
+    assert!(
+        stopped.failure.message().contains("modelContext"),
+        "{stopped}"
+    );
+    assert_eq!(stopped.sent, Sent::NotSent);
+    assert!(app.case_events().await.unwrap().is_empty());
+}

@@ -81,7 +81,7 @@ a2m_core::failure_codes! {
         meaning "The tool the page registered under the name is not the tool the binding was written for: its description or its input schema differs from the digest the binding holds. Nothing was sent.",
         next "Look at the tool the page offers now, and, if it is the one meant, pin the digest this message gives in the binding.";
     SITE_TOOLS_UNAVAILABLE = UnknownVariant, "site_tools_unavailable",
-        meaning "The browser has no tools of pages to offer: the browser the engine owns does not carry the experimental domain they are called through.",
+        meaning "The browser has no tools of pages to offer: the browser the engine owns does not carry the experimental domain they are called through, or a page of it has no place to register one (`document.modelContext`), as a page that is not a secure context has none.",
         next "Use a browser of a version that carries it, or bind the operation through the interface.";
     DOWNLOAD_NOT_OFFERED = UnknownVariant, "download_not_offered",
         meaning "The action declares a download, and the page began none before the step's time ended.",
