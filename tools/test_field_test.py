@@ -64,6 +64,32 @@ class Containers(unittest.TestCase):
         self.assertIn("K=v", argv)
         self.assertEqual(argv[-1], SYSTEM["image"])
 
+    def test_a_system_s_mounts_are_files_of_the_recipe_read_only_and_its_command_follows_the_image(self):
+        with tempfile.TemporaryDirectory() as recipe:
+            Path(recipe, "files").mkdir()
+            Path(recipe, "files", "server").write_text("x")
+            system = {**SYSTEM, "mounts": {"/opt/server": "files/server"}, "command": ["/opt/server", "--serve"]}
+            argv = self.run.system_argv(system, "/runs/data", {}, recipe)
+            self.assertIn(f"{Path(recipe, 'files', 'server').resolve()}:/opt/server:ro", argv)
+            self.assertEqual(argv[-3:], [SYSTEM["image"], "/opt/server", "--serve"])
+            self.assertNotIn("-p", argv)
+
+    def test_a_mount_outside_the_recipe_or_to_a_relative_path_is_refused(self):
+        with tempfile.TemporaryDirectory() as recipe:
+            Path(recipe, "inside").write_text("x")
+            for mounts in ({"/opt/x": "../outside"}, {"/opt/x": "/etc/passwd"}, {"opt/x": "inside"},
+                           {"/opt/x": "missing"}, {"/opt/x:rw": "inside"}):
+                with self.assertRaises(field_test.CannotRun, msg=mounts):
+                    field_test.file_mounts(mounts, recipe)
+
+    def test_the_box_is_given_the_recipe_s_box_mounts_read_only(self):
+        with tempfile.TemporaryDirectory() as recipe:
+            Path(recipe, "tool").write_text("x")
+            self.run.box_mounts = field_test.file_mounts({"/opt/tool/tool": "tool"}, recipe)
+            argv = self.run.box_argv("/b/anything2mcp", "/h", "/p", "0:0")
+            self.assertIn(f"{Path(recipe, 'tool').resolve()}:/opt/tool/tool:ro", argv)
+            self.assertEqual(argv[-3:], [field_test.BOX_IMAGE, "sleep", "infinity"])
+
     def test_a_system_in_the_box_s_network_joins_the_box_and_publishes_nothing(self):
         argv = self.run.system_argv({**SYSTEM, "network": "box"}, "/runs/data", {})
         self.assertEqual(flag_value(argv, "--network"), f"container:{self.run.box}")
@@ -585,6 +611,32 @@ class HarnessProcess(unittest.TestCase):
 
 class Secrets(unittest.TestCase):
     TOKEN = "an-invented-token-0042"
+
+    def test_a_request_to_the_system_carries_the_headers_its_step_names(self):
+        sent = []
+
+        class Answer:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        def opened(call, timeout):
+            sent.append(call)
+            return Answer()
+
+        spec = {"method": "POST", "path": "/mcp", "json": {"id": 1}, "headers": {"MCP-Protocol-Version": "2025-11-25"}}
+        with mock.patch.object(field_test.NO_PROXY, "open", opened):
+            self.assertEqual(field_test.request("http://system:5000", spec), (200, "{}"))
+        self.assertEqual(sent[0].full_url, "http://system:5000/mcp")
+        self.assertEqual(sent[0].get_header("Mcp-protocol-version"), "2025-11-25")
+        self.assertEqual(sent[0].get_header("Content-type"), "application/json")
 
     def test_a_secret_the_system_issued_is_kept_by_name_and_shown_nowhere(self):
         names, secrets = {"direct": "http://10.0.0.2:3000"}, {}

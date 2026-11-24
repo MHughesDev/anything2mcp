@@ -28,8 +28,8 @@ A step is an object with one of these keys, and optionally `expect`, `gap`,
 and `note`:
 
     "exec":    [argv]                 a program inside the system's container
-    "http":    {"method", "path", "json", "basic"}   a request sent straight
-                                      to the system, never through the product
+    "http":    {"method", "path", "json", "basic", "headers"}   a request sent
+                                      straight to the system, never through the product
     "a2m":     [argv]                 one command of the product
     "copy":    {"from", "to"}         a file of the recipe folder into the project
     "python":  [script, args...]      a script of the recipe folder
@@ -141,7 +141,7 @@ A recipe that built an address from `127.0.0.1` and `{port}` does not: `{port}` 
 system's port on the network, and nothing is published on this machine. Change such an
 address to `{system}`.
 
-Three more things a recipe may say under `"system"`, for a system that is not a request
+More things a recipe may say under `"system"`, for a system that is not a request
 service:
 
 - `"ready": {"exec": [argv]}` in place of a path: the system is ready when that program,
@@ -153,6 +153,13 @@ service:
   and the closed-network check made, before the system. `{host}` is `127.0.0.1`, `{system}` is
   `http://127.0.0.1:<port>`, and `{direct}` is the box's address on the closed network. It
   cannot be combined with `"proxy": true`, whose upstream is the system's container by name.
+- `"mounts": {"/path/inside": "file of the recipe folder"}` and `"command": [argv]`: files the
+  system's container is given read-only, and the argument list after its image. With them a
+  release binary pinned by digest, which the recipe holds, runs in the box's own image.
+- `"box_mounts": {"/path/inside": "file of the recipe folder"}`: files the product's box is given
+  read-only, such as a command-line program or a local MCP server's program that the product
+  starts on its own machine. A path inside a container is absolute, and a file stays inside the
+  recipe folder; a recipe that breaks either is refused before anything is started.
 - `"harness_features": ["<package>/<feature>", ...]`: features of workspace packages that the
   field harness is built with, such as a store a pack speaks to only behind a feature. The
   report states them, because a run with them is not a run of the product as it is shipped.
@@ -234,6 +241,25 @@ def system_env(system, names):
     return fill(env, names)
 
 
+def file_mounts(mounts, recipe):
+    """The `-v` flags that mount files of the recipe folder read-only into a container:
+    `mounts` maps a path inside the container to a file of the recipe folder. A path inside
+    must be absolute, and a file must be named relative to the recipe folder and stay inside
+    it, so that a recipe mounts nothing of this machine but its own files."""
+    argv = []
+    home = os.path.realpath(recipe)
+    for inside, source in sorted(mounts.items()):
+        if not inside.startswith("/") or ":" in inside:
+            raise CannotRun(f"A mount's path inside the container, `{inside}`, is not an absolute path.")
+        resolved = os.path.realpath(os.path.join(home, source))
+        if os.path.isabs(source) or os.path.commonpath([resolved, home]) != home:
+            raise CannotRun(f"A mount's file, `{source}`, is not a file of the recipe folder.")
+        if not os.path.isfile(resolved):
+            raise CannotRun(f"A mount's file, `{source}`, is not in the recipe folder.")
+        argv += ["-v", f"{resolved}:{inside}:ro"]
+    return argv
+
+
 def fill(value, names):
     """Fill `{name}` in every string of a JSON value."""
     if isinstance(value, str):
@@ -262,6 +288,7 @@ def request(base, spec):
         headers["Content-Type"] = "application/json"
     if "basic" in spec:
         headers["Authorization"] = "Basic " + base64.b64encode(spec["basic"].encode()).decode()
+    headers.update(spec.get("headers", {}))
     call = urllib.request.Request(
         base.rstrip("/") + spec["path"], data=data, headers=headers, method=spec.get("method", "GET")
     )
@@ -297,21 +324,29 @@ class Run:
         self.proxy = f"{self.network}-proxy"
         self.label = f"{RUN_LABEL}={self.token}"
         self.box_up = False
+        # Files of the recipe folder mounted read-only into the box, as `-v` flags: a program
+        # the product starts on this machine, such as a command-line program or a local MCP
+        # server's program (`system.box_mounts`).
+        self.box_mounts = []
 
     def network_argv(self):
         return ["docker", "network", "create", "--internal", "--label", self.label, self.network]
 
-    def system_argv(self, system, data, env):
+    def system_argv(self, system, data, env, recipe=""):
         """The system's container: on the closed network, with no published port. With
         `"network": "box"`, in the box's own network, so that it is on the box's loopback
-        address and on the closed network through the box, and nowhere else."""
+        address and on the closed network through the box, and nowhere else. `mounts` are
+        files of the recipe folder, read-only; `command` is the argument list after the
+        image, for an image that is not the system's own, such as the box's image running a
+        release binary the recipe holds."""
         network = f"container:{self.box}" if system.get("network") == "box" else self.network
         argv = ["docker", "run", "-d", "--name", self.system, "--network", network, "--label", self.label]
         if "volume" in system:
             argv += ["-v", f"{data}:{system['volume']}"]
+        argv += file_mounts(system.get("mounts", {}), recipe)
         for key, value in env.items():
             argv += ["-e", f"{key}={value}"]
-        return argv + [system["image"]]
+        return argv + [system["image"], *system.get("command", [])]
 
     def box_argv(self, binary, home, project, user, harness=None):
         """The container the product's binary runs in: the binary read-only, the field
@@ -320,6 +355,7 @@ class Run:
         mounts = ["-v", f"{binary}:{BOX_BINARY}:ro"]
         if harness:
             mounts += ["-v", f"{harness}:{BOX_HARNESS}:ro"]
+        mounts += self.box_mounts
         return [
             "docker", "run", "-d", "--init", "--name", self.box, "--network", self.network,
             "--label", self.label, "--user", user, "-e", f"HOME={home}",
@@ -932,12 +968,15 @@ def main():
         return 2
     try:
         system_env(system, {})
+        file_mounts(system.get("mounts", {}), recipe_dir)
+        box_mounts = file_mounts(system.get("box_mounts", {}), recipe_dir)
     except CannotRun as stop:
         print(f"The field test could not be run: {stop}")
         return 2
 
     run_dir = os.path.join(recipe_dir, "runs", time.strftime("%Y%m%d-%H%M%S"))
     active = Run(recipe["name"])
+    active.box_mounts = box_mounts
     names = {
         "recipe": recipe_dir,
         "project": os.path.join(run_dir, "project"),
@@ -996,7 +1035,7 @@ def main():
                 env["A2M_BINARY"], home, names["project"], f"{os.getuid()}:{os.getgid()}", harness=harness_binary
             )
         if not a_folder:
-            code, _, err = run(active.system_argv(system, names["data"], system_env(system, names)))
+            code, _, err = run(active.system_argv(system, names["data"], system_env(system, names), recipe_dir))
             if code != 0:
                 raise CannotRun(f"The system did not start: {err.strip()[-400:]}")
             holder = active.box if system.get("network") == "box" else active.system
