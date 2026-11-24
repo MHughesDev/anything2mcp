@@ -10013,7 +10013,7 @@
    "name": "Blocked Programs",
    "group": "Command Pack",
    "state": "b",
-   "text": "Shells and interpreters given inline code, programs that run what their arguments name (launchers, package runners, version managers, build tools), terminals, and attaching to a running program. Decision 0299 plans a closed list of subcommands that run no code but the program's own, and a pinned way to start a server through a launcher; not built yet.",
+   "text": "Shells and interpreters given inline code, programs that run what their arguments name (launchers, package runners, version managers, build tools), terminals, and attaching to a running program. A closed list of commands that run no code but the program's own is allowed (decision 0349), and a launcher starts only with the file it loads pinned by digest; the MCP pack starts a local server that way, and the publish review shows it as a launcher and says what nothing pins (decisions 0371, 0398).",
    "where": "a2m-pack-command: src/safety.rs",
    "never": [
     "Start a shell.",
