@@ -29,7 +29,7 @@ A round that finds nothing has probably not looked hard enough. A round that rew
 | 10 | The measured system | Now that numbers exist, which sections assumed something the numbers contradict? | 2026-11-24 ([report](../reviews/measured-system-review-2026-11-24.md)) |
 | 11 | The application owner | Read the design as the vendor of a wrapped application. What would make them object, and is the objection fair? | Not yet |
 | 12 | Simpler | For each major part: is there a design half as complex that gives most of the value? | Not yet |
-| 13 | The other operating systems | What quietly assumes one operating system? | Not yet |
+| 13 | The other operating systems | What quietly assumes one operating system? | 2026-11-24 ([report](../reviews/other-operating-systems-review-2026-11-24.md)) |
 | 14 | A year later | What will be hardest to change once people depend on it? Are those things right? | Not yet |
 | 15 | Coverage | For every way software on a personal computer can be read or changed from outside itself, does the design have a place for it, and is that place the right one? Kept as the [coverage map](../reviews/coverage-map.md) | 2026-11-18 |
 | 16 | Breadth | Beyond the kinds of system: for every way an agent might want to work with a system (be told, wait, act at a time, hand over or take back a file, ask the person, act on two systems at once, act as someone, be one of several agents, come back a month later), is there a verb, a run shape, a result shape, and a door for it, and where there is none, is the line in the way a rule, a choice, or not yet? First run as the [breadth review](../reviews/breadth-review-2026-11-18.md) | 2026-11-18 |

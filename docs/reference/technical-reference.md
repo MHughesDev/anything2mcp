@@ -881,14 +881,15 @@ On a local machine no command approves a write; see spec section 222. On a serve
 
 ## On-disk layout
 
-Each operating system's own conventions are followed. `A2M_HOME` overrides all of them with one directory. Exact paths are confirmed when the paths module is written in Phase 1.
+Each operating system's own conventions are followed, as `Paths::resolve` in `a2m-actions` gives them. `A2M_HOME` overrides all of them with one directory. A folder named by a variable is used when the variable is set; the fallback is the one shown after "else".
 
 | What | Windows | macOS | Linux |
 | --- | --- | --- | --- |
-| Settings | Roaming application data | Application Support | The user's configuration directory |
-| Store, blobs, browser profiles, logs | Local application data | Application Support | The user's data directory |
-| Local channel and lock file | A named pipe carrying the user's identifier | A per-user runtime directory | The user's runtime directory |
-| Pinned browsers and caches | Local application data | Caches | The user's cache directory |
+| Settings | `%APPDATA%\anything2mcp` | `~/Library/Application Support/anything2mcp` | `$XDG_CONFIG_HOME/anything2mcp`, else `~/.config/anything2mcp` |
+| Store, blobs, browser profiles, logs (the data folder) | `%LOCALAPPDATA%\anything2mcp` | `~/Library/Application Support/anything2mcp` | `$XDG_DATA_HOME/anything2mcp`, else `~/.local/share/anything2mcp` |
+| Runtime folder: the lock files, and the socket on macOS and Linux | `run` in the data folder; the channel is a named pipe carrying the user's identifier and a digest of this folder's path | `$TMPDIR/anything2mcp`, else `run` in the data folder. [Decision 0432](../decisions/0432-the-runtime-folder-does-not-follow-a-variable-that-differs-between-one-users-processes.md) makes it always `run` in the data folder, once roadmap package OS1 is built | `$XDG_RUNTIME_DIR/anything2mcp`, else `run` in the data folder. Decision 0432 puts `/run/user/<uid>/anything2mcp` before the last, once OS1 is built |
+| Caches | `cache` in the data folder | `~/Library/Caches/anything2mcp` | `$XDG_CACHE_HOME/anything2mcp`, else `~/.cache/anything2mcp` |
+| An administrator's installation file | `%PROGRAMDATA%\anything2mcp`, else `%LOCALAPPDATA%\anything2mcp` | `/Library/Application Support/anything2mcp` | `/etc/anything2mcp` |
 
 Inside the data directory: `store/` for the database with `blobs/` for evidence inside it, `profiles/<target>/<environment>/<kind>-<digest>/` for one browser data directory per identity, `journal/` for the runner's local journal, and `logs/`. A project folder holds only target files and working output, never any of these.
 

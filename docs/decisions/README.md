@@ -421,3 +421,6 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0427 | [A mode states how long its prepare may take, and the engine honours it under a ceiling](0427-a-mode-states-how-long-its-prepare-may-take-and-the-engine-honours-it-under-a-ceiling.md) | Accepted (design decision) |
 | 0428 | [A page request read whose browser is lost goes on as a `ui` read does](0428-a-page-request-read-whose-browser-is-lost-goes-on-as-a-ui-read-does.md) | Accepted (design decision) |
 | 0429 | [A read of a retained key that declares `found` answers a key with no message as `found: false`](0429-a-read-of-a-retained-key-that-declares-found-answers-a-key-with-no-message-as-found-false.md) | Accepted (design decision) |
+| 0430 | [A file whose bytes are not on this machine is refused by name, and never fetched](0430-a-file-whose-bytes-are-not-on-this-machine-is-refused-by-name-and-never-fetched.md) | Accepted (design decision) |
+| 0431 | [A name that Windows keeps for a device is refused on every system](0431-a-name-that-windows-keeps-for-a-device-is-refused-on-every-system.md) | Accepted (design decision) |
+| 0432 | [The runtime folder does not follow a variable that differs between one user's processes](0432-the-runtime-folder-does-not-follow-a-variable-that-differs-between-one-users-processes.md) | Accepted (design decision) |

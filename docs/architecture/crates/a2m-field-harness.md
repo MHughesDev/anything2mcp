@@ -27,3 +27,9 @@ None. It is a program, not a library. It builds a `Host` from the process, sets 
 ## It must never
 
 Decide anything the policy engine decides; hold engine logic; answer an approval of an `irreversible` operation (the field prompt refuses it, always); be reached by a package, or named by any crate.
+
+## Where it runs
+
+On Linux alone. The closed network of decision 0310 is a container network made with `--internal`, and the runner (`tools/field_test.py`) reaches the system by the container's address on it, which only Linux with docker allows; on Docker Desktop the containers are in a virtual machine whose addresses the host cannot reach. The harness itself is built from the product and would compile anywhere, but the binary in the box is a Linux one.
+
+So no field test has run, or can yet run, on Windows or macOS, and none can approve a write there: the field prompt is safe only inside the closed network, and outside it a write's approval is a person's at the system's own prompt. What only those two systems have (the desktop pack's back ends, the presence prompts, a file kept by a sync program, the named pipe) is proven by CI against the test stands and by the owner's checks, never by a field test. Roadmap package OS5 is the first field test on each of the two: reads only, through the shipped program, with no container ([review of lens 13](../../reviews/other-operating-systems-review-2026-11-24.md), finding 6).
