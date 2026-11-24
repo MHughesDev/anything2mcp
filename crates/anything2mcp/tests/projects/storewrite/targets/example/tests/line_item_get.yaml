@@ -1,0 +1,5 @@
+test: example_line_item_get
+kind: offline
+fixture: line_item_get
+inputs: {order_id: "A-100", item_code: "L-101"}
+expect: {quantity: 2}

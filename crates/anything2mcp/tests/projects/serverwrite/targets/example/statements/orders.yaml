@@ -1,0 +1,33 @@
+# The store of the imaginary order-entry system `example` on a server, for
+# the writes of the data pack. It describes no real product. The port and
+# the database are replaced by those of the test's own server.
+surface: orders_server
+records:
+  line_item:
+    table: order_lines
+    key: [order_id, item_code]
+    version: row_version
+    fields:
+      order_id: {column: order_id, type: identifier}
+      item_code: {column: item_code, type: identifier}
+      description: {column: description, type: note}
+      quantity: {column: quantity, type: integer}
+      length: {column: length_in, type: length_inches}
+      unit_price: {column: unit_price, type: price}
+statements:
+  line_item_by_key:
+    effect: read
+    form: table
+    record: line_item
+    isolation: read_committed
+    time_limit: 2s
+  line_item_update:
+    effect: write
+    form: table
+    record: line_item
+    verb: update
+    set: [length, unit_price]
+    guard: none
+    hazard: data_elsewhere
+    isolation: read_committed
+    time_limit: 5s

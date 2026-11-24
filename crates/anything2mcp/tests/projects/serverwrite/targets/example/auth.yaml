@@ -1,0 +1,10 @@
+auth:
+  - surfaces: [orders_server]
+    mode: custom
+    provider: http_basic
+    probe: example_line_item_get
+    probe_inputs: {order_id: "A-100", item_code: "L-102"}
+    settings: {user: "example_app"}
+    credentials:
+      password: "vault://example/service/password"
+    attempt_limit: 1

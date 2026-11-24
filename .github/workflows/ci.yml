@@ -337,6 +337,8 @@ jobs:
         run: cargo clippy -p a2m-pack-data --all-targets --locked --features postgres -- -D warnings
       - name: Test with the server store on
         run: cargo test -p a2m-pack-data --locked --no-fail-fast --features postgres
+      - name: Test the writes through the product with the server store on
+        run: cargo test -p anything2mcp --locked --no-fail-fast --features a2m-pack-data/postgres --test data_write
 
   nats:
     name: The stream pack against a real NATS server

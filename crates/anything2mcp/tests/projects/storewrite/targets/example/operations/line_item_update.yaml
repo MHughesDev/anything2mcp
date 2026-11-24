@@ -1,0 +1,23 @@
+operation: example_line_item_update
+title: Update a line item
+effect: irreversible
+hazard: data_elsewhere
+key: [order_id, item_code]
+commit_points: 1
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+  item_code: {type: identifier, description: "Item code, such as L-101"}
+  length: {type: length_inches, description: "Length, in inches"}
+  unit_price: {type: price, description: "Price of one unit"}
+outputs:
+  length: {type: length_inches}
+  unit_price: {type: price}
+bindings:
+  - mode: sql
+    status: verified
+    verb: update
+    statement: line_item_update
+    read_back: line_item_by_key
+description: >
+  Updates the length and the price of one line item by its key, and reads it back.
+  Prefer example_line_item_describe to change only the description.
