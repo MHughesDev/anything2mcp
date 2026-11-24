@@ -15,9 +15,9 @@ The opposite fault is worse. A bet closed because the code reads as if it holds 
 ## Decision
 
 1. **A status other than `open` needs a named test and its result, or a measured number.** A reading of the code, a search of the sources, and a design that went one way are notes, not results.
-2. **`partly` is a status.** It is an open bet of which a named test or a number has settled a stated part. Its cell says which part, by which test or record, and what is missing. A bet that is `partly` is still open: nothing may be built on the missing part as if it held.
+2. **`partly` is a status.** It is an open bet of which a named test or a number has settled a stated part. Its result file says which part, by which test or record, and what is missing. A status cell holds one word and nothing else, because `tools/docs_audit.py` reads it; the first form of this sweep wrote sentences in the cells, which the audit's pattern did not match, so its check passed over those rows without a word. Until the audit accepts `partly`, the cell of such a bet stays `open` and its result file's status line says `partly`. A bet that is `partly` is still open: nothing may be built on the missing part as if it held.
 3. **`supported`, `refuted`, and `changed` need a result file,** as before.
-4. **The sweep of 2026-11-24** applied this to every bet. H-11 is `changed`, with its result file written from the numbers of [decision 0082](0082-the-decision-core-is-the-policy-crates-own-evaluator.md). H-04, H-06, H-16, H-20, H-28, H-32, H-39, and H-40 are `partly`. The register's note of the sweep names the bets that lean one way with no test and stay `open`.
+4. **The sweep of 2026-11-24** applied this to every bet. H-11 is `changed`, with its result file written from the numbers of [decision 0082](0082-the-decision-core-is-the-policy-crates-own-evaluator.md). H-04, H-06, H-16, H-20, H-28, H-32, H-39, and H-40 are `partly`, each with a result file. H-26's cell is made the one word `supported`. The register's note of the sweep names the bets that lean one way with no test and stay `open`.
 
 ## Alternatives
 
