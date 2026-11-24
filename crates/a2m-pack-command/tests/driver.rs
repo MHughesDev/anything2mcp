@@ -1629,6 +1629,154 @@ async fn discovery_runs_only_the_declared_forms_and_drafts_commands_it_never_tri
     scene.handle.release(sandbox, false).await;
 }
 
+/// What the help of the stand's program lists, as findings: the program is
+/// started only with its declared help and version forms.
+async fn found_by_help(scene: &Scene) -> Vec<a2m_core::Finding> {
+    use a2m_core::{Archetype, SurfaceKind};
+    use a2m_provider::{DiscoveryScope, ReadOnlyPort, SurfaceDescription};
+
+    let prepared = scene.prepare(Posture::Discovery, None).await.unwrap();
+    let description = SurfaceDescription {
+        kind: SurfaceKind::new("program").unwrap(),
+        archetype: Archetype::Command,
+        address: scene.surface.surface.address.clone(),
+        facts: Values::new(),
+    };
+    let all = scene.registry.discoverers_for(&description);
+    let help: Vec<_> = all
+        .into_iter()
+        .filter(|found| found.declared().name.to_string() == "help")
+        .collect();
+    let port = ReadOnlyPort::new(scene.handle.clone(), prepared);
+    let scope = DiscoveryScope {
+        surface: &scene.surface,
+        bounds: help[0].declared().bounds,
+        deadline: Deadline::after(WITHIN),
+        paths: &CheckedPaths::none(),
+        redact: &NoSecrets,
+        focus: &Values::new(),
+    };
+    let mut found = Found(Vec::new());
+    help[0].discover(&port, &scope, &mut found).await.unwrap();
+    let (handle, prepared) = port.into_parts();
+    handle.release(prepared, false).await;
+    found.0
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_command_a_person_declared_a_read_is_drafted_as_an_operation_that_reads_the_stand() {
+    // Decision 0399. The help does not say what a command does, so the
+    // drafter drafts an operation only over a command whose `commands/`
+    // file a person wrote with `effect: read`.
+    let mut scene = Scene::new();
+    let control = scene.stand.control().clone();
+    let seed = control.stored_items().unwrap();
+    let findings = found_by_help(&scene).await;
+    assert_eq!(findings.len(), 9);
+
+    // The person's folder: the target, its types, and the program's
+    // declaration (reads and writes, as they declared them). No operation.
+    let target = Folder::new("declared");
+    let wanted = ["target.yaml", "types.yaml", "commands/inventory.yaml"];
+    std::fs::create_dir_all(target.path().join("commands")).unwrap();
+    for (path, text) in stand_files(&scene.stand) {
+        if wanted.contains(&path.as_str()) {
+            std::fs::write(target.path().join(&path), text).unwrap();
+        }
+    }
+    let root = a2m_files::TargetRoot::new(target.path());
+    let set = scene.registry.compiler_set();
+    let drafted = a2m_files::Drafter::new(set, &root)
+        .draft(&findings)
+        .unwrap();
+    assert!(
+        drafted.refused.is_empty() && drafted.conflicts.is_empty(),
+        "{drafted:?}"
+    );
+
+    // A command declared a read gets an operation, named for the
+    // declaration, with no open question in it.
+    let written: Vec<&str> = drafted.written.iter().map(|path| path.as_str()).collect();
+    for read in [
+        "operations/item_show.yaml",
+        "operations/item_list.yaml",
+        "operations/stock_report.yaml",
+    ] {
+        assert!(written.contains(&read), "{read} in {written:?}");
+    }
+    assert!(
+        drafted
+            .not_drafted
+            .iter()
+            .any(|entry| entry.reason.contains("declared a write")),
+        "{:?}",
+        drafted.not_drafted
+    );
+    // No write is drafted for a command declared a write or an
+    // irreversible one, and none for a command nobody declared: the report
+    // says why for each.
+    for never in [
+        "item_set_quantity",
+        "item_add",
+        "item_remove",
+        "catalog_push",
+    ] {
+        assert!(
+            !written.iter().any(|path| path.contains(never)),
+            "{never} in {written:?}"
+        );
+    }
+    let undeclared = drafted
+        .not_drafted
+        .iter()
+        .filter(|entry| entry.reason.contains("no person has declared"))
+        .count();
+    assert!(undeclared >= 1, "{:?}", drafted.not_drafted);
+    for entry in &drafted.not_drafted {
+        assert!(!entry.reason.is_empty());
+    }
+    // Nothing the person declared is drafted again.
+    assert!(
+        !written.iter().any(|path| path.starts_with("commands/")),
+        "{written:?}"
+    );
+    let shown = std::fs::read_to_string(target.path().join("operations/item_show.yaml")).unwrap();
+    assert!(shown.contains("effect: \"read\""), "{shown}");
+    assert!(shown.contains("command: \"item_show\""), "{shown}");
+    assert!(shown.contains("untrusted_text"), "{shown}");
+    assert!(!shown.contains("open question"), "{shown}");
+
+    // The folder compiles, and the drafted read, run against the stand,
+    // returns what the stand holds.
+    let mut files = Vec::new();
+    for path in written.iter().copied().chain(wanted.iter().copied()) {
+        let text = std::fs::read_to_string(target.path().join(path)).unwrap();
+        files.push((path.to_owned(), text.replace("\r\n", "\n")));
+    }
+    scene.plan = match common::compile(&files, scene.registry.compiler_set()) {
+        Ok(compiled) => compiled.plan,
+        Err(problems) => panic!("{problems:#?}\n{files:#?}"),
+    };
+    let stored = seed.iter().find(|item| item.sku == "SK-1003").unwrap();
+    let item = done(scene.read("example_item_show", &sku("SK-1003")).await);
+    assert_eq!(item.values.get("sku"), Some(&Value::from("SK-1003")));
+    assert_eq!(
+        item.values.get("quantity"),
+        Some(&Value::Int(i64::from(stored.quantity)))
+    );
+    assert_eq!(
+        item.values.get("name"),
+        Some(&Value::from(stored.name.as_str()))
+    );
+    let listed = done(scene.read("example_item_list", &Values::new()).await);
+    let rows = listed.values.get("rows").unwrap().as_list().unwrap();
+    assert_eq!(rows.len(), seed.len());
+
+    // Nothing was written.
+    assert!(control.writes().unwrap().is_empty());
+    assert_eq!(control.stored_items().unwrap(), seed);
+}
+
 /// Every file below a folder, with its path and text.
 fn a2m_files_texts(folder: &std::path::Path) -> Vec<(String, String)> {
     let mut found = Vec::new();

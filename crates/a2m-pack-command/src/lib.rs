@@ -100,6 +100,7 @@ impl Pack for CommandPack {
                 .lint_rule(Arc::new(lint::ShellProgram))
                 .lint_rule(Arc::new(lint::WriteExitDeclared))
                 .drafting_rule(Arc::new(draft::CommandFromFinding))
+                .drafting_rule(Arc::new(draft::OperationFromCommand))
                 .drafting_rule(Arc::new(powershell::PowerShellFromFinding)),
         )?;
         to.discoverer(
