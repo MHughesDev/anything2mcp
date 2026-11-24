@@ -1,0 +1,19 @@
+# The imaginary order-entry system `example`, reached where an edge answers
+# in front of it: a page, a limit, and an answer the endpoint declares
+# (decision 0357). It describes no real product. A test gives the surface
+# the address of the application it started.
+schema_version: 1
+target: example
+title: Example order entry, edge answers
+surfaces:
+  api:
+    kind: http
+    base: "http://127.0.0.1:4010"
+environments:
+  test:
+    kind: test
+  production:
+    kind: production
+default_environment: test
+environment: {locale: en-US, timezone: UTC}
+drift_risk: low

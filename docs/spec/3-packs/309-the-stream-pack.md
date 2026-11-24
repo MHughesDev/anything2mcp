@@ -175,6 +175,8 @@ Where no such look exists, no sample is taken and coverage is `unknown`. The sco
 
 The drafter never writes a publish, a `take`, or a subscription name.
 
+**A field of a message named as a secret is never drafted as an input or an output.** The drafter asks the compiler's own test (`names_a_secret` in `a2m-files`) of each plain field of a message the broker's schema states or a look saw, and of a retained channel's key field. Such a field is no output of a drafted read or look, and the last sentence of the description names the fields left out; it is no property of a drafted schema file, which is then not closed, since a message does hold it; and a key field so named is no key and no input, so the channel file holds the question of the key and no read of one key is drafted. The compiler's refusal of a secret in a file does not change ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
+
 ## Where the loop fits, and where it strains
 
 | Part of the loop | Fit |

@@ -1,0 +1,20 @@
+operation: example_page_note_save
+title: Save a note through the page's own tool
+effect: irreversible
+commit_points: 1
+inputs:
+  text: {type: text, description: "The note"}
+outputs:
+  saying: {type: untrusted_text}
+bindings:
+  - mode: site_tools
+    verb: submit
+    status: verified
+    screen: tools
+    tool: example_note_save
+    digest: "b911cacea92ad0b623156a4e7d21d4d728dbe28c2da0f1df6043cd4d2813a9e1"
+    args:
+      text: input.text
+    result: saying
+description: >
+  Calls the tool the page registers to save a note, and returns what the page says.

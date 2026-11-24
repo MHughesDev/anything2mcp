@@ -31,23 +31,27 @@ pub use types::UNTRUSTED_TEXT;
 mod view;
 mod yaml;
 
-pub use compile::{COMPILER_VERSION, Compiled, DRAFT_VERSION, MINIMUM_ENGINE, compile, lint_one};
+pub use compile::{
+    COMPILER_VERSION, Compiled, DRAFT_VERSION, MINIMUM_ENGINE, compile, left_out_sentence,
+    lint_one, names_a_secret,
+};
 pub use diag::{
     DRAFT_CONFLICT, Diagnostic, Diagnostics, LINT_FAILED, Level, PATH_NOT_ALLOWED,
     REGISTRATION_CONFLICT, Stage, TARGET_UNREADABLE,
 };
 pub use doc::{Doc, Entry, Located, Place, RelPath};
 pub use draft::{
-    DRAFT_LEVEL, DraftContext, DraftDoc, DraftReport, DraftValue, Drafter, OpenQuestion, Quoting,
-    StoredQuestion,
+    DRAFT_LEVEL, DraftContext, DraftDoc, DraftReport, DraftValue, Drafter, NotDrafted,
+    OpenQuestion, Quoting, StoredQuestion,
 };
 pub use load::{
-    LARGEST_RECORDED_FILE, LARGEST_TARGET_FILE, SourceFile, Sources, TargetRoot, load, load_files,
+    HELD_FOLDER, Held, HeldFile, HeldQuestion, LARGEST_RECORDED_FILE, LARGEST_TARGET_FILE,
+    MOST_HELD_FILES, SourceFile, Sources, TargetRoot, held_files, load, load_files, read_held,
 };
 pub use register::{
-    CompileMode, CompiledSection, CompilerSet, CompilerSetBuilder, DeclaredName, DefinedName,
-    DraftingRule, ExprSite, FileKind, FixedPlace, LintRule, Lowered, Lowering, NoticeField,
-    Possible, ProgramField, StepCommits, SurfaceKindSpec,
+    CompileMode, CompiledSection, CompilerSet, CompilerSetBuilder, DEFAULT_MODE_RANK, DeclaredName,
+    DefinedName, DraftingRule, ExprSite, FileKind, FixedPlace, LintRule, Lowered, Lowering,
+    NoticeField, Possible, ProgramField, StepChanges, StepCommits, SurfaceKindSpec,
 };
 pub use review::{
     BindingReview, BindingStatement, BindingStates, CredentialShown, EnvironmentVariable,
@@ -71,5 +75,6 @@ pub use yaml::{normalize_text, parse as parse_yaml};
 mod tests {
     mod drafter;
     mod example;
+    mod held;
     mod review;
 }

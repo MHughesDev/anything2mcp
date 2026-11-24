@@ -1079,7 +1079,7 @@ impl Kernel {
         let mut context = Context::plain(caller.principal.workspace, self.environment());
         context.effect = effect;
         context.hazard = hazard;
-        context.toolset = caller.toolset.clone();
+        context.toolset = self.toolset_for_decision(caller.toolset.as_ref()).await;
         context.caller_is_agent = caller.is_agent;
         context.acting_for = caller.principal.acting_for.clone();
         let name = match a2m_policy::ActionName::new(def.name.as_str()) {

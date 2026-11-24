@@ -162,6 +162,37 @@ fn the_example_files_compile_twice_to_the_same_bytes() {
     assert_eq!(add.bindings[0].lookup.len(), 3);
 }
 
+/// Decision 0364: a write that says truly that its program reaches the
+/// target's own server stays a write, and its read-back still verifies it;
+/// reaching a host outside the target is still a hazard.
+#[test]
+fn a_write_may_declare_the_servers_that_are_the_targets_own_and_stays_verified() {
+    let folder = Folder::new("own-server");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let compiled = compile(
+        &changed(
+            "commands/inventory.yaml",
+            "{flag: --quantity, param: quantity, join: \"=\"}, --yes]\n",
+            "{flag: --quantity, param: quantity, join: \"=\"}, --yes]\n    reaches: {own_server: [store.example.com]}\n",
+        ),
+        registry.compiler_set(),
+    );
+    let plan = match compiled {
+        Ok(compiled) => compiled.plan,
+        Err(problems) => panic!("{problems:#?}"),
+    };
+    let set = plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_item_set_quantity")
+        .unwrap();
+    assert_eq!(set.effect, EffectClass::Write);
+    assert_eq!(set.bindings[0].evidence, a2m_core::WriteEvidence::ReadBack);
+    // The declaration is in the plan the pack reads at run time.
+    let section = String::from_utf8_lossy(plan.packs[0].payload.as_bytes()).into_owned();
+    assert!(section.contains("store.example.com"), "{section}");
+}
+
 /// One change to the fixtures, and the code and words of its refusal.
 fn refused(path: &str, from: &str, to: &str, code: &str) {
     let folder = Folder::new("refused");
@@ -265,6 +296,26 @@ fn a_file_that_breaks_a_rule_does_not_compile() {
         "    effect: irreversible\n    hazard: sends_outside\n",
         "    effect: write\n    hazard: sends_outside\n",
         "command.hazard_needs_irreversible",
+    );
+    // Decision 0364: only a read answers "none" by printing nothing; a server
+    // is named as a host; a path to the records goes with a document.
+    refused(
+        FILE,
+        "args: [item, remove, {param: sku}, --yes]\n    exits: {3: absent}",
+        "args: [item, remove, {param: sku}, --yes]\n    exits: {3: absent}\n    absent: empty_output",
+        "command.absent_empty_needs_read",
+    );
+    refused(
+        FILE,
+        "args: [item, remove, {param: sku}, --yes]",
+        "args: [item, remove, {param: sku}, --yes]\n    reaches: {own_server: ['https://store.example.com/x']}",
+        "command.own_server_malformed",
+    );
+    refused(
+        FILE,
+        "      json:\n        lines: true\n",
+        "      json:\n        lines: true\n        at: [items]\n",
+        "command.output_malformed",
     );
     // An assigned key the output does not hold; a session folder not built.
     refused(

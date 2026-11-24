@@ -163,7 +163,7 @@ fn discover(core: &Core) -> Json {
 
 fn tool(entry: ToolEntry) -> Json {
     let notes = entry.annotations;
-    json!({
+    let mut listed = json!({
         "name": entry.name,
         "title": entry.title,
         "description": entry.description,
@@ -174,7 +174,11 @@ fn tool(entry: ToolEntry) -> Json {
             "idempotentHint": notes.idempotent,
             "openWorldHint": notes.open_world,
         },
-    })
+    });
+    if !entry.meta.is_empty() {
+        listed["_meta"] = Json::Object(entry.meta);
+    }
+    listed
 }
 
 async fn list(core: &Core, asker: &Asker, params: &Json, id: &Json, stateless: bool) -> Answer {

@@ -65,6 +65,12 @@ pub struct SessionRow {
     /// stored now is about one the person has stored again since, and is
     /// not counted. `None` when no attempt is counted.
     pub attempted_with: Option<Digest>,
+    /// Whether the last sign-in was declared by the target's drafts rather
+    /// than by a published version. Such a session is never renewed without
+    /// its person (decision 0248). Kept in the record, so that a restart
+    /// does not forget it (decision 0374); a record that does not say, as
+    /// one kept before the mark was, reads as made under drafts.
+    pub made_under_drafts: bool,
 }
 
 /// What happened, in the words of the session timeline (spec section 215).

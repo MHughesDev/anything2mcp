@@ -104,16 +104,21 @@ Because locators, endpoints, and every other piece of knowledge about a system e
 
 When a canary or a run reports `drift`:
 
-1. The affected tools are marked unavailable. Reads through other tools continue.
+1. The affected tools are marked unavailable. Reads through other tools continue. What is affected is the knowledge the drift was seen in: the pack entry the failing step refers to, a screen in the web pack, held by the digest of the section that holds it, or the binding itself when no step names one. Every binding through the same mode on the same surface that relies on that knowledge is refused before it sends anything, a write among them, until a canary's pass through it vouches for it again or a version that changed it is published. A canary is never stopped by a mark; it writes nothing, and it is the check ([decision 0380](../../decisions/0380-a-drift-marks-the-knowledge-it-was-seen-in-and-stops-every-binding-that-relies-on-it.md)). Built today: the marks, the refusal, and the lift; the tool is refused when called and is not yet shown as unavailable in a listing.
 2. The repairing agent is given a fixed bundle, with restricted fields masked in all of it:
    - the failing step's trace record;
    - the snapshot taken at the failure;
    - the last snapshot of the same screen or surface from a verified run or a fixture;
    - the differences between the two;
    - the file involved: in the web pack a screen model, an endpoint, or a platform-profile rule; in another pack, the file of its kind that holds the knowledge that drifted.
+   - where the pack has one, a ranked list of candidate elements from the failure snapshot, each with its score by property, made by the pack's deterministic repair proposer under fixed weights the pack declares. The proposer proposes nothing, and the failure stays `locator_ambiguous`, when the top two candidates are closer than the margin the pack declares. A score is evidence for the repairing agent and the reviewer; it applies nothing ([decision 0323](../../decisions/0323-a-repair-is-proposed-by-a-fixed-scorer-and-drifting-is-seen-before-drift.md)).
 3. The agent proposes a file change: a new locator, a fingerprint update, a schema update, a new rule. It never touches a live run. Repair is building work, done by an agent at authoring time, never at run time.
 4. The change runs through the publish gates against the test environment and the fixtures ([section 403](../4-building-tools/403-testing-and-publish-gates.md)).
 5. A person approves the diff, and it is published as a new version.
+
+A repair never applies at run time, whatever its score. A false repair, a locator that matches the wrong element and passes, is the failure this loop exists to prevent: open tools that heal by similarity document exactly that failure ([research note 37](../../research/37-locator-drift-and-repair.md)). What holds it here is the fingerprint, the rule that a locator matches exactly one element, and a person's approval of the diff.
+
+**Drifting, before drift.** A canary reports `drifting`, not `drift`, when a field or action still passes but the locator that matched it is not the first in its list. A `drifting` tool stays available; it is shown in the drift metrics and in the engine's health, and it does not stop a run. A second sign, a fingerprint score below the one it had at the last verified run, needs the matched element's reference from that run, which the screen model does not yet keep (decision 0323).
 
 ## Fixtures from traces
 

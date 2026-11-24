@@ -1,0 +1,13 @@
+# Case 27: a note that holds instructions aimed at an agent.
+screen: note
+surface: app
+reach: {url: "/cases/note"}
+ready: {visible: {role: heading, name: "Order note"}}
+fields:
+  note:
+    type: untrusted_text
+    control: text
+    read: text
+    locate:
+      - {test_id: note}
+    fingerprint: {section: {role: main, name: ""}}

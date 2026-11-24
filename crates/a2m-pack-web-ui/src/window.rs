@@ -315,7 +315,12 @@ impl WindowLogin {
             // What the tab refused: a move to an origin nobody declared,
             // a window, a download. Each ends the sign-in.
             if let Some(refused) = tab.blocked().first() {
-                return Err(if refused.method == "NAVIGATION" {
+                return Err(if refused.method == a2m_pack_web_browser::OUTSIDE {
+                    codes::row::ORIGIN_NOT_DECLARED.failure(
+                        "A page of the sign-in loaded something from an origin that is neither the application's nor an identity provider the target declares. The browser failed it before it left, and the sign-in is ended.",
+                        "Declare the origin under `identity_providers` if the sign-in page really loads from it, and sign in again.",
+                    )
+                } else if refused.method == "NAVIGATION" {
                     codes::row::SURFACE_NOT_DECLARED.failure(
                         "The sign-in window was sent to an origin the target does not declare. The browser ended the move, and the sign-in with it.",
                         "Declare the identity provider's origin under `identity_providers` and as a surface of the target, if it is one, and sign in again.",

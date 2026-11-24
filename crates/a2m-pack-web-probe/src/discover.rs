@@ -13,7 +13,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    Coverage, Digest, EvidenceLevel, Failure, Finding, FindingKind, LimitationCode, Value,
+    Coverage, Digest, EvidenceLevel, Failure, FailureClass, Finding, FindingKind, LimitationCode,
+    Value,
 };
 use a2m_pack_web_browser::{
     Address, BrowserError, Deadline, EXCHANGES_KEPT, Look, ObserveTab, RawValue, ReadWhat,
@@ -25,7 +26,6 @@ use a2m_provider::{
 };
 use serde_json::Value as Json;
 
-use crate::SURFACE_KIND;
 use crate::infer::{Answer, Exchange, infer_endpoints, matched_requests};
 use crate::look::{
     Arrival, Claim, Core, FOCUS_TIER_TWO, Place, Standing, failure, json_body, link, link_target,
@@ -33,6 +33,7 @@ use crate::look::{
 };
 use crate::screen;
 use crate::shape::{Shape, object};
+use crate::{SURFACE_KIND, codes};
 
 /// The methods of a request. Anything else an observing tab reports is a
 /// thing the page made, such as a socket.
@@ -108,6 +109,53 @@ fn refused_note(refused: &[RequestShape]) -> Option<(LimitationCode, String)> {
         format!(
             "The page tried {} thing(s) an observing tab refuses ({}). Nothing left the browser, so what they would have done was not seen.",
             refused.len(),
+            listed.join(", ")
+        ),
+    ))
+}
+
+/// The name, in a `screen` finding, of the origins the page tried to send a
+/// request to that the observing tab refused: the origins outside the
+/// surface's own, as the tab reported them (decision 0292). A finding holds
+/// the field only when there are some, each origin once, in order. The
+/// drafting rules of the web pack's drivers read it into the drafted
+/// operation's `permissions.destinations`, for a person to review.
+pub const REFUSED_ORIGINS: &str = "refused_origins";
+
+/// What an observing tab refused, taken apart: the origins outside its
+/// reach that its page tried to send to, each once and in order, and
+/// everything else it refused.
+fn outside_origins(refused: Vec<RequestShape>) -> (BTreeSet<String>, Vec<RequestShape>) {
+    let mut origins = BTreeSet::new();
+    let mut others = Vec::new();
+    for one in refused {
+        if one.method != a2m_pack_web_browser::OUTSIDE {
+            others.push(one);
+            continue;
+        }
+        // An address that does not read as one of `http` or `https` is not
+        // an origin a person could declare: it is counted with the rest.
+        match Place::parse(&one.address) {
+            Some(place) => {
+                origins.insert(place.origin);
+            }
+            None => others.push(one),
+        }
+    }
+    (origins, others)
+}
+
+/// The limitation that says which origins the page tried to send to.
+fn outside_note(origins: &BTreeSet<String>) -> Option<(LimitationCode, String)> {
+    if origins.is_empty() {
+        return None;
+    }
+    let listed: Vec<&str> = origins.iter().map(String::as_str).collect();
+    Some((
+        LimitationCode::NotExercised,
+        format!(
+            "The page tried to send requests to {} origin(s) outside the surface's own ({}). The observing tab refused them before they left the browser, so what they would have loaded was not seen. They are listed in the finding as `{REFUSED_ORIGINS}`.",
+            origins.len(),
             listed.join(", ")
         ),
     ))
@@ -343,6 +391,149 @@ impl Discoverer for WebProbe {
     }
 }
 
+// ---- web_auth ----
+
+/// The names of the signs of a sign-in that `web_auth` classifies, as the
+/// finding's `sign_in` holds them. They are the session keeper's names
+/// for them (`a2m_auth::SignInSign`), which turns them into a
+/// recommendation; a test of the product holds the two lists equal.
+pub const SIGN_IN_SIGNS: &[&str] = &["password_form", "other_origin", "challenge", "code_step"];
+
+/// The words of an address that reads as a sign-in page. A page at such an
+/// address that shows no field this pack classifies is a sign-in no rule
+/// covers: `sign_in_unrecognized`, never a guess (rule 7).
+pub const SIGN_IN_WORDS: &[&str] = &["sign-in", "signin", "sign_in", "login", "log-in", "logon"];
+
+/// Whether a path reads as a sign-in page.
+fn reads_as_a_sign_in(path: &str) -> bool {
+    path.to_ascii_lowercase()
+        .split(['/', '?', '#', '.'])
+        .any(|part| SIGN_IN_WORDS.contains(&part))
+}
+
+/// `web_auth`: how the surface's start page asks for a sign-in, from the
+/// page's structure and where it ended alone (decisions 0254 and 0321).
+/// It classifies a password form, a move to another origin, an answer of
+/// status 401, and a field for a one-time code. It reads no field's value,
+/// types nothing, and sends no form: its tab is an observing tab, which
+/// fails every request that is not a read. A second factor that does not
+/// show on the page is `unknown`, never guessed.
+pub(crate) struct WebAuth(pub(crate) Arc<Parts>, pub(crate) DiscovererName);
+
+impl WebAuth {
+    async fn look(
+        &self,
+        scope: &DiscoveryScope<'_>,
+        out: &mut dyn FindingSink,
+    ) -> Result<DiscoveryReport, Failure> {
+        let Parts { core, kinds } = &*self.0;
+        let (address, start) = Core::start(scope)?;
+        let tab = core.tab(scope).await?;
+        let arrival = core.arrive(&tab, &address, &start, scope).await?;
+        let code_field = || async {
+            crate::look::present(
+                &tab,
+                &crate::look::css("input[autocomplete=one-time-code]"),
+                scope,
+            )
+            .await
+        };
+        let (sign, code) = match &arrival.standing {
+            Standing::SignIn("other_origin") => ("other_origin", false),
+            Standing::SignIn("status_401") => ("challenge", false),
+            Standing::SignIn(_) => ("password_form", code_field().await?),
+            Standing::Blocked(code) => {
+                return Err(Failure::new(
+                    FailureClass::EdgeBlocked,
+                    code.clone(),
+                    "The surface stopped answering as itself; how it signs in was not seen.",
+                    "Look at the surface in a browser, and ask its owner before trying again.",
+                ));
+            }
+            Standing::Open if code_field().await? => ("code_step", true),
+            Standing::Open if reads_as_a_sign_in(&arrival.ended.path) => {
+                return Err(Failure::new(
+                    FailureClass::UnknownVariant,
+                    codes::SIGN_IN_UNRECOGNIZED,
+                    "The surface's start page reads as a sign-in, and shows neither a password field, nor a field for a one-time code, nor a move to another origin: no rule of this pack classifies it.",
+                    "Say how the surface signs in: declare it in `auth.yaml` with `draft.write`, or ask a person which method it is.",
+                ));
+            }
+            Standing::Open => {
+                // Nothing asks for a sign-in: there is nothing to classify.
+                return Ok(DiscoveryReport {
+                    coverage: Coverage::Partial,
+                    ..DiscoveryReport::default()
+                });
+            }
+        };
+        let identity_origin = if sign == "other_origin" {
+            Json::from(arrival.ended.origin.clone())
+        } else {
+            Json::Null
+        };
+        let found = object([
+            ("format", Json::from("1")),
+            ("sign_in", Json::from(sign)),
+            (
+                "second_factor",
+                Json::from(if code { "asked" } else { "unknown" }),
+            ),
+            (
+                "redirected",
+                Json::Bool(arrival.asked.plain() != arrival.ended.plain()),
+            ),
+            ("identity_origin", identity_origin),
+            ("status", arrival.status.map_or(Json::Null, Json::from)),
+            ("submitted", Json::Bool(false)),
+        ]);
+        let mut limitations = vec![(
+            LimitationCode::NotExercised,
+            "The sign-in was classified from the page's structure and where it ended; no field was read and nothing was sent.".to_owned(),
+        )];
+        if !code {
+            limitations.push((
+                LimitationCode::SingleVariant,
+                "A second factor, a passkey, or a link sent by mail does not show before a sign-in is sent: whether one follows is not known, and a person says.".to_owned(),
+            ));
+        }
+        out.found(core.finding(
+            scope,
+            arrival.asked.subject(scope.redact)?,
+            &kinds.sign_in_method,
+            &found,
+            &Claim {
+                level: EvidenceLevel::Inferred,
+                limitations,
+                parents: Vec::new(),
+            },
+        )?)?;
+        Ok(DiscoveryReport {
+            coverage: Coverage::Partial,
+            ..DiscoveryReport::default()
+        })
+    }
+}
+
+impl Discoverer for WebAuth {
+    fn name(&self) -> DiscovererName {
+        self.1.clone()
+    }
+
+    fn suits(&self, surface: &SurfaceDescription) -> bool {
+        suits_web(surface)
+    }
+
+    fn discover<'a>(
+        &'a self,
+        _port: &'a dyn SandboxPort,
+        scope: &'a DiscoveryScope<'a>,
+        out: &'a mut dyn FindingSink,
+    ) -> BoxFuture<'a, Result<DiscoveryReport, Failure>> {
+        Box::pin(self.look(scope, out))
+    }
+}
+
 // ---- the pages of one discovery ----
 
 /// The pages to look at, in order, each once, within the page budget and
@@ -529,12 +720,20 @@ impl WebSnapshot {
                     pages.add(target, depth + 1, false);
                 }
             }
-            limitations.extend(refused_note(&tab.blocked()));
-            seen.push((
-                arrival.ended,
-                screen::found(&snapshot, &arrival.title),
-                limitations,
-            ));
+            let (outside, others) = outside_origins(tab.blocked());
+            limitations.extend(refused_note(&others));
+            limitations.extend(outside_note(&outside));
+            let mut found = screen::found(&snapshot, &arrival.title);
+            if !outside.is_empty()
+                && let Json::Object(fields) = &mut found
+            {
+                fields.insert(
+                    REFUSED_ORIGINS.to_owned(),
+                    Json::Array(outside.iter().map(|one| Json::from(one.as_str())).collect()),
+                );
+                *fields = crate::shape::sorted(std::mem::take(fields));
+            }
+            seen.push((arrival.ended, found, limitations));
         }
         Self::give(core, kinds, scope, &seen, &mut out)?;
         Ok(pages.report)
@@ -566,6 +765,21 @@ impl WebSnapshot {
                 Some(group) => {
                     let first = &seen[group.pages[0]];
                     let mut fields = first.1.as_object().cloned().unwrap_or_default();
+                    // Every page of the group may have tried other origins.
+                    let refused: BTreeSet<&str> = group
+                        .pages
+                        .iter()
+                        .filter_map(|page| seen[*page].1.get(REFUSED_ORIGINS))
+                        .filter_map(Json::as_array)
+                        .flatten()
+                        .filter_map(Json::as_str)
+                        .collect();
+                    if !refused.is_empty() {
+                        fields.insert(
+                            REFUSED_ORIGINS.to_owned(),
+                            Json::Array(refused.into_iter().map(Json::from).collect()),
+                        );
+                    }
                     fields.insert(
                         "pages".to_owned(),
                         Json::Array(
@@ -910,6 +1124,15 @@ impl WebCapture {
                 limitations.push((
                     LimitationCode::Sampled,
                     "A parameter of the path template rests on variance alone: the segment differed between otherwise identical requests.".to_owned(),
+                ));
+            }
+            if endpoint.keeps_a_short_number() {
+                limitations.push((
+                    LimitationCode::Sampled,
+                    format!(
+                        "A number of fewer than {} digits in the path is kept as written: a short number is a parameter only where requests showed it varying.",
+                        crate::infer::LEAST_DIGITS
+                    ),
                 ));
             }
             if endpoint.response.as_ref().is_some_and(Shape::has_optional) {

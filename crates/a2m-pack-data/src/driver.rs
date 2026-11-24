@@ -32,7 +32,7 @@ use a2m_provider::{
 use a2m_telemetry::{Acting, Detail};
 
 use crate::model::{
-    Access, Column, Does, Returns, Section, Statement, StepDetail, Stored, SurfaceFields,
+    Access, Column, Does, FOUND, Returns, Section, Statement, StepDetail, Stored, SurfaceFields,
 };
 #[cfg(feature = "postgres")]
 use crate::names::DATABASE;
@@ -1086,6 +1086,7 @@ impl Session {
         redact: &dyn Redact,
     ) -> Result<StepOutcome, StepFailure> {
         let (_, statement) = self.statement(step)?;
+        let detail: StepDetail = step.payload.decode().map_err(StepFailure::not_sent)?;
         let Some(ran) = self.ran.take() else {
             return Err(self
                 .not_sent(unexpected(
@@ -1102,6 +1103,11 @@ impl Session {
                 "Correct the record's key in the statements file.",
             )),
             Returns::OneOrNone => match ran.rows.into_iter().next() {
+                // A read that answers a missing row says so (decision 0348).
+                None if detail.answers_missing => Ok(StepOutcome::Done(Observed {
+                    values: Values::new().with(FOUND, false),
+                    ..Observed::default()
+                })),
                 None => Ok(StepOutcome::Absent(Observed::default())),
                 Some(row) => {
                     // A value stored another way than declared is named as
@@ -1109,7 +1115,10 @@ impl Session {
                     let held = Self::is_asked(&statement, asked.as_deref(), &ran.columns, &row);
                     Self::record(&statement, &ran.columns, row)
                         .and_then(|values| held.map(|()| values))
-                        .map(|values| {
+                        .map(|mut values| {
+                            if detail.answers_missing {
+                                values.insert(FOUND, Value::Bool(true));
+                            }
                             StepOutcome::Done(Observed {
                                 values: redact.redact_values(&values),
                                 ..Observed::default()

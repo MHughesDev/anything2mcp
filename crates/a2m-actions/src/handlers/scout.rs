@@ -201,6 +201,9 @@ struct Identified {
     complete: bool,
     /// Why nothing was observed, when the drafts do not compile.
     not_compiled: Option<String>,
+    /// The `sign_in_method` findings of each surface's discovery, for the
+    /// rules that recommend a sign-in.
+    sign_in_findings: BTreeMap<String, Vec<Finding>>,
 }
 
 /// The files of the project's `sources` folder a scout hands its
@@ -273,6 +276,7 @@ async fn identify(
     }
     let workspace = call.caller.principal.workspace;
     let mut surfaces = Vec::new();
+    let mut sign_in_findings: BTreeMap<String, Vec<Finding>> = BTreeMap::new();
     let mut complete = true;
     for look in looks {
         // The scout waits for a discovery to its end, as long as its
@@ -357,6 +361,14 @@ async fn identify(
                         .or_default() += 1;
                 }
                 entry["findings_by_kind"] = json!(by_kind);
+                sign_in_findings.insert(
+                    look.name.to_string(),
+                    found
+                        .iter()
+                        .filter(|finding| finding.kind().as_str() == a2m_auth::SIGN_IN_METHOD)
+                        .cloned()
+                        .collect(),
+                );
                 entry["ended"] = Json::Array(
                     reported
                         .iter()
@@ -382,6 +394,7 @@ async fn identify(
         runs,
         complete,
         not_compiled: None,
+        sign_in_findings,
     })
 }
 
@@ -496,6 +509,16 @@ fn sign_ins(identified: &Identified, declared: Option<&BTreeMap<String, Vec<Json
                 declared.get(name).cloned().unwrap_or_default()
             });
             let first = declared_here.as_ref().and_then(|entries| entries.first());
+            // The fixed rules of `a2m-auth` over what this surface's
+            // discovery found. Always marked inferred; what the files
+            // declare is kept as declared, and the recommendation stands
+            // beside it (decision 0367).
+            let recommendation = a2m_auth::recommend(
+                identified
+                    .sign_in_findings
+                    .get(name)
+                    .map_or(&[][..], Vec::as_slice),
+            );
             let mut unknown = Vec::new();
             if first.is_none() {
                 unknown.push("identity_mode");
@@ -509,8 +532,15 @@ fn sign_ins(identified: &Identified, declared: Option<&BTreeMap<String, Vec<Json
                 "failure": surface.get("failure"),
                 "method": first.map(|entry| entry["provider"].clone()),
                 "identity_mode": first.map(|entry| entry["mode"].clone()),
-                "level": if first.is_some() { "declared" } else { "unknown" },
+                "level": if first.is_some() {
+                    "declared"
+                } else if recommendation.first().is_some() {
+                    "inferred"
+                } else {
+                    "unknown"
+                },
                 "unknown": unknown,
+                "recommendation": recommendation.to_json(),
                 "confirm": "A claim for a person to confirm by signing in; the engine never holds a credential it was told here.",
             })
         })
@@ -520,8 +550,10 @@ fn sign_ins(identified: &Identified, declared: Option<&BTreeMap<String, Vec<Json
 handler!(
     /// `auth.detect`: how each surface signs in, as claims to be confirmed
     /// by a person: whether its kind keeps a session, what the target's
-    /// files declare, and what its discovery met. No rule recommends an
-    /// identity mode the files do not declare, so none is guessed.
+    /// files declare, and what its discovery met. The fixed rules of
+    /// `a2m-auth` recommend a mode and a provider from what was met,
+    /// marked `inferred`, for a person to confirm; what the files declare
+    /// is kept as declared, and a sign no rule covers is a question.
     auth_detect,
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
@@ -917,6 +949,16 @@ fn draft_into(
         .draft(findings)
 }
 
+/// A draft's path without the holding folder's name in front. An unknown is
+/// kept under its scope, which is this path, so that the same draft held or
+/// not is one question and moving it in or out opens none again.
+fn unheld(path: &a2m_files::RelPath) -> String {
+    path.as_str()
+        .strip_prefix(&format!("{}/", a2m_files::HELD_FOLDER))
+        .unwrap_or(path.as_str())
+        .to_owned()
+}
+
 fn paths(list: &[a2m_files::RelPath]) -> Vec<String> {
     list.iter().map(|path| path.as_str().to_owned()).collect()
 }
@@ -952,11 +994,12 @@ async fn compare(
         let report = drafted?;
         let mut asked = Vec::new();
         for path in &report.conflicts {
+            let path = unheld(path);
             asked.push((
                 format!(
                     "The system, as observed, drafts `{path}` otherwise than the target's file holds it. Which is right?"
                 ),
-                path.as_str().to_owned(),
+                path.clone(),
                 "The file is the target's, and what was observed differs from it.".to_owned(),
                 "A person reads the file beside the findings it would be drafted from (`finding.describe`).".to_owned(),
             ));
@@ -964,7 +1007,7 @@ async fn compare(
         Ok((
             json!({
                 "differs": paths(&report.conflicts),
-                "would_draft": paths(&report.written),
+                "would_draft": paths(&[report.written.clone(), report.held.clone()].concat()),
                 "not_covered": report.not_covered.iter().map(Digest::to_string).collect::<Vec<_>>(),
             }),
             asked,
@@ -997,8 +1040,8 @@ async fn draft(
                     // The product's sentence and the system's words, kept
                     // apart in what is stored (decision 0193).
                     open.stored(),
-                    open.file.as_str().to_owned(),
-                    format!("The draft `{}` does not compile until it is answered.", open.file),
+                    unheld(&open.file),
+                    format!("The draft `{}` waits on the answer.", unheld(&open.file)),
                     "A person states the value; the system did not.".to_owned(),
                 )
             })
@@ -1014,17 +1057,44 @@ async fn draft(
                 })
             })
             .collect();
-        // The drafts that hold an open question, each once: the try stage
-        // compiles without them (decision 0180).
+        // The drafts that wait in the holding folder, each once: every
+        // file of a finding that has an open question. The loader does not
+        // read them, so the target compiles and is tried without them
+        // (decision 0298).
         let held_back: BTreeSet<String> = report
-            .open_questions
+            .held
             .iter()
-            .map(|open| open.file.as_str().to_owned())
+            .map(|path| path.as_str().to_owned())
+            .collect();
+        // The findings a rule covers and drafted nothing from, each with
+        // the finding's own words (looked up by its id) and the reason the
+        // rule gave (roadmap package FT11).
+        let not_drafted: Vec<Json> = report
+            .not_drafted
+            .iter()
+            .map(|left| {
+                let description = findings
+                    .iter()
+                    .find(|finding| finding.id() == left.finding)
+                    .map_or(Json::Null, |finding| untrusted(json!(finding.found())));
+                json!({
+                    "finding": left.finding.to_string(),
+                    "description": description,
+                    "pack": left.pack,
+                    "reason": if left.reason.is_empty() {
+                        "the rule gave no reason"
+                    } else {
+                        left.reason.as_str()
+                    },
+                })
+            })
             .collect();
         Ok((
             json!({
                 "written": files,
                 "held_back": held_back,
+                "not_drafted": not_drafted,
+                "left_out_as_secret": report.left_out_as_secret,
                 "conflicts": paths(&report.conflicts),
                 "refused": report.refused.iter().map(|(path, why)| json!({"file": path.as_str(), "why": why})).collect::<Vec<_>>(),
                 "open_questions": report.open_questions.len(),
@@ -1289,14 +1359,14 @@ async fn try_reads(
     let left_out = json!(held_back);
     if tools.is_empty() {
         return Ok(Tried {
-            result: json!({"tools": tried, "left_out": left_out}),
+            result: json!({"tools": tried, "left_out": left_out, "counts": tried_counts(&tried, &left_out)}),
             runs,
             complete: true,
         });
     }
-    // What can compile is compiled: every file of the target but the
-    // drafts that hold an open question, since one such file keeps its
-    // whole kind from compiling (decision 0180).
+    // What can compile is compiled: the target as the loader reads it. A
+    // draft that holds an open question waits in the holding folder, which
+    // is not read (decision 0298), so it is not among the files.
     let compiled = {
         let kernel = kernel.clone();
         off_thread(move || Ok(super::build::compile_what_can(&kernel, &folder, &held_back))).await?
@@ -1305,10 +1375,10 @@ async fn try_reads(
         Ok((compiled, left_out)) => (compiled, json!(left_out)),
         Err(problems) => {
             for (tool, file) in tools {
-                tried.push(json!({"tool": tool, "file": file, "state": "not_tried", "why": "The drafts do not compile, without those that hold an open question."}));
+                tried.push(json!({"tool": tool, "file": file, "state": "not_tried", "why": "The drafts do not compile."}));
             }
             return Ok(Tried {
-                result: json!({"tools": tried, "left_out": left_out, "problems": marked_problems(&problems)}),
+                result: json!({"tools": tried, "left_out": left_out, "counts": tried_counts(&tried, &left_out), "problems": marked_problems(&problems)}),
                 runs,
                 complete: true,
             });
@@ -1448,15 +1518,8 @@ async fn try_reads(
         let same = results
             .windows(2)
             .all(|pair| pair[0]["result"] == pair[1]["result"]);
-        let state = if not_ended {
-            "not_ended"
-        } else if completed == TRIES && same {
-            "proven"
-        } else if completed == TRIES {
-            "differs"
-        } else {
-            "failed"
-        };
+        let state = trial_state(&results, not_ended);
+        let waits = state == "waiting";
         let mut entry = json!({
             "tool": name,
             "file": file,
@@ -1473,9 +1536,30 @@ async fn try_reads(
                 TRIAL_BOUND.as_secs()
             ));
         }
+        if waits
+            && let Some(surface) = super::tools::binding_surface(&plan, &found.tool, Some(&binding))
+        {
+            let next = super::tools::sign_in_next(target, &surface);
+            entry["surface"] = json!(surface.as_str());
+            entry["next"] = json!({"action": next.action, "input": next.args});
+        }
         if let Some((list, output)) = &from {
             // Where the input came from, never its value.
             entry["input_from"] = json!({"list": list, "output": output});
+        }
+        if state == "proven" {
+            // The call that reads it, for an agent to copy (decision 0306).
+            // An input taken from a list read's answer is the system's
+            // data: it is not copied into the report, and the call names
+            // where it comes from.
+            let mut arguments = json!({"target": target.as_str(), "tool": name});
+            if from.is_none()
+                && !input.is_empty()
+                && let Ok(accepted) = serde_json::to_value(&input)
+            {
+                arguments["input"] = accepted;
+            }
+            entry["call"] = json!({"action": "draft.try", "input": arguments});
         }
         if let Some(first) = results.first() {
             // The shape of what the system answered, never its values: a
@@ -1506,10 +1590,57 @@ async fn try_reads(
     }
     // In the order of the drafted tools, whatever order they were tried in.
     tried.sort_by(|a, b| a["tool"].as_str().cmp(&b["tool"].as_str()));
+    let counts = tried_counts(&tried, &left_out);
     Ok(Tried {
-        result: json!({"tools": tried, "left_out": left_out}),
+        result: json!({"tools": tried, "left_out": left_out, "counts": counts}),
         runs,
         complete: true,
+    })
+}
+
+/// What the trials of one drafted read came to. A read whose last trial
+/// rests waiting for a sign-in is not a failed read: it waits, with the
+/// surface to sign in to (decision 0303).
+fn trial_state(results: &[Json], not_ended: bool) -> &'static str {
+    let completed = results
+        .iter()
+        .filter(|result| result["status"] == "completed")
+        .count();
+    let same = results
+        .windows(2)
+        .all(|pair| pair[0]["result"] == pair[1]["result"]);
+    let waits = results
+        .last()
+        .is_some_and(|result| result["status"] == "needs_login");
+    if not_ended {
+        "not_ended"
+    } else if waits {
+        "waiting"
+    } else if completed == TRIES && same {
+        "proven"
+    } else if completed == TRIES {
+        "differs"
+    } else {
+        "failed"
+    }
+}
+
+/// What became of the drafted reads, counted so that they add up (decision
+/// 0303): every drafted read is proven, waiting for a sign-in, failed (a
+/// trial that failed, differed, or did not end), not tried (with its
+/// reason in its entry), or held back with an open question.
+fn tried_counts(tried: &[Json], left_out: &Json) -> Json {
+    let state = |name: &str| tried.iter().filter(|tool| tool["state"] == name).count();
+    let (proven, waiting, not_tried) = (state("proven"), state("waiting"), state("not_tried"));
+    let failed = tried.len() - proven - waiting - not_tried;
+    let held = left_out.as_array().map_or(0, Vec::len);
+    json!({
+        "drafted": tried.len() + held,
+        "proven": proven,
+        "waiting": waiting,
+        "failed": failed,
+        "not_tried": not_tried,
+        "held": held,
     })
 }
 
@@ -1752,6 +1883,7 @@ handler!(
                     runs: BTreeMap::new(),
                     complete: true,
                     not_compiled: Some(failure.message().to_owned()),
+                    sign_in_findings: BTreeMap::new(),
                 },
                 Err(failure) => return Err(failure),
             };
@@ -2035,6 +2167,30 @@ handler!(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_read_that_waits_for_a_sign_in_is_waiting_and_the_counts_add_up() {
+        use super::{TRIES, json, trial_state, tried_counts};
+        let rest = |status: &str| json!({"status": status, "result": {"n": 1}});
+        assert_eq!(trial_state(&[rest("needs_login")], false), "waiting");
+        assert_eq!(trial_state(&[rest("needs_login")], true), "not_ended");
+        assert_eq!(trial_state(&[rest("failed")], false), "failed");
+        let proven: Vec<_> = (0..TRIES).map(|_| rest("completed")).collect();
+        assert_eq!(trial_state(&proven, false), "proven");
+        let tried = [
+            json!({"state": "proven"}),
+            json!({"state": "waiting"}),
+            json!({"state": "waiting"}),
+            json!({"state": "failed"}),
+            json!({"state": "differs"}),
+            json!({"state": "not_tried"}),
+        ];
+        let counts = tried_counts(&tried, &json!(["held/a.yaml"]));
+        assert_eq!(
+            counts,
+            json!({"drafted": 7, "proven": 1, "waiting": 2, "failed": 2, "not_tried": 1, "held": 1})
+        );
+    }
+
     use super::{COPY_MOST_FILES, copy_target};
 
     fn folder(name: &str) -> std::path::PathBuf {

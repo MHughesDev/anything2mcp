@@ -963,7 +963,7 @@ pub(crate) fn inject_state(
         let incomplete = || {
             a2m_auth::codes::row::NEEDS_LOGIN.failure(
                 "The session cannot be used: its saved state is incomplete.",
-                "Sign in with `anything2mcp session login`, then run the tool again or resume the run.",
+                "Sign in with `anything2mcp session login`, then resume the run, which reconciles any write it began before it writes again.",
             )
         };
         let rules: Vec<CookieRule> = material

@@ -206,8 +206,10 @@ fn draft_and_compile(
         report.refused.is_empty() && report.conflicts.is_empty(),
         "{report:?}"
     );
+    answer_what_an_answer_may_leave_out(folder.path(), &report);
     let files: Vec<(RelPath, Vec<u8>)> = files_of(folder.path())
         .into_iter()
+        .filter(|(file, _)| !file.as_str().starts_with("held/"))
         .filter(|(file, _)| !report.open_questions.iter().any(|open| open.file == *file))
         .collect();
     let sources =
@@ -216,6 +218,54 @@ fn draft_and_compile(
         .unwrap_or_else(|problems| panic!("{problems:?}"))
         .plan;
     (folder, plan)
+}
+
+/// A person's answer to the one question a drafted page request holds
+/// about what its answer may leave out (decisions 0322 and 0341; a capture
+/// never states `required`): the held page request moves into place with
+/// `required` listing every value the answer's `properties` declare, and
+/// the read held with it moves along. A held file with another question
+/// stays held.
+fn answer_what_an_answer_may_leave_out(folder: &std::path::Path, report: &DraftReport) {
+    let mut answered = false;
+    for held in &report.held {
+        let from = folder.join(held.as_str());
+        let mut text = std::fs::read_to_string(&from).unwrap();
+        let Some(start) = text.find("required: {") else {
+            continue;
+        };
+        let end = start + text[start..].find('\n').unwrap();
+        let properties = text.find("properties:\n").unwrap();
+        let names: Vec<&str> = text[properties..]
+            .lines()
+            .skip(1)
+            .take_while(|line| line.starts_with("    "))
+            .filter(|line| !line.starts_with("     "))
+            .map(|line| line.trim().trim_end_matches(':'))
+            .collect();
+        text.replace_range(start..end, &format!("required: [{}]", names.join(", ")));
+        let to = folder.join(held.as_str().strip_prefix("held/").unwrap());
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(&to, text).unwrap();
+        std::fs::remove_file(&from).unwrap();
+        answered = true;
+    }
+    if !answered {
+        return;
+    }
+    // The read drafted over the request holds no question of its own.
+    for held in &report.held {
+        let from = folder.join(held.as_str());
+        if from.exists()
+            && !std::fs::read_to_string(&from)
+                .unwrap()
+                .contains("open_question")
+        {
+            let to = folder.join(held.as_str().strip_prefix("held/").unwrap());
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::rename(&from, &to).unwrap();
+        }
+    }
 }
 
 /// Runs the `act` steps of a read's `ui` binding through the `ui` driver

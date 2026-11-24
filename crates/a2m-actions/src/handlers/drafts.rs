@@ -16,7 +16,9 @@ use a2m_files::{
 use a2m_provider::{CheckedPath, EntryKind};
 use serde_json::{Value as Json, json};
 
-use super::build::{TARGETS_FOLDER, off_thread, problems_json, project, target_folder};
+use super::build::{
+    TARGETS_FOLDER, held_drafts, held_note, off_thread, problems_json, project, target_folder,
+};
 use super::handler;
 use crate::codes;
 use crate::dispatch::{Next, Output};
@@ -69,6 +71,22 @@ fn no_link_on_the_way(folder: &CheckedPath, path: &RelPath) -> Result<(), Failur
     Ok(())
 }
 
+/// The path a draft of the holding folder would have outside it, which
+/// names its file kind: `operations/x.yaml` for `held/operations/x.yaml`.
+/// `None` for a path that is not under the holding folder.
+fn outside_held(path: &RelPath) -> Option<RelPath> {
+    let inner = path.as_str().strip_prefix("held/")?;
+    RelPath::new(inner).ok()
+}
+
+fn not_a_held_draft(path: &RelPath) -> Failure {
+    codes::input(
+        codes::PATH_NOT_ALLOWED,
+        format!("`{path}` is not a draft in a folder of the holding folder."),
+        "Name a held draft by its path, such as `held/operations/stock_get.yaml`.",
+    )
+}
+
 fn no_such_file(target: &TargetName, path: &RelPath) -> Failure {
     codes::input(
         codes::NOT_FOUND,
@@ -83,6 +101,9 @@ handler!(
     |_kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
         let path = draft_path(call.required("file")?)?;
+        if outside_held(&path).is_some_and(|inner| inner.folder().is_none()) {
+            return Err(not_a_held_draft(&path));
+        }
         let project_folder = call.project_folder()?.to_path_buf();
         let (named, at) = (target.clone(), path.clone());
         let bytes = off_thread(move || {
@@ -218,10 +239,40 @@ handler!(
                     "Add it with `target.add` first.",
                 ));
             }
-            let edited = match SourceFile::read(at.clone(), content.as_bytes(), set) {
+            // A draft in the holding folder is read as the file it would be
+            // outside it, which names its kind (decision 0298). It waits on
+            // an open question, so it is not linted with the target, and
+            // nothing it holds reaches the compiler.
+            let held = outside_held(&at);
+            if let Some(inner) = &held
+                && inner.folder().is_none()
+            {
+                return Err(not_a_held_draft(&at));
+            }
+            let edited = match SourceFile::read(
+                held.clone().unwrap_or_else(|| at.clone()),
+                content.as_bytes(),
+                set,
+            ) {
                 Ok(edited) => edited,
                 Err(problem) => return Ok(Err(Diagnostics::from(problem))),
             };
+            if held.is_some() {
+                no_link_on_the_way(&folder, &at)?;
+                let file = draft_file(&folder, &at)?;
+                if matches!(file.entry_kind()?, EntryKind::Folder | EntryKind::Link) {
+                    return Err(codes::input(
+                        codes::PATH_NOT_ALLOWED,
+                        format!("A folder or a link stands at `{at}`, and a file is never written through one."),
+                        "Name another file.",
+                    ));
+                }
+                if let Some((parent, _)) = at.as_str().rsplit_once('/') {
+                    folder.join(parent)?.create_dir_all()?;
+                }
+                file.write(content.as_bytes())?;
+                return Ok(Ok((edited.digest, Diagnostics::new())));
+            }
             let root = TargetRoot::new(folder.as_path());
             let loaded = a2m_files::load(&root, set).ok();
             let previous = loaded
@@ -262,6 +313,9 @@ handler!(
             Ok(Ok((edited.digest, problems)))
         })
         .await?;
+        let failed = match &written {
+            Ok((_, problems)) | Err(problems) => problems.has_errors(),
+        };
         let output = match written {
             Ok((digest, problems)) => Output::ok(json!({
                 "target": target.as_str(),
@@ -288,6 +342,15 @@ handler!(
                 json!({"target": target.as_str(), "file": path.as_str()}),
                 "after correcting what the problems name; nothing was written",
             )),
+        };
+        // A name not found may be defined by a held draft: said once, and
+        // the held files are looked at only when the compile has failed.
+        let output = match failed
+            .then_some(())
+            .and(held_note(&held_drafts(&call, &target).await?))
+        {
+            Some(note) => output.warn(note),
+            None => output,
         };
         Ok(output)
     }
@@ -354,6 +417,9 @@ handler!(
             }
             let mut checked = Vec::with_capacity(all.len());
             for at in &all {
+                if outside_held(at).is_some_and(|inner| inner.folder().is_none()) {
+                    return Err(not_a_held_draft(at));
+                }
                 if at.folder().is_none() {
                     return Err(codes::input(
                         codes::PATH_NOT_ALLOWED,
@@ -375,7 +441,14 @@ handler!(
                     }
                 }
                 let bytes = file.read(LARGEST_TARGET_FILE as u64 + 1)?;
-                if let Err(problem) = SourceFile::read(at.clone(), &bytes, set)
+                // A held draft is judged as the file it would be outside
+                // the holding folder (decision 0298).
+                let held = outside_held(at);
+                if held.as_ref().is_some_and(|inner| inner.folder().is_none()) {
+                    return Err(not_a_held_draft(at));
+                }
+                if let Err(problem) =
+                    SourceFile::read(held.unwrap_or_else(|| at.clone()), &bytes, set)
                     && problem.code.as_str() == a2m_files::codes::UNKNOWN_FILE
                 {
                     return Err(codes::input(
@@ -430,7 +503,13 @@ handler!(
             shown["file"] = json!(file);
             shown["digest"] = json!(digest.to_string());
         }
-        Ok(Output::ok(shown).then(Next::new(
+        let mut output = Output::ok(shown);
+        if problems.has_errors()
+            && let Some(note) = held_note(&held_drafts(&call, &target).await?)
+        {
+            output = output.warn(note);
+        }
+        Ok(output.then(Next::new(
             "test.run",
             json!({"target": target.as_str()}),
             "to run the gates on the drafts that are left",

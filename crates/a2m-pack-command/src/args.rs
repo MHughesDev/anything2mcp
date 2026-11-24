@@ -279,6 +279,8 @@ mod tests {
             exits: BTreeMap::new(),
             output: Output::Ignored,
             assigns: None,
+            absent_when_empty: false,
+            own_server: Vec::new(),
             limits: Limits::default(),
         }
     }

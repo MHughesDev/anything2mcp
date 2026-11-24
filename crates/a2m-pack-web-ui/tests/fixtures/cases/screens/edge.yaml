@@ -1,0 +1,14 @@
+# Case 23: a page that is, or is not, in the way: the edge answers for the
+# application with a refusal, a challenge, or a notice of maintenance.
+screen: edge
+surface: app
+reach: {url: "/edge/{kind}"}
+ready: {visible: {role: heading, name: "Edge ok"}}
+fields:
+  heading:
+    type: text
+    control: text
+    read: text
+    locate:
+      - {role: heading, name: "Edge ok"}
+    fingerprint: {section: {role: main, name: ""}}

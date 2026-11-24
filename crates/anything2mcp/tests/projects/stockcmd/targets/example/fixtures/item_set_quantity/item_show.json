@@ -1,0 +1,8 @@
+[
+  {"sku": "SK-1001", "name": "Example rail", "quantity": 4, "location": "A01", "version": 1},
+  {"sku": "SK-1001", "name": "Example rail", "quantity": 4, "location": "A01", "version": 1},
+  {"sku": "SK-1001", "name": "Example rail", "quantity": 4, "location": "A01", "version": 1},
+  {"sku": "SK-1001", "name": "Example rail", "quantity": 12, "location": "A01", "version": 2},
+  {"sku": "SK-1001", "name": "Example rail", "quantity": 12, "location": "A01", "version": 2},
+  {"sku": "SK-1001", "name": "Example rail", "quantity": 12, "location": "A01", "version": 2}
+]

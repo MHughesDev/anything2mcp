@@ -598,6 +598,7 @@ impl Kernel {
                 exclusive: Vec::new(),
                 max_step: Duration::from_secs(30),
                 writes: false,
+                verify_after_loss: false,
             },
             run,
             priority: Priority::Batch,

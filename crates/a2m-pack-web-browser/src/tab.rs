@@ -30,7 +30,8 @@ use crate::protocol::{
     FailRequest, FetchEnable, GetFrameTree, GetFullAxTree, GetProperties, GetResponseBody,
     GetTargetInfo, HandleDialog, InsertText, MediaFeature, Navigate, NetworkEnable,
     NodeDescription, PageEnable, RequestPattern, RequestPaused, RunIfWaiting, RuntimeEnable,
-    SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia, SetLifecycleEvents, SetLocale, SetTimezone,
+    SetAcceptLanguage, SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia, SetFileInputFiles,
+    SetLifecycleEvents, SetLocale, SetTimezone,
 };
 use crate::snapshot::{Snapshot, SnapshotLimits};
 
@@ -316,6 +317,20 @@ pub enum By {
         /// The selector.
         selector: String,
     },
+    /// The row of a grid or a table whose first cell shows this text
+    /// exactly: a row is known by its key, never by its place.
+    RowKeyed {
+        /// The text of the row's first cell.
+        key: String,
+    },
+    /// One cell of the row whose first cell shows this text exactly: a
+    /// cell is known by its row's key and its place among the row's cells.
+    CellKeyed {
+        /// The text of the row's first cell.
+        key: String,
+        /// The cell's place in its row, counted from zero.
+        column: usize,
+    },
 }
 
 /// A query for exactly one element, inside another element when `within`
@@ -447,6 +462,16 @@ pub enum ReadWhat {
         /// The attribute's name.
         name: String,
     },
+    /// The text of one cell of a row, counted from zero among its cells.
+    Cell {
+        /// The cell's place in its row.
+        index: usize,
+    },
+    /// The labels of the selected item of a tree and of the items it is
+    /// under, outermost first, joined by `/`.
+    TreePath,
+    /// The names of the files a file input holds, joined by `/`.
+    Files,
 }
 
 /// What a read gave, as the page holds it: not trimmed, not normalized.
@@ -460,13 +485,17 @@ pub enum RawValue {
     Absent,
 }
 
-/// One element of one page generation. After a navigation, or a re-render
-/// that removes it, using it is [`BrowserError::NotFound`]; it is never
-/// looked for again silently.
+/// One element of one page generation, and the query that found it. After
+/// a navigation, acting on it or reading it is [`BrowserError::NotFound`].
+/// After a re-render that removes it, acting on it is
+/// [`BrowserError::NotFound`] and it is never looked for again; a read
+/// alone finds it again by its query, in the same document and the same
+/// call that reads it, when that query still matches exactly one element.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Element {
     object: String,
     tab: u64,
+    query: Query,
 }
 
 /// A page that has loaded as far as its document.
@@ -479,6 +508,10 @@ pub struct Loaded {
     /// The status of the document's response, when there was one. `None`
     /// for a move within the same document.
     pub status: Option<u16>,
+    /// Whether the document's response says the edge holds the visitor for
+    /// a challenge: the header `cf-mitigated` with the value `challenge`.
+    /// Never passed: the engine does not answer a challenge (rule 5).
+    pub challenged: bool,
 }
 
 /// A key to press.
@@ -551,6 +584,10 @@ pub enum Input {
     Check(bool),
     /// Choose the option of a select that has this value.
     SelectByValue(String),
+    /// Give a file input this one file, by its path, as a person's choice
+    /// in the browser's file chooser would. The path is a checked path
+    /// from the pack: this crate opens nothing.
+    Attach(std::path::PathBuf),
 }
 
 impl fmt::Debug for Input {
@@ -564,8 +601,19 @@ impl fmt::Debug for Input {
             Self::Click => f.write_str("Click"),
             Self::Check(on) => write!(f, "Check({on})"),
             Self::SelectByValue(value) => write!(f, "SelectByValue({value:?})"),
+            Self::Attach(_) => f.write_str("Attach(a file)"),
         }
     }
+}
+
+/// A dialog of the browser that is open on a tab: what kind it is and what
+/// it says, as the page gave it, redacted and bounded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenDialog {
+    /// `alert`, `confirm`, `prompt`, or `beforeunload`.
+    pub kind: String,
+    /// What the dialog says.
+    pub message: String,
 }
 
 /// How to answer a dialog of the page.
@@ -811,7 +859,7 @@ struct Nav {
     /// The loader whose document has been parsed.
     loaded: Option<String>,
     /// The loader of the last document response, and its status.
-    document: Option<(String, u16)>,
+    document: Option<(String, u16, bool)>,
 }
 
 /// Who is moving the tab to another document: the `goto` under way, or the
@@ -929,6 +977,17 @@ pub(crate) struct Page {
     nav: watch::Sender<Nav>,
     /// How many dialogs of the page have closed.
     dialogs_closed: watch::Sender<u64>,
+    /// A download a step declared, and how it stands.
+    download: Mutex<DownloadState>,
+    /// How many times what the page's download stands at changed.
+    download_changes: watch::Sender<u64>,
+    /// The tools the page registered, and the answers of calls of them.
+    site: Mutex<SiteState>,
+    /// How many times what the page announced of its tools changed.
+    site_changes: watch::Sender<u64>,
+    /// The dialog that is open, as the browser says it: its kind and what it
+    /// says, redacted.
+    open_dialog: Mutex<Option<OpenDialog>>,
     blocked: Mutex<Vec<RequestShape>>,
     /// How many documents of the tab's own frame have loaded, and how many
     /// things the tab refused, together: what a wait for the next change of
@@ -968,6 +1027,13 @@ pub(crate) struct Page {
     released: AtomicBool,
     browser: Arc<BrowserInner>,
 }
+
+mod downloads;
+mod site_tools;
+use downloads::DownloadState;
+pub use downloads::{Download, DownloadError};
+use site_tools::SiteState;
+pub use site_tools::{SiteAnswer, SiteTool, digest_of};
 
 /// Clears the mark of a `goto` under way when the `goto` ends, however it
 /// ends.
@@ -1383,8 +1449,8 @@ impl Page {
                 .borrow()
                 .document
                 .as_ref()
-                .filter(|(of, _)| *of == loader)
-                .map(|(_, status)| *status);
+                .filter(|(of, _, _)| *of == loader)
+                .map(|(_, status, challenged)| (*status, *challenged));
         }
         // A tab a person signs in in may be on a page whose origin its
         // helper does not look at: the browser says where it is, and the
@@ -1408,7 +1474,8 @@ impl Page {
         Ok(Loaded {
             address,
             title,
-            status: document_status,
+            status: document_status.map(|(status, _)| status),
+            challenged: document_status.is_some_and(|(_, challenged)| challenged),
         })
     }
 
@@ -1452,6 +1519,7 @@ impl Page {
             return Ok(Element {
                 object,
                 tab: self.serial,
+                query: query.clone(),
             });
         }
         match found.count() {
@@ -1484,11 +1552,16 @@ impl Page {
                 BrowserError::Unexpected("a helper argument could not be written".to_owned())
             })?,
             CallArgument::number(self.max_read),
+            // A page that drew the element again since it was found is read
+            // in the element its query finds now (decision 0379).
+            CallArgument::of(&element.query).ok_or_else(|| {
+                BrowserError::Unexpected("a helper argument could not be written".to_owned())
+            })?,
         ];
         let evaluated = self
             .on_element(
                 element,
-                "function (what, limit) { return __a2m.read(this, what, limit); }",
+                "function (what, limit, query) { return __a2m.read(this, what, limit, query); }",
                 arguments,
                 deadline,
             )
@@ -1834,6 +1907,29 @@ impl Page {
                 )
                 .await
                 .map(|_| ()),
+            Input::Attach(path) => {
+                // Only a file input takes a file; nothing is sent to any
+                // other element.
+                self.checked(
+                    element,
+                    "function () { return __a2m.fileInput(this); }",
+                    Vec::new(),
+                    deadline,
+                )
+                .await
+                .map_err(looked)?;
+                let files = [path.to_string_lossy().into_owned()];
+                self.call(
+                    &SetFileInputFiles {
+                        object_id: &element.object,
+                        files: &files,
+                    },
+                    deadline,
+                )
+                .await
+                .map(|_| ())
+                .map_err(after_sent)
+            }
             Input::Press(key) => {
                 self.checked(element, PREPARE_FOCUS, Vec::new(), deadline)
                     .await
@@ -2355,6 +2451,11 @@ impl Page {
     /// (decision 0292). Then an observing tab refuses what could write.
     fn judge_request(&self, paused: &RequestPaused) -> Verdict {
         let request = &paused.request;
+        // An origin the tool declares as refused is failed all the same, and
+        // reports nothing: the run goes on without it.
+        if self.origins.refused_quietly_reported(&request.url) {
+            return Verdict::Refuse(None);
+        }
         if !self.origins.reaches_reported(&request.url) {
             return Verdict::Refuse(Some(OUTSIDE.to_owned()));
         }
@@ -2410,10 +2511,15 @@ impl Page {
                 self.answered(&received.request_id, &received.response);
                 if received.kind == "Document" && !received.loader_id.is_empty() {
                     self.nav.send_modify(|nav| {
-                        nav.document = Some((received.loader_id, received.response.status));
+                        let challenged = received.response.challenged();
+                        nav.document =
+                            Some((received.loader_id, received.response.status, challenged));
                     });
                 }
             }
+            EventKind::ToolsAdded(params) if own => self.tools_added(&params),
+            EventKind::ToolsRemoved(params) if own => self.tools_removed(&params),
+            EventKind::ToolResponded(params) if own => self.tool_responded(&params),
             EventKind::ContextCreated(created) if own => {
                 let context = created.context;
                 if context.name == WORLD
@@ -2429,7 +2535,13 @@ impl Page {
             EventKind::ContextsCleared if own => {
                 self.world.send_replace(None);
             }
-            EventKind::DialogOpening if own => {
+            EventKind::DialogOpening(opened) if own => {
+                if let Ok(mut open) = self.open_dialog.lock() {
+                    *open = Some(OpenDialog {
+                        kind: opened.kind,
+                        message: shown(self.redact.as_ref(), &opened.message),
+                    });
+                }
                 self.status.send_if_modified(|status| {
                     let open = *status == Status::Open;
                     if open {
@@ -2439,6 +2551,9 @@ impl Page {
                 });
             }
             EventKind::DialogClosed if own => {
+                if let Ok(mut open) = self.open_dialog.lock() {
+                    *open = None;
+                }
                 self.status.send_if_modified(|status| {
                     let dialog = *status == Status::Dialog;
                     if dialog {
@@ -2467,7 +2582,18 @@ impl Page {
             }
             // The browser writes no file for it: every download is denied
             // when the browser starts. This is the report.
-            EventKind::DownloadBegins(download) => self.block(DOWNLOAD, &download.url),
+            EventKind::DownloadBegins(download) => {
+                // A download a step declared is the one, kept; any other is
+                // refused as ever, and a second one cancelled.
+                let declared = self.download_begins(&serde_json::json!({
+                    "guid": download.guid,
+                    "suggestedFilename": download.suggested_filename,
+                }));
+                if !declared {
+                    self.block(DOWNLOAD, &download.url);
+                }
+            }
+            EventKind::DownloadProgress(params) if own => self.download_progress(&params),
             EventKind::Attached(attached) => {
                 // Every child of a tab a tool runs in is locked before it
                 // runs, in both postures (decision 0292); a sign-in tab
@@ -2918,15 +3044,33 @@ fn fetch_everything() -> FetchEnable<'static> {
     }
 }
 
-/// Only the requests of documents: what a tab that may act holds, to keep
-/// itself on its origins.
-fn fetch_documents() -> FetchEnable<'static> {
+/// The requests of documents, and of what a page loads and no body goes
+/// with: what a sign-in tab holds (decision 0335). A style, an image, a
+/// media file, a font, a script, and the rest the browser files as `Other`
+/// carry no body of the person's. A `fetch`, an `XHR`, and a beacon do, and
+/// are not held, because the password a person types would cross into the
+/// engine's process in them (decision 0254). The kinds this browser's
+/// interception filter does not name (measured: `TextTrack`, `Prefetch`,
+/// `Manifest`) are not held either.
+fn fetch_documents_and_loads() -> FetchEnable<'static> {
+    const LOADS: [&str; 7] = [
+        "Document",
+        "Stylesheet",
+        "Image",
+        "Media",
+        "Font",
+        "Script",
+        "Other",
+    ];
     FetchEnable {
-        patterns: vec![RequestPattern {
-            url_pattern: "*",
-            resource_type: Some("Document"),
-            request_stage: "Request",
-        }],
+        patterns: LOADS
+            .iter()
+            .map(|kind| RequestPattern {
+                url_pattern: "*",
+                resource_type: Some(kind),
+                request_stage: "Request",
+            })
+            .collect(),
     }
 }
 
@@ -3154,6 +3298,11 @@ pub(crate) async fn open_page(
         status: watch::Sender::new(Status::Open),
         nav: watch::Sender::new(Nav::default()),
         dialogs_closed: watch::Sender::new(0),
+        download: Mutex::new(DownloadState::default()),
+        download_changes: watch::Sender::new(0),
+        site: Mutex::new(SiteState::default()),
+        site_changes: watch::Sender::new(0),
+        open_dialog: Mutex::new(None),
         blocked: Mutex::new(Vec::new()),
         changes: watch::Sender::new(0),
         pending: Mutex::new(BTreeMap::new()),
@@ -3233,9 +3382,12 @@ async fn prepare(
         )
         .await?;
     } else if page.quiet {
-        // A tab a person signs in in holds the requests of documents, as a
-        // tab that may act does, and hears no network event at all.
-        page.call(&fetch_documents(), deadline).await?;
+        // A tab a person signs in in holds the requests of documents and
+        // of what the page loads with no body, to its origins and the
+        // providers' (decision 0335), and hears no network event at all. A
+        // `fetch`, an `XHR`, or a beacon of its page is not held: what the
+        // person types would cross in it.
+        page.call(&fetch_documents_and_loads(), deadline).await?;
         page.call(&RuntimeEnable {}, deadline).await?;
     } else {
         // A tab that may act holds every request, as an observing tab does,
@@ -3311,6 +3463,17 @@ async fn prepare(
     page.call(
         &SetLocale {
             locale: &env.locale,
+        },
+        deadline,
+    )
+    .await?;
+    // A page reads its language from `navigator.language` and from the
+    // header the browser sends, not from the number format alone: both are
+    // the target's locale too.
+    page.call(
+        &SetAcceptLanguage {
+            user_agent: "",
+            accept_language: &env.locale,
         },
         deadline,
     )
@@ -3626,6 +3789,16 @@ impl ActTab {
         deadline: Deadline,
     ) -> Result<PageAnswer, BrowserError> {
         self.page.write_from_page(write, deadline).await
+    }
+
+    /// The dialog that is open, if one is: nothing is answered.
+    #[must_use]
+    pub fn open_dialog(&self) -> Option<OpenDialog> {
+        self.page
+            .open_dialog
+            .lock()
+            .ok()
+            .and_then(|open| open.clone())
     }
 
     /// Answers the dialog that is open.

@@ -17,6 +17,8 @@ pub enum Fact {
     Listeners,
     /// The proxy setting.
     Proxy,
+    /// The DHCP server each interface was leased its address by.
+    DhcpServers,
 }
 
 impl Fact {
@@ -30,6 +32,7 @@ impl Fact {
             Self::Neighbours => "the neighbour table",
             Self::Listeners => "the listening sockets",
             Self::Proxy => "the proxy setting",
+            Self::DhcpServers => "the DHCP servers",
         }
     }
 }

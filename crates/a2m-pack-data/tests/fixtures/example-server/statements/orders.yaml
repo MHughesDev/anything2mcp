@@ -18,7 +18,7 @@ records:
       customer_id: {column: customer_id, type: identifier}
       name: {column: name, type: note}
       credit_limit_cents: {column: credit_limit_cents, type: integer}
-      notes: {column: notes, type: note}
+      notes: {column: notes, type: note, nullable: true}
   # The same table under a key that does not identify one row: what a
   # record declared with too small a key does.
   order_line_loose:
@@ -43,7 +43,7 @@ records:
       shipment_id: {column: shipment_id, type: integer}
       order_id: {column: order_id, type: identifier}
       carrier: {column: carrier, type: note}
-      external_ref: {column: external_ref, type: identifier}
+      external_ref: {column: external_ref, type: identifier, nullable: true}
 statements:
   line_item_by_key:
     effect: read

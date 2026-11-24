@@ -24,7 +24,7 @@ Other sections cover what happens when the target system misbehaves, a session e
 | --- | --- | --- | --- |
 | The database cannot commit: full disk, lost connection | A write stops before its next intent. If a write was sent and cannot be recorded, the runner journals it locally and stops; the run is `possible_commit` | `stopped` | When the database returns, journals are uploaded and doubtful records reconciled |
 | The evidence store is full | Writes stop, because a record cannot be marked verified without its evidence | `degraded`; reads continue at the lowest capture level | Free space or retention; nothing is lost |
-| The key store or key service is unreachable | Sessions already in memory keep working | No session can be restored or saved; calls needing one wait, then fail | Automatic when it returns |
+| The key store or key service is unreachable | Sessions already in memory keep working | No session can be restored or saved; a call that needs one fails at once, `busy`/`key_store_unreachable`, and nothing is signed in or thrown away in its place ([decision 0352](../../decisions/0352-the-faults-of-the-kernels-own-parts-as-proven-and-what-a-verified-record-keeps.md)) | Automatic when it returns, for a store that became unreachable after start; an engine started while it was unreachable stays `degraded` until it is started again (not built) |
 | In the web pack, the browser crashes | Reads retry on a new browser. A write that had been sent is `possible_commit` | Continue | The browser is relaunched from the same profile, so the sign-in usually survives |
 | In the web pack, a tab hangs | The step times out with its declared class | Continue | The tab is closed; the browser is recycled after repeated hangs |
 | A provider's code panics in a step | The step fails by name: `unknown_variant` for a step that commits nothing, `possible_commit` for a save, because nothing says whether the write left. The driver's context is not used again | Continue | A save is reconciled on resume |
@@ -33,9 +33,9 @@ Other sections cover what happens when the target system misbehaves, a session e
 | The engine process dies | Runs in flight are interrupted | The next client starts a new engine | Reconcile, then resume, as in section 208 |
 | The machine's clock jumps | Leases are unaffected; they are measured on a steady clock | Approvals and tokens are judged by the database's or issuer's clock, with a small tolerance | None needed |
 | A plan fails its hash check | The tool is not run | That tool is unavailable; others are unaffected | Republish from stored sources |
-| A new policy version fails to load | The previous version stays in force | Unchanged | Fix and publish again. With no valid version at all, everything is denied |
+| A new policy version fails to load | The previous version stays in force: a version that does not compile or fails its tests is never stored | Unchanged | Fix and publish again. A newest stored version that cannot be read denies everything; the engine does not fall back to an older one, which may be looser (decision 0352) |
 | The identity provider is down | Running work continues on existing sessions | Server callers cannot be authenticated and are refused; local use is unaffected | Automatic |
-| A migration is interrupted | Not applicable | The engine refuses to start on a half-migrated store | Migrations are transactional where the database allows; a backup is taken first and restored otherwise |
+| A migration is interrupted | Not applicable | The engine refuses to start on a half-migrated store: one that holds a later migration without an earlier one, or what a migration makes without its record, `store_version_unsupported` (decision 0352) | Migrations are transactional where the database allows, each with the row that records it, so an interruption leaves none half; a backup is taken first and restored otherwise |
 | The store is corrupt | Not applicable | `stopped`; an integrity check runs at start | Restore from backup; every run in flight at the backup's time is reconciled |
 
 ## Limits that prevent failures
@@ -58,4 +58,4 @@ A toolset always names the exact version it uses, so two toolsets can be on diff
 
 ## Proving it
 
-Each row of the failure table is a fault-injection test: the fault is induced against the built-in test application, and the test asserts the health state, what callers were told, and that the test application's stored data shows no duplicate and no unverified record. The tests for the database, the browser, and process death arrive with Phase 3; the rest with Phase 9.
+Each row of the failure table is a fault-injection test: the fault is induced against the built-in test application, and the test asserts the health state, what callers were told, and that the test application's stored data shows no duplicate and no unverified record. The tests for the database, the browser, and process death arrive with Phase 3; the rest with Phase 9. Package 3.10 built the rows of the kernel's own parts: the engine's in `a2m-engine` `tests/faults.rs`; a half-migrated and a damaged store in `a2m-ledger`; a policy version that fails to load in `a2m-policy`; an unreachable key store in `a2m-vault` and `a2m-auth`; and, through the product against the test application, the faults of a write in `crates/anything2mcp/tests/faults.rs` (decision 0352).

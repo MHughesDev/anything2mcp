@@ -13,7 +13,7 @@ kind = "pack"
 name = "http"
 archetype = "request"
 verbs = ["read", "list", "search", "create", "update", "upsert", "delete", "submit", "call"]
-steps = ["request", "validate", "extract", "probe"]
+steps = ["token", "request", "validate", "extract", "probe"]
 # No `commit_steps`: no step kind of this mode always saves. A `request`
 # saves exactly when its endpoint is marked `write`, and the lowering marks
 # it `commits` then; the driver refuses an endpoint that writes from a step
@@ -36,7 +36,7 @@ discoverer = ["http_surface", "http_description"]
 name = "http_surface"
 archetype = "request"
 surface_kinds = ["http"]
-kinds = ["endpoint"]
+kinds = ["endpoint", "sign_in_method"]
 sources = ["live_system"]
 max_level = "discovered"
 bounds = { seconds = 30, bytes = 1000000, depth = 1 }
@@ -45,7 +45,7 @@ bounds = { seconds = 30, bytes = 1000000, depth = 1 }
 name = "http_description"
 archetype = "request"
 surface_kinds = ["http"]
-kinds = ["described_operation"]
+kinds = ["described_operation", "sign_in_method"]
 sources = ["published_description"]
 max_level = "inferred"
 bounds = { seconds = 60, bytes = 8000000, depth = 1 }
@@ -62,6 +62,10 @@ surface_kinds = ["http", "web"]
 
 [[finding_kinds]]
 name = "described_operation"
+surface_kinds = ["http"]
+
+[[finding_kinds]]
+name = "sign_in_method"
 surface_kinds = ["http"]
 
 [[lint_rules]]
@@ -132,6 +136,26 @@ code = "answer_holds_secret"
 [[failure_codes]]
 class = "transient"
 code = "upstream_unavailable"
+
+[[failure_codes]]
+class = "stale"
+code = "token_not_read"
+
+[[failure_codes]]
+class = "drift"
+code = "anti_forgery_not_found"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "anti_forgery_unreadable"
+
+[[failure_codes]]
+class = "edge_blocked"
+code = "rate_limited_by_edge"
+
+[[failure_codes]]
+class = "edge_blocked"
+code = "forbidden_by_edge"
 
 [[failure_codes]]
 class = "policy"

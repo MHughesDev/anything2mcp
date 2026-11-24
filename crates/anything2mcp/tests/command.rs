@@ -521,14 +521,13 @@ fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
         "{made}"
     );
 
-    // `add` registers the target, scouts it, shows the report, and asks
-    // for the sign-in, which a target that declares none does not need
-    // (decision 0205).
+    // `add` registers the target, scouts it, and ends at the report; it
+    // asks for no sign-in where no read waits for one (decision 0306).
     let add = bare.run(&["add", "example"]);
     let added = object(&add);
     assert_eq!(add.status.code(), Some(0), "{added}");
-    assert_eq!(added["action"], "session.login", "{added}");
-    assert_eq!(added["result"]["state"], "not_needed", "{added}");
+    assert_eq!(added["action"], "scout.report", "{added}");
+    assert_ne!(added["next"]["action"], "session.login", "{added}");
     let file = bare
         .project
         .path()

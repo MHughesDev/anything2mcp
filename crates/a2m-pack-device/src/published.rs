@@ -36,7 +36,9 @@ use a2m_core::{
     Coverage, Decimal, EvidenceLevel, Failure, FileKindName, Finding, FindingKind, OperationName,
     ProducedBy, Source, Subject, Values,
 };
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
+use a2m_files::{
+    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, names_a_secret,
+};
 use a2m_provider::{
     BoxFuture, CheckedPath, DescribeForm, Describer, Description, Discoverer, DiscovererName,
     DiscoveryReport, DiscoveryScope, FindingSink, SandboxPort, SurfaceDescription,
@@ -240,6 +242,9 @@ pub(crate) enum LeftOut {
     Bit,
     /// Can only be written.
     WriteOnly,
+    /// Its name, as the file writes it or as the register and output it
+    /// becomes, is a secret's: a secret is never an output (decision 0302).
+    Secret,
     /// A scale, a word count, a word order, or an access the pack cannot
     /// read.
     Unreadable,
@@ -253,6 +258,7 @@ impl LeftOut {
             Self::Address => "it states an address the protocol cannot hold",
             Self::Bit => "it is a coil or a discrete input, of which no read is drafted",
             Self::WriteOnly => "it can only be written",
+            Self::Secret => "its name is a secret's, so that a secret is never an output",
             Self::Unreadable => {
                 "it states a scale, a word count, a word order, or an access the pack cannot read"
             }
@@ -404,6 +410,11 @@ pub(crate) fn drafted(row: &MapRow, taken: &mut BTreeSet<String>) -> Result<Draf
         .as_deref()
         .and_then(name_of)
         .ok_or(LeftOut::NoName)?;
+    // A register named as a secret is left out of the map and has no read:
+    // its value would be an output (decision 0302).
+    if row.name.as_deref().is_some_and(names_a_secret) || names_a_secret(&name) {
+        return Err(LeftOut::Secret);
+    }
     let mut unique = name.clone();
     let mut number = 2;
     while !taken.insert(unique.clone()) {

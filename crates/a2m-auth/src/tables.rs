@@ -26,7 +26,7 @@ macro_rules! columns {
     () => {
         "id, workspace_id, target, environment, identity_ref, provider, state, epoch, \
          home_runner_id, movable, profile, state_since, signed_in_at, expires_at, checked_at, \
-         last_used_at, stored_attempts, wants, attempted_with"
+         last_used_at, stored_attempts, wants, attempted_with, signed_in_under"
     };
 }
 
@@ -88,7 +88,20 @@ fn row(row: &Row) -> Result<SessionRow, Failure> {
             .opt_text(18)?
             .map(|text| parsed(text, "a credential's mark"))
             .transpose()?,
+        // Only the word `published` reads as published. Null, as in a row
+        // kept before migration 0027, and any word this engine does not
+        // know, read as made under drafts: fail closed (decision 0374).
+        made_under_drafts: row.opt_text(19)? != Some(PUBLISHED),
     })
+}
+
+/// What `signed_in_under` holds for a session made under a published
+/// version, and for one made under drafts.
+const PUBLISHED: &str = "published";
+const DRAFTS: &str = "drafts";
+
+fn under(made_under_drafts: bool) -> SqlValue {
+    SqlValue::from(if made_under_drafts { DRAFTS } else { PUBLISHED })
 }
 
 /// The session of a key, if it has a record.
@@ -171,9 +184,10 @@ pub(crate) fn create(
         "INSERT INTO sessions
             (id, workspace_id, target, environment, identity_ref, owner_principal_id, provider,
              state, epoch, home_runner_id, movable, profile, state_since, signed_in_at,
-             expires_at, checked_at, last_used_at, stored_attempts, wants, attempted_with)
+             expires_at, checked_at, last_used_at, stored_attempts, wants, attempted_with,
+             signed_in_under)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                 ?18, ?19, ?20)",
+                 ?18, ?19, ?20, ?21)",
         &[
             SqlValue::from(new.id.to_string()),
             SqlValue::from(new.key.workspace.to_string()),
@@ -195,6 +209,7 @@ pub(crate) fn create(
             SqlValue::from(new.stored_attempts),
             SqlValue::from(new.wants.map(PersonReason::as_str)),
             SqlValue::from(new.attempted_with.map(|mark| mark.to_string())),
+            under(new.made_under_drafts),
         ],
     )?;
     insert_event(tx, event)?;
@@ -216,7 +231,7 @@ pub(crate) fn advance(
         "UPDATE sessions SET provider = ?4, state = ?5, epoch = ?6, home_runner_id = ?7,
                 movable = ?8, profile = ?9, state_since = ?10, signed_in_at = ?11,
                 expires_at = ?12, checked_at = ?13, last_used_at = ?14, stored_attempts = ?15,
-                wants = ?16, attempted_with = ?17
+                wants = ?16, attempted_with = ?17, signed_in_under = ?18
          WHERE id = ?1 AND state = ?2 AND epoch = ?3",
         &[
             SqlValue::from(seen.id.to_string()),
@@ -236,6 +251,7 @@ pub(crate) fn advance(
             SqlValue::from(next.stored_attempts),
             SqlValue::from(next.wants.map(PersonReason::as_str)),
             SqlValue::from(next.attempted_with.map(|mark| mark.to_string())),
+            under(next.made_under_drafts),
         ],
     )?;
     if changed == 0 {

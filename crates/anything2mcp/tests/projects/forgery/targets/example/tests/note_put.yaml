@@ -1,0 +1,5 @@
+test: example_note_put
+kind: offline
+fixture: note_put
+inputs: {order_id: "A-102", note: "Synthetic note, changed"}
+expect: {note: "Synthetic note, changed"}

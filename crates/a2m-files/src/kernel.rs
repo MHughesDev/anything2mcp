@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use a2m_core::{
-    ApproveWrites, BindingStatus, CaptureLevel, Checkpoint, DecimalMark, DriftRisk, EffectClass,
-    EnvironmentKind, FieldBase, Hazard, IdentityStrategy, Rounding, Sensitivity, SignInMode,
-    TestKind, WhitespaceRule,
+    ApproveWrites, BindingStatus, CaptureLevel, Checkpoint, DecimalMark, DescriptionBy, DriftRisk,
+    EffectClass, EnvironmentKind, FieldBase, Hazard, IdentityStrategy, Rounding, Sensitivity,
+    SignInMode, TestKind, WhitespaceRule,
 };
 
 use crate::schema::JsonSchema;
@@ -60,14 +60,28 @@ pub const KERNEL_FOLDER_KINDS: &[(&str, &str)] = &[
     ("fixtures", FIXTURE),
 ];
 
-/// The folders the kernel owns.
-pub const KERNEL_FOLDERS: &[&str] = &["operations", "pipelines", "sources", "tests", "fixtures"];
+/// The folders the kernel owns or reserves: `held` holds the drafts that
+/// wait on an open question, and the loader does not read it (decision
+/// 0298), so no pack may register a file kind in it.
+pub const KERNEL_FOLDERS: &[&str] = &[
+    "operations",
+    "pipelines",
+    "sources",
+    "tests",
+    "fixtures",
+    "held",
+];
 
 /// The keys of a surface the kernel owns; the rest are its pack's.
 pub const SURFACE_KEYS: &[&str] = &["kind", "same_session_as", "rate", "stands"];
 
 /// The keys of a binding the kernel owns; the rest are its mode's.
 pub const BINDING_KEYS: &[&str] = &["mode", "verb", "status", "precondition"];
+
+/// The orders an operation may state for its bindings (decision 0337):
+/// `listed` keeps the order of the file; stating none is by each mode's
+/// rank in its provider's manifest.
+pub const BINDING_ORDERS: &[&str] = &["listed"];
 
 /// The name a success check reads: every record of the run was verified.
 pub const ALL_RECORDS_VERIFIED: &str = "all_records_verified";
@@ -78,7 +92,8 @@ fn inputs() -> JsonSchema {
             .required("type", JsonSchema::field_type())
             .optional("description", JsonSchema::text())
             .optional("required", JsonSchema::bool())
-            .optional("default", JsonSchema::scalar()),
+            .optional("default", JsonSchema::scalar())
+            .optional("precondition", JsonSchema::bool()),
     )
 }
 
@@ -243,7 +258,8 @@ fn operation() -> JsonSchema {
             JsonSchema::map_of(
                 JsonSchema::object()
                     .required("type", JsonSchema::field_type())
-                    .optional("list", JsonSchema::bool()),
+                    .optional("list", JsonSchema::bool())
+                    .optional("may_be_absent", JsonSchema::bool()),
             ),
         )
         .required(
@@ -251,6 +267,8 @@ fn operation() -> JsonSchema {
             JsonSchema::non_empty_list(JsonSchema::map_of(JsonSchema::any())),
         )
         .required("description", JsonSchema::text())
+        .optional("description_by", JsonSchema::words(DescriptionBy::NAMES))
+        .optional("binding_order", JsonSchema::words(BINDING_ORDERS))
         .optional(
             "examples",
             JsonSchema::list(JsonSchema::map_of(JsonSchema::scalar())),
@@ -285,6 +303,7 @@ fn pipeline() -> JsonSchema {
         .required("pipeline", JsonSchema::name())
         .optional("title", JsonSchema::text())
         .required("description", JsonSchema::text())
+        .optional("description_by", JsonSchema::words(DescriptionBy::NAMES))
         .optional("effect", JsonSchema::words(EffectClass::NAMES))
         .optional("inputs", inputs())
         .optional(

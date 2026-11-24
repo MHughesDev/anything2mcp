@@ -18,7 +18,7 @@ pub(crate) fn needs_login(why: &'static str) -> Failure {
         FailureClass::SessionExpired,
         NEEDS_LOGIN,
         format!("The session cannot be used: {why}."),
-        "Sign in with `anything2mcp session login`, then run the tool again or resume the run.",
+        "Sign in with `anything2mcp session login`, then resume the run, which reconciles any write it began before it writes again.",
     )
 }
 

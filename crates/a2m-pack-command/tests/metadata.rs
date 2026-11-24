@@ -120,7 +120,14 @@ async fn discover(
     };
     let prepared = handle.prepare(&cx, None).await.unwrap();
     let before = stand.control().invocations().unwrap().len();
-    let discoverers = registry.discoverers_for(&description(&surface));
+    // The pack has two discoverers: the one that runs a program's declared
+    // help forms, and the one that reads a binary's bytes and starts nothing.
+    let all = registry.discoverers_for(&description(&surface));
+    assert_eq!(all.len(), 2);
+    let discoverers: Vec<_> = all
+        .into_iter()
+        .filter(|found| found.declared().name.to_string() == "help")
+        .collect();
     assert_eq!(discoverers.len(), 1);
     let port = ReadOnlyPort::new(handle.clone(), prepared);
     let scope = a2m_provider::DiscoveryScope {
@@ -203,6 +210,7 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
     assert_eq!(
         taken,
         [
+            "binary",
             "completions",
             "manual",
             "module_manifest",
@@ -312,7 +320,11 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
     assert!(control.writes().unwrap().is_empty());
     assert_eq!(control.stored_items().unwrap(), seed);
 
-    let described = registry.discoverers_for(&description(&surface))[0]
+    let described = registry
+        .discoverers_for(&description(&surface))
+        .into_iter()
+        .find(|found| found.declared().name.to_string() == "help")
+        .unwrap()
         .describe(&findings, a2m_provider::DescribeForm::Summary);
     assert!(
         described.text.contains("2 handed files"),
@@ -333,7 +345,17 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
     let drafted = a2m_files::Drafter::new(registry.compiler_set(), &root)
         .draft(&findings)
         .unwrap();
-    assert_eq!(drafted.written.len(), 9, "{drafted:?}");
+    // Every command is its own finding and each file holds an open
+    // question, so all nine wait in the holding folder (decision 0298).
+    assert!(drafted.written.is_empty(), "{drafted:?}");
+    assert_eq!(drafted.held.len(), 9, "{drafted:?}");
+    assert!(
+        drafted
+            .held
+            .iter()
+            .all(|path| path.as_str().starts_with("held/commands/")),
+        "{drafted:?}"
+    );
     assert_eq!(
         drafted.not_covered,
         files.iter().map(|file| file.id()).collect::<Vec<_>>()
@@ -355,8 +377,21 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
     assert!(asked("item list", "--limit").contains("does not show it"));
     assert!(asked("catalog push", "--dry-run").contains("does not show it"));
     assert!(asked("item show", "How to print the item").contains("what a file handed"));
-    let draft =
-        std::fs::read_to_string(target.path().join("commands").join("item_list.yaml")).unwrap();
+    assert!(
+        !target
+            .path()
+            .join("commands")
+            .join("item_list.yaml")
+            .exists()
+    );
+    let draft = std::fs::read_to_string(
+        target
+            .path()
+            .join("held")
+            .join("commands")
+            .join("item_list.yaml"),
+    )
+    .unwrap();
     assert!(!draft.contains("limit:"), "{draft}");
     // Each draft compiles but for the questions it leaves: every problem
     // the compiler and the lints find is an open question, a value that
@@ -587,9 +622,25 @@ async fn a_powershell_help_file_and_a_manifest_are_read_as_data_and_draft_fixed_
     let drafted = a2m_files::Drafter::new(registry.compiler_set(), &root)
         .draft(&ours)
         .unwrap();
-    assert_eq!(drafted.written.len(), 2, "{drafted:?}");
-    let draft =
-        |name: &str| std::fs::read_to_string(target.path().join("commands").join(name)).unwrap();
+    // Each command holds an open question (the program's digest, the
+    // effect), so both wait in the holding folder (decision 0298).
+    assert!(drafted.written.is_empty(), "{drafted:?}");
+    assert_eq!(
+        drafted
+            .held
+            .iter()
+            .map(|path| path.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "held/commands/get_exampleitem.yaml",
+            "held/commands/set_exampleitem.yaml"
+        ],
+        "{drafted:?}"
+    );
+    assert!(!target.path().join("commands").exists());
+    let draft = |name: &str| {
+        std::fs::read_to_string(target.path().join("held").join("commands").join(name)).unwrap()
+    };
     let get = draft("get_exampleitem.yaml");
     for expected in [
         "-NoProfile",
@@ -760,4 +811,131 @@ async fn a_help_file_with_an_entity_too_large_or_not_help_starts_nothing_and_fet
     let commands = of_kind(&findings, "powershell_command");
     assert_eq!(commands.len(), 1);
     assert!(commands[0].found().contains("Set-ExampleItem"));
+}
+
+/// Decision 0302: a parameter a program's help shows under a secret's name
+/// is never a param of the draft. An optional one is left out; a required one
+/// makes the arguments of that command a question.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_parameter_named_as_a_secret_is_never_drafted_as_a_param() {
+    let folder = Folder::new("powershell-secret");
+    let stand = Stand::start().unwrap();
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let help = String::from_utf8(source("Example.Inventory-help.xml"))
+        .unwrap()
+        .replace(
+            "<maml:name>Detailed</maml:name>",
+            "<maml:name>ClientSecret</maml:name>",
+        )
+        .replace(
+            "<maml:name>Sku</maml:name>",
+            "<maml:name>Password</maml:name>",
+        );
+    let (report, findings, _) = discover(
+        &stand,
+        &folder,
+        &registry,
+        &[(
+            "powershell_help",
+            "Example.Inventory-help.xml",
+            help.into_bytes(),
+        )],
+        &NoSecrets,
+    )
+    .await;
+    report.unwrap();
+    let ours: Vec<Finding> = findings
+        .iter()
+        .filter(|finding| finding.kind().as_str() == "powershell_command")
+        .cloned()
+        .collect();
+    assert_eq!(ours.len(), 2);
+    let target = Folder::new("powershell-secret-draft");
+    let root = powershell_target(&stand, &target);
+    let drafted = a2m_files::Drafter::new(registry.compiler_set(), &root)
+        .draft(&ours)
+        .unwrap();
+    assert!(drafted.refused.is_empty(), "{drafted:?}");
+    let mut seen = 0;
+    for path in &drafted.held {
+        let text = std::fs::read_to_string(target.path().join(path.as_str())).unwrap();
+        seen += 1;
+        // No param, flag, or argument has a secret's name, and `Rows`
+        // stays a param: only the secret's names are left out.
+        for secret in ["clientsecret", "password"] {
+            assert!(
+                !text.to_ascii_lowercase().contains(secret),
+                "{path}: {text}"
+            );
+        }
+    }
+    assert_eq!(seen, 2);
+    // Of `Set-ExampleItem`, the set that requires `Sku` has its arguments
+    // asked, and the set without it still gives `-InputObject` by name.
+    let set =
+        std::fs::read_to_string(target.path().join("held/commands/set_exampleitem.yaml")).unwrap();
+    assert!(set.contains("flag: \"-InputObject\""), "{set}");
+    assert!(set.contains("args: {open_question:"), "{set}");
+    // `Sku` was required, so the arguments of that set are a question, and
+    // the question names no secret.
+    assert!(
+        drafted.open_questions.iter().any(|open| open
+            .question
+            .contains("requires a parameter under a name that is a secret's")),
+        "{:?}",
+        drafted.open_questions
+    );
+}
+
+/// Field test 5, findings 28 and 29 (decision 0364): a program that prints
+/// a second version line, and help set out with tabs. The scout starts, reads
+/// every command, and says how many lines of the listing it skipped and why.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_version_line_and_a_listing_set_out_with_tabs_do_not_stop_the_scout() {
+    use example_cli::faults::{Fault, FaultKind};
+
+    let folder = Folder::new("tabs");
+    let stand = Stand::start().unwrap();
+    let registry = registry(&folder, Arc::new(NoSecrets));
+
+    let (report, findings, _) = discover(&stand, &folder, &registry, &[], &NoSecrets).await;
+    let plain = report.unwrap();
+    let names = |findings: &[Finding]| -> Vec<String> {
+        of_kind(findings, "command")
+            .into_iter()
+            .map(|finding| json(finding)["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let expected = names(&findings);
+    assert_eq!(expected.len(), 9, "{expected:?}");
+    assert_eq!(plain.dropped, 0);
+
+    let control = stand.control();
+    control
+        .set_fault(&Fault::until_cleared(FaultKind::TabbedHelp).on("help"))
+        .unwrap();
+    control
+        .set_fault(&Fault::until_cleared(FaultKind::UnnamedHelpLine).on("help"))
+        .unwrap();
+    control
+        .set_fault(&Fault::until_cleared(FaultKind::InterfaceLine))
+        .unwrap();
+    let (report, findings, _) = discover(&stand, &folder, &registry, &[], &NoSecrets).await;
+    let report = report.unwrap();
+    // Every command is read, with its text, though the listing uses tabs and
+    // the version is the first of two lines.
+    assert_eq!(names(&findings), expected);
+    assert_eq!(
+        json(command(&findings, "item show"))["about"],
+        "Show one item."
+    );
+    // The line that holds no name is skipped, counted, and said by reason.
+    assert_eq!(report.dropped, 1);
+    let listing = of_kind(&findings, "command_file")
+        .into_iter()
+        .find(|finding| json(finding)["form"] == "program_help")
+        .expect("a finding that says the skipped line");
+    let said = json(listing);
+    assert_eq!(said["unread"], serde_json::json!({"name_not_plain": 1}));
+    assert_eq!(said["read"], expected.len());
 }

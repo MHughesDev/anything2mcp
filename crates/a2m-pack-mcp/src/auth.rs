@@ -37,7 +37,7 @@ fn incomplete() -> Failure {
         FailureClass::SessionExpired,
         a2m_auth::codes::NEEDS_LOGIN,
         "The session cannot be used: its saved credentials are incomplete.",
-        "Sign in with `anything2mcp session login`, then run the tool again or resume the run.",
+        "Sign in with `anything2mcp session login`, then resume the run, which reconciles any write it began before it writes again.",
     )
 }
 

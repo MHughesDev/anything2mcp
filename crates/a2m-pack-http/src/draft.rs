@@ -14,7 +14,10 @@
 //! or one list of values.
 
 use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName};
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
+use a2m_files::{
+    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, left_out_sentence,
+    names_a_secret,
+};
 
 use crate::json::Json;
 use crate::openapi::{DescribedOperation, Parameter, object_words, snake};
@@ -65,15 +68,25 @@ fn example_of(parameter: &Parameter) -> Option<DraftValue> {
     }
 }
 
+/// Whether a name the description writes is a certain secret's by the
+/// compiler's own rule, as the description writes it or as an output or
+/// input is named from it (decision 0302).
+fn named_as_secret(word: &str, name: &str) -> bool {
+    names_a_secret(word) || names_a_secret(name)
+}
+
 /// The plain properties of a record's shape: for each, the name it has as
 /// an output, the property as the description writes it, and its kind.
 /// A property whose name holds a dot or a star cannot be named in
 /// `extract`; one whose name gives no output name, or one already taken,
-/// or one that is not one plain value, is left out.
-fn plain_outputs(shape: &Json) -> Vec<(String, &str, &str)> {
+/// or one that is not one plain value, is left out. Apart, the names of
+/// those left out because the compiler takes them for a secret's: a value
+/// such a property holds is never an output.
+fn plain_outputs_and_secrets(shape: &Json) -> (Vec<(String, &str, &str)>, Vec<String>) {
     let mut found: Vec<(String, &str, &str)> = Vec::new();
+    let mut secrets: Vec<String> = Vec::new();
     let Some(Json::Object(properties)) = shape.get("properties") else {
-        return found;
+        return (found, secrets);
     };
     for (property, inner) in properties {
         if property.contains(['.', '*']) {
@@ -89,18 +102,23 @@ fn plain_outputs(shape: &Json) -> Vec<(String, &str, &str)> {
         if !matches!(kind, "string" | "integer" | "number" | "boolean" | "any") {
             continue;
         }
+        if named_as_secret(property, &name) {
+            secrets.push(name);
+            continue;
+        }
         found.push((name, property.as_str(), kind));
     }
-    found
+    (found, secrets)
 }
 
 /// The outputs of a read: each plain property of `shape`, named in the
 /// form target files use, with where it is in the answer when the name
 /// differs or the answer is a list.
-fn outputs(shape: &Json, listed: bool, cx: &DraftContext<'_>) -> (Pairs, Pairs) {
+fn outputs(shape: &Json, listed: bool, cx: &DraftContext<'_>) -> (Pairs, Pairs, Vec<String>) {
     let mut outputs: Pairs = Vec::new();
     let mut extract = Vec::new();
-    for (name, property, kind) in plain_outputs(shape) {
+    let (plain, secrets) = plain_outputs_and_secrets(shape);
+    for (name, property, kind) in plain {
         let Some(ty) = output_type(kind, &name, cx) else {
             continue;
         };
@@ -113,7 +131,24 @@ fn outputs(shape: &Json, listed: bool, cx: &DraftContext<'_>) -> (Pairs, Pairs) 
         }
         outputs.push((name, DraftValue::map(output)));
     }
-    (outputs, extract)
+    (outputs, extract, secrets)
+}
+
+/// Why a read is not drafted, in this pack's own words: they quote nothing
+/// of the description (roadmap package FT11).
+mod why {
+    pub(super) const NO_TARGET: &str =
+        "The target has no `target.yaml` yet, so a tool has no name to be given.";
+    pub(super) const PATH_NOT_BINDABLE: &str = "The read's path is not one this rule can bind: every placeholder must be a whole segment of a path that begins with `/`.";
+    pub(super) const NO_NAME: &str = "No tool name can be made from the words of the read's path.";
+    pub(super) const NO_PARAMETER: &str = "A placeholder of the read's path has no parameter the description states, so its type is not known.";
+    pub(super) const SECRET_PLACEHOLDER: &str = "A placeholder of the read's path is named as a secret's. A secret is never an input, so the read is left to a person.";
+    pub(super) const SECRET_PARAMETER: &str = "The read requires a parameter outside the path whose name is a secret's. A secret is never an input, so the read is left to a person.";
+    pub(super) const OUTSIDE_PATH: &str = "The read requires a parameter outside the path (a query value, a header, a cookie, a body, or a form), which this rule does not draft as an input.";
+    pub(super) const NO_ANSWER: &str = "The description states no answer shape for the read.";
+    pub(super) const NO_PLAIN_OUTPUT: &str =
+        "The answer has no property of one plain value this rule can name as an output.";
+    pub(super) const ONLY_SECRETS: &str = "Every plain property of the answer is named as a secret's, so the read would have no output. A secret is never an output.";
 }
 
 /// The placeholders of a read's path, in order, each with what the
@@ -121,6 +156,13 @@ fn outputs(shape: &Json, listed: bool, cx: &DraftContext<'_>) -> (Pairs, Pairs) 
 /// read needs a parameter outside the path (a query value, a header, a
 /// cookie, a body, or a form): the read is the developer's.
 fn placeholders_of(operation: &DescribedOperation) -> Option<Vec<(String, &Parameter)>> {
+    placeholders_or_why(operation).ok()
+}
+
+/// As [`placeholders_of`], with the reason it gives none.
+fn placeholders_or_why(
+    operation: &DescribedOperation,
+) -> Result<Vec<(String, &Parameter)>, &'static str> {
     let mut placeholders = Vec::new();
     for part in operation.path.split('/') {
         let Some(name) = part.strip_prefix('{').and_then(|p| p.strip_suffix('}')) else {
@@ -129,17 +171,30 @@ fn placeholders_of(operation: &DescribedOperation) -> Option<Vec<(String, &Param
         let parameter = operation
             .parameters
             .iter()
-            .find(|known| known.place == "path" && known.name == name)?;
+            .find(|known| known.place == "path" && known.name == name)
+            .ok_or(why::NO_PARAMETER)?;
+        // A placeholder named as a secret makes the read the developer's: a
+        // secret is never an input (decision 0302).
+        if named_as_secret(name, &snake(name)) {
+            return Err(why::SECRET_PLACEHOLDER);
+        }
         placeholders.push((snake(name), parameter));
     }
-    if operation
+    let outside: Vec<&Parameter> = operation
         .parameters
         .iter()
-        .any(|parameter| parameter.required && parameter.place != "path")
+        .filter(|parameter| parameter.required && parameter.place != "path")
+        .collect();
+    if outside
+        .iter()
+        .any(|parameter| named_as_secret(&parameter.name, &snake(&parameter.name)))
     {
-        return None;
+        return Err(why::SECRET_PARAMETER);
     }
-    Some(placeholders)
+    if !outside.is_empty() {
+        return Err(why::OUTSIDE_PATH);
+    }
+    Ok(placeholders)
 }
 
 /// The record of an answer, and whether the answer is a list of them.
@@ -156,16 +211,40 @@ fn record_of(shape: &Json) -> Option<(&Json, bool)> {
 /// `draft` goes by; the import asks it, so that a read the rule leaves to
 /// the developer does not make another read's name longer.
 pub(crate) fn would_draft(operation: &DescribedOperation) -> bool {
-    operation.safe
-        && operation.method == "GET"
-        && operation.template_path().is_some()
-        && object_words(&operation.path).is_some()
-        && placeholders_of(operation).is_some()
-        && operation
-            .response
-            .as_ref()
-            .and_then(record_of)
-            .is_some_and(|(record, _)| !plain_outputs(record).is_empty())
+    is_read(operation) && why_not_drafted(operation).is_none()
+}
+
+/// Whether the description's operation is one the rule reads at all: a GET
+/// it marks safe. Any other is not a read, and is not reported as one left
+/// undrafted.
+fn is_read(operation: &DescribedOperation) -> bool {
+    operation.safe && operation.method == "GET"
+}
+
+/// Why a read is not drafted, when it is not; `None` when it is. The
+/// conditions of [`would_draft`], one by one, in the order they are met.
+fn why_not_drafted(operation: &DescribedOperation) -> Option<&'static str> {
+    if operation.template_path().is_none() {
+        return Some(why::PATH_NOT_BINDABLE);
+    }
+    if object_words(&operation.path).is_none() {
+        return Some(why::NO_NAME);
+    }
+    if let Err(reason) = placeholders_or_why(operation) {
+        return Some(reason);
+    }
+    let Some((record, _)) = operation.response.as_ref().and_then(record_of) else {
+        return Some(why::NO_ANSWER);
+    };
+    let (plain, secrets) = plain_outputs_and_secrets(record);
+    if plain.is_empty() {
+        return Some(if secrets.is_empty() {
+            why::NO_PLAIN_OUTPUT
+        } else {
+            why::ONLY_SECRETS
+        });
+    }
+    None
 }
 
 /// What a read that was given no name is asked.
@@ -196,11 +275,25 @@ impl DraftingRule for DescribedReadRule {
 
     fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
         let operation = DescribedOperation::from_found(finding.found()).ok_or_else(unreadable)?;
+        // Only a safe GET is a read; any other is not this rule's, and is
+        // not reported as left undrafted.
+        if !is_read(&operation) {
+            return Ok(Vec::new());
+        }
         // A tool is named after its target; with none there is no name.
         let Some(target) = cx.target() else {
+            cx.not_drafted(why::NO_TARGET);
             return Ok(Vec::new());
         };
-        if !would_draft(&operation) {
+        if let Some(reason) = why_not_drafted(&operation) {
+            cx.not_drafted(reason);
+            // A read with nothing left but secrets is not drafted for them:
+            // they are the properties left out.
+            if reason == why::ONLY_SECRETS
+                && let Some((record, _)) = operation.response.as_ref().and_then(record_of)
+            {
+                cx.left_out_as_secret(plain_outputs_and_secrets(record).1.len());
+            }
             return Ok(Vec::new());
         }
         let (Some(path), Some(shape), Some(placeholders)) = (
@@ -213,10 +306,12 @@ impl DraftingRule for DescribedReadRule {
         let Some((record, listed)) = record_of(shape) else {
             return Ok(Vec::new());
         };
-        let (outputs, extract) = outputs(record, listed, cx);
+        let (outputs, extract, secrets) = outputs(record, listed, cx);
         if outputs.is_empty() || path.is_empty() {
+            cx.not_drafted(why::NO_PLAIN_OUTPUT);
             return Ok(Vec::new());
         }
+        cx.left_out_as_secret(secrets.len());
         let verb = if listed { "list" } else { "get" };
         // A read whose name is shared with another's, or is too long, is
         // drafted with its name as an open question, in a file of its own.
@@ -305,14 +400,20 @@ impl DraftingRule for DescribedReadRule {
         doc.push(("bindings", DraftValue::List(vec![DraftValue::map(binding)])));
         doc.push((
             "description",
-            DraftValue::text(&if listed {
-                format!(
-                    "Lists what the endpoint `{endpoint}` answers, as the service's published description states it. Drafted by rule; its name is provisional."
-                )
-            } else {
-                format!(
-                    "Reads what the endpoint `{endpoint}` answers for one key, as the service's published description states it. Drafted by rule; its name is provisional, and its example is the description's own."
-                )
+            DraftValue::text(&{
+                let mut text = if listed {
+                    format!(
+                        "Lists what the endpoint `{endpoint}` answers, as the service's published description states it. Drafted by rule; its name is provisional."
+                    )
+                } else {
+                    format!(
+                        "Reads what the endpoint `{endpoint}` answers for one key, as the service's published description states it. Drafted by rule; its name is provisional, and its example is the description's own."
+                    )
+                };
+                if !secrets.is_empty() {
+                    text.push_str(&left_out_sentence(&secrets));
+                }
+                text
             }),
         ));
         // The example is the description's own, for every placeholder, or
@@ -328,5 +429,148 @@ impl DraftingRule for DescribedReadRule {
             path: RelPath::new(&file)?,
             body: DraftValue::map(doc),
         }])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        left_out_sentence, placeholders_of, plain_outputs_and_secrets, why, why_not_drafted,
+        would_draft,
+    };
+    use crate::json::Json;
+    use crate::openapi::{DescribedOperation, operations};
+
+    /// One GET at `path` with `parameters` (JSON text) answering `schema`.
+    fn read(path: &str, parameters: &str, schema: &str) -> DescribedOperation {
+        let text = r#"{"openapi": "3.0.3", "paths": {"PATH": {"get": {"parameters": [PARAMS],
+              "responses": {"200": {"content": {"application/json": {"schema": SCHEMA}}}}}}}}"#
+            .replace("PATH", path)
+            .replace("PARAMS", parameters)
+            .replace("SCHEMA", schema);
+        operations(text.as_bytes()).unwrap().remove(0)
+    }
+
+    const RECORD: &str = r#"{"type": "object", "properties": {
+        "id": {"type": "string"}, "client_secret": {"type": "string"},
+        "accessToken": {"type": "string"}, "total": {"type": "integer"},
+        "inner": {"type": "object", "properties": {"password": {"type": "string"}}}}}"#;
+
+    fn names(found: &[(String, &str, &str)]) -> Vec<String> {
+        found.iter().map(|(name, _, _)| name.clone()).collect()
+    }
+
+    #[test]
+    fn a_property_named_as_a_secret_is_left_out_at_the_top_and_in_a_lists_items() {
+        let top = Json::parse(RECORD.as_bytes()).unwrap();
+        let list =
+            Json::parse(format!(r#"{{"type": "array", "items": {RECORD}}}"#).as_bytes()).unwrap();
+        let items = list.get("items").unwrap();
+        for record in [&top, items] {
+            let (kept, secrets) = plain_outputs_and_secrets(record);
+            assert_eq!(names(&kept), ["id", "total"]);
+            assert_eq!(secrets, ["client_secret", "access_token"]);
+        }
+        let sentence = left_out_sentence(&["client_secret".to_owned(), "access_token".to_owned()]);
+        assert!(
+            sentence.ends_with("`client_secret`, `access_token`."),
+            "{sentence}"
+        );
+        assert!(sentence.contains("secret"), "{sentence}");
+    }
+
+    #[test]
+    fn a_nested_property_named_as_a_secret_changes_nothing() {
+        let record = Json::parse(RECORD.as_bytes()).unwrap();
+        let (_, secrets) = plain_outputs_and_secrets(&record);
+        // `inner.password` is nested: it was never an output, so it is
+        // neither kept nor counted as left out.
+        assert!(
+            !secrets
+                .iter()
+                .any(|name| name == "password" || name == "inner")
+        );
+    }
+
+    #[test]
+    fn a_read_with_nothing_but_secrets_to_give_is_not_drafted() {
+        let only = r#"{"type": "object", "properties": {"client_secret": {"type": "string"}}}"#;
+        assert!(!would_draft(&read("/a/b", "", only)));
+        assert!(would_draft(&read("/a/b", "", RECORD)));
+    }
+
+    #[test]
+    fn an_optional_parameter_named_as_a_secret_is_no_input_and_a_required_one_is_not_drafted() {
+        let optional = r#"{"name": "access_token", "in": "query", "schema": {"type": "string"}}"#;
+        let found = read("/a/b", optional, RECORD);
+        assert_eq!(placeholders_of(&found).unwrap().len(), 0);
+        assert!(would_draft(&found));
+        for place in ["query", "header", "cookie"] {
+            let required = format!(
+                r#"{{"name": "api_key", "in": "{place}", "required": true, "schema": {{"type": "string"}}}}"#
+            );
+            let found = read("/a/b", &required, RECORD);
+            assert!(placeholders_of(&found).is_none(), "{place}");
+            assert!(!would_draft(&found), "{place}");
+        }
+    }
+
+    #[test]
+    fn a_path_placeholder_named_as_a_secret_makes_the_read_not_drafted() {
+        let secret =
+            r#"{"name": "api_key", "in": "path", "required": true, "schema": {"type": "string"}}"#;
+        assert!(!would_draft(&read("/a/{api_key}", secret, RECORD)));
+        let plain =
+            r#"{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}"#;
+        assert!(would_draft(&read("/a/{id}", plain, RECORD)));
+    }
+
+    #[test]
+    fn a_read_the_rule_does_not_draft_says_why_and_a_read_it_drafts_says_nothing() {
+        let id = r#"{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}"#;
+        let required = |place: &str, name: &str| {
+            format!(
+                r#"{{"name": "{name}", "in": "{place}", "required": true, "schema": {{"type": "string"}}}}"#
+            )
+        };
+        let secrets_only =
+            r#"{"type": "object", "properties": {"client_secret": {"type": "string"}}}"#;
+        let nothing_plain = r#"{"type": "object", "properties": {"tags": {"type": "array", "items": {"type": "string"}}}}"#;
+        let cases = [
+            (read("/a/{id}", id, RECORD), None),
+            (
+                read(
+                    "/a/{id}",
+                    &format!("{id}, {}", required("query", "api_key")),
+                    RECORD,
+                ),
+                Some(why::SECRET_PARAMETER),
+            ),
+            (
+                read(
+                    "/a/{id}",
+                    &format!("{id}, {}", required("header", "x")),
+                    RECORD,
+                ),
+                Some(why::OUTSIDE_PATH),
+            ),
+            (
+                read("/a/{api_key}", &required("path", "api_key"), RECORD),
+                Some(why::SECRET_PLACEHOLDER),
+            ),
+            (read("/a/{id}", "", RECORD), Some(why::NO_PARAMETER)),
+            (read("/a/b", "", secrets_only), Some(why::ONLY_SECRETS)),
+            (read("/a/b", "", nothing_plain), Some(why::NO_PLAIN_OUTPUT)),
+        ];
+        for (operation, expected) in &cases {
+            assert_eq!(why_not_drafted(operation), *expected, "{}", operation.path);
+            assert_eq!(would_draft(operation), expected.is_none());
+        }
+        // A reason quotes nothing of the description.
+        for (_, expected) in &cases {
+            if let Some(reason) = expected {
+                assert!(!reason.contains("api_key") && !reason.contains("client_secret"));
+            }
+        }
     }
 }

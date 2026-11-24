@@ -1,6 +1,6 @@
 # The manifest of the web pack's discoverers. What is not built is not
-# declared: `web_auth`, `web_endpoints`, `web_declared`, and the finding
-# kinds `field`, `action`, and `declared_tool`.
+# declared: `web_endpoints`, `web_declared`, and the finding kinds `field`,
+# `action`, and `declared_tool`.
 manifest_format = 1
 contract = 1
 
@@ -18,7 +18,7 @@ of = "finding_kinds"
 surface_kind = "web"
 
 [points]
-discoverer = ["web_probe", "web_snapshot", "web_capture"]
+discoverer = ["web_probe", "web_snapshot", "web_capture", "web_auth"]
 
 [[discoverers]]
 name = "web_probe"
@@ -46,6 +46,15 @@ kinds = ["exchange", "endpoint"]
 sources = ["live_system"]
 max_level = "discovered"
 bounds = { seconds = 120, bytes = 4000000, depth = 0 }
+
+[[discoverers]]
+name = "web_auth"
+archetype = "interface"
+surface_kinds = ["web"]
+kinds = ["sign_in_method"]
+sources = ["live_system"]
+max_level = "inferred"
+bounds = { seconds = 30, bytes = 1000000, depth = 0 }
 
 [[finding_kinds]]
 name = "surface"
@@ -94,6 +103,10 @@ code = "page_unreadable"
 [[failure_codes]]
 class = "transient"
 code = "page_not_loaded"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "sign_in_unrecognized"
 
 # The browser is started for a profile of the engine's own, under the root
 # `profiles`, and reaches only the target's declared surfaces.

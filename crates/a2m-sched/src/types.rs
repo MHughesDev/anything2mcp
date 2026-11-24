@@ -449,6 +449,14 @@ pub struct JobRequirements {
     pub max_step: Duration,
     /// Whether the job may write to the system.
     pub writes: bool,
+    /// Set by the scheduler on the reconcile it queues after a lost lease,
+    /// and kept on each reconcile that follows it: once its reconcile has
+    /// settled, the job reads again every record the ledger holds as
+    /// verified, within the same lease (decision 0347). A job made by a
+    /// caller leaves it `false`; one stored before the field existed reads
+    /// as `false`.
+    #[serde(default)]
+    pub verify_after_loss: bool,
 }
 
 /// A run to admit, with its first job.
@@ -539,11 +547,18 @@ pub struct RunnerTerms {
 /// How many more jobs a runner can take now.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Slots {
-    /// The most jobs one claim returns.
+    /// The most jobs one claim returns in the runner's ordinary slots.
     pub total: u32,
     /// Free slots for each mode, by name. A job that names modes takes one
     /// slot of the first of its modes that has one free.
     pub per_mode: BTreeMap<Mode, u32>,
+    /// Free slots kept for the session keeper's jobs, of kind
+    /// [`JobKind::SessionKeepalive`]: no other job takes one, so a run
+    /// that waits for a session's check or renewal never holds the only
+    /// slot that check needs (spec section 215). A keeper job takes one of
+    /// these before an ordinary slot, and the runner's modes do not limit
+    /// it.
+    pub keeper: u32,
 }
 
 /// The right to work on one job for a limited time.

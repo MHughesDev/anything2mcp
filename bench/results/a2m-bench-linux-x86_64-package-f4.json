@@ -1,0 +1,27 @@
+{
+  "schema": "a2m-bench-result",
+  "version": 1,
+  "commit": "package-f4",
+  "os": "linux",
+  "arch": "x86_64",
+  "plan": {
+    "warmup_iterations": 50,
+    "iterations": 500
+  },
+  "scenarios": [
+    {
+      "name": "program_size",
+      "operation": {
+        "count": 1,
+        "min_ns": 0,
+        "median_ns": 0,
+        "p95_ns": 0,
+        "p99_ns": 0,
+        "max_ns": 0
+      },
+      "baseline": null,
+      "overhead": null,
+      "size_bytes": 24042992
+    }
+  ]
+}

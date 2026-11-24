@@ -732,6 +732,11 @@ impl Kernel {
                     .to_owned(),
             );
         }
+        // What this engine's ledger proved of each tool, each fixture, and
+        // each verified binding, first, so that a person reads it before
+        // the rest (decision 0311).
+        let proved = crate::evidence::lines(self, caller, &target, &compiled.plan, &gates).await?;
+        details.splice(0..0, proved);
         details.extend(gates.lines());
         Ok((input, details, shown, Vec::new()))
     }

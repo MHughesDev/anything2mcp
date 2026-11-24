@@ -1,0 +1,17 @@
+# The imaginary inventory tool of the imaginary system `example`, as a
+# target of the command pack. It describes no real product. Its one surface
+# is a program; a test puts the test stand's program at the path named here.
+schema_version: 1
+target: example
+title: Example inventory tool
+surfaces:
+  tool:
+    kind: program
+    path: '/opt/example/bin/example-cli'
+environments:
+  test:
+    kind: test
+    test_records: ["SK-1001"]
+default_environment: test
+environment: {locale: en-US, timezone: UTC}
+drift_risk: low

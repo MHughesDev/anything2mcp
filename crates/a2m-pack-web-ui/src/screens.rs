@@ -15,8 +15,8 @@ use a2m_files::{
 
 use crate::codes::shown;
 use crate::model::{
-    Action, Cond, Field, Fingerprint, Handling, LocateBy, Locator, PAYLOAD_FORMAT, ReadHow, Rows,
-    Screen, ScreenSection, Segment, Variant,
+    Action, Cond, DownloadDecl, Field, Fingerprint, Handling, LocateBy, Locator, NativeDialog,
+    PAYLOAD_FORMAT, ReadHow, Rows, Screen, ScreenSection, Segment, Variant,
 };
 
 /// The name of this pack, as its manifest gives it.
@@ -36,7 +36,32 @@ pub const CONTROLS: &[&str] = &[
     "measurement",
     "select",
     "checkbox",
+    "radio",
+    "date",
+    "combobox",
+    "autocomplete",
+    "datetime",
+    "time",
+    "slider",
+    "file",
+    "rich_text",
+    "grid",
+    "tree",
+    "tabs",
+    "accordion",
+    "toggle",
 ];
+
+/// The controls whose choices the field names under `options`, each code
+/// with the label the page shows for it. A `radio`, a set of `tabs`, and an
+/// `accordion` must: each is read as the code of the choice that is on. A
+/// `combobox` and an `autocomplete` may; with none, the label is the value.
+const CHOICES_REQUIRED: &[&str] = &["radio", "tabs", "accordion"];
+const CHOICES_OPTIONAL: &[&str] = &["combobox", "autocomplete"];
+
+/// The most a declared download may be, in bytes: a person's file, not a
+/// disk's contents.
+pub const MOST_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
 
 /// A code of this pack's compiler: its lint rules, and what its file kind
 /// and lowering refuse.
@@ -117,12 +142,26 @@ pub(crate) fn screen_schema() -> JsonSchema {
         .required("control", JsonSchema::control())
         .required("locate", locate_schema())
         .optional("fingerprint", fingerprint_schema())
-        .optional("read", JsonSchema::words(&["value", "text", "checked"]));
+        .optional("read", JsonSchema::words(&["value", "text", "checked"]))
+        .optional("options", JsonSchema::map_of(JsonSchema::text()))
+        .optional("column", JsonSchema::int());
     let action = JsonSchema::object()
         .required("locate", locate_schema())
         .optional("fingerprint", fingerprint_schema())
         .required("confirm", condition_schema(2))
-        .optional("commits", JsonSchema::bool());
+        .optional("commits", JsonSchema::bool())
+        .optional(
+            "dialog",
+            JsonSchema::object()
+                .required("says", JsonSchema::text())
+                .required("answer", JsonSchema::words(&["accept", "dismiss"])),
+        )
+        .optional(
+            "download",
+            JsonSchema::object()
+                .required("most_bytes", JsonSchema::int())
+                .optional("into", JsonSchema::name()),
+        );
     let rows = JsonSchema::object()
         .required("locate", locate_schema())
         .optional("fingerprint", fingerprint_schema())
@@ -140,7 +179,11 @@ pub(crate) fn screen_schema() -> JsonSchema {
             "when",
             JsonSchema::object().required("visible", locator_schema(1)),
         )
-        .required("handling", JsonSchema::words(&["absent", "stop"]));
+        .required(
+            "handling",
+            JsonSchema::words(&["absent", "stop", "confirm", "dismiss"]),
+        )
+        .optional("with", JsonSchema::name());
     JsonSchema::object()
         .required("screen", JsonSchema::name())
         .optional("surface", JsonSchema::surface())
@@ -148,6 +191,7 @@ pub(crate) fn screen_schema() -> JsonSchema {
             "reach",
             JsonSchema::object().required("url", JsonSchema::text()),
         )
+        .optional("frame", JsonSchema::non_empty_list(locator_schema(1)))
         .required("ready", condition_schema(2))
         .optional("fields", JsonSchema::map_of(field))
         .optional("actions", JsonSchema::map_of(action))
@@ -302,6 +346,7 @@ impl Reader {
         Some(Some(Fingerprint {
             section,
             near_text: stated.text("near_text").map(str::to_owned),
+            frame: None,
         }))
     }
 
@@ -376,10 +421,10 @@ impl Reader {
         let read = match (doc.text("read"), control.as_str()) {
             (Some("value"), _) => ReadHow::Value,
             (Some("text"), _) => ReadHow::Text,
-            (Some("checked"), _) | (None, "checkbox") => ReadHow::Checked,
+            (Some("checked"), _) | (None, "checkbox" | "toggle") => ReadHow::Checked,
             _ => ReadHow::Value,
         };
-        if (read == ReadHow::Checked) != (control == "checkbox") {
+        if (read == ReadHow::Checked) != matches!(control.as_str(), "checkbox" | "toggle") {
             self.refuse(
                 "read_not_fitting",
                 &doc.at,
@@ -387,7 +432,66 @@ impl Reader {
                     "The control `{}` cannot be read as the field says.",
                     shown(&control)
                 ),
-                "A `checkbox` is read as `checked`, and every other control as `value` or `text`.",
+                "A `checkbox` and a `toggle` are read as `checked`, and every other control as `value` or `text`.",
+            );
+            return None;
+        }
+        let mut options = BTreeMap::new();
+        for entry in doc.get("options").map(Located::entries).unwrap_or_default() {
+            if let Some(label) = entry.value.as_text() {
+                options.insert(entry.key.value.clone(), label.to_owned());
+            }
+        }
+        let required = CHOICES_REQUIRED.contains(&control.as_str());
+        let allowed = required || CHOICES_OPTIONAL.contains(&control.as_str());
+        if (required && options.is_empty()) || (!allowed && !options.is_empty()) {
+            self.refuse(
+                "options_not_fitting",
+                &doc.at,
+                if required {
+                    format!(
+                        "A `{}` field names its choices under `options`, each code with the label the page shows for it.",
+                        shown(&control)
+                    )
+                } else {
+                    format!(
+                        "The control `{}` has no `options`; only a `radio`, `tabs`, `accordion`, `combobox`, or `autocomplete` takes them.",
+                        shown(&control)
+                    )
+                },
+                "Write `options:` for a control that has choices, and nowhere else.",
+            );
+            return None;
+        }
+        let column = match doc.get("column").and_then(Located::as_int) {
+            Some(place) => match u32::try_from(place) {
+                Ok(place) => Some(place),
+                Err(_) => {
+                    self.refuse(
+                        "column_not_fitting",
+                        &doc.at,
+                        "A `column` is the place of a cell in its row, counted from zero."
+                            .to_owned(),
+                        "Write a whole number of zero or more.",
+                    );
+                    return None;
+                }
+            },
+            None => None,
+        };
+        if (control == "grid") != column.is_some() {
+            self.refuse(
+                "column_not_fitting",
+                &doc.at,
+                if control == "grid" {
+                    "A `grid` field names the `column` of its cell: its place among the cells of a row, counted from zero.".to_owned()
+                } else {
+                    format!(
+                        "The control `{}` has no `column`; only a `grid` takes one.",
+                        shown(&control)
+                    )
+                },
+                "Write `column:` for a grid cell, and nowhere else.",
             );
             return None;
         }
@@ -396,17 +500,52 @@ impl Reader {
             locate,
             fingerprint,
             read,
+            options,
+            column,
         })
     }
 
     fn action(&mut self, doc: &Located<Doc>) -> Option<Action> {
         let locate = self.locators(doc)?;
         let fingerprint = self.fingerprint(doc, &locate)?;
+        let dialog = doc.get("dialog").and_then(|stated| {
+            Some(NativeDialog {
+                says: stated.text("says")?.to_owned(),
+                accept: stated.text("answer") == Some("accept"),
+            })
+        });
+        let download = match doc.get("download") {
+            Some(stated) => {
+                let most = stated
+                    .get("most_bytes")
+                    .and_then(Located::as_int)
+                    .and_then(|most| u64::try_from(most).ok())
+                    .filter(|most| (1..=MOST_DOWNLOAD_BYTES).contains(most));
+                let Some(most_bytes) = most else {
+                    self.refuse(
+                        "download_invalid",
+                        &stated.at,
+                        format!(
+                            "The most a download may hold is between 1 and {MOST_DOWNLOAD_BYTES} bytes."
+                        ),
+                        "Write `most_bytes:` with the size the file may be, in bytes.",
+                    );
+                    return None;
+                };
+                Some(DownloadDecl {
+                    most_bytes,
+                    into: stated.text("into").map(str::to_owned),
+                })
+            }
+            None => None,
+        };
         Some(Action {
             locate,
             fingerprint,
             confirm: self.condition(doc.get("confirm")?)?,
             commits: doc.get("commits").and_then(Located::as_bool) == Some(true),
+            dialog,
+            download,
         })
     }
 
@@ -496,16 +635,75 @@ impl Reader {
             let handling = match entry.value.text("handling") {
                 Some("absent") => Some(Handling::Absent),
                 Some("stop") => Some(Handling::Stop),
+                Some("confirm") => Some(Handling::Confirm),
+                Some("dismiss") => Some(Handling::Dismiss),
                 _ => None,
             };
+            let with = entry.value.text("with").map(str::to_owned);
+            let answers = matches!(handling, Some(Handling::Confirm | Handling::Dismiss));
+            match (&with, answers) {
+                (Some(name), true) if !actions.contains_key(name) => {
+                    self.refuse(
+                        "variant_with_unknown",
+                        &entry.value.at,
+                        format!(
+                            "The variant `{}` is answered with the action `{}`, which the screen does not declare.",
+                            shown(&entry.key.value),
+                            shown(name)
+                        ),
+                        "Declare the action on the screen, or name one it has.",
+                    );
+                }
+                (None, true) => {
+                    self.refuse(
+                        "variant_without_answer",
+                        &entry.value.at,
+                        format!(
+                            "The variant `{}` is to be confirmed or dismissed and names no action to do it with.",
+                            shown(&entry.key.value)
+                        ),
+                        "Add `with:` and the name of the action that answers it.",
+                    );
+                }
+                (Some(_), false) => {
+                    self.refuse(
+                        "variant_with_unused",
+                        &entry.value.at,
+                        format!(
+                            "The variant `{}` names an action to answer it with, and its handling answers nothing.",
+                            shown(&entry.key.value)
+                        ),
+                        "Remove `with:`, or make the handling `confirm` or `dismiss`.",
+                    );
+                }
+                _ => {}
+            }
             if let (Some(when), Some(handling)) = (when, handling) {
-                variants.insert(entry.key.value.clone(), Variant { when, handling });
+                variants.insert(
+                    entry.key.value.clone(),
+                    Variant {
+                        when,
+                        handling,
+                        with,
+                    },
+                );
+            }
+        }
+        // The frame the screen is in, outermost first: each frame is
+        // looked for inside the one before it.
+        let mut frame: Option<Locator> = None;
+        for stated in doc.get("frame").map(Located::items).unwrap_or_default() {
+            if let Some(mut next) = self.locator(stated) {
+                if let Some(outer) = &frame {
+                    next.inside(outer);
+                }
+                frame = Some(next);
             }
         }
         if self.problems.len() != before {
             return None;
         }
-        Some(Screen {
+        let mut screen = Screen {
             surface: surface.to_owned(),
             reach: reach?,
             ready: ready?,
@@ -513,7 +711,11 @@ impl Reader {
             actions,
             rows,
             variants,
-        })
+        };
+        if let Some(frame) = &frame {
+            screen.inside(frame);
+        }
+        Some(screen)
     }
 }
 
@@ -742,6 +944,232 @@ impl LintRule for NoFingerprint {
                 )
             })
             .collect()
+    }
+}
+
+/// The surface's profile, when the surface names one that exists and is not
+/// `auto`. A name that exists nowhere is `web.profile_unknown`'s.
+fn profile_of(view: &ResolvedView<'_>, surface: &str) -> Option<&'static crate::profiles::Profile> {
+    let named = view
+        .target()
+        .surface(surface)?
+        .doc
+        .get("profile")?
+        .as_text()?;
+    crate::profiles::named(named)
+}
+
+/// The identifiers a selector is built on: `#name`, and `[id=name]`.
+fn ids_of(selector: &str) -> Vec<String> {
+    static IDS: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
+    let Some(pattern) = IDS
+        .get_or_init(|| {
+            regex::Regex::new(r#"#([A-Za-z_][\w-]*)|\[id\s*[~|^$*]?=\s*["']?([^"'\]]+)"#).ok()
+        })
+        .as_ref()
+    else {
+        return Vec::new();
+    };
+    pattern
+        .captures_iter(selector)
+        .filter_map(|found| found.get(1).or_else(|| found.get(2)))
+        .map(|found| found.as_str().to_owned())
+        .collect()
+}
+
+/// `web.generated_id`.
+pub(crate) struct GeneratedId;
+
+impl LintRule for GeneratedId {
+    fn code(&self) -> LintCode {
+        code("generated_id")
+    }
+
+    fn level(&self, _mode: CompileMode) -> Level {
+        Level::Error
+    }
+
+    fn summary(&self) -> &str {
+        "No locator is built on an identifier that the surface's platform profile says the platform makes."
+    }
+
+    fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        for screen in view.entries(&SCREEN_KIND, &WEB_SURFACE) {
+            let Some(profile) = screen
+                .text("surface")
+                .and_then(|surface| profile_of(view, surface))
+            else {
+                continue;
+            };
+            for key in ["fields", "actions"] {
+                for entry in screen.get(key).map(Located::entries).unwrap_or_default() {
+                    for locator in entry
+                        .value
+                        .get("locate")
+                        .map(Located::items)
+                        .unwrap_or_default()
+                    {
+                        Self::look(profile, &entry.key.value, locator, &mut out);
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+impl GeneratedId {
+    fn look(
+        profile: &crate::profiles::Profile,
+        part: &str,
+        locator: &Located<Doc>,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let mut ids = locator
+            .get("css")
+            .and_then(Located::as_text)
+            .map(ids_of)
+            .unwrap_or_default();
+        ids.extend(
+            locator
+                .get("test_id")
+                .and_then(Located::as_text)
+                .map(str::to_owned),
+        );
+        for id in ids {
+            if profile.rejects_id(&id) {
+                out.push(problem(
+                    "generated_id",
+                    Stage::Lint,
+                    &locator.at,
+                    format!(
+                        "A locator of `{}` is built on the identifier `{}`, which the profile `{}` says the platform makes.",
+                        shown(part),
+                        shown(&id),
+                        profile.name
+                    ),
+                    "Locate it by its label, its role and name, or its text; an identifier the platform makes changes when the page does.",
+                ));
+            }
+        }
+        if let Some(inside) = locator.get("within") {
+            Self::look(profile, part, inside, out);
+        }
+    }
+}
+
+/// `web.profile_unknown`.
+pub(crate) struct ProfileUnknown;
+
+impl LintRule for ProfileUnknown {
+    fn code(&self) -> LintCode {
+        code("profile_unknown")
+    }
+
+    fn level(&self, _mode: CompileMode) -> Level {
+        Level::Error
+    }
+
+    fn summary(&self) -> &str {
+        "A surface's `profile` is the name of a platform profile, or `auto`."
+    }
+
+    fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        for surface in view.target().surfaces() {
+            if surface.kind != &WEB_SURFACE {
+                continue;
+            }
+            let Some(named) = surface.doc.get("profile") else {
+                continue;
+            };
+            let text = named.as_text().unwrap_or("");
+            if text != "auto" && crate::profiles::named(text).is_none() {
+                out.push(problem(
+                    "profile_unknown",
+                    Stage::Lint,
+                    &named.at,
+                    format!(
+                        "The surface `{}` names the profile `{}`, which is not one of {}.",
+                        surface.name,
+                        shown(text),
+                        crate::profiles::names().join(", ")
+                    ),
+                    "Name one of the profiles, or `auto` to have the probe name it.",
+                ));
+            }
+        }
+        out
+    }
+}
+
+/// `web.profile_readonly`: a write bound through a screen whose surface's
+/// profile has the tier `read_only` or `unsupported`. It holds whatever
+/// mode binds the screen, since a mode that acts on the page acts on
+/// controls the profile says are not checked for writing.
+pub(crate) struct ProfileReadonly;
+
+impl LintRule for ProfileReadonly {
+    fn code(&self) -> LintCode {
+        code("profile_readonly")
+    }
+
+    fn level(&self, _mode: CompileMode) -> Level {
+        Level::Error
+    }
+
+    fn summary(&self) -> &str {
+        "No write is bound through a screen of a surface whose platform profile's tier is `read_only` or `unsupported`."
+    }
+
+    fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        let screens = view.entries(&SCREEN_KIND, &WEB_SURFACE);
+        for operation in view.operations() {
+            if operation.effect() == a2m_core::EffectClass::Read {
+                continue;
+            }
+            for binding in operation
+                .doc()
+                .get("bindings")
+                .map(Located::items)
+                .unwrap_or_default()
+            {
+                let Some(named) = binding.get("screen") else {
+                    continue;
+                };
+                let Some(name) = named.as_text() else {
+                    continue;
+                };
+                let Some((surface, profile)) = screens
+                    .iter()
+                    .find(|screen| screen.text("screen") == Some(name))
+                    .and_then(|screen| screen.text("surface"))
+                    .and_then(|surface| Some((surface, profile_of(view, surface)?)))
+                else {
+                    continue;
+                };
+                if profile.may_write() {
+                    continue;
+                }
+                out.push(problem(
+                    "profile_readonly",
+                    Stage::Lint,
+                    &named.at,
+                    format!(
+                        "The operation `{}` writes through the screen `{}`, on the surface `{}`, whose profile `{}` has the tier `{}`: its controls are not checked for writing.",
+                        operation.name(),
+                        shown(name),
+                        shown(surface),
+                        profile.name,
+                        profile.support_tier
+                    ),
+                    "Bind the write to a request instead (`page_http`, or `http` on the service behind the page), or keep the operation a read; the profile says this platform's controls may be read and not written.",
+                ));
+            }
+        }
+        out
     }
 }
 

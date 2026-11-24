@@ -129,6 +129,12 @@ async fn reading_a_run_asks_nobody_and_an_approved_run_says_so() {
     // The call that rested the run told its person, once.
     let asked = world.asked();
     assert_eq!(asked, 1);
+    // The person is told the effect class of the operation, for a prompt
+    // that must refuse an irreversible one.
+    assert_eq!(
+        world.surface.approvals.lock().unwrap()[0].effect,
+        a2m_core::EffectClass::Write
+    );
     let rested = world.call("run.get", json!({"run_id": run})).await;
     assert_eq!(status(&rested), "needs_approval");
     assert_eq!(rested.exit, ExitClass::PersonNeeded);

@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
@@ -50,6 +50,46 @@ impl RandomSource for Counted {
     }
 }
 
+/// A clock that moves only when told: both its counts together, as time
+/// passing does, or only its time of day, as a machine's clock that is set
+/// or jumps does.
+#[derive(Debug)]
+pub struct TestClock {
+    passing: ManualClock,
+    jumped: AtomicI64,
+}
+
+impl TestClock {
+    fn starting_at(now: Timestamp) -> Self {
+        Self {
+            passing: ManualClock::starting_at(now),
+            jumped: AtomicI64::new(0),
+        }
+    }
+
+    /// Time passes: the steady count and the time of day move together.
+    pub fn advance(&self, by: Duration) {
+        self.passing.advance(by);
+    }
+
+    /// The time of day jumps by `millis`, forward or back; no time passes.
+    pub fn jump(&self, millis: i64) {
+        self.jumped.fetch_add(millis, Ordering::SeqCst);
+    }
+}
+
+impl Clock for TestClock {
+    fn elapsed(&self) -> Duration {
+        self.passing.elapsed()
+    }
+
+    fn now(&self) -> Timestamp {
+        Timestamp::from_unix_millis(
+            self.passing.now().as_unix_millis() + self.jumped.load(Ordering::SeqCst),
+        )
+    }
+}
+
 /// A folder under the system's temporary folder, removed when dropped.
 pub struct Folder(PathBuf);
 
@@ -83,7 +123,7 @@ pub const START: i64 = 1_800_000_000_000;
 pub struct Stand {
     pub folder: Folder,
     pub keys: Arc<MemoryKeyStore>,
-    pub clock: Arc<ManualClock>,
+    pub clock: Arc<TestClock>,
     pub store: Store,
     pub sched: Scheduler,
     pub settings: SchedSettings,
@@ -95,8 +135,8 @@ async fn open(
     keys: &Arc<MemoryKeyStore>,
     now: Timestamp,
     starts: u64,
-) -> (Arc<ManualClock>, Store) {
-    let clock = Arc::new(ManualClock::starting_at(now));
+) -> (Arc<TestClock>, Store) {
+    let clock = Arc::new(TestClock::starting_at(now));
     let config = StoreConfig::in_dir(folder.path())
         .with_clock(Arc::clone(&clock) as Arc<dyn Clock>)
         .with_random(Counted::starting_at(starts * 1_000_000));
@@ -275,6 +315,7 @@ pub fn slots(total: u32) -> Slots {
     Slots {
         total,
         per_mode: BTreeMap::from([(mode(), total)]),
+        keeper: 0,
     }
 }
 
@@ -316,6 +357,7 @@ pub fn requirements(writes: bool) -> JobRequirements {
         exclusive: Vec::new(),
         max_step: Duration::from_secs(10),
         writes,
+        verify_after_loss: false,
     }
 }
 

@@ -164,6 +164,7 @@ fn text() -> PromptText {
     PromptText {
         title: "Approve a write by `example_orders_item_upsert`".to_owned(),
         detail: "Change 0123456789ab".to_owned(),
+        purpose: crate::PromptFor::Approval(None),
     }
 }
 
@@ -334,6 +335,7 @@ async fn the_dialog_shows_the_engines_words_and_the_deadline_takes_it_away() {
     let empty = PromptText {
         title: String::new(),
         detail: String::new(),
+        purpose: crate::PromptFor::Act,
     };
     assert!(!reason_for(&empty).is_empty());
 

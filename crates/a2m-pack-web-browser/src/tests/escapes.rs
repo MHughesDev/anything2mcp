@@ -82,6 +82,139 @@ async fn refused(blocked: impl Fn() -> Vec<RequestShape>, word: &str) -> Vec<Req
 }
 
 /// The same, until one refusal carries `word` for exactly `address`.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_origin_refused_quietly_is_failed_in_the_browser_in_both_postures_and_reports_nothing() {
+    let app = TestApp::start().await.unwrap();
+    let stand = Stand::with_browser("quiet_refusal");
+    let browser = stand.open(&profile("clerk")).await;
+    let page = at(&app.url("/escapes/loads"));
+    // The other name is declared as a place to send to, and also as one to
+    // refuse quietly: the refusal wins, so a person cannot reach by one list
+    // what another list refuses.
+    let origins = reaching_the_other_name(&app).and_refused_quietly([&at(&other(&app, "/"))]);
+    let others = |seen: &[RequestShape]| {
+        seen.iter()
+            .filter(|one| one.method != "WEBSOCKET")
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let acting = must(browser.acting_tab(&environment(), &origins).await);
+    must(acting.goto(&page, soon()).await);
+    must(
+        acting
+            .wait(&Primitive::Visible(css("#tried")), soon())
+            .await,
+    );
+    // The socket is held by a script in the page, which names what it
+    // refuses; every request interception holds is failed and not named.
+    let seen = refused(|| acting.blocked(), "WEBSOCKET").await;
+    assert_eq!(others(&seen), []);
+    drop(acting);
+    let observing = observing_with(&stand, "scout", &origins).await;
+    must(observing.goto(&page, soon()).await);
+    must(
+        observing
+            .wait(&Primitive::Visible(css("#tried")), soon())
+            .await,
+    );
+    let seen = refused(|| observing.blocked(), "WEBSOCKET").await;
+    assert_eq!(others(&seen), []);
+    drop(observing);
+    // The stand's count: nothing of either page arrived.
+    assert_eq!(loads_arrived(&app).await, BTreeMap::new());
+    drop(browser);
+    stand.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sign_in_tab_loads_nothing_from_an_origin_it_was_not_given_and_what_it_was_given_arrives()
+{
+    let app = TestApp::start().await.unwrap();
+    let stand = Stand::with_browser("sign_in_loads");
+    let browser = stand.open(&profile("person")).await;
+    let page = at(&app.url("/escapes/loads"));
+    let elsewhere = |name: &str| other(&app, &format!("{WRITE}/loads-{name}"));
+
+    // The sign-in page loads an image, a script, and a style from the other
+    // name, and sends a `fetch` and a POST there. Given the application's
+    // origin alone, the tab fails every load before it leaves the browser and
+    // reports each with its address. The `fetch` and the POST are the page's
+    // own script's, which may carry what the person types and which a sign-in
+    // tab does not hold (decision 0254): they arrive. That is the stated
+    // limit of this tab, held by this test so that it cannot change unseen.
+    // Nor does it hold a socket, which is not a subresource: that too
+    // arrives.
+    let tab = must(
+        browser
+            .sign_in_tab(&environment(), &only(&app), &Origins::default())
+            .await,
+    );
+    must(tab.goto(&page, soon()).await);
+    must(tab.wait(&Primitive::Visible(css("#tried")), soon()).await);
+    let seen = refused(|| tab.blocked(), crate::OUTSIDE).await;
+    let mut outside: Vec<String> = seen
+        .iter()
+        .filter(|one| one.method == crate::OUTSIDE)
+        .map(|one| one.address.clone())
+        .collect();
+    outside.sort();
+    let mut expected: Vec<String> = ["image", "script", "style"]
+        .iter()
+        .map(|name| elsewhere(name))
+        .collect();
+    expected.sort();
+    assert_eq!(outside, expected);
+    let started = std::time::Instant::now();
+    while loads_arrived(&app).await.len() < 3 {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "{:?}",
+            loads_arrived(&app).await
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        loads_arrived(&app).await.into_keys().collect::<Vec<_>>(),
+        loads(&["fetch", "post", "socket"])
+    );
+    drop(tab);
+
+    // Given as the origin of a provider the tab passes through, the other
+    // name is sent the loads too.
+    app.reset().await.unwrap();
+    let passing = Origins::of([&at(&other(&app, "/"))]);
+    let tab = must(
+        browser
+            .sign_in_tab(&environment(), &only(&app), &passing)
+            .await,
+    );
+    must(tab.goto(&page, soon()).await);
+    must(tab.wait(&Primitive::Visible(css("#tried")), soon()).await);
+    let started = std::time::Instant::now();
+    while loads_arrived(&app).await.len() < 6 {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "{:?}",
+            loads_arrived(&app).await
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        loads_arrived(&app).await.into_keys().collect::<Vec<_>>(),
+        loads(&["fetch", "image", "post", "script", "socket", "style"])
+    );
+    assert_eq!(
+        tab.blocked()
+            .into_iter()
+            .filter(|one| one.method == crate::OUTSIDE)
+            .count(),
+        0
+    );
+    drop(tab);
+    drop(browser);
+    stand.end().await;
+}
+
 async fn refused_at(
     blocked: impl Fn() -> Vec<RequestShape>,
     word: &str,
@@ -1041,4 +1174,99 @@ async fn a_frame_in_another_process_of_an_acting_tab_sends_nothing_outside_the_t
     drop(tab);
     drop(browser);
     stand.end().await;
+}
+
+/// Every origin the test application is reached by has a place, told from
+/// the address and the machine's state and never from the name the browser
+/// would resolve (decision 0223, package N2b). The stand is asked for its
+/// own address.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_origin_of_the_test_application_has_a_place_and_a_name_is_never_resolved() {
+    use a2m_netstate::NetworkFingerprint;
+    use a2m_provider::{MachineState, NetworkPlace};
+
+    let app = TestApp::start().await.unwrap();
+    let origins = reaching_the_other_name(&app);
+    let places = origins.places(&MachineState::read(), &[], &NetworkFingerprint::default());
+    // The application's own address, and its other name as a place the
+    // page may send requests to: two origins, two places.
+    assert_eq!(places.len(), 2);
+    for (origin, placed) in &places {
+        let expected = if origin.starts_with("http://127.0.0.1") {
+            // The stand listens on loopback, and says so in its own address.
+            assert!(app.url("/").starts_with(origin), "{origin}");
+            NetworkPlace::ThisMachine
+        } else {
+            // `localhost` is a name, and a name is never resolved here,
+            // although the browser would take it to loopback.
+            assert!(origin.starts_with("http://localhost"), "{origin}");
+            NetworkPlace::Unknown
+        };
+        assert_eq!(placed.place, expected, "{origin}: {}", placed.because);
+        // Every connection is direct, as the launch holds it (decision 0197).
+        assert!(placed.place.is_direct(), "{origin}");
+    }
+    // The place does not change what the guard allows: the guard compares
+    // origins, and the other name is still not a place the tab may be on.
+    assert!(!origins.allows(&at(&other(&app, "/"))));
+    assert!(origins.reaches_reported(&other(&app, "/")));
+    // A machine whose state cannot be read still places the stand.
+    assert!(
+        origins
+            .places(&MachineState::unread(), &[], &NetworkFingerprint::default())
+            .iter()
+            .any(|(_, placed)| placed.place == NetworkPlace::ThisMachine)
+    );
+}
+
+/// A reach in force that sends an origin through a named gateway places it
+/// `via_gateway`; one for another network does not (decision 0327, package
+/// N3). The place never changes what the guard allows.
+#[test]
+fn an_origin_a_reach_in_force_sends_through_a_gateway_is_placed_via_gateway() {
+    use std::net::IpAddr;
+
+    use a2m_netstate::NetworkFingerprint;
+    use a2m_provider::{GatewayName, MachineState, NetworkPlace, Reach, ReachEntry};
+
+    fn ip(text: &str) -> IpAddr {
+        text.parse().unwrap()
+    }
+    fn network(hardware: u8, gateway: &str, subnet: &str) -> NetworkFingerprint {
+        NetworkFingerprint::of_facts(
+            Some(&[0, 0x11, 0x22, 0x33, 0x44, hardware]),
+            Some(ip(gateway)),
+            None,
+            Some((ip(subnet), 24)),
+            &[],
+        )
+    }
+    fn reach(on: NetworkFingerprint) -> Reach {
+        Reach {
+            label: "named".to_owned(),
+            network: on,
+            look: Vec::new(),
+            send: vec![ReachEntry::through(
+                "https://app.example.com",
+                GatewayName::new("office").unwrap(),
+            )],
+        }
+    }
+    let home = network(1, "192.168.1.1", "192.168.1.20");
+    let cafe = network(9, "10.20.0.1", "10.20.0.77");
+    let origins = Origins::of([&at("https://app.example.com/")]);
+    let state = MachineState::read();
+
+    let in_force = origins.places(&state, &[reach(home.clone())], &home);
+    assert_eq!(in_force.len(), 1);
+    assert_eq!(in_force[0].1.place, NetworkPlace::ViaGateway);
+    assert_eq!(
+        in_force[0].1.gateway.as_ref().map(|g| g.as_str()),
+        Some("office")
+    );
+
+    let not_in_force = origins.places(&state, &[reach(home)], &cafe);
+    assert_ne!(not_in_force[0].1.place, NetworkPlace::ViaGateway);
+    assert!(not_in_force[0].1.gateway.is_none());
+    assert!(origins.allows(&at("https://app.example.com/")));
 }

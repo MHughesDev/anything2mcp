@@ -380,6 +380,10 @@ async fn a_lost_lease_is_fenced_and_quarantined_before_anyone_else_gets_the_run(
     let again = stand.claim_one(one).await;
     assert_eq!(again.job, reconcile);
     assert_eq!(again.requirements.kind, JobKind::Reconcile);
+    // A reconcile after a lost lease ends by reading the verified records
+    // again, in its own lease (decision 0347).
+    assert!(again.requirements.verify_after_loss);
+    assert!(!lease.requirements.verify_after_loss);
     assert_eq!(again.run, Some(run));
     assert!(again.epoch > lease.epoch);
     // Under its new number the reconcile job confirms the quarantined lock.
@@ -399,6 +403,41 @@ async fn a_lost_lease_is_fenced_and_quarantined_before_anyone_else_gets_the_run(
         )),
         "held"
     );
+}
+
+/// Spec section 224: when the machine's clock jumps, leases are unaffected,
+/// because they are measured on a steady clock.
+#[tokio::test]
+async fn a_jump_in_the_machines_clock_does_not_move_leases() {
+    let stand = Stand::new("clock-jump").await;
+    let one = stand.hello(1).await;
+    let two = stand.hello(2).await;
+    let (run, job) = stand.admit(write(1, "w")).await;
+    let lease = stand.claim_one(one).await;
+
+    // The time of day jumps a day forward, with no time passing. The lease
+    // is not lost, nobody else is given the job, and its heartbeat is taken.
+    stand.clock.jump(86_400_000);
+    let swept = stand.sched.sweep().await.unwrap();
+    assert!(swept.lost.is_empty(), "{swept:?}");
+    assert!(stand.claim(two, 1).await.is_empty());
+    stand.sched.heartbeat(&lease.lease_ref()).await.unwrap();
+    assert_eq!(stand.sched.job(job).await.unwrap().state, JobState::Leased);
+    assert_ne!(stand.run_state(run), "stopped");
+
+    // The time of day jumps two days back. The lease still runs its own
+    // length on the steady count: it is lost when that has passed, and not
+    // a day and more later.
+    stand.clock.jump(-2 * 86_400_000);
+    // The sweeping task is told the moment of the loss on the store's
+    // clock: the lease's length and the grace after it, from now.
+    assert_eq!(stand.sched.next_due().await.unwrap(), Some(stand.after(35)));
+    stand.advance(30);
+    assert!(stand.sched.sweep().await.unwrap().lost.is_empty());
+    stand.advance(5);
+    let swept = stand.sched.sweep().await.unwrap();
+    assert_eq!(swept.lost, vec![job]);
+    assert_eq!(stand.run_state(run), "stopped");
 }
 
 // ---- exclusive resources -------------------------------------------------
@@ -1118,6 +1157,8 @@ async fn a_stopped_job_is_reconciled_when_the_ledger_holds_a_record_in_doubt() {
     );
     let again = stand.claim_one(one).await;
     assert_eq!(again.requirements.kind, JobKind::Reconcile);
+    // No lease was lost: the reconcile has no check after a loss to make.
+    assert!(!again.requirements.verify_after_loss);
     assert_eq!(again.run, Some(run));
 
     // A run with no intent stored is not reconciled on the same report.
@@ -1596,4 +1637,61 @@ async fn a_resume_names_the_reconcile_it_finds_and_inside_a_quarantine_says_how_
     assert!(stand.claim(one, 1).await.is_empty());
     stand.advance(60);
     assert_eq!(stand.claim_one(one).await.job, found.job);
+}
+
+// ---- the slot kept for the keeper ------------------------------------------
+
+/// A probe of a session, submitted as a keeper job.
+fn keeper_job(caller: u8, input: &str) -> a2m_sched::Submission {
+    let mut submission = read(caller, input);
+    submission.job.kind = JobKind::SessionKeepalive;
+    submission.job.modes = Vec::new();
+    submission
+}
+
+#[tokio::test]
+async fn a_keeper_job_takes_the_slot_kept_for_it_and_no_other_job_ever_does() {
+    let stand = Stand::new("keeper-slot").await;
+    let runner = stand.hello(1).await;
+    // A run holds the runner's only ordinary slot, as a run that waits for
+    // a session's renewal does.
+    stand.admit(read(1, "waits")).await;
+    let held = stand.claim_one(runner).await;
+    assert_eq!(held.requirements.kind, JobKind::Execute);
+
+    // Another run and a keeper job wait. With no ordinary slot free and
+    // the keeper's slot free, only the keeper job is handed out.
+    stand.admit(read(2, "queued")).await;
+    stand.admit(keeper_job(1, "probe")).await;
+    let only_keeper = a2m_sched::Slots {
+        total: 0,
+        per_mode: std::collections::BTreeMap::new(),
+        keeper: 1,
+    };
+    let leased = stand
+        .sched
+        .claim(runner, only_keeper.clone(), Duration::ZERO)
+        .await
+        .unwrap();
+    let kinds: Vec<JobKind> = leased.iter().map(|lease| lease.requirements.kind).collect();
+    assert_eq!(kinds, [JobKind::SessionKeepalive]);
+
+    // The keeper's slot is all that is offered again: the run that waits
+    // is not handed out in it.
+    let none = stand
+        .sched
+        .claim(runner, only_keeper, Duration::ZERO)
+        .await
+        .unwrap();
+    assert!(none.is_empty(), "{none:?}");
+
+    // A keeper job also takes an ordinary slot when none is kept free.
+    stand.admit(keeper_job(3, "second probe")).await;
+    let ordinary = stand.claim(runner, 2).await;
+    let mut kinds: Vec<&str> = ordinary
+        .iter()
+        .map(|lease| lease.requirements.kind.as_str())
+        .collect();
+    kinds.sort_unstable();
+    assert_eq!(kinds, ["execute", "session_keepalive"]);
 }

@@ -11,12 +11,16 @@ use a2m_ledger::{Durability, PolicyKey, Store, Tx, WriteClearance};
 
 use crate::approval::{ApprovalSurface, PresenceCheck};
 use crate::failure::{self, DECISION_NOT_FOUND, POLICY_TESTS_FAILED};
-use crate::model::{PrincipalRef, Question, Request, RuleId, word};
-use crate::rules::{self, Answer, Verdict};
+use crate::model::{
+    Context, PrincipalRef, Question, Request, Resource, RuleId, ToolRef, ToolsetName, word,
+};
+use crate::rules::{self, Answer, RuleKind, Verdict};
 use crate::set::{
-    self, BuiltIn, CandidateSet, Compiled, PolicyLayers, Profile, Settings, TestReport,
+    self, BuiltIn, CandidateSet, Compiled, Grant, PolicyLayers, PolicyTest, Profile, Settings,
+    TestReport,
 };
 use crate::store;
+use crate::toolset::Toolset;
 
 /// The policy engine. Cheap to clone; every clone is the same engine.
 #[derive(Clone)]
@@ -208,6 +212,45 @@ pub struct PublishProof {
     pub presence: Option<PresenceCheck>,
 }
 
+/// One change to the layers in force, published as a new version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayerChange {
+    /// Add a grant.
+    AddGrant(Grant),
+    /// Remove a grant the layers hold.
+    RemoveGrant(Grant),
+    /// Add a toolset, or replace the one of the same name.
+    SetToolset(Toolset),
+    /// Remove the toolset of this name.
+    RemoveToolset(ToolsetName),
+}
+
+/// One version in the history of the set, newest last.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionInfo {
+    /// The version's digest.
+    pub version: Digest,
+    /// Who published it; none for the built-in set.
+    pub published_by: Option<String>,
+    /// The user-presence check that came with it, as its word.
+    pub presence: Option<String>,
+    /// When it was stored.
+    pub published_at: Timestamp,
+    /// Whether it is the version in force.
+    pub in_force: bool,
+}
+
+/// The second administrator of a publish, and who drafted the version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishReview {
+    /// The administrator or publisher who reviewed the version and publishes
+    /// it with the first. Never an agent, never the publisher, never the
+    /// author.
+    pub reviewer: PrincipalRef,
+    /// The person who drafted the version, where that is known.
+    pub drafted_by: Option<PrincipalId>,
+}
+
 /// Why a past decision came out as it did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Explanation {
@@ -227,7 +270,10 @@ pub struct Explanation {
     pub version: Option<String>,
     /// The code the caller was given, when refused.
     pub refusal_code: Option<String>,
-    /// The rules that determined the answer, each with what it says.
+    /// The rules that determined the answer, each with what it says and the
+    /// entry of the set that decided it. It holds no secret: no credential, no
+    /// pre-approval condition, and no field of the request beyond what the
+    /// record states.
     pub rules: Vec<RuleExplained>,
     /// The whole explanation in sentences a developer can act on.
     pub summary: String,
@@ -238,6 +284,8 @@ pub struct Explanation {
 pub struct RuleExplained {
     /// The rule's name in its policy version.
     pub id: String,
+    /// Where it comes from: a guardrail, a grant, a toolset, and so on.
+    pub kind: RuleKind,
     /// What it says, in words.
     pub says: String,
 }
@@ -502,10 +550,40 @@ impl Policy {
         by: &PrincipalRef,
         proof: PublishProof,
     ) -> Result<Digest, Failure> {
+        self.publish_reviewed(tx, candidate, by, proof, None)
+    }
+
+    /// As [`Policy::publish`], with the second administrator a set may need.
+    /// A set needs one when the set in force says `second_admin_publish`, so
+    /// a candidate cannot switch the need off for itself, and the first set
+    /// that turns it on needs none. The reviewer must be a person other than the publisher and
+    /// the author, who holds the role of administrator or publisher in the
+    /// set in force.
+    ///
+    /// # Errors
+    ///
+    /// As [`Policy::publish`]; `policy`/`second_admin_required` when a second
+    /// administrator is needed and none, or one who may not, was given.
+    pub fn publish_reviewed(
+        &self,
+        tx: &mut Tx<'_>,
+        candidate: &CandidateSet,
+        by: &PrincipalRef,
+        proof: PublishProof,
+        review: Option<&PublishReview>,
+    ) -> Result<Digest, Failure> {
         tests_must_pass(&candidate.test())?;
+        let in_force = self.current(tx);
+        let needs_second = in_force
+            .as_ref()
+            .is_some_and(|set| set.layers.second_admin_publish);
+        if needs_second {
+            let roles = in_force.as_ref().map(|set| &set.layers);
+            check_review(by, review, roles)?;
+        }
         let present = proof.presence.is_some_and(PresenceCheck::proves_presence);
-        let loosens = self
-            .current(tx)
+        let loosens = in_force
+            .as_ref()
             .is_none_or(|current| candidate.loosens(&current.layers));
         if loosens && !present {
             return Err(failure::presence_required(
@@ -521,6 +599,163 @@ impl Policy {
             proof.presence.map(PresenceCheck::as_str),
         )?;
         Ok(candidate.version())
+    }
+
+    /// The layers of the set in force, without its test table, which is
+    /// stored and hashed but never read back. `None` when no valid set is in
+    /// force.
+    pub fn layers_in_force(&self, tx: &mut Tx<'_>) -> Option<PolicyLayers> {
+        self.current(tx).map(|set| set.layers.clone())
+    }
+
+    /// The history of published versions, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// The store's failures.
+    pub fn versions(&self, tx: &mut Tx<'_>) -> Result<Vec<VersionInfo>, Failure> {
+        let in_force = self.current(tx).map(|set| set.version);
+        store::versions(tx, self.key())?
+            .into_iter()
+            .map(|row| {
+                let version: Digest = row.version.parse().map_err(|_| {
+                    failure::invalid(
+                        "A stored policy version has no readable name.",
+                        "Publish a policy set again.",
+                    )
+                })?;
+                Ok(VersionInfo {
+                    in_force: in_force == Some(version),
+                    version,
+                    published_by: row.published_by,
+                    presence: row.presence,
+                    published_at: row.published_at,
+                })
+            })
+            .collect()
+    }
+
+    /// Changes one grant or one toolset of the set in force and publishes the
+    /// result as a new version, with `tests` as its test table (the table of
+    /// the set in force is never read back, so the caller brings the one the
+    /// new version must pass). The rules of [`Policy::publish_reviewed`]
+    /// apply.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`schema_invalid` when no valid set is in force, the grant or
+    /// toolset to remove is not there, or the result does not compile; the
+    /// failures of [`Policy::publish_reviewed`].
+    pub fn publish_change(
+        &self,
+        tx: &mut Tx<'_>,
+        change: LayerChange,
+        tests: Vec<PolicyTest>,
+        by: &PrincipalRef,
+        proof: PublishProof,
+        review: Option<&PublishReview>,
+    ) -> Result<Digest, Failure> {
+        let Some(mut layers) = self.layers_in_force(tx) else {
+            return Err(failure::evaluation_failed());
+        };
+        let missing = |what: &str| {
+            failure::invalid(
+                format!("The {what} to remove is not in the set in force."),
+                "List what the set holds, and name one that is there.",
+            )
+        };
+        layers = match change {
+            LayerChange::AddGrant(grant) => layers.with_grant(grant),
+            LayerChange::RemoveGrant(grant) => {
+                let (next, removed) = layers.without_grant(&grant);
+                if !removed {
+                    return Err(missing("grant"));
+                }
+                next
+            }
+            LayerChange::SetToolset(toolset) => layers.with_toolset(toolset),
+            LayerChange::RemoveToolset(name) => {
+                let (next, removed) = layers.without_toolset(&name);
+                if !removed {
+                    return Err(missing("toolset"));
+                }
+                next
+            }
+        };
+        layers.tests = tests;
+        let candidate = self.compile(&layers)?;
+        self.publish_reviewed(tx, &candidate, by, proof, review)
+    }
+
+    /// The tools of `catalog` that `principal` may use, each asked as
+    /// [`Policy::would`] asks it, with the context the tool brings. The
+    /// catalog is the caller's; nothing is recorded.
+    pub fn tools_allowed(
+        &self,
+        tx: &mut Tx<'_>,
+        principal: &PrincipalRef,
+        catalog: &[(ToolRef, Context)],
+    ) -> Vec<ToolRef> {
+        catalog
+            .iter()
+            .filter(|(tool, context)| {
+                let request = Request {
+                    principal: principal.clone(),
+                    question: Question::UseTool,
+                    resource: Resource::Tool(tool.clone()),
+                    context: context.clone(),
+                    run: None,
+                    diff_hash: None,
+                };
+                self.would(tx, &request) == Answer::Allow
+            })
+            .map(|(tool, _)| tool.clone())
+            .collect()
+    }
+
+    /// Which of `candidates` may use `tool`: "who can call this tool?".
+    pub fn who_can(
+        &self,
+        tx: &mut Tx<'_>,
+        tool: &ToolRef,
+        context: &Context,
+        candidates: &[PrincipalRef],
+    ) -> Vec<PrincipalId> {
+        candidates
+            .iter()
+            .filter(|principal| {
+                let request = Request {
+                    principal: (*principal).clone(),
+                    question: Question::UseTool,
+                    resource: Resource::Tool(tool.clone()),
+                    context: context.clone(),
+                    run: None,
+                    diff_hash: None,
+                };
+                self.would(tx, &request) == Answer::Allow
+            })
+            .map(|principal| principal.id)
+            .collect()
+    }
+
+    /// The tools of `catalog` that the toolset `name` selects, for the one
+    /// list every caller of the toolset sees. `None` when the set in force
+    /// does not define the toolset.
+    pub fn toolset_tools(
+        &self,
+        tx: &mut Tx<'_>,
+        name: &ToolsetName,
+        catalog: &[ToolRef],
+    ) -> Option<Vec<ToolRef>> {
+        let set = self.current(tx)?;
+        let toolset = set.layers.toolsets.iter().find(|set| set.name == *name)?;
+        Some(
+            catalog
+                .iter()
+                .filter(|tool| toolset.selects(tool))
+                .cloned()
+                .collect(),
+        )
     }
 
     /// Why a past decision came out as it did. Only an auditor or an
@@ -562,6 +797,7 @@ impl Policy {
             .iter()
             .map(|rule| RuleExplained {
                 id: rule.clone(),
+                kind: rules::kind_of(rule),
                 says: rules::describe(set.as_ref(), rule),
             })
             .collect();
@@ -718,4 +954,44 @@ pub(crate) fn covers_parts(
             // A switch this engine cannot read stops everything.
             None => true,
         })
+}
+
+/// Whether `review` lets `by` publish: a person other than `by` and the
+/// author, who holds the role of administrator or publisher in the set in
+/// force. An agent never publishes or reviews a publish.
+fn check_review(
+    by: &PrincipalRef,
+    review: Option<&PublishReview>,
+    in_force: Option<&PolicyLayers>,
+) -> Result<(), Failure> {
+    use crate::model::{PrincipalKind, Role};
+    let Some(review) = review else {
+        return Err(failure::second_admin_required("none was given"));
+    };
+    let reviewer = &review.reviewer;
+    if by.kind == PrincipalKind::Agent || reviewer.kind != PrincipalKind::Person {
+        return Err(failure::second_admin_required(
+            "an agent can neither publish nor review a publish",
+        ));
+    }
+    if reviewer.id == by.id {
+        return Err(failure::second_admin_required(
+            "the reviewer is the publisher",
+        ));
+    }
+    if review.drafted_by == Some(reviewer.id) {
+        return Err(failure::second_admin_required("the reviewer drafted it"));
+    }
+    let may_review = in_force.is_some_and(|layers| {
+        layers.roles.iter().any(|binding| {
+            matches!(binding.role, Role::Admin | Role::Publisher) && binding.who.covers(reviewer)
+        })
+    });
+    if may_review {
+        Ok(())
+    } else {
+        Err(failure::second_admin_required(
+            "the reviewer holds neither the administrator nor the publisher role",
+        ))
+    }
 }

@@ -178,14 +178,16 @@ impl ActionRegistry {
 
     /// The actions a built-in toolset lists up front, in catalog order: the
     /// three `action.*` tools first among those kept, then the marked
-    /// actions until the toolset's cap is reached. A marked action past the
+    /// actions until the toolset's cap is reached. An action that is not built
+    /// is never listed up front (decision 0306); it is found by
+    /// `action.search`. A marked action past the
     /// cap is reached through `action.run` (decision 0094).
     #[must_use]
     pub fn toolset(&self, toolset: BuiltInToolset) -> Vec<&ActionDef> {
         let marked: Vec<&ActionDef> = self
             .defs
             .iter()
-            .filter(|def| def.listed.in_toolset(toolset))
+            .filter(|def| def.listed.in_toolset(toolset) && def.built())
             .collect();
         let always = marked
             .iter()

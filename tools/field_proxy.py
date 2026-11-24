@@ -45,12 +45,20 @@ It records no headers and no bodies, because they can hold credentials.
     python3 tools/field_proxy.py --upstream 127.0.0.1:3000 \\
         --rule "POST ^/api/ drop_response 1"
 
+In a field test the proxy runs in a container on the run's closed network
+(decision 0310): `--listen 0.0.0.0:PORT` makes it reachable by the product's container,
+`--control 127.0.0.1:PORT` opens a control port for one JSON line per connection
+(`add_rule`, `record`, `reset`), reachable only inside that container, and
+`--control ADDRESS --send JSON` is its client, which the runner runs with `docker exec`.
+
 Standard library only; Python 3.11 or newer.
 """
 
 import argparse
 import asyncio
+import json
 import re
+import socket
 import threading
 
 ACTIONS = ("pass", "delay", "refuse", "drop_request", "drop_response", "cut_response")
@@ -129,7 +137,8 @@ def _closes(version, fields):
 
 
 class FaultProxy:
-    def __init__(self, upstream_host, upstream_port, rewrite_host=True):
+    def __init__(self, upstream_host, upstream_port, rewrite_host=True, listen_host="127.0.0.1"):
+        self.listen_host = listen_host
         self.upstream_host = upstream_host
         self.upstream_port = int(upstream_port)
         self.rewrite_host = rewrite_host
@@ -175,8 +184,8 @@ class FaultProxy:
 
     # Lifecycle.
 
-    async def start(self):
-        self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0, limit=HEAD_LIMIT)
+    async def start(self, port=0):
+        self._server = await asyncio.start_server(self._handle, self.listen_host, port, limit=HEAD_LIMIT)
         self.port = self._server.sockets[0].getsockname()[1]
         return self.port
 
@@ -300,29 +309,106 @@ def render_record(record):
     )
 
 
+def apply_control(proxy, message):
+    """One control message, as a dict, for a proxy; the answer is a dict. `op` is one of
+    add_rule (method, path, do, times, seconds, bytes), record, or reset."""
+    op = message.get("op")
+    if op == "add_rule":
+        proxy.add_rule(
+            message.get("method", "GET"),
+            message["path"],
+            message.get("do", "pass"),
+            times=message.get("times", 1),
+            seconds=message.get("seconds", 1),
+            nbytes=message.get("bytes", 0),
+        )
+        return {"ok": True}
+    if op == "record":
+        return {"ok": True, "record": proxy.record()}
+    if op == "reset":
+        proxy.reset()
+        return {"ok": True}
+    return {"ok": False, "error": f"unknown op {op!r}"}
+
+
+async def _control_line(proxy, reader, writer):
+    """One line of JSON in, one line of JSON out."""
+    try:
+        line = await reader.readline()
+        try:
+            answer = apply_control(proxy, json.loads(line))
+        except (ValueError, KeyError, TypeError, AttributeError) as bad:
+            answer = {"ok": False, "error": str(bad)}
+        writer.write(json.dumps(answer).encode() + b"\n")
+        await writer.drain()
+    except (ConnectionError, OSError):
+        pass
+    finally:
+        writer.close()
+
+
+def send_control(address, message, seconds=10):
+    """Send one control message to a proxy's control address, `host:port`, and return its
+    answer. This is the client of `--control`."""
+    host, _, port = address.rpartition(":")
+    with socket.create_connection((host, int(port)), timeout=seconds) as link:
+        link.sendall(json.dumps(message).encode() + b"\n")
+        data = b""
+        while not data.endswith(b"\n"):
+            more = link.recv(65536)
+            if not more:
+                break
+            data += more
+    return json.loads(data)
+
+
 async def _serve_by_hand(args):
     host, _, port = args.upstream.rpartition(":")
-    proxy = FaultProxy(host or "127.0.0.1", int(port), rewrite_host=not args.keep_host)
+    listen_host, _, listen_port = args.listen.rpartition(":")
+    proxy = FaultProxy(host or "127.0.0.1", int(port), rewrite_host=not args.keep_host, listen_host=listen_host)
     for text in args.rule:
         words = text.split()
         method, path, do = words[:3]
         times = int(words[3]) if len(words) > 3 else 1
         proxy.add_rule(method, path, do, times)
-    listening = await proxy.start()
-    print(f"listening on 127.0.0.1:{listening}, forwarding to {args.upstream}", flush=True)
+    listening = await proxy.start(int(listen_port))
+    control = None
+    if args.control:
+        control_host, _, control_port = args.control.rpartition(":")
+        control = await asyncio.start_server(
+            lambda r, w: _control_line(proxy, r, w), control_host, int(control_port)
+        )
+    print(f"listening on {listen_host}:{listening}, forwarding to {args.upstream}", flush=True)
     try:
         await asyncio.Event().wait()
     finally:
+        if control is not None:
+            control.close()
         await proxy.close()
         print(render_record(proxy.record()))
 
 
 def main():
     parser = argparse.ArgumentParser(description="A TCP proxy that breaks one coming HTTP exchange on purpose.")
-    parser.add_argument("--upstream", required=True, help="host:port to forward to")
+    parser.add_argument("--upstream", help="host:port to forward to")
+    parser.add_argument("--listen", default="127.0.0.1:0", help="host:port to listen on (default: 127.0.0.1, any port)")
     parser.add_argument("--rule", action="append", default=[], help='"METHOD PATH-REGEX ACTION [TIMES]"')
     parser.add_argument("--keep-host", action="store_true", help="do not rewrite the Host header")
+    parser.add_argument(
+        "--control",
+        help="host:port. With --upstream: also listen there for one JSON line per connection that adds a rule, "
+        "reads the record, or resets (used by tools/field_test.py inside the proxy's container). "
+        "With --send: the address of a running proxy's control port",
+    )
+    parser.add_argument("--send", help="send this JSON message to --control, print the answer, and exit")
     args = parser.parse_args()
+    if args.send:
+        if not args.control:
+            parser.error("--send needs --control")
+        print(json.dumps(send_control(args.control, json.loads(args.send))))
+        return
+    if not args.upstream:
+        parser.error("--upstream is required")
     try:
         asyncio.run(_serve_by_hand(args))
     except KeyboardInterrupt:

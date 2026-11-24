@@ -542,3 +542,115 @@ async fn a_page_http_update_through_the_engine_loop_is_approved_written_once_and
         "the store and the logs were not where the test looked ({scanned} files)"
     );
 }
+
+/// The line item's input for the form's write, with its length as the
+/// application shows one.
+fn line_item(item: &str, description: &str, quantity: u32, length: &str) -> String {
+    format!(
+        r#"{{"order_id": "A-100", "item_code": "{item}", "description": "{description}", "quantity": {quantity}, "length_in": "{length}"}}"#
+    )
+}
+
+/// One write to one field set through a form, through the engine loop of
+/// the product (roadmap package 3.3): called by an agent, the write of a
+/// line item through the `ui` mode rests for approval and nothing is
+/// written; approved by a person, it is filled, saved once, and read back
+/// afresh, and the application holds what was asked. A browser lost to the
+/// answer after the save was stored puts the record in doubt, and the
+/// resume's reconcile reads it and saves nothing again. It needs a
+/// browser, as the web pack's tests find one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_ui_update_through_the_engine_loop_rests_is_approved_written_once_and_read_back() {
+    const UPDATE: &str = "example_line_item_update";
+    let app = TestApp::start().await.unwrap();
+    let machine = Machine::new("pages", &[(PLACEHOLDER, &app.url(""))]).on_disk();
+    let world = machine.open().await;
+    let linted = world.ok(&["draft", "lint", "example"]).await;
+    assert_eq!(linted["ok"], true, "{linted}");
+    let tested = world.agent(&["test", "example"]).await;
+    assert_eq!(tested.result()["passed"], true, "{}", tested.json);
+    let published = world.person(&["version", "publish", "example"]).await;
+    assert_eq!(published.finished.code, 0, "{:?}", published.finished);
+
+    // Called by an agent, the write rests, and nothing was written.
+    let input = line_item("L-101", "Oak rail, sanded", 7, "12.5");
+    let rested = world
+        .agent(&["tool", "call", UPDATE, "--input", &input])
+        .await;
+    assert_eq!(
+        rested.result()["status"],
+        "needs_approval",
+        "{:?}",
+        rested.finished
+    );
+    let run = rested.result()["run_id"].as_str().unwrap().to_owned();
+    assert_eq!(app.write_count("A-100", "L-101").await.unwrap(), 0);
+
+    // Approved by the person, it is written once and read back.
+    approve(&world, &run).await;
+    let done = world.agent(&["run", "resume", &run]).await;
+    assert_eq!(done.finished.code, 0, "{:?}", done.finished);
+    assert_eq!(done.result()["status"], "completed", "{}", done.json);
+    assert_eq!(
+        done.result()["result"]["description"],
+        "Oak rail, sanded",
+        "{}",
+        done.json
+    );
+    assert_eq!(app.write_count("A-100", "L-101").await.unwrap(), 1);
+    let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
+    assert_eq!(stored.description, "Oak rail, sanded");
+    assert_eq!(stored.quantity, 7);
+    assert_eq!(stored.length_sixteenths, 200);
+    let trace = world.ok(&["trace", "show", &run]).await;
+    let written = kinds(&trace);
+    assert_eq!(
+        written.iter().filter(|kind| **kind == "intent").count(),
+        1,
+        "{written:?}"
+    );
+    assert_eq!(
+        written.iter().filter(|kind| **kind == "verified").count(),
+        1,
+        "{written:?}"
+    );
+
+    // The save is stored and its answer lost: the record is in doubt, and
+    // the resume reconciles it by reading, and saves nothing again.
+    let input = line_item("L-102", "Pine rail", 4, "30");
+    let rested = world
+        .agent(&["tool", "call", UPDATE, "--input", &input])
+        .await;
+    let second = rested.result()["run_id"].as_str().unwrap().to_owned();
+    approve(&world, &second).await;
+    app.set_fault(
+        &Fault::once(FaultKind::LostAfterCommit).on_paths("/api/orders/A-100/items/L-102"),
+    )
+    .await
+    .unwrap();
+    let lost = world.agent(&["run", "resume", &second]).await;
+    assert_eq!(lost.error()["class"], "possible_commit", "{}", lost.json);
+    assert_eq!(lost.error()["retry_safe"], false, "{}", lost.json);
+    assert_eq!(app.write_count("A-100", "L-102").await.unwrap(), 1);
+    let reconciled = world.agent(&["run", "resume", &second]).await;
+    assert_eq!(
+        reconciled.result()["status"],
+        "completed",
+        "{}",
+        reconciled.json
+    );
+    assert_eq!(
+        app.write_count("A-100", "L-102").await.unwrap(),
+        1,
+        "the reconcile saved the line item again"
+    );
+    let stored = app.stored_item("A-100", "L-102").await.unwrap().unwrap();
+    assert_eq!(stored.description, "Pine rail");
+    assert_eq!(stored.quantity, 4);
+    assert_eq!(stored.length_sixteenths, 480);
+    let trace = world.ok(&["trace", "show", &second]).await;
+    let kinds = kinds(&trace);
+    assert!(kinds.contains(&"reconcile_read"), "{kinds:?}");
+    assert_eq!(kinds.iter().filter(|kind| **kind == "intent").count(), 1);
+    world.close().await;
+}

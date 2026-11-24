@@ -575,7 +575,14 @@ async fn discovery_observes_and_cannot_write() {
                 }
             }
             ("http_description", Ok(findings)) => {
-                assert_eq!(findings.len(), 9);
+                assert_eq!(findings.len(), 13);
+                let by = |kind: &str| {
+                    findings
+                        .iter()
+                        .filter(|one| one.kind().as_str() == kind)
+                        .count()
+                };
+                assert_eq!((by("described_operation"), by("sign_in_method")), (11, 2));
                 for finding in findings {
                     assert_eq!(finding.level(), EvidenceLevel::Inferred);
                     assert_eq!(finding.source(), Source::PublishedDescription);
@@ -746,7 +753,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
         .filter(|(name, _)| name == "http_description")
         .flat_map(|(_, result)| result.unwrap())
         .collect();
-    assert_eq!(findings.len(), 9, "{findings:?}");
+    assert_eq!(findings.len(), 13, "{findings:?}");
 
     let folder = Folder::new("drafted-reads");
     let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
@@ -775,6 +782,7 @@ async fn the_test_applications_description_drafts_reads_that_read_what_it_stores
             "operations/api_orders_list.yaml",
             "operations/api_stock_get.yaml",
             "operations/orders_delivery_get.yaml",
+            "operations/orders_handoff_get.yaml",
             "operations/orders_items_get.yaml",
             "operations/orders_shipment_get.yaml",
             "operations/orders_totals_get.yaml",
@@ -973,6 +981,276 @@ async fn a_read_drafted_from_a_description_takes_null_and_missing_for_an_optiona
     assert!(app.writes().await.unwrap().is_empty());
 }
 
+/// Case 36 (decision 0302): the application's `client_secret` is no output
+/// of the read drafted for its answer, the optional `access_token` is no
+/// input, the read that requires an `api_key` is not drafted, the target
+/// compiles with no `credential_in_file`, and the invented value is in no
+/// part of a result and in no draft file.
+#[tokio::test]
+async fn a_property_and_a_parameter_named_as_a_secret_are_never_drafted() {
+    use example_app::answers::HANDOFF_SECRET;
+
+    let app = TestApp::start().await.unwrap();
+    let address = app.url("");
+    let scene = Scene::new("example", &address);
+    let findings: Vec<Finding> = discover(&scene, &Values::new())
+        .await
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect();
+    let folder = Folder::new("drafted-secret");
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    std::fs::write(
+        folder.path().join("target.yaml"),
+        target.replace("http://127.0.0.1:4010", &address),
+    )
+    .unwrap();
+    let root = TargetRoot::new(folder.path());
+    let set = scene.registry.compiler_set();
+    let report = Drafter::new(set, &root).draft(&findings).unwrap();
+    assert!(report.kept_failing.is_empty(), "{report:?}");
+    assert!(
+        !report
+            .written
+            .iter()
+            .any(|path| path.as_str() == "operations/orders_pickup_get.yaml"),
+        "{report:?}"
+    );
+    // The read that requires an `api_key` is in the report, with that
+    // reason (roadmap package FT11), and the report counts the one
+    // property left out of the hand-off for its name.
+    let secret_reads: Vec<_> = report
+        .not_drafted
+        .iter()
+        .filter(|left| left.reason.contains("whose name is a secret's"))
+        .collect();
+    assert_eq!(secret_reads.len(), 1, "{:?}", report.not_drafted);
+    assert_eq!(secret_reads[0].pack, "http");
+    assert!(
+        findings
+            .iter()
+            .find(|finding| finding.id() == secret_reads[0].finding)
+            .is_some_and(|finding| finding.found().contains("/pickup")),
+        "{:?}",
+        report.not_drafted
+    );
+    assert_eq!(report.left_out_as_secret, 1, "{report:?}");
+    // No reason carries a value of the system or the secret's own name.
+    assert!(
+        report
+            .not_drafted
+            .iter()
+            .all(|left| !left.reason.contains("api_key") && !left.reason.contains(HANDOFF_SECRET)),
+        "{:?}",
+        report.not_drafted
+    );
+    let operation =
+        std::fs::read_to_string(folder.path().join("operations/orders_handoff_get.yaml")).unwrap();
+    assert!(!operation.contains("client_secret:"), "{operation}");
+    assert!(!operation.contains("access_token"), "{operation}");
+    assert!(operation.contains("carrier_code"), "{operation}");
+    assert!(
+        operation.contains("their names are a secret's") && operation.contains("`client_secret`"),
+        "{operation}"
+    );
+
+    // No draft file holds the invented value.
+    let mut stack = vec![folder.path().to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Ok(text) = std::fs::read_to_string(&path) {
+                assert!(!text.contains(HANDOFF_SECRET), "{}", path.display());
+            }
+        }
+    }
+
+    // The target compiles; the compiler refuses nothing.
+    let sources = a2m_files::load(&root, set).unwrap();
+    let plan = a2m_files::compile(
+        &sources,
+        set,
+        a2m_files::CompileMode::Draft,
+        a2m_files::DRAFT_VERSION,
+    )
+    .unwrap()
+    .plan;
+    assert!(
+        plan.operations
+            .iter()
+            .all(|operation| operation.name.as_str() != "example_orders_pickup_get")
+    );
+
+    let reading = Scene::over(
+        Folder::new("drafted-secret-run"),
+        common::registry(
+            &Folder::new("drafted-secret-registry"),
+            Arc::new(a2m_core::NoSecrets),
+        ),
+        plan,
+        &address,
+    );
+    let (handle, mut prepared) = reading.reader().await;
+    let ran = reading
+        .read(
+            &handle,
+            &mut prepared,
+            "example_orders_handoff_get",
+            &Values::new().with("order_id", "A-100"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        ran.values.get("carrier_code").and_then(Value::as_text),
+        Some("EXF")
+    );
+    assert_eq!(ran.values.get("packages"), Some(&Value::Int(2)));
+    assert!(ran.values.get("client_secret").is_none());
+    assert!(
+        !format!("{ran:?}").contains(HANDOFF_SECRET),
+        "no part of the result holds the secret"
+    );
+    handle.release(prepared, false).await;
+    assert!(app.writes().await.unwrap().is_empty());
+}
+
+/// Case 37 (decision 0305): the read drafted for the hand-off declares its
+/// optional `packages` as an output that may be absent, and no other. Its
+/// schema admits `null` for that output only and requires every output; a
+/// result with the value null or left out is `null` under its own name and
+/// validates against the schema; a `null` in a required output stops.
+#[tokio::test]
+async fn a_drafted_read_declares_the_output_the_description_does_not_require_as_possibly_absent() {
+    use example_app::answers::CarrierAnswer;
+
+    let app = TestApp::start().await.unwrap();
+    let address = app.url("");
+    let scene = Scene::new("example", &address);
+    let findings: Vec<Finding> = discover(&scene, &Values::new())
+        .await
+        .into_iter()
+        .filter(|(name, _)| name == "http_description")
+        .flat_map(|(_, result)| result.unwrap())
+        .collect();
+    let folder = Folder::new("drafted-absent");
+    let target = std::fs::read_to_string(fixture("example").join("target.yaml")).unwrap();
+    std::fs::write(
+        folder.path().join("target.yaml"),
+        target.replace("http://127.0.0.1:4010", &address),
+    )
+    .unwrap();
+    let root = TargetRoot::new(folder.path());
+    let set = scene.registry.compiler_set();
+    Drafter::new(set, &root).draft(&findings).unwrap();
+    let sources = a2m_files::load(&root, set).unwrap();
+    let plan = a2m_files::compile(
+        &sources,
+        set,
+        a2m_files::CompileMode::Draft,
+        a2m_files::DRAFT_VERSION,
+    )
+    .unwrap()
+    .plan;
+
+    // The plan: `packages` may be absent, and nothing else of the read.
+    let operation = plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_orders_handoff_get")
+        .unwrap();
+    let absent: Vec<&str> = operation
+        .outputs
+        .iter()
+        .filter(|output| output.may_be_absent)
+        .map(|output| output.name.as_str())
+        .collect();
+    assert_eq!(absent, ["packages"]);
+    assert_eq!(operation.outputs.len(), 3);
+
+    // The schema says the same: every output required, `null` admitted by
+    // `packages` alone.
+    let tool = plan
+        .tools
+        .iter()
+        .find(|tool| tool.name.as_str() == "example_orders_handoff_get")
+        .unwrap();
+    let schema: serde_json::Value = serde_json::from_slice(tool.output_schema.as_bytes()).unwrap();
+    let mut required: Vec<&str> = schema["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|name| name.as_str())
+        .collect();
+    required.sort_unstable();
+    assert_eq!(required, ["carrier_code", "order_id", "packages"]);
+    for (name, admits_null) in [
+        ("order_id", false),
+        ("carrier_code", false),
+        ("packages", true),
+    ] {
+        let property = &schema["properties"][name];
+        assert_eq!(
+            common::schema_fits(property, &serde_json::Value::Null).is_ok(),
+            admits_null,
+            "{name}: {property}"
+        );
+    }
+
+    let reading = Scene::over(
+        Folder::new("drafted-absent-run"),
+        common::registry(
+            &Folder::new("drafted-absent-registry"),
+            Arc::new(a2m_core::NoSecrets),
+        ),
+        plan,
+        &address,
+    );
+    let (handle, mut prepared) = reading.reader().await;
+    let inputs = Values::new().with("order_id", "A-100");
+    for (answer, packages) in [
+        (CarrierAnswer::Object, Value::Int(2)),
+        (CarrierAnswer::Null, Value::Null),
+        (CarrierAnswer::Missing, Value::Null),
+    ] {
+        app.set_carrier(answer).await.unwrap();
+        let ran = reading
+            .read(
+                &handle,
+                &mut prepared,
+                "example_orders_handoff_get",
+                &inputs,
+            )
+            .await
+            .unwrap_or_else(|failure| panic!("{answer:?}: {failure:?}"));
+        // The key is always in the result, with the value or `null`.
+        assert_eq!(ran.values.get("packages"), Some(&packages), "{answer:?}");
+        let result = serde_json::to_value(&ran.values).unwrap();
+        common::schema_fits(&schema, &result)
+            .unwrap_or_else(|why| panic!("{answer:?}: {why}: {result}"));
+    }
+
+    // A `null` where the description requires a value stops.
+    app.set_carrier(CarrierAnswer::RequiredNull).await.unwrap();
+    let failure = reading
+        .read(
+            &handle,
+            &mut prepared,
+            "example_orders_handoff_get",
+            &inputs,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Drift, "response_schema_mismatch")
+    );
+    handle.release(prepared, false).await;
+    assert!(app.writes().await.unwrap().is_empty());
+}
+
 /// A redactor that knows one secret.
 struct Knows(&'static str);
 
@@ -1143,7 +1421,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
     // the origin and that path, and the surface is not an open question.
     let prefixed = format!("{base}/v1");
     let findings = findings_from_handed_file(&app, &prefixed).await;
-    assert_eq!(findings.len(), 9);
+    assert_eq!(findings.len(), 13);
     let one = target.replace("http://127.0.0.1:4010", &prefixed);
     let (_folder, root, scene, report) = draft_into(one, &findings);
     assert!(
@@ -1239,8 +1517,22 @@ fn with_surfaces(target: &str, surfaces: &[(&str, &str)]) -> String {
     format!("{head}surfaces:\n{text}environments:{rest}")
 }
 
+/// An endpoint draft, read at exactly the path given: `endpoints/` for a
+/// draft in place, `held/endpoints/` for one held for an open question
+/// (decision 0298). A held draft is nowhere else, and one in place is not
+/// also held.
 fn surface_of(folder: &Folder, file: &str) -> String {
-    std::fs::read_to_string(folder.path().join("endpoints").join(file)).unwrap()
+    let (held, name) = match file.strip_prefix("held/") {
+        Some(rest) => (true, rest),
+        None => (false, file),
+    };
+    let beside = if held {
+        name.to_owned()
+    } else {
+        format!("held/{name}")
+    };
+    assert!(!folder.path().join(&beside).exists(), "{beside} stands too");
+    std::fs::read_to_string(folder.path().join(file)).unwrap()
 }
 
 #[tokio::test]
@@ -1261,7 +1553,7 @@ async fn an_endpoint_is_tied_to_a_surface_only_when_exactly_one_takes_it() {
         ],
     );
     let (folder, report) = drafted_into(&nested, &findings);
-    let entry = surface_of(&folder, "get_orders_id.yaml");
+    let entry = surface_of(&folder, "held/endpoints/get_orders_id.yaml");
     assert!(
         !entry.contains("surface: \"api\"") && !entry.contains("surface: \"orders\""),
         "{entry}"
@@ -1273,19 +1565,19 @@ async fn an_endpoint_is_tied_to_a_surface_only_when_exactly_one_takes_it() {
     let findings = findings_from_description(description(), &format!("{base}/v10")).await;
     let near = with_surfaces(&target, &[("api", &format!("{base}/v1"))]);
     let (folder, _) = drafted_into(&near, &findings);
-    assert!(!surface_of(&folder, "get_orders_id.yaml").contains("surface: \"api\""));
+    assert!(!surface_of(&folder, "held/endpoints/get_orders_id.yaml").contains("surface: \"api\""));
 
     // The only `http` surface of the target, at another origin: not taken.
     let findings = findings_from_description(description(), &base).await;
     let elsewhere = with_surfaces(&target, &[("api", "http://127.0.0.1:1")]);
     let (folder, report) = drafted_into(&elsewhere, &findings);
-    assert!(!surface_of(&folder, "get_orders_id.yaml").contains("surface: \"api\""));
+    assert!(!surface_of(&folder, "held/endpoints/get_orders_id.yaml").contains("surface: \"api\""));
     assert!(!report.open_questions.is_empty());
 
     // The only one, at the origin and a trailing slash: taken.
     let slash = with_surfaces(&target, &[("api", &format!("{base}/"))]);
     let (folder, _) = drafted_into(&slash, &findings);
-    assert!(surface_of(&folder, "get_orders_id.yaml").contains("surface: \"api\""));
+    assert!(surface_of(&folder, "endpoints/get_orders_id.yaml").contains("surface: \"api\""));
 }
 
 #[tokio::test]
@@ -1302,11 +1594,11 @@ async fn a_2_0_base_path_that_is_not_the_surfaces_path_leaves_the_surface_open()
         &with_surfaces(&target, &[("api", &format!("{base}/v1"))]),
         &findings,
     );
-    assert!(!surface_of(&folder, "get_orders.yaml").contains("surface: \"api\""));
+    assert!(!surface_of(&folder, "held/endpoints/get_orders.yaml").contains("surface: \"api\""));
     let question = report
         .open_questions
         .iter()
-        .find(|question| question.file.as_str() == "endpoints/get_orders.yaml")
+        .find(|question| question.file.as_str() == "held/endpoints/get_orders.yaml")
         .unwrap();
     assert!(question.question.contains("not the same"), "{question:?}");
     // The same path, with a trailing slash ignored: tied.
@@ -1315,7 +1607,7 @@ async fn a_2_0_base_path_that_is_not_the_surfaces_path_leaves_the_surface_open()
         &with_surfaces(&target, &[("api", &format!("{base}/api"))]),
         &findings,
     );
-    assert!(surface_of(&folder, "get_orders.yaml").contains("surface: \"api\""));
+    assert!(surface_of(&folder, "endpoints/get_orders.yaml").contains("surface: \"api\""));
 }
 
 #[tokio::test]
@@ -1324,12 +1616,17 @@ async fn a_read_with_no_name_to_give_is_drafted_with_an_open_question_and_a_file
     let target = target.replace("target: example", "target: example_store");
     let app = TestApp::start().await.unwrap();
     let base = app.url("");
+    // A surface takes every endpoint, so that the only questions left are
+    // about names: an endpoint with a question holds its finding's files
+    // back (decision 0298).
+    let target = with_surfaces(&target, &[("api", &base)]);
     let operations = |report: &a2m_files::DraftReport| -> Vec<String> {
         report
             .written
             .iter()
+            .chain(&report.held)
             .map(|path| path.as_str().to_owned())
-            .filter(|path| path.starts_with("operations/"))
+            .filter(|path| path.starts_with("operations/") || path.starts_with("held/operations/"))
             .collect()
     };
 
@@ -1413,10 +1710,10 @@ async fn two_operations_with_one_operation_id_are_drafted_to_two_endpoint_files(
     };
     let endpoints = |report: &a2m_files::DraftReport| -> Vec<String> {
         report
-            .written
+            .held
             .iter()
             .map(|path| path.as_str().to_owned())
-            .filter(|path| path.starts_with("endpoints/"))
+            .filter(|path| path.starts_with("held/endpoints/"))
             .collect()
     };
     let drafted = |ids: &[(&str, &str)]| {
@@ -1431,9 +1728,15 @@ async fn two_operations_with_one_operation_id_are_drafted_to_two_endpoint_files(
     let findings =
         findings_from_description(drafted(&[("/a", "list"), ("/b", "list")]), &base).await;
     let (_folder, report) = drafted_into(&target, &findings);
+    // Each endpoint file holds open questions (its surface, its answer), so
+    // both wait in the holding folder and none is in place (decision 0298).
+    assert!(report.written.is_empty(), "{:?}", report.written);
     let mut written = endpoints(&report);
     written.sort();
-    assert_eq!(written, ["endpoints/get_a.yaml", "endpoints/get_b.yaml"]);
+    assert_eq!(
+        written,
+        ["held/endpoints/get_a.yaml", "held/endpoints/get_b.yaml"]
+    );
 
     // The fallback collides too: two files, each held, none merged.
     let findings = findings_from_description(drafted(&[("/a/b", "x"), ("/a_b", "x")]), &base).await;
@@ -1441,7 +1744,9 @@ async fn two_operations_with_one_operation_id_are_drafted_to_two_endpoint_files(
     let written = endpoints(&report);
     assert_eq!(written.len(), 2, "{written:?}");
     assert!(
-        written.iter().all(|file| file.contains("held_")),
+        written
+            .iter()
+            .all(|file| file.starts_with("held/endpoints/") && file.contains("held_")),
         "{written:?}"
     );
     assert_eq!(

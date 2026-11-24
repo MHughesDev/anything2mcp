@@ -53,6 +53,7 @@ anything2mcp/
   bench/                  # performance suite and budgets
   docs/                   # the design, the architecture, the decisions, the research, the plan
   tools/                  # the documentation audit and its self-test
+    a2m-field-harness/    # at tools/field-harness/: the product's own `serve` with the field prompt; test equipment, never packaged (decision 0310)
   xtask/                  # build, release, and code-generation tasks
 ```
 
@@ -158,7 +159,7 @@ A pack or provider is in one of four states, and `provider.list` shows which.
 
 A provider package may be written in any language. Python is the first language with a small kit for writing one, because that is what most people integrating a system reach for.
 
-- The package declares an entry point in a group the runtime reads. The entry names the provider's manifest and the command that starts it.
+- The package declares an entry point in the group `anything2mcp.providers`. The entry's name is the provider's name, and its value is the dotted name of a package of the provider's own that holds the manifest, which in turn names the command that starts it ([decision 0314](../../decisions/0314-a-provider-package-is-found-by-reading-its-entry-and-no-package-code-runs.md)). The entry is read as text and never loaded: the search starts no Python, imports no package, and says where it looked.
 - The runtime starts it as a separate process through the supervisor and speaks the plug-in protocol to it. No Python runs inside the engine, and no engine logic runs in Python.
 - A provider installed with pip is listed as present and not enabled until a person enables it.
 - Rule six is unchanged: everything on the path of a run is Rust, except a plug-in, which is a declared, supervised process.
@@ -264,6 +265,6 @@ A tool that holds signed-in sessions to business systems must not talk to anyone
 
 - Wheel size under 25 MB with every first-party pack, and install time under 10 seconds on a normal connection. Both are targets until measured; package F4 measures them for hypothesis H-28.
 - Research brief 28 is answered by [research note 21](../../research/21-wheel-and-npm-packaging.md): one `bin` wheel carries the package; eight platform tags; `dist` is not adopted for pip or npm and is weighed again for the standalone installers; npm and crates.io need each name to exist before trusted publishing. Still open: `a2m` from pip on Windows, and the start time of the npm launcher (H-39).
-- The exact entry-point group, and the shape of an extra that names a provider package.
+- The shape of an extra that names a provider package. The entry-point group is settled by decision 0314.
 - Whether a provider written in Rust, outside this repository, is loaded as a process like any other plug-in. Almost certainly yes: one way in.
 - Whether the library facade publishes the `a2m-*` crates. That needs a decision record when embedding needs it.

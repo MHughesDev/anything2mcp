@@ -16,7 +16,7 @@ use tokio::sync::{Notify, oneshot, watch};
 
 use crate::budget::{self, Take};
 use crate::failure;
-use crate::tables::{self, Acquired, between, plus};
+use crate::tables::{self, Acquired, LeaseClock, between, plus};
 use crate::types::{
     Admitted, BudgetKey, CancelOutcome, Enqueue, HoldScope, JobEnd, JobLease, JobRow, LeaseRef,
     RateGrant, RateLimit, Renewal, ResourceKey, Resumed, RunnerOffer, RunnerTerms, SchedSettings,
@@ -38,6 +38,9 @@ pub const QUEUE_WAIT: &str = "a2m.sched.queue_wait";
 struct Inner {
     store: Store,
     clock: Arc<dyn Clock>,
+    /// The count every lease is measured on: the steady clock, from the
+    /// time of day this scheduler was made.
+    leases: LeaseClock,
     settings: SchedSettings,
     telemetry: Option<Telemetry>,
     /// Woken when a waiting claim may find work it did not find before.
@@ -129,11 +132,13 @@ impl Scheduler {
     #[must_use]
     pub fn new(store: Store, settings: SchedSettings, telemetry: Option<Telemetry>) -> Self {
         let clock = store.clock();
+        let leases = LeaseClock::new(Arc::clone(&clock));
         let (due, _) = watch::channel(0);
         Self {
             inner: Arc::new(Inner {
                 store,
                 clock,
+                leases,
                 settings,
                 telemetry,
                 work: Notify::new(),
@@ -416,10 +421,11 @@ impl Scheduler {
                 let _gate = self.inner.gate.lock().await;
                 let waited_for = self.inner.waits().waited_for();
                 let free = free.clone();
+                let leases = self.inner.leases.clone();
                 self.inner
                     .store
                     .write(Durability::Synced, move |tx| {
-                        tables::claim(tx, &settings, runner, free, &waited_for)
+                        tables::claim(tx, &settings, runner, free, &waited_for, leases.now())
                     })
                     .await?
             };
@@ -457,11 +463,12 @@ impl Scheduler {
     pub async fn heartbeat(&self, lease: &LeaseRef) -> Result<Renewal, Failure> {
         let settings = self.inner.settings;
         let lease = *lease;
+        let leases = self.inner.leases.clone();
         let renewal = self
             .inner
             .store
             .write(Durability::Relaxed, move |tx| {
-                tables::heartbeat(tx, &settings, &lease)
+                tables::heartbeat(tx, &settings, &lease, leases.now())
             })
             .await?;
         self.inner
@@ -575,16 +582,17 @@ impl Scheduler {
             let _gate = self.inner.gate.lock().await;
             let waited_for = self.inner.waits().waited_for();
             let wanted = keys.clone();
+            let leases = self.inner.leases.clone();
             let acquired = self
                 .inner
                 .store
                 .write(Durability::Synced, move |tx| {
-                    tables::acquire(tx, &lease, &wanted, &waited_for)
+                    tables::acquire(tx, &lease, &wanted, &waited_for, leases.now())
                 })
                 .await?;
             let lease_until = match acquired {
                 Acquired::Taken => return Ok(()),
-                Acquired::Blocked { lease_until } => lease_until,
+                Acquired::Blocked { lease_until } => self.inner.leases.to_store(lease_until),
             };
             if wait.is_zero() {
                 return Err(failure::resource_in_use(self.inner.settings.lease_length));
@@ -638,10 +646,13 @@ impl Scheduler {
         if waiters.is_empty() {
             return;
         }
+        let leases = self.inner.leases.clone();
         let granted = self
             .inner
             .store
-            .write(Durability::Synced, move |tx| tables::grant(tx, &waiters))
+            .write(Durability::Synced, move |tx| {
+                tables::grant(tx, &waiters, leases.now())
+            })
             .await;
         // When the store refuses, the waiters stay; their own deadlines end
         // their waits.
@@ -687,12 +698,13 @@ impl Scheduler {
         wait: Duration,
     ) -> Result<(), Failure> {
         let lease = *lease;
+        let leases = self.inner.leases.clone();
         let lease_until = self
             .inner
             .store
-            .read(move |tx| tables::lease_until(tx, &lease))
+            .read(move |tx| tables::lease_until(tx, &lease, leases.now()))
             .await?;
-        let deadline = plus(self.now(), wait).min(lease_until);
+        let deadline = plus(self.now(), wait).min(self.inner.leases.to_store(lease_until));
         let retry = self.inner.settings.lease_length;
         let (waiter, woken) = {
             let mut waits = self.inner.waits();
@@ -769,11 +781,12 @@ impl Scheduler {
         let lease = *lease;
         loop {
             let keys = budgets.to_vec();
+            let leases = self.inner.leases.clone();
             let (take, lease_until) = self
                 .inner
                 .store
                 .write(Durability::Relaxed, move |tx| {
-                    let lease_until = tables::lease_until(tx, &lease)?;
+                    let lease_until = tables::lease_until(tx, &lease, leases.now())?;
                     // A watch's check leaves its reserve of every budget to
                     // the caller's own reads (decision 0247), and spends the
                     // share its surface keeps for watches, however many
@@ -805,7 +818,7 @@ impl Scheduler {
             match take {
                 Take::Granted { requests, over } => return Ok(RateGrant { requests, over }),
                 Take::Wait { until } => {
-                    if until >= lease_until {
+                    if until >= self.inner.leases.to_store(lease_until) {
                         return Err(failure::rate_limited(between(self.now(), until)));
                     }
                     self.timer(until).fired().await;
@@ -835,11 +848,12 @@ impl Scheduler {
         }
         let default = self.inner.settings.default_rate;
         let (lease, keys) = (*lease, budgets.to_vec());
+        let leases = self.inner.leases.clone();
         let take = self
             .inner
             .store
             .write(Durability::Relaxed, move |tx| {
-                tables::lease_until(tx, &lease)?;
+                tables::lease_until(tx, &lease, leases.now())?;
                 budget::take(tx, &default, &keys, want.max(1), true, reserve_percent)
             })
             .await?;
@@ -927,12 +941,13 @@ impl Scheduler {
     pub async fn sweep(&self) -> Result<SweepReport, Failure> {
         let settings = self.inner.settings;
         let resumed = Arc::clone(&self.inner.resumed);
+        let leases = self.inner.leases.clone();
         let swept = self
             .inner
             .store
             .write(Durability::Synced, move |tx| {
                 let asked = resumed_set(&resumed).clone();
-                tables::sweep(tx, &settings, &asked)
+                tables::sweep(tx, &settings, &asked, leases.now())
             })
             .await?;
         {
@@ -967,10 +982,11 @@ impl Scheduler {
     /// `busy` failures of the store.
     pub async fn next_due(&self) -> Result<Option<Timestamp>, Failure> {
         let settings = self.inner.settings;
+        let leases = self.inner.leases.clone();
         let stored = self
             .inner
             .store
-            .read(move |tx| tables::next_due(tx, &settings))
+            .read(move |tx| tables::next_due(tx, &settings, &leases))
             .await?;
         let waited = self.inner.waits().next_timer();
         Ok(match (stored, waited) {

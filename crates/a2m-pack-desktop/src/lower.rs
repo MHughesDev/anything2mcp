@@ -24,13 +24,14 @@ use a2m_core::{
     Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
 };
 use a2m_files::{
-    Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
-    ResolvedBinding, Stage, StepCommits,
+    BindingStatement, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering,
+    Place, Possible, ResolvedBinding, Sends, Stage, Statement, StepChanges, StepCommits,
 };
 
 use crate::codes::{self, shown};
 use crate::model::{
-    InvokeStep, PAYLOAD_FORMAT, ReadItem, ReadStep, Screen, ScreenSection, SetStep,
+    InvokeStep, MemberStep, PAYLOAD_FORMAT, PropertyStep, ReadItem, ReadStep, Screen,
+    ScreenSection, SetStep,
 };
 use crate::screens::{DESKTOP_SURFACE, SCREEN_KIND, problem};
 
@@ -46,6 +47,20 @@ pub const SET: StepKind = StepKind::fixed("set");
 pub const INVOKE: StepKind = StepKind::fixed("invoke");
 /// The step a discoverer sends: the shape of the application's windows.
 pub const SNAPSHOT: StepKind = StepKind::fixed("snapshot");
+/// The step a discoverer sends: what the surface's service says of itself,
+/// asked so that a service that is not running is never started.
+pub const INTROSPECT: StepKind = StepKind::fixed("introspect");
+/// The step that reads one property of the surface's service.
+pub const PROPERTY: StepKind = StepKind::fixed("property");
+/// The step a discoverer sends: the definition of the management class the
+/// surface names (Windows).
+pub const SCHEMA: StepKind = StepKind::fixed("schema");
+/// What a drafted read of a management class's property lowers to. This
+/// version carries out no such step (decision 0318).
+pub const MANAGEMENT_GET: StepKind = StepKind::fixed("management_get");
+/// What a drafted read of a COM property get lowers to. This version
+/// carries out no such step (decision 0318).
+pub const COM_GET: StepKind = StepKind::fixed("com_get");
 
 const READ_VERBS: &[&str] = &["read", "list"];
 const WRITE_VERBS: &[&str] = &["update", "upsert"];
@@ -73,7 +88,29 @@ impl DesktopLowering {
         Self {
             mode,
             schema: JsonSchema::object()
-                .required("screen", JsonSchema::name())
+                .optional("screen", JsonSchema::name())
+                .optional(
+                    "management",
+                    JsonSchema::object()
+                        .required("surface", JsonSchema::name())
+                        .required("class", JsonSchema::text())
+                        .required("name", JsonSchema::text()),
+                )
+                .optional(
+                    "com",
+                    JsonSchema::object()
+                        .required("surface", JsonSchema::name())
+                        .required("interface", JsonSchema::text())
+                        .required("name", JsonSchema::text()),
+                )
+                .optional(
+                    "property",
+                    JsonSchema::object()
+                        .required("surface", JsonSchema::name())
+                        .required("path", JsonSchema::text())
+                        .required("interface", JsonSchema::text())
+                        .required("name", JsonSchema::text()),
+                )
                 .optional("fields", JsonSchema::map_of(JsonSchema::expression()))
                 .optional("action", JsonSchema::name())
                 .optional(
@@ -85,7 +122,16 @@ impl DesktopLowering {
                 .chain(WRITE_VERBS)
                 .map(|verb| Verb::fixed(verb))
                 .collect(),
-            step_kinds: vec![GOTO, WAIT, READ, SET, INVOKE],
+            step_kinds: vec![
+                GOTO,
+                WAIT,
+                READ,
+                SET,
+                INVOKE,
+                PROPERTY,
+                MANAGEMENT_GET,
+                COM_GET,
+            ],
         }
     }
 }
@@ -372,6 +418,273 @@ impl<'a> Lower<'a, '_> {
         steps
     }
 
+    /// A binding that reads one property of the surface's service: one
+    /// `property` step, and nothing that could call a method of the
+    /// service (decision 0316). Only the verb `read`, and only an operation
+    /// declared to read.
+    fn property(
+        &mut self,
+        binding: &ResolvedBinding<'_>,
+        property: &Located<Doc>,
+        verb: &str,
+    ) -> Result<Lowered, Diagnostics> {
+        let at = &binding.doc.at;
+        let text = |key: &str| {
+            property
+                .get(key)
+                .and_then(Located::as_text)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        if verb != "read" {
+            self.refuse(
+                "property_reads_only",
+                Stage::Analyze,
+                at,
+                format!(
+                    "The verb `{}` is not built for a binding that names a property of a service: a property is read, and setting one is not built.",
+                    shown(verb)
+                ),
+                "Bind the verb `read`.",
+            );
+        }
+        if self.cx.operation().effect() != EffectClass::Read {
+            self.refuse(
+                "read_acts",
+                Stage::Analyze,
+                at,
+                "A binding that reads a property of a service is a read, and the operation is declared to change something.".to_owned(),
+                "Declare `effect: read`.",
+            );
+        }
+        for key in ["screen", "fields", "action", "read_back"] {
+            if let Some(stray) = binding.field(key) {
+                self.refuse(
+                    "read_acts",
+                    Stage::Analyze,
+                    &stray.at,
+                    format!(
+                        "A binding that reads a property of a service states `{key}`, which belongs to a window."
+                    ),
+                    "Remove it.",
+                );
+            }
+        }
+        let (path, interface, name) = (text("path"), text("interface"), text("name"));
+        if !crate::dbus::is_object_path(&path)
+            || interface.is_empty()
+            || !interface
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+            || name.is_empty()
+            || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            self.refuse(
+                "property_invalid",
+                Stage::Resolve,
+                &property.at,
+                "The binding's object path, interface, or property name is not one a bus accepts."
+                    .to_owned(),
+                "Write the path, interface, and name as the service's introspection gives them.",
+            );
+        }
+        let outputs = self.cx.operation().outputs();
+        let [output] = outputs else {
+            self.refuse(
+                "property_output",
+                Stage::Analyze,
+                at,
+                "A read of one property has exactly one output, which is the property's value as text.".to_owned(),
+                "Give the operation one output, of the type `untrusted_text`.",
+            );
+            return Err(std::mem::take(&mut self.problems));
+        };
+        let surface = SurfaceName::new(&text("surface")).map_err(|_| {
+            Diagnostics::from(problem(
+                "unknown_screen",
+                Stage::Resolve,
+                &property.at,
+                "The binding's surface has no well-formed name.",
+                "Name a surface the target declares.",
+            ))
+        })?;
+        let payload = PropertyStep {
+            path,
+            interface,
+            name,
+            output: output.name.clone(),
+        };
+        let step = Step {
+            kind: PROPERTY,
+            refers_to: None,
+            args: Vec::new(),
+            timeout_ms: self
+                .cx
+                .target()
+                .default_timeout_ms(PROPERTY.as_str())
+                .unwrap_or(DEFAULT_TIMEOUT_MS),
+            fails_as: Self::not_found(),
+            commits: false,
+            lookup: false,
+            idempotent: true,
+            when: None,
+            payload: self.encoded(&payload, &property.at),
+        };
+        if !self.problems.is_empty() {
+            return Err(std::mem::take(&mut self.problems));
+        }
+        Ok(Lowered {
+            surface,
+            act: vec![step],
+            confirm: Vec::new(),
+            read_back: Vec::new(),
+            lookup: Vec::new(),
+            settle_ms: 0,
+            prefer_response: false,
+        })
+    }
+
+    /// A binding that reads one member of a management class (`management`)
+    /// or of a COM interface (`com`): one step, which this version of the
+    /// pack does not carry out, and nothing that could change anything
+    /// (decision 0318). Only the verb `read`, and only an operation declared
+    /// to read.
+    fn member(
+        &mut self,
+        binding: &ResolvedBinding<'_>,
+        member: &Located<Doc>,
+        verb: &str,
+        key: &'static str,
+        kind: StepKind,
+    ) -> Result<Lowered, Diagnostics> {
+        let at = &binding.doc.at;
+        let text = |name: &str| {
+            member
+                .get(name)
+                .and_then(Located::as_text)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        if verb != "read" {
+            self.refuse(
+                "property_reads_only",
+                Stage::Analyze,
+                at,
+                format!(
+                    "The verb `{}` is not built for a binding that names a member of a {}: a member is read, and setting or calling one is not built.",
+                    shown(verb),
+                    if key == "com" { "COM interface" } else { "management class" }
+                ),
+                "Bind the verb `read`.",
+            );
+        }
+        if self.cx.operation().effect() != EffectClass::Read {
+            self.refuse(
+                "read_acts",
+                Stage::Analyze,
+                at,
+                "A binding that reads a member is a read, and the operation is declared to change something.".to_owned(),
+                "Declare `effect: read`.",
+            );
+        }
+        for other in [
+            "screen",
+            "fields",
+            "action",
+            "read_back",
+            "property",
+            "management",
+            "com",
+        ] {
+            if other != key
+                && let Some(stray) = binding.field(other)
+            {
+                self.refuse(
+                    "read_acts",
+                    Stage::Analyze,
+                    &stray.at,
+                    format!(
+                        "A binding that reads a member states `{other}`, which belongs to another kind of binding."
+                    ),
+                    "Remove it.",
+                );
+            }
+        }
+        let owner_key = if key == "com" { "interface" } else { "class" };
+        let (owner, name) = (text(owner_key), text("name"));
+        let plain = |word: &str, dots: bool| {
+            !word.is_empty()
+                && word
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || (dots && c == '.'))
+        };
+        if !plain(&owner, key == "com") || !plain(&name, false) {
+            self.refuse(
+                "property_invalid",
+                Stage::Resolve,
+                &member.at,
+                format!(
+                    "The binding's {owner_key} or member name is not one a definition can hold."
+                ),
+                "Write them as the definition gives them.",
+            );
+        }
+        let outputs = self.cx.operation().outputs();
+        let [output] = outputs else {
+            self.refuse(
+                "property_output",
+                Stage::Analyze,
+                at,
+                "A read of one member has exactly one output, which is its value as text."
+                    .to_owned(),
+                "Give the operation one output, of the type `untrusted_text`.",
+            );
+            return Err(std::mem::take(&mut self.problems));
+        };
+        let surface = SurfaceName::new(&text("surface")).map_err(|_| {
+            Diagnostics::from(problem(
+                "unknown_screen",
+                Stage::Resolve,
+                &member.at,
+                "The binding's surface has no well-formed name.",
+                "Name a surface the target declares.",
+            ))
+        })?;
+        let payload = MemberStep {
+            owner,
+            name,
+            output: output.name.clone(),
+        };
+        let step = Step {
+            kind: kind.clone(),
+            refers_to: None,
+            args: Vec::new(),
+            timeout_ms: self
+                .cx
+                .target()
+                .default_timeout_ms(kind.as_str())
+                .unwrap_or(DEFAULT_TIMEOUT_MS),
+            fails_as: Self::not_found(),
+            commits: false,
+            lookup: false,
+            idempotent: true,
+            when: None,
+            payload: self.encoded(&payload, &member.at),
+        };
+        if !self.problems.is_empty() {
+            return Err(std::mem::take(&mut self.problems));
+        }
+        Ok(Lowered {
+            surface,
+            act: vec![step],
+            confirm: Vec::new(),
+            read_back: Vec::new(),
+            lookup: Vec::new(),
+            settle_ms: 0,
+            prefer_response: false,
+        })
+    }
+
     fn invoke(&mut self, found: &Found<'_>, binding: &Located<Doc>) -> Option<Step> {
         let Some(named) = binding.get("action") else {
             self.refuse(
@@ -411,6 +724,16 @@ impl<'a> Lower<'a, '_> {
     }
 }
 
+/// Whether a management namespace begins with two separators,
+/// `\\host\root` or `//host/root`: another machine's.
+fn names_another_machine(namespace: &str) -> bool {
+    let mut chars = namespace.chars();
+    matches!(
+        (chars.next(), chars.next()),
+        (Some('/' | '\\'), Some('/' | '\\'))
+    )
+}
+
 impl Lowering for DesktopLowering {
     fn mode(&self) -> Mode {
         self.mode.clone()
@@ -438,6 +761,18 @@ impl Lowering for DesktopLowering {
         }
     }
 
+    /// A `goto`, `wait`, or `read` only looks at a window. A `set` types
+    /// into one and an `invoke` performs one of its actions, and either can
+    /// change the system whatever the window model says, so a read holds
+    /// neither.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == SET || *kind == INVOKE {
+            StepChanges::Can
+        } else {
+            StepChanges::Never
+        }
+    }
+
     /// A verb that reads is a read. A write is a write when the binding
     /// names how the record is read back, and `irreversible` when it
     /// names nothing, since what was written could never be read again
@@ -450,6 +785,43 @@ impl Lowering for DesktopLowering {
         } else {
             EffectClass::Write
         }
+    }
+
+    /// A binding of this pack starts no program and sets no variable: it
+    /// attaches to an application that is already running. The driver sends
+    /// nothing over a network: it asks the platform's own accessibility
+    /// interface (the session's accessibility bus, the window system, the
+    /// process table) on this machine, and the one other thing it reads, a
+    /// management class's definition, it asks of this machine's management
+    /// service. So it sends to no address. What the application does in
+    /// answer to an action is its own, and no request the engine sends is
+    /// addressed to it by a name or an address (decision 0336). The one
+    /// surface field that could name another machine, a management
+    /// namespace written `\\host\...` or `//host/...`, makes the statement
+    /// not stated.
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        lowered: &Lowered,
+        cx: &LowerContext<'_>,
+    ) -> Statement {
+        let Some(surface) = cx.target().surface(lowered.surface.as_str()) else {
+            return Statement::NotStated;
+        };
+        if surface
+            .doc
+            .text("management_namespace")
+            .is_some_and(names_another_machine)
+        {
+            return Statement::NotStated;
+        }
+        Statement::Stated(BindingStatement {
+            sends: Sends::Only {
+                surface: false,
+                addresses: Vec::new(),
+            },
+            ..BindingStatement::default()
+        })
     }
 
     fn binding_schema(&self) -> &JsonSchema {
@@ -516,6 +888,14 @@ impl Lowering for DesktopLowering {
                     "The screens were compiled in another format.".to_owned(),
                     "Report this to the desktop pack's author.",
                 ),
+            }
+        }
+        if let Some(property) = binding.field("property") {
+            return lower.property(binding, property, verb);
+        }
+        for (key, kind) in [("management", MANAGEMENT_GET), ("com", COM_GET)] {
+            if let Some(member) = binding.field(key) {
+                return lower.member(binding, member, verb, key, kind);
             }
         }
         let Some(found) = lower.screen(binding.doc) else {

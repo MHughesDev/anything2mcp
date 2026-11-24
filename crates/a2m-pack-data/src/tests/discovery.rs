@@ -190,8 +190,9 @@ async fn the_stands_catalog_drafts_reads_that_read_what_it_stores() {
         }
     }
     // The table with no key and the view hold a question, and have no read.
-    // While they are in the folder no statements file compiles, since the
-    // kind's section is not made; without them, every draft does.
+    // Both wait in the holding folder, and are not also in place; the loader
+    // does not read that folder, so every other draft compiles with them
+    // there (decision 0298).
     let mut questioned: Vec<&str> = report
         .open_questions
         .iter()
@@ -201,17 +202,22 @@ async fn the_stands_catalog_drafts_reads_that_read_what_it_stores() {
     assert_eq!(
         questioned,
         [
-            "statements/order_status_history.yaml",
-            "statements/order_summaries.yaml"
+            "held/statements/order_status_history.yaml",
+            "held/statements/order_summaries.yaml"
         ]
     );
+    let held: Vec<&str> = report.held.iter().map(|path| path.as_str()).collect();
+    assert_eq!(held, questioned);
     assert!(
-        !operations
+        !report
+            .written
             .iter()
-            .any(|path| path.contains("history") || path.contains("summaries"))
+            .any(|path| path.as_str().contains("history") || path.as_str().contains("summaries"))
     );
     for path in &questioned {
-        std::fs::remove_file(root.join(path)).unwrap();
+        assert!(root.join(path).is_file(), "{path}");
+        let in_place = path.strip_prefix("held/").unwrap();
+        assert!(!root.join(in_place).exists(), "{in_place}");
     }
     let plan = compile_folder(&scene.registry, &root).unwrap().plan;
     let lines_get = plan
@@ -388,6 +394,80 @@ async fn the_drafted_list_returns_the_stands_rows_column_by_column_through_the_p
     assert_eq!(scene.db.data_version().unwrap(), before);
 }
 
+/// Decision 0305: a column that takes a null is drafted `nullable`, and its
+/// outputs, one record's and a list's, may be absent; a column that refuses
+/// one, or is part of the key, is not.
+#[tokio::test]
+async fn a_column_that_takes_a_null_is_drafted_nullable_and_its_outputs_may_be_absent() {
+    let mut scene = Scene::new();
+    scene.db.set_write_log(false).unwrap();
+    let (folder, plan) = drafted_plan(&scene, 1000).await;
+    let customers = std::fs::read_to_string(
+        folder
+            .path()
+            .join("example")
+            .join("statements")
+            .join("customers.yaml"),
+    )
+    .unwrap();
+    assert!(
+        customers.contains(
+            "notes:\n        column: \"notes\"\n        type: \"text\"\n        nullable: true"
+        ),
+        "{customers}"
+    );
+    assert!(
+        customers.contains("name:\n        column: \"name\"\n        type: \"text\"\n      "),
+        "{customers}"
+    );
+    let flags = |operation: &str| -> Vec<(String, bool)> {
+        plan.operations
+            .iter()
+            .find(|found| found.name.as_str() == operation)
+            .unwrap()
+            .outputs
+            .iter()
+            .filter(|output| ["customer_id", "name", "notes"].contains(&output.name.as_str()))
+            .map(|output| (output.name.clone(), output.may_be_absent))
+            .collect()
+    };
+    let expected = [
+        ("customer_id".to_owned(), false),
+        ("name".to_owned(), false),
+        ("notes".to_owned(), true),
+    ];
+    // The read by key takes the key as its input, and returns the rest. A
+    // row that is not there is answered with `found: false`, so every one
+    // of its outputs may be absent (decision 0348).
+    assert_eq!(
+        flags("example_customers_get"),
+        [("name".to_owned(), true), ("notes".to_owned(), true)]
+    );
+    assert_eq!(flags("example_customers_list"), expected);
+
+    // The list of every customer gives `null` for the one with no notes,
+    // and its outputs are what the plan allows.
+    scene.plan = plan;
+    let steps = scene
+        .plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_customers_list")
+        .unwrap()
+        .bindings[0]
+        .act
+        .clone();
+    let mut run = scene.prepare(a2m_provider::Posture::Live).await;
+    let observed = super::values(run.steps(&steps, &Values::new(), None).await.unwrap());
+    run.release().await;
+    let result = super::outputs_of(&scene.plan, "example_customers_list", &observed);
+    let notes = result
+        .get("notes")
+        .and_then(a2m_core::Value::as_list)
+        .unwrap();
+    assert!(notes.contains(&a2m_core::Value::Null), "{notes:?}");
+}
+
 #[tokio::test]
 async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_question() {
     let scene = Scene::new();
@@ -424,10 +504,14 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
         [
             "operations/order_lines_get.yaml",
             "operations/order_lines_list.yaml",
-            "statements/order_lines.yaml",
-            "statements/order_status_history.yaml"
+            "statements/order_lines.yaml"
         ]
     );
+    // The table with no key holds a question, so its draft waits in the
+    // holding folder, and is not also in place (decision 0298).
+    let held: Vec<&str> = report.held.iter().map(|path| path.as_str()).collect();
+    assert_eq!(held, ["held/statements/order_status_history.yaml"]);
+    assert!(!root.join("statements/order_status_history.yaml").exists());
 
     let lines = std::fs::read_to_string(root.join("statements").join("order_lines.yaml")).unwrap();
     assert!(lines.contains("order_lines_by_key"), "{lines}");
@@ -453,15 +537,19 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
     );
     // The table with no key holds a question where its key would be, and
     // no statement.
-    let history =
-        std::fs::read_to_string(root.join("statements").join("order_status_history.yaml")).unwrap();
+    let history = std::fs::read_to_string(
+        root.join("held")
+            .join("statements")
+            .join("order_status_history.yaml"),
+    )
+    .unwrap();
     assert!(!history.contains("by_key"), "{history}");
     assert!(
         report
             .open_questions
             .iter()
             .any(
-                |question| question.file.as_str() == "statements/order_status_history.yaml"
+                |question| question.file.as_str() == "held/statements/order_status_history.yaml"
                     && question.question.contains("identify one row")
             ),
         "{:#?}",
@@ -484,9 +572,9 @@ async fn a_table_with_a_key_drafts_a_read_by_key_and_one_without_drafts_a_questi
         std::fs::read_to_string(second.join("statements").join("order_lines.yaml")).unwrap()
     );
 
-    // The keyed draft alone compiles with the pack's registrations, its
-    // two statements each bound by a drafted read.
-    std::fs::remove_file(root.join("statements").join("order_status_history.yaml")).unwrap();
+    // The keyed draft compiles with the pack's registrations, its two
+    // statements each bound by a drafted read, while the held draft stays
+    // where it is: the loader does not read the holding folder.
     let compiled = compile_folder(&scene.registry, &root).unwrap();
     assert!(compiled.warnings.find("data.statement_unused").is_none());
 }
@@ -585,4 +673,141 @@ async fn a_drafting_rule_that_drafts_a_statement_that_writes_is_refused() {
     let written: Vec<&str> = report.written.iter().map(|path| path.as_str()).collect();
     assert_eq!(written, ["statements/only_reads.yaml"]);
     assert!(!root.join("statements").join("tries_a_write.yaml").exists());
+}
+
+/// Decision 0302: a column named as a secret is no field of the drafted
+/// record and no output of a drafted read, whether its name is a secret's as
+/// the store writes it or as the field it becomes; the description of each
+/// read says so. The value is invented, and no draft holds it.
+#[tokio::test]
+async fn a_column_named_as_a_secret_is_never_drafted_as_a_field_or_an_output() {
+    const VALUE: &str = "example-not-a-secret-0001";
+    let scene = Scene::new();
+    scene.db.set_write_log(false).unwrap();
+    scene
+        .db
+        .someone_else(
+            "CREATE TABLE account_logins (login_id text PRIMARY KEY, label text NOT NULL, \
+             \"Client-Secret\" text NOT NULL, passwordHint text)",
+            &[],
+        )
+        .unwrap();
+    scene
+        .db
+        .someone_else(
+            &format!(
+                "INSERT INTO account_logins VALUES ('login-1', 'first', '{VALUE}', '{VALUE}')"
+            ),
+            &[],
+        )
+        .unwrap();
+    let (findings, _) = discover(&scene).await;
+    let finding = findings
+        .into_iter()
+        .find(|finding| {
+            serde_json::from_str::<TableFound>(finding.found())
+                .unwrap()
+                .table
+                == "account_logins"
+        })
+        .unwrap();
+    let folder = Folder::new("draft-secret-columns");
+    let root = folder.path().join("example");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(
+        super::fixtures().join("target.yaml"),
+        root.join("target.yaml"),
+    )
+    .unwrap();
+    let report = Drafter::new(scene.registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(std::slice::from_ref(&finding))
+        .unwrap();
+    assert!(report.refused.is_empty(), "{report:?}");
+    assert_eq!(report.written.len(), 3, "{report:?}");
+    for path in &report.written {
+        let text = std::fs::read_to_string(root.join(path.as_str())).unwrap();
+        assert!(!text.contains(VALUE), "{path}: {text}");
+        // No field, output, or input is named as a secret.
+        for line in text.lines() {
+            let key = line.trim().split(':').next().unwrap_or("");
+            assert!(
+                !(a2m_files::names_a_secret(key) && line.trim().ends_with(':')),
+                "{path}: {line}"
+            );
+        }
+        // The statement text selects only the columns that are drafted.
+        // Only a description names them, to say they were left out.
+        for line in text
+            .lines()
+            .filter(|line| !line.starts_with("description:"))
+        {
+            let line = line.to_ascii_lowercase();
+            assert!(
+                !line.contains("client-secret") && !line.contains("passwordhint"),
+                "{path}: {line}"
+            );
+        }
+    }
+    let list = std::fs::read_to_string(root.join("operations/account_logins_list.yaml")).unwrap();
+    assert!(
+        list.contains("Left out because their names are a secret's, so that a secret is never an output: `client_secret`, `passwordhint`."),
+        "{list}"
+    );
+    let get = std::fs::read_to_string(root.join("operations/account_logins_get.yaml")).unwrap();
+    assert!(
+        get.contains("label:") && get.contains("Left out because"),
+        "{get}"
+    );
+    // The target compiles.
+    compile_folder(&scene.registry, &root).unwrap();
+}
+
+#[tokio::test]
+async fn a_drafted_read_by_key_answers_a_row_that_is_not_there_with_found_false() {
+    let mut scene = Scene::new();
+    scene.db.set_write_log(false).unwrap();
+    let (_folder, plan) = drafted_plan(&scene, 1000).await;
+    scene.plan = plan;
+    let operation = scene
+        .plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_customers_get")
+        .unwrap();
+    assert!(
+        operation
+            .outputs
+            .iter()
+            .any(|output| output.name == "found")
+    );
+    let steps = operation.bindings[0].act.clone();
+    // The store holds the first customer and not the second.
+    let stored = scene.db.stored_rows(Table::Customers).unwrap();
+    let holds = |id: &str| {
+        stored
+            .iter()
+            .any(|row| row.get("customer_id") == Some(&example_db::rows::Value::from(id)))
+    };
+    assert!(holds("C-001") && !holds("C-999"));
+    let mut run = scene.prepare(a2m_provider::Posture::Live).await;
+    let present = super::values(
+        run.steps(&steps, &super::inputs(&[("customer_id", "C-001")]), None)
+            .await
+            .unwrap(),
+    );
+    let missing = super::values(
+        run.steps(&steps, &super::inputs(&[("customer_id", "C-999")]), None)
+            .await
+            .unwrap(),
+    );
+    run.release().await;
+    let got = super::outputs_of(&scene.plan, "example_customers_get", &present);
+    assert_eq!(got.get("found"), Some(&a2m_core::Value::Bool(true)));
+    assert!(got.get("name").and_then(a2m_core::Value::as_text).is_some());
+    // A missing row is an answer: `found: false`, and every other output
+    // absent, as `null`.
+    let none = super::outputs_of(&scene.plan, "example_customers_get", &missing);
+    assert_eq!(none.get("found"), Some(&a2m_core::Value::Bool(false)));
+    assert_eq!(none.get("name"), Some(&a2m_core::Value::Null));
+    assert_eq!(none.get("notes"), Some(&a2m_core::Value::Null));
 }

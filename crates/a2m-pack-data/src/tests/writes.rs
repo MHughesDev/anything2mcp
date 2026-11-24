@@ -62,6 +62,21 @@ async fn an_update_is_written_once_and_reads_back() {
     let (mut run, write) = scene.live(&LINE).await;
     let wanted = update("151.25", "13.10", 1);
 
+    // The committing step carries the values the write sends, so that an
+    // offline test's `request.json` can hold them (field finding 22).
+    let commit = &binding.act[3];
+    assert!(commit.commits);
+    let carried = super::args_of(&scene.plan, commit, &wanted);
+    assert_eq!(
+        carried,
+        super::args_of(&scene.plan, &binding.act[1], &wanted)
+    );
+    assert_eq!(carried.get("length"), Some(&decimal("151.25")));
+    assert_eq!(carried.get("unit_price"), Some(&decimal("13.10")));
+    // The version the write is guarded by travels under the guard's own
+    // parameter name.
+    assert!(carried.iter().any(|(_, value)| value == &Value::Int(1)));
+
     // The committing step without the ledger's token never reaches the
     // driver, and nothing is committed.
     for step in &binding.act[..3] {

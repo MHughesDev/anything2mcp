@@ -25,7 +25,9 @@ pub mod codes;
 mod control;
 mod def;
 mod dispatch;
+mod drift;
 mod events;
+mod evidence;
 mod faces;
 mod fixture;
 mod handlers;
@@ -36,6 +38,7 @@ mod kernel;
 mod offline;
 mod paths;
 mod person;
+mod places;
 mod project;
 mod registry;
 mod render;
@@ -62,9 +65,9 @@ pub use dispatch::{
 pub use events::{EVENTS_PAGE, Followed, RunEventView, RunEvents, RunsInHand};
 pub use faces::{
     CommandArg, CommandFace, McpResultFace, McpToolFace, PROCESS_COMMANDS, PROGRAM, REST_PREFIX,
-    RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut, ShortcutRun, ShortcutStep, TOOL_PREFIX,
-    ToolAnnotationsFace, command_faces, command_faces_of, mcp_tool, mcp_tools, rest_routes,
-    said_line, sdk_methods, tool_name,
+    RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut, ShortcutOption, ShortcutRun, ShortcutStep,
+    TOOL_PREFIX, ToolAnnotationsFace, command_faces, command_faces_of, mcp_tool, mcp_tools,
+    rest_routes, said_line, sdk_methods, tool_name,
 };
 pub use health::{Health, HealthState, Impaired, Part};
 pub use kernel::{CallerCredential, CloseReason, Kernel, KernelParts, Prepared, StorePlace};
@@ -92,12 +95,19 @@ extern crate self as a2m_actions;
     reason = "tests; the helpers they share do not carry the test attribute"
 )]
 mod tests {
+    mod access;
     mod audit;
     mod authoring;
+    mod drift;
+    mod guard;
     mod kernel;
     mod keys;
     mod net;
+    mod others;
     mod pass_two;
+    mod probe;
+    mod reach;
+    mod renewal;
     mod runs;
     mod second;
     mod watches;

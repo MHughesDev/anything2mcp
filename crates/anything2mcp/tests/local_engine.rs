@@ -22,8 +22,8 @@ use std::time::Duration;
 
 use a2m_actions::{BoxFuture, Paths, PersonSurface};
 use a2m_local::{
-    Availability, EngineLock, NoPrompt, PresencePrompt, PromptAnswer, PromptName, PromptText,
-    StopReason,
+    Availability, EngineLock, NoPrompt, PresencePrompt, PromptAnswer, PromptFor, PromptName,
+    PromptText, StopReason,
 };
 use anything2mcp::cli::{Finished, Host, run_with};
 use anything2mcp::{EngineOptions, LocalEngine, PASSPHRASE_VARIABLE};
@@ -121,7 +121,7 @@ async fn an_engine_whose_data_directory_is_removed_refuses_the_next_request_by_n
 async fn two_commands_share_one_engine_a_second_engine_is_refused_and_a_stop_leaves_nothing() {
     let app = TestApp::start().await.unwrap();
     let machine = published(&app).await;
-    let served = Served::start(&machine);
+    let mut served = Served::start(&machine);
 
     // A command that does not hold the vault's passphrase cannot run the
     // engine itself: whatever it reads, the engine read.
@@ -189,9 +189,12 @@ async fn two_commands_share_one_engine_a_second_engine_is_refused_and_a_stop_lea
     assert_eq!(still.status.code(), Some(0), "{still:?}");
 
     // Asked to stop, the engine closes and its process ends by itself.
+    // The engine answers the stop before it stops taking requests, so the
+    // answer is the engine's own, with no warning of a lost one.
     let stop = output(without_key(&["engine", "stop"])).await;
-    assert_eq!(stop.status.code(), Some(0), "{stop:?}");
+    assert_eq!(stop.status.code(), Some(0), "{stop:?}; {}", served.so_far());
     assert_eq!(object(&stop)["result"]["stopping"], true);
+    assert_eq!(object(&stop)["warnings"], json!([]), "{stop:?}");
     let (code, printed) = served.ended();
     assert_eq!(code, Some(0), "{printed}");
     let last: Json = serde_json::from_str(printed.trim()).unwrap();
@@ -366,6 +369,7 @@ async fn command(machine: &Machine, args: &[&str]) -> (Finished, Json) {
         person: None,
         key_store: None,
         program: None,
+        prompt: None,
     };
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
     let finished = run_with(&args, &host).await;
@@ -650,6 +654,7 @@ async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises
         person: None,
         key_store: None,
         program: None,
+        prompt: None,
     };
     let args: Vec<String> = ["version", "publish", "example"]
         .iter()
@@ -803,4 +808,281 @@ async fn an_agents_publish_waits_on_its_page_and_a_persons_press_publishes_it_on
     assert_eq!(stop.status.code(), Some(0), "{stop:?}");
     assert_eq!(serving.await.unwrap(), StopReason::Asked);
     lock_comes_free(&machine).await;
+}
+
+/// A presence prompt that keeps what it was asked for, and passes.
+struct Recording(std::sync::Mutex<Vec<PromptFor>>);
+
+impl PresencePrompt for Recording {
+    fn available(&self) -> BoxFuture<'_, Availability> {
+        Box::pin(async { Availability::ready(PromptName::Polkit, "The prompt of a test.") })
+    }
+
+    fn ask(
+        &self,
+        text: PromptText,
+        _deadline: tokio::time::Instant,
+    ) -> BoxFuture<'_, PromptAnswer> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push(text.purpose);
+            PromptAnswer::Present(PromptName::Polkit)
+        })
+    }
+}
+
+/// Decision 0310: `serve` run with a `Host` that carries a presence prompt
+/// asks that prompt, and asks it for an approval with the effect class of
+/// the operation, which a prompt that must refuse an irreversible one reads.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serve_asks_the_prompt_of_its_host_for_an_approval_with_the_operations_effect_class() {
+    let app = TestApp::start().await.unwrap();
+    let machine = published(&app).await;
+    let prompt = Arc::new(Recording(std::sync::Mutex::new(Vec::new())));
+    let host = Host {
+        cwd: machine.project.path().to_path_buf(),
+        environment: machine.environment(),
+        stdout_is_terminal: false,
+        person_at_terminal: false,
+        person: None,
+        key_store: None,
+        program: None,
+        prompt: Some(Arc::clone(&prompt) as Arc<dyn PresencePrompt>),
+    };
+    let serving = tokio::spawn({
+        let args = vec!["serve".to_owned()];
+        async move { run_with(&args, &host).await }
+    });
+    let paths = Paths::under(machine.home.path());
+    let give_up = tokio::time::Instant::now() + PATIENCE;
+    while !EngineLock::held(&paths).unwrap() {
+        assert!(
+            tokio::time::Instant::now() < give_up,
+            "serve never took the lock"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let (rested, response) =
+        command(&machine, &["tool", "call", UPSERT, "--input", WRITE_INPUT]).await;
+    assert_eq!(rested.code, 3, "{rested:?}");
+    let link = response["result"]["link"].as_str().unwrap().to_owned();
+    let http = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
+    let text = http.get(&link).send().await.unwrap().text().await.unwrap();
+    let marker = "name=\"once\" value=\"";
+    let from = text.find(marker).unwrap() + marker.len();
+    let once = &text[from..from + text[from..].find('"').unwrap()];
+    let origin = &link[..link.find("/approve/").unwrap()];
+    let pressed = http
+        .post(format!("{link}/approve"))
+        .header("origin", origin)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("once={once}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        pressed.status().as_u16(),
+        200,
+        "{}",
+        pressed.text().await.unwrap()
+    );
+    assert_eq!(
+        *prompt.0.lock().unwrap(),
+        [PromptFor::Approval(Some(a2m_core::EffectClass::Write))]
+    );
+
+    let (stop, _) = command(&machine, &["engine", "stop"]).await;
+    assert_eq!(stop.code, 0, "{stop:?}");
+    let ended = serving.await.unwrap();
+    assert_eq!(ended.code, 0, "{ended:?}");
+    lock_comes_free(&machine).await;
+}
+
+/// A read through the served engine leaves one run row and the events of
+/// that run: the engine's own record, read back by the commands that
+/// ask for it (roadmap package 1.4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_read_leaves_one_run_row_and_its_events() {
+    let app = TestApp::start().await.unwrap();
+    let machine = published(&app).await;
+    let served = Served::start(&machine);
+    let without_key = |args: &[&str]| {
+        let mut command = machine.program(args);
+        command.env_remove(PASSPHRASE_VARIABLE);
+        command
+    };
+
+    let read = output(without_key(&[
+        "tool", "call", ORDER_GET, "--input", READ_INPUT,
+    ]))
+    .await;
+    assert_eq!(read.status.code(), Some(0), "{read:?}");
+    let result = object(&read)["result"].clone();
+    assert_eq!(result["status"], "completed");
+    let run = result["run_id"].as_str().unwrap().to_owned();
+
+    // The row: this run, completed, with the value the read returned.
+    let row = output(without_key(&["run", "get", &run])).await;
+    assert_eq!(row.status.code(), Some(0), "{row:?}");
+    let row = object(&row)["result"].clone();
+    assert_eq!(row["run_id"], run.as_str());
+    assert_eq!(row["status"], "completed");
+    assert_eq!(row["result"], result["result"]);
+
+    // Exactly one row for the one read.
+    let listed = output(without_key(&["run", "list"])).await;
+    assert_eq!(listed.status.code(), Some(0), "{listed:?}");
+    let listed = object(&listed)["result"]["runs"].clone();
+    let listed = listed.as_array().unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0]["run_id"], run.as_str());
+
+    // Its events, in order, ending on the state change to completed.
+    let trace = output(without_key(&["trace", "show", &run])).await;
+    assert_eq!(trace.status.code(), Some(0), "{trace:?}");
+    let trace = object(&trace)["result"].clone();
+    let kinds: Vec<&str> = trace["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["kind"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"binding_chosen"), "{kinds:?}");
+    assert_eq!(kinds.last(), Some(&"state_changed"), "{kinds:?}");
+
+    let stop = output(without_key(&["engine", "stop"])).await;
+    assert_eq!(stop.status.code(), Some(0), "{stop:?}");
+    let (code, printed) = served.ended();
+    assert_eq!(code, Some(0), "{printed}");
+}
+
+/// An MCP client, through `bridge`, reads what a command reads, and the
+/// tool list it is shown is the registry's built-in tools and the
+/// published tools of the machine, and nothing hand-written (roadmap
+/// package 1.5; the MCP part of the parity check of spec section 220).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_mcp_client_reads_what_a_command_reads_and_its_tool_list_is_the_registrys() {
+    let app = TestApp::start().await.unwrap();
+    let machine = published(&app).await;
+    let served = Served::start(&machine);
+
+    // The command's read.
+    let mut command = machine.program(&["tool", "call", ORDER_GET, "--input", READ_INPUT]);
+    command.env_remove(PASSPHRASE_VARIABLE);
+    let done = output(command).await;
+    assert_eq!(done.status.code(), Some(0), "{done:?}");
+    let by_command = object(&done)["result"]["result"].clone();
+
+    // The same read, by an MCP client.
+    let mut bridge = Bridge::start(&machine, &["bridge"]);
+    let called = bridge.ask(&stateless(
+        1,
+        "tools/call",
+        json!({"name": ORDER_GET, "arguments": {"order_id": "A-100"}}),
+    ));
+    assert_ne!(called["result"]["isError"], true, "{called}");
+    assert_eq!(
+        called["result"]["structuredContent"]["result"], by_command,
+        "{called}"
+    );
+
+    // The tool list: every built-in tool is the face of an action in the
+    // registry, with that face's description and input schema, and the
+    // others are the machine's published tools, each named for its target.
+    let registry = anything2mcp::action_registry().unwrap();
+    let faces = a2m_actions::mcp_tools(&registry, a2m_actions::BuiltInToolset::Use);
+    let listed = bridge.ask(&stateless(2, "tools/list", json!({})));
+    let tools = listed["result"]["tools"].as_array().unwrap();
+    for tool in tools {
+        let name = tool["name"].as_str().unwrap();
+        if let Some(face) = faces.iter().find(|face| face.name == name) {
+            assert_eq!(tool["description"], face.description.as_str(), "{name}");
+            assert_eq!(tool["inputSchema"], face.input_schema, "{name}");
+        } else {
+            assert!(
+                !name.starts_with("a2m_") && name.starts_with("example_"),
+                "a tool the registry does not describe: {name}"
+            );
+        }
+    }
+    for face in &faces {
+        assert!(
+            tools.iter().any(|tool| tool["name"] == face.name.as_str()),
+            "the registry's tool is not listed: {}",
+            face.name
+        );
+    }
+
+    let (code, _, said) = bridge.close();
+    assert_eq!(code, Some(0), "{said}");
+    let stop = output(machine.program(&["engine", "stop"])).await;
+    assert_eq!(stop.status.code(), Some(0), "{stop:?}");
+    assert_eq!(served.ended().0, Some(0));
+}
+
+/// Two commands at once, each a read through the pages of the test
+/// application, are served by one engine through one browser: the browser
+/// pack starts one program for the profile, and the second read uses it
+/// again (roadmap package 1.4). The browser's launches are counted by the
+/// browser pack's test equipment under this machine's own home; the engine
+/// runs in this process so that the count is this process's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_commands_at_once_read_through_one_browser() {
+    let app = TestApp::start().await.unwrap();
+    let machine = Machine::new("pages", &[(PLACEHOLDER, &app.url(""))]).with_passphrase();
+    let world = machine.open().await;
+    let published = world.person(&["version", "publish", "example"]).await;
+    assert_eq!(published.finished.code, 0, "{:?}", published.finished);
+    world.close().await;
+    lock_comes_free(&machine).await;
+
+    let prompt = Arc::new(Passed(AtomicU32::new(0)));
+    let mut options = EngineOptions::of_machine(
+        Paths::under(machine.home.path()),
+        machine.environment(),
+        Surface::new() as Arc<dyn PersonSurface>,
+    );
+    options.project = Some(machine.project.path().to_path_buf());
+    let local = LocalEngine::start(options, Arc::clone(&prompt) as Arc<dyn PresencePrompt>)
+        .await
+        .unwrap();
+    assert!(local.engine().runner_problem().is_none());
+    let serving = tokio::spawn(local.serve());
+    let launches = || a2m_pack_web_browser::test_support::launches_under(machine.home.path());
+    assert_eq!(launches(), 0);
+
+    let input = |item: &str| format!(r#"{{"order_id": "A-100", "item_code": "{item}"}}"#);
+    let (left, right) = (input("L-101"), input("L-102"));
+    let read = |input: &str| {
+        let args = ["tool", "call", "example_line_item_get", "--input", input];
+        let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+        let machine = &machine;
+        async move {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            command(machine, &args).await
+        }
+    };
+    let ((first, one), (second, two)) = tokio::join!(read(&left), read(&right));
+    for (done, response, item) in [(&first, &one, "L-101"), (&second, &two, "L-102")] {
+        assert_eq!(done.code, 0, "{done:?}");
+        let result = &response["result"];
+        assert_eq!(result["status"], "completed", "{response}");
+        assert_eq!(result["mode"], "ui", "{response}");
+        let held = app.stored_item("A-100", item).await.unwrap().unwrap();
+        assert_eq!(
+            result["result"]["description"],
+            held.description.as_str(),
+            "{response}"
+        );
+    }
+    assert_ne!(one["result"]["run_id"], two["result"]["run_id"]);
+    // One browser served both reads.
+    assert_eq!(launches(), 1);
+
+    let (stopped, _) = command(&machine, &["engine", "stop"]).await;
+    assert_eq!(stopped.code, 0, "{stopped:?}");
+    assert_eq!(serving.await.unwrap(), StopReason::Asked);
 }

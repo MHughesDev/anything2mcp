@@ -26,6 +26,9 @@ a2m_core::failure_codes! {
     PAGE_NOT_LOADED = Transient, "page_not_loaded",
         meaning "A page did not load.",
         next "Check that the surface's address is right and that the system is up, then run discovery again.";
+    SIGN_IN_UNRECOGNIZED = UnknownVariant, "sign_in_unrecognized",
+        meaning "The surface's start page reads as a sign-in, and no rule of the web pack classifies how it asks for one.",
+        next "Say how the surface signs in: declare it in `auth.yaml` with `draft.write`, or ask a person which method it is.";
 }
 
 /// Text from outside, cut before it is shown in a message.

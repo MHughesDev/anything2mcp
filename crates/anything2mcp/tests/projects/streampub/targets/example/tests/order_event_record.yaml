@@ -1,0 +1,5 @@
+test: example_order_event_record
+kind: offline
+fixture: order_event_record
+inputs: {order_id: "A-100", event: "shipped"}
+expect: {position: 1}

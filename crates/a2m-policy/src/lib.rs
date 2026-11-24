@@ -17,26 +17,28 @@ mod policy;
 mod rules;
 mod set;
 mod store;
+mod toolset;
 
 pub use approval::{ApprovalSurface, Approved, Channel, Declined, PresenceCheck};
 pub use policy::{
-    Decision, Explanation, KillScope, KillSwitch, LimitCheck, Outcome, Policy, PolicyHealth,
-    PublishProof, RuleExplained,
+    Decision, Explanation, KillScope, KillSwitch, LayerChange, LimitCheck, Outcome, Policy,
+    PolicyHealth, PublishProof, PublishReview, RuleExplained, VersionInfo,
 };
 
 pub use failure::{
     APPROVAL_MISSING, APPROVAL_REFUSED, APPROVAL_STALE, DECISION_NOT_FOUND, EFFECT_TOO_HIGH,
     IDENTITY_NOT_ALLOWED, KILL_SWITCH_ON, LIMIT_EXCEEDED, NOT_GRANTED, POLICY_EVALUATION_FAILED,
-    POLICY_TESTS_FAILED, PRESENCE_REQUIRED,
+    POLICY_TESTS_FAILED, PRESENCE_REQUIRED, SECOND_ADMIN_REQUIRED,
 };
 pub use model::{
     ActingFor, ActionName, ActionRef, Context, GroupName, IdentityMode, ModuleName, OptionName,
     PrincipalKind, PrincipalRef, Question, Request, Resource, Role, RuleId, RunRef, ToolRef,
     ToolsetName,
 };
-pub use rules::Answer;
+pub use rules::{Answer, RuleKind};
 pub use set::{
     ApproveWrites, BuiltIn, CONDITION_NAMES, CandidateSet, Grant, LabelGrant, OptionGrant,
     PolicyLayers, PolicyTest, PreApproval, Profile, Quota, RoleBinding, SET_FORMAT, Scope,
     Settings, Subject, TestFailure, TestReport,
 };
+pub use toolset::{RoleGrant, Toolset};

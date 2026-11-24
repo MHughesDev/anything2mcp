@@ -20,7 +20,7 @@ How this project is built: slowly, core first, one small proven step at a time, 
 | 5. Prove | Tests against a test stand, asking the stand what it stored. The fewest that prove the slice | Passing tests |
 | 6. Measure | Time and size for anything with a budget | Numbers |
 | 7. Reflect | What did this teach about the design? Update the documents: a hypothesis result, a decision record, a corrected section | Documents that are true again |
-| 8. Ship | Push, open the pull request, merge when every check is green, and write the journal entry: what works, what was learned, what changed in the design, what is next | Merged work and a journal entry |
+| 8. Ship | Run `python3 tools/gate.py` until it is green, then push, open the pull request, merge when every check is green, and write the journal entry: what works, what was learned, what changed in the design, what is next | Merged work and a journal entry |
 
 Steps 2 and 7 are the ones most easily skipped and the ones that make the design better. Do not skip them.
 
@@ -63,6 +63,7 @@ An agent starts each session knowing nothing of the last one. The repository is 
 - Two agents do not change the same crate at the same time. Documents that many packages touch, such as the indexes, are changed last and in small edits.
 - An agent that leads others gives each a package with a stated proof, checks the proof, and merges what passes. It does not hand over its conclusion and ask for it to be confirmed.
 - Whoever merges second brings their branch up to date first. Nobody rewrites another agent's history.
+- A lead that gathers several agents' work into one batch runs `python3 tools/gate.py` on the whole batch, in a build folder of its own, before it pushes; a worker's checks scoped to its own crates do not show what its change broke in another crate ([decision 0372](../decisions/0372-a-push-waits-for-the-checks-of-cis-linux-job-run-here-and-ci-keeps-the-compiled-dependencies.md)).
 - On a machine that many agents share, no agent stops a process by its name (`pkill`, `killall`, `taskkill /IM`, or the like). Another agent's engine or test stand runs under the same name, so a stop by name ends that agent's work too. An agent stops only a process it started, by the identifier the system gave it. On 2026-11-18 an engine was asked to stop from outside in the middle of another agent's test, and a stop by name was the likely cause.
 
 ## When to stop and change course

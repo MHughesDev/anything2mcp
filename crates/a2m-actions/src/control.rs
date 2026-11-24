@@ -93,6 +93,9 @@ pub(crate) struct InProcessControl {
     /// name to its path as the call wrote it (decision 0263). Empty for
     /// every other run.
     discovery_files: std::collections::BTreeMap<String, String>,
+    /// What the job leases a session for: a run's own use, or the probe
+    /// of a keeper job.
+    purpose: Purpose,
 }
 
 impl InProcessControl {
@@ -112,7 +115,14 @@ impl InProcessControl {
             plan,
             caller,
             discovery_files: std::collections::BTreeMap::new(),
+            purpose: Purpose::Run,
         }
+    }
+
+    /// The same control, leasing sessions for `purpose`.
+    pub(crate) fn with_purpose(mut self, purpose: Purpose) -> Self {
+        self.purpose = purpose;
+        self
     }
 
     /// The same control, handing a discovery job the files its run's
@@ -233,7 +243,10 @@ impl Control for InProcessControl {
             context.effect = question.effect;
             context.hazard = question.hazard;
             context.records = question.records;
-            context.toolset = self.caller.toolset.clone();
+            context.toolset = self
+                .kernel
+                .toolset_for_decision(self.caller.toolset.as_ref())
+                .await;
             context.caller_is_agent = self.caller.is_agent;
             context.acting_for = self.caller.acting_for.clone();
             let request = a2m_policy::Request {
@@ -294,7 +307,8 @@ impl Control for InProcessControl {
                         "Declare the surface in the target's auth file, then publish again.",
                     )
                 })?;
-            let entry = entry_of(&self.plan, auth, &self.run.environment, !self.drafted());
+            let published = !self.drafted();
+            let entry = entry_of(&self.plan, auth, &self.run.environment, published);
 
             let settings = self.kernel.settings();
             let wait = if settings.text("engine.person") == Some("absent") {
@@ -307,7 +321,7 @@ impl Control for InProcessControl {
                 }
             };
             let decided = self.run.decision.unwrap_or(self.caller.decision);
-            keeper
+            let lease = keeper
                 .lease(LeaseRequest {
                     key: SessionKey {
                         workspace: self.run.workspace,
@@ -321,10 +335,23 @@ impl Control for InProcessControl {
                     acting_for: self.caller.person(),
                     wait,
                     headroom: want.headroom,
-                    purpose: Purpose::Run,
+                    purpose: self.purpose,
                 })
                 .await
-                .map_err(|failure| self.redacted(failure))
+                .map_err(|failure| self.redacted(failure))?;
+            // The session is checked with the probe of the published
+            // version a run last leased it under.
+            if published && self.purpose == Purpose::Run {
+                self.kernel.note_probe(
+                    lease.session(),
+                    crate::keeper::ProbeSource {
+                        target: self.run.target.clone(),
+                        plan: self.run.target_version,
+                        probe: auth.probe.clone(),
+                    },
+                );
+            }
+            Ok(lease)
         })
     }
 
@@ -435,7 +462,10 @@ impl Control for InProcessControl {
             let mut context = Context::plain(self.run.workspace, self.run.environment.clone());
             context.effect = self.run.effect;
             context.hazard = hazard.unwrap_or(a2m_core::Hazard::None);
-            context.toolset = self.caller.toolset.clone();
+            context.toolset = self
+                .kernel
+                .toolset_for_decision(self.caller.toolset.as_ref())
+                .await;
             context.caller_is_agent = self.caller.is_agent;
             context.acting_for = self.caller.acting_for.clone();
             let known = hazard.is_some();
@@ -849,9 +879,13 @@ impl Control for InProcessControl {
                     mode,
                     surface,
                     failure,
+                    knowledge,
                 } => {
-                    // The health of a binding is the engine's own table,
-                    // which is not built; the sign is kept as a run event.
+                    // The sign is kept as a run event, and the knowledge it
+                    // names as a drift mark of the target: kept after a
+                    // drift, lifted after a canary's pass (decision 0380).
+                    // Both in one transaction, synced, so a drift that was
+                    // seen is never lost before the next job is filled.
                     let payload = json!({
                         "binding_health": true,
                         "operation": operation.as_str(),
@@ -860,11 +894,31 @@ impl Control for InProcessControl {
                         "class": failure.as_ref().map(|(class, _)| class.as_str()),
                         "code": failure.as_ref().map(|(_, code)| code.as_str()),
                     });
+                    let workspace = self.run.workspace;
+                    let target = self.plan.header.target.as_str().to_owned();
                     store
-                        .write(Durability::Relaxed, move |tx| {
+                        .write(Durability::Synced, move |tx| {
                             tx.ledger()
-                                .append_event(&fence, EventKind::Need, &payload, None)
-                                .map(|_| ())
+                                .append_event(&fence, EventKind::Need, &payload, None)?;
+                            match &failure {
+                                Some((FailureClass::Drift, code)) => crate::drift::keep(
+                                    tx,
+                                    &crate::drift::Found {
+                                        workspace,
+                                        target: &target,
+                                        run,
+                                        operation: &operation,
+                                        mode: &mode,
+                                        surface: &surface,
+                                        code,
+                                    },
+                                    &knowledge,
+                                ),
+                                Some(_) => Ok(()),
+                                None => crate::drift::lift(
+                                    tx, workspace, &target, &surface, &mode, &knowledge,
+                                ),
+                            }
                         })
                         .await
                 }
@@ -1079,10 +1133,14 @@ impl InProcessControl {
             .store()?
             .write(Durability::Synced, move |tx| {
                 let mut ledger = tx.ledger();
-                let state = ledger.run(run)?.state;
+                let row = ledger.run(run)?;
+                let state = row.state;
                 // A run that ended while the job was in hand, declined at
-                // the desk or cancelled, stays as it ended.
-                if state == to || state.is_final() {
+                // the desk or cancelled, stays as it ended. A stopped run
+                // stopped again for another reason takes the new failure.
+                let same_failure = row.failure.as_ref().map(|(class, code)| (*class, code))
+                    == why.as_ref().map(|why| (why.class(), why.code()));
+                if (state == to && (to != RunState::Stopped || same_failure)) || state.is_final() {
                     return Ok(());
                 }
                 ledger.set_state(&fence, to, why.as_ref())

@@ -464,3 +464,62 @@ fn a_keyed_write_with_no_read_back_is_refused_by_the_pack_and_the_fix_names_the_
         "{problems:#?}"
     );
 }
+
+/// What the review says of every tool of the fixtures after one
+/// replacement: where each sends, and whether it is stated at all.
+fn reach_after(file: &[&str], from: &str, to: &str) -> Vec<a2m_files::Reach> {
+    let folder = Folder::new("states");
+    let registry = registry_of(&crate::pack(), &folder, Arc::new(NoSecrets));
+    let root = folder.path().join("example");
+    copy(&fixtures(), &root);
+    let path = file.iter().fold(root.clone(), |path, part| path.join(part));
+    let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("\r\n", "\n");
+    assert!(text.contains(from), "the fixture no longer holds `{from}`");
+    std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
+    let compiled = match compile_folder(&registry, &root) {
+        Ok(compiled) => compiled,
+        Err(problems) => panic!("it must compile: {problems:#?}"),
+    };
+    assert!(!compiled.review.items.is_empty());
+    for item in &compiled.review.items {
+        for binding in &item.bindings {
+            // Nothing is started and no variable is set, whichever the store.
+            if let a2m_files::BindingStates::Stated { runs, environment } = &binding.states {
+                assert!(runs.is_empty() && environment.is_empty());
+            }
+        }
+    }
+    compiled
+        .review
+        .items
+        .into_iter()
+        .map(|item| item.reach)
+        .collect()
+}
+
+#[test]
+fn a_store_in_a_local_file_states_that_it_sends_to_no_address() {
+    for reach in reach_after(&["target.yaml"], "stands: alone", "stands: alone") {
+        let a2m_files::Reach::Stated { groups, .. } = reach else {
+            panic!("a local file's tool does not state where it sends");
+        };
+        assert!(groups.is_empty(), "{groups:?}");
+    }
+}
+
+#[test]
+fn a_store_in_a_file_of_another_machine_is_not_stated() {
+    let reaches = reach_after(
+        &["target.yaml"],
+        "file: example.db",
+        "file: //other/share/example.db",
+    );
+    assert!(
+        reaches
+            .iter()
+            .all(|reach| matches!(reach, a2m_files::Reach::Partly { .. })),
+        "{reaches:?}"
+    );
+}

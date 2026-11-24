@@ -500,6 +500,7 @@ fn described(found: &FoundTool) -> Json {
         "hazard": hazard.to_string(),
         "title": found.tool.title,
         "description": found.tool.description,
+        "description_by": found.tool.description_by.as_str(),
         "input_schema": schema(&found.tool.input_schema),
         "output_schema": schema(&found.tool.output_schema),
         "annotations": {
@@ -558,7 +559,7 @@ async fn held(kernel: &Kernel, call: &Call, work: &HeldWork<'_>, refused: Failur
     let caller = &call.caller;
     let mut context = Context::plain(caller.principal.workspace, work.environment.clone());
     context.effect = work.effect;
-    context.toolset = caller.toolset.clone();
+    context.toolset = kernel.toolset_for_decision(caller.toolset.as_ref()).await;
     context.caller_is_agent = caller.is_agent;
     context.acting_for = caller.principal.acting_for.clone();
     let decision = policy
@@ -607,6 +608,7 @@ fn requirements(run: &RunRow, kind: JobKind, exclusive: Vec<ResourceKey>) -> Job
         exclusive,
         max_step: Duration::from_secs(30),
         writes: run.effect != EffectClass::Read,
+        verify_after_loss: false,
     }
 }
 
@@ -828,6 +830,7 @@ handler!(
                     exclusive,
                     max_step: Duration::from_secs(30),
                     writes: effect != EffectClass::Read,
+                    verify_after_loss: false,
                 },
                 run,
                 priority: Priority::Interactive,
@@ -1259,7 +1262,7 @@ impl Kernel {
         let mut context = Context::plain(caller.principal.workspace, row.environment.clone());
         context.effect = row.effect;
         context.hazard = hazard;
-        context.toolset = caller.toolset.clone();
+        context.toolset = self.toolset_for_decision(caller.toolset.as_ref()).await;
         context.caller_is_agent = caller.is_agent;
         context.acting_for = caller.principal.acting_for.clone();
         let decision = policy
@@ -1527,6 +1530,7 @@ pub(crate) async fn run_output(
                                     "`{}` would write to `{}`.",
                                     row.tool_name, row.target
                                 ),
+                                effect: row.effect,
                             })
                             .await
                             .ok();
@@ -1864,6 +1868,11 @@ handler!(
     }
 );
 
+/// What a trial's answer says it is (decision 0306): fixed words, not the
+/// builder's.
+const TRIAL_NOTE: &str =
+    "This is a trial in the sandbox. A published tool is called with `tool.call`.";
+
 handler!(
     /// `draft.try`: runs one drafted read in the engine's sandbox, as a
     /// `Try` job of its own run, and returns its outcome as `tool.call`
@@ -1877,7 +1886,7 @@ handler!(
         let target = a2m_core::TargetName::new(call.required("target")?)?;
         let name = OperationName::new(call.required("tool")?)?;
         let project_folder = call.project_folder()?.to_path_buf();
-        let compiled = super::build::compile_in(
+        let compiled = match super::build::compile_in(
             kernel,
             project_folder,
             &target,
@@ -1885,9 +1894,22 @@ handler!(
             a2m_files::DRAFT_VERSION,
         )
         .await?
-        .map_err(Failure::from)?;
+        {
+            Ok(compiled) => compiled,
+            Err(problems) => {
+                // A name only a held draft defines may be why (decision 0298).
+                let held = super::build::held_drafts(&call, &target).await?;
+                return Err(super::build::noting_held(Failure::from(problems), &held));
+            }
+        };
         let plan = std::sync::Arc::new(compiled.plan);
         let Some(tool) = plan.tool(&name).cloned() else {
+            // A tool whose draft is held is refused by name, with its
+            // question as the next step.
+            let held = super::build::held_drafts(&call, &target).await?;
+            if let Some(refused) = super::build::held_tool_refusal(&held, name.as_str()) {
+                return Err(refused);
+            }
             return Err(codes::input(
                 codes::NOT_FOUND,
                 format!("The drafts of `{target}` hold no tool named `{name}`."),
@@ -1928,14 +1950,96 @@ handler!(
                     "Declare an environment in the target's files.",
                 )
             })?;
-        let binding = named_binding(&plan, &found.tool, &call)?;
+        let file_modes = {
+            let (kernel, folder, target, name) = (
+                kernel.clone(),
+                call.project_folder()?.to_path_buf(),
+                target.clone(),
+                name.clone(),
+            );
+            super::build::off_thread(move || {
+                Ok(super::build::target_folder(&folder, &target)
+                    .ok()
+                    .and_then(|folder| {
+                        crate::places::file_modes_in(&kernel, folder.as_path(), name.as_str())
+                    }))
+            })
+            .await?
+        };
+        let binding = named_binding(&plan, &found.tool, &call, file_modes.as_deref())?;
+        let surface = binding_surface(&plan, &found.tool, binding.as_ref());
         kernel.keep_draft(&target, compiled.encoded.hash, std::sync::Arc::clone(&plan));
+        let asked_at = kernel.inner.clock.now();
         let run = submit_trial(kernel, &call, &found, &input, environment, binding).await?;
-        let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
+        let mut row = kernel.wait_for_rest(run, wait_of(&call)).await?;
+        // The same trial made again is the run that was made first (ledger
+        // rule 6). One that was made before this call and rests waiting for
+        // a sign-in is taken up again, once, so that a trial made again
+        // after the person signed in reads through the session.
+        if row.state == RunState::NeedsLogin && row.created_at < asked_at {
+            let queued = kernel
+                .sched()?
+                .resume(Enqueue {
+                    run,
+                    job: requirements(&row, JobKind::Try, Vec::new()),
+                    priority: Priority::Interactive,
+                    health: sched_health(kernel),
+                    queue_wait: None,
+                })
+                .await;
+            if queued.is_ok() {
+                kernel.run_changed();
+                row = kernel.wait_for_rest(run, wait_of(&call)).await?;
+            }
+        }
+        let waits = row.state == RunState::NeedsLogin;
         let output = run_output(kernel, &call, row, Tell::Person).await?;
+        let mut output = output;
+        // A trial that waits for a sign-in names the one action that signs
+        // in, as the scout's report does (decision 0303). A trial is never
+        // resumed: the same trial is made again once the person is signed
+        // in.
+        if waits && let Some(surface) = &surface {
+            output.next = Some(sign_in_next(&target, surface));
+        }
+        if let Json::Object(answer) = &mut output.result {
+            answer.insert("sandbox".to_owned(), json!(true));
+            answer.insert("published".to_owned(), json!(false));
+            answer.insert("note".to_owned(), json!(TRIAL_NOTE));
+        }
         Ok(output.warn("This was a trial of a draft in the sandbox; nothing was published."))
     }
 );
+
+/// The surface the binding a trial runs acts on: the one named, or the one
+/// the engine chooses by default.
+pub(crate) fn binding_surface(
+    plan: &a2m_core::Plan,
+    tool: &a2m_core::ToolPlan,
+    binding: Option<&a2m_engine::BindingPin>,
+) -> Option<a2m_core::SurfaceName> {
+    let ToolRuns::Operation(index) = tool.runs else {
+        return None;
+    };
+    let operation = plan.operations.get(index.get())?;
+    let position = match binding {
+        Some(pin) => pin.position,
+        None => a2m_engine::default_binding(operation)?,
+    };
+    let acted = operation.bindings.get(position)?;
+    plan.surface(acted.surface)
+        .map(|surface| surface.name.clone())
+}
+
+/// The one action that signs in to `surface` of `target`, for a read that
+/// waits for a sign-in (decision 0303).
+pub(crate) fn sign_in_next(target: &a2m_core::TargetName, surface: &a2m_core::SurfaceName) -> Next {
+    Next::new(
+        "session.login",
+        json!({"target": target.as_str(), "surface": surface.as_str()}),
+        "then make the same trial again",
+    )
+}
 
 /// Keeps the call of a trial of one drafted read and submits it as a `Try`
 /// job of a run of its own; the plan must be kept in memory already
@@ -1969,8 +2073,9 @@ pub(crate) async fn submit_trial(
 }
 
 /// The binding of an operation a trial or a recording runs (audit finding
-/// AC-6): the one the call names by `mode`, and by `position` (from 1)
-/// where two share the mode; with neither, the one that would act if the
+/// AC-6): the one the call names by `mode`, and by `position` (from 1, as
+/// the operation's file lists its bindings, `file_modes` being their modes
+/// in that order) where two share the mode; with neither, the one that would act if the
 /// operation were called live, the first `verified`, else the first not
 /// retired. A retired binding is refused. `None` for a pipeline, whose
 /// operations are chosen for as live.
@@ -1978,6 +2083,7 @@ pub(crate) fn named_binding(
     plan: &a2m_core::Plan,
     tool: &a2m_core::ToolPlan,
     call: &Call,
+    file_modes: Option<&[String]>,
 ) -> Result<Option<a2m_engine::BindingPin>, Failure> {
     let ToolRuns::Operation(index) = tool.runs else {
         return Ok(None);
@@ -1986,10 +2092,25 @@ pub(crate) fn named_binding(
         return Ok(None);
     };
     let mode = call.text("mode");
-    let position = call
-        .int("position")
-        .and_then(|position| usize::try_from(position).ok())
-        .and_then(|position| position.checked_sub(1));
+    // The call counts bindings as the operation's file lists them; the plan
+    // holds them in the order the compiler gave them (package 4.6). A place
+    // that cannot be turned into the plan's names no binding: `usize::MAX`.
+    let position =
+        call.int("position")
+            .and_then(|position| usize::try_from(position).ok())
+            .and_then(|position| position.checked_sub(1))
+            .map(|given| {
+                let plan_modes: Vec<&str> = operation
+                    .bindings
+                    .iter()
+                    .map(|binding| binding.mode.as_str())
+                    .collect();
+                match file_modes {
+                    Some(file_modes) => crate::places::plan_place(&plan_modes, file_modes, given)
+                        .unwrap_or(usize::MAX),
+                    None => given,
+                }
+            });
     let unnamed = || {
         codes::input(
             codes::NOT_FOUND,
@@ -2137,6 +2258,7 @@ pub(crate) async fn submit_trial_kept(
                 exclusive: Vec::new(),
                 max_step: Duration::from_secs(30),
                 writes: false,
+                verify_after_loss: false,
             },
             run,
             priority: Priority::Interactive,
@@ -2181,8 +2303,8 @@ pub(crate) async fn plan_in(
             if !target_folder.is_dir() {
                 return Ok(None);
             }
-            // A draft that holds an open question does not keep the rest
-            // of the target from being observed (decision 0180).
+            // A draft that holds an open question waits in the holding
+            // folder, which is not read (decision 0298).
             super::build::compile_what_can(&kernel_for, target_folder.as_path(), &[])
                 .map(|(compiled, _)| Some(compiled))
                 .map_err(Failure::from)
@@ -2300,6 +2422,7 @@ pub(crate) async fn submit_discovery(
                 exclusive: Vec::new(),
                 max_step: Duration::from_secs(30),
                 writes: false,
+                verify_after_loss: false,
             },
             run,
             priority: Priority::Interactive,

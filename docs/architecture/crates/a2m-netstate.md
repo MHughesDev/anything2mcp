@@ -39,6 +39,10 @@ pub fn proxy() -> Result<Proxy, NetError>;             // as the system states i
                                                        // a list holding `@` left out whole (may_hold_credentials)
 pub fn standing() -> Result<Standing, NetError>;       // interfaces() and routes(), joined
 pub fn standing_of(&Interfaces, &Routes) -> Standing;  // the join, pure
+pub fn dhcp_servers() -> Result<DhcpServers, NetError>; // lease files; Linux only, elsewhere net_reader_not_built
+pub fn fingerprint() -> Result<FingerprintReading, NetError>; // the network the preferred default route leaves through
+impl FingerprintReading { pub fn of(&Readings) -> Self }       // pure: the join of the readings
+impl NetworkFingerprint { pub fn recognize(&self, &Self) -> Recognition } // pure: Same | Different(fact) | Insufficient
 
 // Facts. A field the system does not state is None or empty, never guessed.
 pub struct Interface { index: u32, name, kind: Option<InterfaceKind>, system_kind: Option<String>,
@@ -80,6 +84,10 @@ Each reading carries `read_from`, the names of the system interfaces it read, so
 | Proxy | This process's environment, by the common variable names | Not built | `WinHttpGetIEProxyConfigForCurrentUser`, `GlobalFree` |
 
 The one message sent anywhere is on Linux: a route-netlink request, addressed to the kernel (port 0, no multicast groups), of one of four `GET` types. A neighbour dump lists the cache; it makes the kernel ask nothing. The answer is read with `recvfrom`: a datagram from any sender but the kernel (port 0) is dropped unread, since another process in the namespace may address the socket's port, and each receive waits at most five seconds, after which the read is `net_read_failed`.
+
+## The network's fingerprint
+
+The fingerprint is of the network the preferred default route (IPv4 first, lowest metric, interface up) leaves through. **Core facts**: the default gateway's hardware address (the neighbour table's entry for the gateway; an entry that is failed, incomplete, or unreachable counts as none, and nothing is sent to fill it), the gateway's address, and the subnet with its prefix. **Secondary facts**: the DNS search domains and the DHCP server. Each is kept as one SHA-256 digest with a domain-separating name, so a stored fingerprint holds no address. The wireless network's name and access point, the system's own network identifiers, and this machine's own hardware address are not part of it. A default route through a tunnel gives an empty fingerprint. `recognize` says `Same` only when all three core facts are stated by both sides and equal and no secondary fact stated by both differs; `Different(fact)` when a fact stated by both differs; and `Insufficient` when a core fact is not stated by a side, which a caller treats as a network it has not seen. The module's documentation states what may change and still be the same network. The proof is `fingerprint.rs`'s tests and `tests/namespace.rs`; the false match of two networks sharing a range and a virtual gateway address is held as a test that says so, and is the risk hypothesis H-44 measures.
 
 ## Privacy
 
@@ -137,7 +145,7 @@ A list a bound cut is not a failure: the reading names it in `cut`.
 4. Done in part: the macOS readers of interfaces, routes, name servers, and neighbours. Compiled and linted for macOS; their tests run first in CI.
 5. Not built: the macOS listening sockets with their owners (`proc_pidfdinfo`, whose socket record `libc` does not carry), and the macOS proxy setting (the system configuration's proxy dictionary). Each answers `net_reader_not_built`.
 6. Not built: the wireless network's name, on any system.
-7. Not built: the network's fingerprint (slice N3 of the design), which this crate's facts feed.
+7. Done: the network's fingerprint and its comparison (slice N3, [decision 0327](../../decisions/0327-a-reach-is-a-record-in-force-only-on-the-network-it-was-named-on-and-via-gateway-is-derived-from-it.md)): `fingerprint.rs`, and `dhcp.rs` for the DHCP server on Linux. The DHCP server on Windows (`Dhcpv4Server` in the adapter record) and macOS (the dynamic store) is not read: those are `net_reader_not_built`, named in the reading as absent.
 8. Done: the second reader's review of the crate ([decision 0261](../../decisions/0261-a-proxy-values-credentials-are-removed-before-any-other-cut.md)): credentials removed before any other cut, a list holding `@` left out whole, the default routes bounded, the owner walk bounded and its program named by the `exe` link, the netlink answer read from the kernel alone with a time limit, and the source scan widened. Not done from that review: on Windows the UDP table lists connected endpoints too, and on macOS an Ethernet-framed interface has no absent entry for its kind (finding A5); the corpus of address spellings (A7), which belongs to `a2m-core`.
 
 ## Open points

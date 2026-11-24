@@ -8,7 +8,10 @@
 //! publish, a `take`, or a subscription's name.
 
 use a2m_core::{Failure, FailureClass, FailureCode, FileKindName, Finding, FindingKind};
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
+use a2m_files::{
+    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, left_out_sentence,
+    names_a_secret,
+};
 
 use crate::channel::{MessageSchema, Shape};
 use crate::json::Json;
@@ -69,6 +72,42 @@ fn path(folder: &str, word: &str) -> Result<RelPath, Failure> {
     RelPath::new(&format!("{folder}/{word}.yaml"))
 }
 
+/// The fields of a message a read of one key would give, by the broker's
+/// schema, that are left out because their names are a secret's.
+fn secrets_of_read(found: &Found, key: &str) -> Vec<String> {
+    secrets_in(found.json.get("schema_fields"), Some(key))
+}
+
+/// The fields of a message a look would give, that are left out because
+/// their names are a secret's: the broker's schema where it holds one the
+/// pack reads, else what a look saw.
+fn secrets_of_list(found: &Found) -> Vec<String> {
+    let stated = found
+        .json
+        .get("schema_fields")
+        .filter(|fields| fields.as_object().is_some_and(|fields| !fields.is_empty()));
+    secrets_in(stated.or_else(|| found.json.get("sampled_fields")), None)
+}
+
+fn secrets_in(fields: Option<&Json>, key: Option<&str>) -> Vec<String> {
+    fields
+        .and_then(Json::as_object)
+        .map(|fields| {
+            fields
+                .iter()
+                .filter(|(name, json_type)| {
+                    names_a_secret(name)
+                        && Some(name.as_str()) != key
+                        && !LOOK_FACTS.contains(&name.as_str())
+                        && a2m_core::Verb::new(name).is_ok()
+                        && json_type.as_str().and_then(output_type).is_some()
+                })
+                .map(|(name, _)| name.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// From a channel the broker lists: a channel file.
 pub(crate) struct ChannelDraft {
     names: Names,
@@ -106,7 +145,10 @@ impl DraftingRule for ChannelDraft {
         if found.json.get("schema").and_then(Json::as_bool) == Some(true) {
             body.push(("schema", DraftValue::text(&found.word)));
         }
-        if let Some(field) = text("key_field") {
+        // A key field named as a secret is no input of any read (decision
+        // 0302): the file holds the question of the key, as for a broker that
+        // does not say.
+        if let Some(field) = text("key_field").filter(|field| !names_a_secret(field)) {
             body.push((
                 "key",
                 DraftValue::map(vec![("field", DraftValue::text(field))]),
@@ -181,9 +223,15 @@ impl DraftingRule for SchemaDraft {
         ];
         match MessageSchema::from_registered(registered) {
             Some(schema) => {
+                // A field named as a secret is no property of the drafted
+                // schema: a key of a file that names a secret is refused, and
+                // no read gives its values (decision 0302). The schema is
+                // then not closed, since a message does hold the field.
+                let left_out = schema.fields.iter().any(|(name, _)| names_a_secret(name));
                 let required: Vec<DraftValue> = schema
                     .fields
                     .iter()
+                    .filter(|(name, _)| !names_a_secret(name))
                     .filter(|(_, rule)| rule.required)
                     .map(|(name, _)| DraftValue::text(name))
                     .collect();
@@ -193,6 +241,7 @@ impl DraftingRule for SchemaDraft {
                 let properties: Vec<(String, DraftValue)> = schema
                     .fields
                     .iter()
+                    .filter(|(name, _)| !names_a_secret(name))
                     .map(|(name, rule)| {
                         let mut property = vec![("type", DraftValue::text(rule.ty.as_str()))];
                         if !rule.allowed.is_empty() {
@@ -210,7 +259,7 @@ impl DraftingRule for SchemaDraft {
                     })
                     .collect();
                 body.push(("properties", DraftValue::Map(properties)));
-                if schema.closed {
+                if schema.closed && !left_out {
                     body.push(("additional_properties", DraftValue::Bool(false)));
                 }
             }
@@ -255,7 +304,11 @@ fn read_outputs(found: &Found, key: &str, cx: &DraftContext<'_>) -> DraftValue {
         .map(|fields| {
             fields
                 .iter()
-                .filter(|(name, _)| name.as_str() != key && a2m_core::Verb::new(name).is_ok())
+                .filter(|(name, _)| {
+                    name.as_str() != key
+                        && a2m_core::Verb::new(name).is_ok()
+                        && !names_a_secret(name)
+                })
                 .filter_map(|(name, json_type)| {
                     let field_type = output_type(json_type.as_str()?)?;
                     Some((
@@ -299,7 +352,9 @@ fn list_outputs(found: &Found) -> DraftValue {
             fields
                 .iter()
                 .filter(|(name, _)| {
-                    !LOOK_FACTS.contains(&name.as_str()) && a2m_core::Verb::new(name).is_ok()
+                    !LOOK_FACTS.contains(&name.as_str())
+                        && a2m_core::Verb::new(name).is_ok()
+                        && !names_a_secret(name)
                 })
                 .filter_map(|(name, json_type)| {
                     let field_type = output_type(json_type.as_str()?)?;
@@ -355,7 +410,9 @@ impl DraftingRule for ReadDraft {
         };
         let text = |key: &str| found.json.get(key).and_then(Json::as_str);
         let key = text("key_field").filter(|field| {
-            a2m_core::Verb::new(field).is_ok() && text("shape") == Some(Shape::Retained.as_str())
+            a2m_core::Verb::new(field).is_ok()
+                && text("shape") == Some(Shape::Retained.as_str())
+                && !names_a_secret(field)
         });
         let binding = |verb: &str, more: Vec<(&str, DraftValue)>| {
             let mut binding = vec![
@@ -396,8 +453,9 @@ impl DraftingRule for ReadDraft {
                     (
                         "description",
                         DraftValue::text(&format!(
-                            "Reads the last value the broker holds for one key of the channel `{}`.",
-                            found.channel
+                            "Reads the last value the broker holds for one key of the channel `{}`.{}",
+                            found.channel,
+                            left_out_sentence(&secrets_of_read(&found, key)),
                         )),
                     ),
                 ],
@@ -413,8 +471,9 @@ impl DraftingRule for ReadDraft {
                     (
                         "description",
                         DraftValue::text(&format!(
-                            "Lists what the channel `{}` holds now, without taking anything: each field of its messages in their order, how many messages one look returns, and whether it holds more.",
-                            found.channel
+                            "Lists what the channel `{}` holds now, without taking anything: each field of its messages in their order, how many messages one look returns, and whether it holds more.{}",
+                            found.channel,
+                            left_out_sentence(&secrets_of_list(&found)),
                         )),
                     ),
                 ],
@@ -451,7 +510,7 @@ mod tests {
         CompilerSet, DraftContext, DraftDoc, DraftValue, Drafter, DraftingRule, RelPath, TargetRoot,
     };
 
-    use crate::channel::ChannelKind;
+    use crate::channel::{ChannelKind, SchemaKind};
     use crate::names::{CHANNEL, Names, PACK};
 
     /// A rule that drafts what the pack's own rules never do: a channel
@@ -565,5 +624,64 @@ mod tests {
         );
         assert_eq!(written, ["channels/only_looks.yaml"]);
         assert!(!exists);
+    }
+
+    /// Decision 0302: a field the broker's schema states under a secret's
+    /// name is no property of the drafted schema file, which then is not
+    /// closed, since a message holds the field; the file compiles by its
+    /// kind and holds no such key.
+    #[test]
+    fn a_schema_field_named_as_a_secret_is_left_out_of_the_drafted_schema() {
+        let names = Names::new().unwrap();
+        let mut builder = CompilerSet::builder();
+        builder
+            .file_kind(PACK, Arc::new(SchemaKind::new()))
+            .unwrap()
+            .drafting_rule(PACK, Arc::new(super::SchemaDraft::new(names.clone())))
+            .unwrap();
+        let set = builder.build();
+        let found = r#"{"address":"ORDERS_STATUS/example.orders.status","schema":{"type":"object","required":["order_id","client_secret"],"properties":{"order_id":{"type":"string"},"client_secret":{"type":"string"},"quantity":{"type":"integer"}},"additionalProperties":false}}"#;
+        let finding = Finding::about(
+            Subject::Unknown {
+                reason: a2m_core::UnknownReason::NotSupported,
+            },
+            names.finding_schema.clone(),
+            found,
+            Source::LiveSystem,
+            ProducedBy {
+                provider: PACK.to_owned(),
+                version: "0.0.1".to_owned(),
+                component: None,
+            },
+            Timestamp::from_unix_millis(0),
+        )
+        .build()
+        .unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "a2m-pack-stream-draft-secret-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("target.yaml"),
+            "schema_version: 1\ntarget: example\nsurfaces:\n  broker:\n    kind: broker\n    address: \"broker.example.test:7001\"\n    protocol: example-broker/1\n",
+        )
+        .unwrap();
+        let report = Drafter::new(&set, &TargetRoot::new(&root))
+            .draft(std::slice::from_ref(&finding))
+            .unwrap();
+        let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
+        let text =
+            std::fs::read_to_string(root.join("schemas/orders_status.yaml")).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(written, ["schemas/orders_status.yaml"], "{report:?}");
+        assert!(report.refused.is_empty(), "{report:?}");
+        assert!(!text.contains("client_secret"), "{text}");
+        assert!(
+            text.contains("order_id") && text.contains("quantity"),
+            "{text}"
+        );
+        assert!(!text.contains("additional_properties"), "{text}");
     }
 }

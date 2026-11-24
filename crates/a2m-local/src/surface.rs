@@ -47,7 +47,7 @@ use tokio::time::Instant;
 
 use crate::codes;
 use crate::presence::{
-    Availability, PresenceKind, PresencePrompt, PromptAnswer, PromptName, PromptText,
+    Availability, PresenceKind, PresencePrompt, PromptAnswer, PromptFor, PromptName, PromptText,
 };
 
 const APPROVAL_PAGE: &str = include_str!("pages/approval.html");
@@ -101,6 +101,8 @@ struct Page {
     tool: String,
     diff_hash: Digest,
     summary: String,
+    /// The effect class of the operation the write carries out.
+    effect: a2m_core::EffectClass,
     started_by: PrincipalId,
     /// The one-time value of the page served last. A press takes it.
     once: Option<String>,
@@ -299,11 +301,12 @@ fn short(diff_hash: Digest) -> String {
 /// The check an approval is recorded with: the policy engine has one word
 /// for each prompt an operating system owns, and this is the one place that
 /// maps them (decision 0145).
-const fn recorded_check(prompt: PromptName) -> PresenceCheck {
+pub(crate) const fn recorded_check(prompt: PromptName) -> PresenceCheck {
     match prompt {
         PromptName::Polkit => PresenceCheck::Polkit,
         PromptName::LocalAuthentication => PresenceCheck::LocalAuthentication,
         PromptName::WindowsHello => PresenceCheck::WindowsHello,
+        PromptName::FieldHarness => PresenceCheck::FieldHarness,
     }
 }
 
@@ -1202,6 +1205,7 @@ struct Pressed {
     run: RunId,
     tool: String,
     diff_hash: Digest,
+    effect: a2m_core::EffectClass,
     started_by: PrincipalId,
     whole: bool,
     deadline: Instant,
@@ -1239,6 +1243,7 @@ fn begin(inner: &Inner, code: &str, body: &Bytes) -> Result<Pressed, Box<Respons
         run: found.run,
         tool: found.tool.clone(),
         diff_hash: found.diff_hash,
+        effect: found.effect,
         started_by: found.started_by,
         whole: found.whole,
         deadline: found.deadline,
@@ -1356,6 +1361,7 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
             PromptText {
                 title: format!("Approve a write by `{}`", pressed.tool),
                 detail: format!("Change {}", short(pressed.diff_hash)),
+                purpose: PromptFor::Approval(Some(pressed.effect)),
             },
             pressed.deadline,
         )
@@ -1785,6 +1791,7 @@ async fn act_confirm_pressed(inner: &Inner, pressed: &mut ActPressed) -> (bool, 
             PromptText {
                 title: format!("Carry out `{}`", pressed.action),
                 detail: format!("Act {}", short_act(pressed.act)),
+                purpose: PromptFor::Act,
             },
             pressed.deadline,
         )
@@ -2222,6 +2229,7 @@ impl PersonSurface for LocalSurface {
                     tool: ask.tool,
                     diff_hash: ask.diff_hash,
                     summary: ask.summary,
+                    effect: ask.effect,
                     started_by: ask.started_by,
                     once: None,
                     pressed: false,
@@ -2338,6 +2346,7 @@ impl PersonSurface for LocalSurface {
                     PromptText {
                         title: format!("Confirm `{}`", ask.action),
                         detail: ask.summary,
+                        purpose: PromptFor::Act,
                     },
                     // A prompt nobody answers ends as an approval's does.
                     deadline,
@@ -2385,13 +2394,32 @@ impl PersonSurface for LocalSurface {
 
     fn ask_session(&self, ask: SessionAsk) -> BoxFuture<'_, PersonAnswer> {
         Box::pin(async move {
-            // A one-time code is asked for on the page of the person's own
-            // press of Carry out, while it is carried out (decision 0205):
-            // the person is at the page then, and nobody else is asked. No
-            // notification and no return address are built on one machine
-            // yet, so any other request cannot reach the person from here.
-            let (PersonAsk::EnterCode { .. }, Identity::Person(person)) = (&ask.ask, &ask.identity)
-            else {
+            // A request reaches the person only through the page of their own
+            // press of Carry out on a sign-in, while it is carried out
+            // (decision 0205): the person is at the page then, and nobody
+            // else is asked. No notification and no return address are built
+            // on one machine yet.
+            let Identity::Person(person) = &ask.identity else {
+                return PersonAnswer::Unreachable;
+            };
+            if matches!(ask.ask, PersonAsk::Notify { .. }) {
+                // The person who pressed is the person told: a sign-in in a
+                // window is theirs to carry out, and the engine types nothing
+                // in it. Nothing is asked of them, and no press is used up.
+                let there = self
+                    .inner
+                    .state()
+                    .presses
+                    .iter()
+                    .any(|press| press.signs_in && press.person == *person);
+                return if there {
+                    PersonAnswer::Done(a2m_auth::Returned::new())
+                } else {
+                    PersonAnswer::Unreachable
+                };
+            }
+            // A one-time code is asked for on that page.
+            let PersonAsk::EnterCode { .. } = &ask.ask else {
                 return PersonAnswer::Unreachable;
             };
             let inner = &self.inner;

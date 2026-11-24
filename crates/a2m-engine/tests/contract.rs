@@ -598,8 +598,18 @@ async fn an_offline_write_reaches_no_system_even_where_its_fixture_answers_the_s
 // ---- decision 0180: a list output is normalized item by item ----
 
 /// The order read with one more output, `lengths`: a list of the field
-/// type `inches`, a decimal.
+/// type `inches`, a decimal, whose items may have no value.
 fn with_lengths(plan: &mut a2m_core::Plan) {
+    with_lengths_absent(plan, true);
+}
+
+/// As [`with_lengths`], with `lengths` declared as an output that may not
+/// be absent.
+fn with_certain_lengths(plan: &mut a2m_core::Plan) {
+    with_lengths_absent(plan, false);
+}
+
+fn with_lengths_absent(plan: &mut a2m_core::Plan, may_be_absent: bool) {
     let inches = plan
         .field_types
         .iter()
@@ -616,6 +626,7 @@ fn with_lengths(plan: &mut a2m_core::Plan) {
         field_type: Some(a2m_core::FieldTypeIndex::new(
             u32::try_from(inches).unwrap(),
         )),
+        may_be_absent,
     });
 }
 
@@ -681,6 +692,85 @@ async fn a_list_output_is_normalized_item_by_item_and_an_item_that_fails_is_name
         !failure.message().contains("secret-for-tests"),
         "{failure:?}"
     );
+}
+
+// ---- decision 0305, point 4: a `null` in an output that may not be absent ----
+
+async fn read_with(change: fn(&mut a2m_core::Plan), answer: Values) -> a2m_engine::JobOutcome {
+    let scene = Scene::new(ORDER_GET, change).await;
+    let replay = replay_of(vec![("get_order", a2m_provider::Recorded::Done(answer))]);
+    let job = scene.job(JobKind::Execute, ORDER_GET, order("A-900")).await;
+    scene
+        .engine
+        .run_offline(&job, scene.control.as_ref(), replay)
+        .await
+}
+
+#[tokio::test]
+async fn a_null_stops_the_run_in_an_output_that_may_not_be_absent_whichever_pack_gave_it() {
+    // A `null` item in a list that may not be absent.
+    let outcome = read_with(
+        with_certain_lengths,
+        order_with_lengths(vec![Value::Text("12.5".to_owned()), Value::Null]),
+    )
+    .await;
+    let failure = outcome.failure().expect("a null item stops the run");
+    assert_eq!(failure.code().as_str(), "output_unexpected", "{failure:?}");
+    assert!(failure.message().contains("item 2"), "{failure:?}");
+
+    // A `null` in a plain output that may not be absent.
+    let outcome = read_with(|_| {}, plain_order().with("customer", Value::Null)).await;
+    let failure = outcome.failure().expect("a null stops the run");
+    assert_eq!(failure.code().as_str(), "output_unexpected", "{failure:?}");
+    assert!(failure.message().contains("`customer`"), "{failure:?}");
+
+    // A missing output that may not be absent stops a read, as before.
+    let mut missing = plain_order();
+    missing.remove("customer");
+    let outcome = read_with(|_| {}, missing).await;
+    let failure = outcome.failure().expect("a missing output stops the run");
+    assert_eq!(failure.code().as_str(), "output_unexpected", "{failure:?}");
+
+    // The same output declared as one that may be absent is returned as
+    // `null`, given so or not given at all.
+    fn customer_may_be_absent(plan: &mut a2m_core::Plan) {
+        for operation in &mut plan.operations {
+            if operation.name.as_str() == ORDER_GET {
+                for output in &mut operation.outputs {
+                    output.may_be_absent |= output.name == "customer";
+                }
+            }
+        }
+    }
+    for answer in [
+        plain_order().with("customer", Value::Null),
+        missing_customer(),
+    ] {
+        let scene = Scene::new(ORDER_GET, customer_may_be_absent).await;
+        let replay = replay_of(vec![("get_order", a2m_provider::Recorded::Done(answer))]);
+        let job = scene.job(JobKind::Execute, ORDER_GET, order("A-900")).await;
+        let outcome = scene
+            .engine
+            .run_offline(&job, scene.control.as_ref(), replay)
+            .await;
+        assert!(completed(&outcome), "{outcome:?}");
+        assert_eq!(scene.last_result().get("customer"), Some(&Value::Null));
+    }
+}
+
+fn missing_customer() -> Values {
+    let mut values = plain_order();
+    values.remove("customer");
+    values
+}
+
+/// An order as the system answers it, with every output the plan declares.
+fn plain_order() -> Values {
+    Values::new()
+        .with("order_id", "A-900")
+        .with("customer", "Replayed Customer")
+        .with("status", "draft")
+        .with("lines", Value::Int(2))
 }
 
 // ---- decision 0196, point 2: another record's value ----

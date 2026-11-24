@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use a2m_core::{FailureClass, SessionState};
+use a2m_core::{FailureClass, Secret, SessionState};
 use a2m_vault::{ItemId, OwnerRef, SealContext, SealedKind};
 
 use super::support::{
@@ -139,6 +139,69 @@ async fn one_renewal_also_under_real_parallelism() {
         assert_eq!(run.await.unwrap().unwrap().epoch(), 2);
     }
     assert_eq!((world.fake.refreshes(), world.fake.sign_ins()), (1, 1));
+}
+
+/// Two engines over one store: two keepers, each with its own waiters, meet
+/// one expired session at once. The store's compare-and-set on the
+/// session's state and epoch lets one of them start the renewal; the other
+/// waits for it, and every run of both is given the one renewed epoch. A
+/// keeper hears of its own renewal at once, and of the other engine's at
+/// its next tick, which wakes every waiting call to read the store again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_engines_over_one_store_make_one_renewal() {
+    let world = World::new(STORED_RENEWING).await;
+    let other = world.second_engine();
+    let key = account_key("robot");
+    let entry = fake_entry();
+    world
+        .keeper
+        .lease(request(&key, &entry, Wait::DEFAULT))
+        .await
+        .unwrap();
+    assert_eq!(world.fake.sign_ins(), 1);
+
+    world.clock.advance(2 * HOUR);
+    world.fake.hold_renewals();
+    let runs: Vec<_> = (0..10)
+        .map(|at| {
+            let keeper = if at % 2 == 0 {
+                world.keeper.clone()
+            } else {
+                other.clone()
+            };
+            let req = request(&key, &entry, Wait::DEFAULT);
+            tokio::spawn(async move { keeper.lease(req).await })
+        })
+        .collect();
+    until(|| world.keeper.waiting() + other.waiting() == 10 && world.fake.refreshes() == 1).await;
+    world.fake.release_renewals();
+    let (mine, theirs): (Vec<_>, Vec<_>) = runs
+        .into_iter()
+        .enumerate()
+        .partition(|(at, _)| at % 2 == 0);
+    for (_, run) in mine {
+        assert_eq!(run.await.unwrap().unwrap().epoch(), 2);
+    }
+    // The other engine's tick, as its tending task makes it.
+    other.tick().await;
+    for (_, run) in theirs {
+        let lease = tokio::time::timeout(Duration::from_secs(30), run)
+            .await
+            .expect("a run of one engine waited past the tick for the other's renewal")
+            .unwrap()
+            .unwrap();
+        assert_eq!(lease.epoch(), 2);
+    }
+    assert_eq!((world.fake.refreshes(), world.fake.sign_ins()), (1, 1));
+    let kinds = world.kinds(&key).await;
+    assert_eq!(kinds.iter().filter(|kind| **kind == "renewed").count(), 1);
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| **kind == "renewal_started")
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -457,6 +520,35 @@ async fn a_refused_stored_credential_is_not_tried_again() {
     }
     assert_eq!((world.fake.refreshes(), world.fake.sign_ins()), (1, 3));
     assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
+}
+
+/// A credential a person chose that is shorter than eight bytes is refused
+/// by name before it is sealed: nothing is stored under its reference, and
+/// it is registered with no redactor (decision 0338).
+#[tokio::test]
+async fn a_chosen_credential_of_one_byte_is_refused_and_nothing_is_stored() {
+    let world = World::new(STORED_RENEWING).await;
+    let key = person_key(1);
+    let refused = world
+        .credentials
+        .put(
+            &key.workspace,
+            &key.identity,
+            &reference("password"),
+            &Secret::new("q"),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code().as_str(), "secret_too_short", "{refused}");
+    assert_eq!(refused.class(), FailureClass::Input);
+    assert!(
+        !world
+            .credentials
+            .holds(&key.workspace, &key.identity, &reference("password"))
+            .await
+            .unwrap()
+    );
+    assert!(!world.is_registered("q"));
 }
 
 /// The count of a refused credential is the session's record's, so a
@@ -808,6 +900,70 @@ async fn an_identity_service_that_is_down_fails_each_call_once_and_never_loops()
 }
 
 #[tokio::test]
+async fn an_unreachable_key_store_keeps_sessions_in_memory_and_restores_none_until_it_answers() {
+    // Section 224: with the key store unreachable, sessions already in
+    // memory keep working; none can be restored or saved; a call that
+    // needs one fails by name; it recovers by itself.
+    let world = World::on_disk(PERSON_RENEWING).await;
+    let key = person_key(1);
+    let entry = fake_entry();
+    world
+        .keeper
+        .sign_in(&key, Arc::clone(&entry), Some(person_id(1)))
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    let before = world
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    let token = placed(&before)[0].1.clone();
+
+    world.keys_unreachable(true);
+    let held = world
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    assert_eq!(placed(&held)[0].1, token);
+
+    // After a restart, the key store stops answering before the session is
+    // back in memory. The saved session cannot be opened: the call fails by
+    // name, and nothing is signed in or thrown away in its place. (A start
+    // while the key store is unreachable leaves the kernel degraded, which
+    // is the kernel's own test.)
+    world.keys_unreachable(false);
+    let after = world.restarted().await;
+    after.keys_unreachable(true);
+    let refused = after
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.class(), FailureClass::Busy, "{refused:?}");
+    assert_eq!(
+        refused.code(),
+        &a2m_vault::codes::KEY_STORE_UNREACHABLE,
+        "{refused:?}"
+    );
+    after.keeper.idle().await;
+    assert_eq!(after.fake.sign_ins(), 1);
+    assert!(after.store.saved(before.session()).await.unwrap().is_some());
+
+    // The key store answers again: the next call restores the same session.
+    after.keys_unreachable(false);
+    let restored = after
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    assert_eq!(restored.session(), before.session());
+    assert_eq!(placed(&restored)[0].1, token);
+    assert_eq!(after.fake.sign_ins(), 1);
+}
+
+#[tokio::test]
 async fn saved_state_survives_a_restart_and_opens_for_its_owner_alone() {
     let world = World::on_disk(PERSON_RENEWING).await;
     let key = person_key(1);
@@ -972,6 +1128,50 @@ async fn the_timers_end_a_session_at_its_maximum_age_and_probe_only_while_wanted
     world.keeper.tick().await;
     assert_eq!(world.probe.calls(), probes);
     assert_eq!(world.state(&key).await, SessionState::Valid);
+}
+
+#[tokio::test]
+async fn a_probe_that_could_not_be_made_changes_nothing_and_a_probes_lease_never_signs_in() {
+    let world = World::new(STORED_RENEWING).await;
+    let key = account_key("robot");
+    let entry = Arc::new(AuthEntry {
+        idle: Some(Duration::from_secs(1200)),
+        ..AuthEntry::new(ProviderName::new("fake").unwrap()).published()
+    });
+
+    // Before any sign-in a probe's lease is refused, and starts none.
+    let mut probing = request(&key, &entry, Wait::DEFAULT);
+    probing.purpose = crate::Purpose::Probe;
+    let refused = world.keeper.lease(probing.clone()).await.unwrap_err();
+    assert_eq!(refused.code(), &codes::NEEDS_LOGIN);
+    assert_eq!(world.fake.sign_ins(), 0);
+
+    world
+        .keeper
+        .lease(request(&key, &entry, Wait::DEFAULT))
+        .await
+        .unwrap();
+    assert_eq!(world.fake.sign_ins(), 1);
+
+    // A probe that answers nothing leaves the session valid, unchecked, and
+    // is not made again until a whole interval later.
+    *world.probe.outcome.lock().unwrap() = ProbeOutcome::Unknown;
+    world.clock.advance(Duration::from_secs(600));
+    world.keeper.tick().await;
+    assert_eq!(world.probe.calls(), 1);
+    assert_eq!(world.state(&key).await, SessionState::Valid);
+    world.keeper.tick().await;
+    assert_eq!(world.probe.calls(), 1);
+    world.clock.advance(Duration::from_secs(600));
+    world.keeper.tick().await;
+    assert_eq!(world.probe.calls(), 2);
+    assert_eq!(world.state(&key).await, SessionState::Valid);
+    assert_eq!(world.fake.refreshes(), 0);
+
+    // Once it is signed in, a probe's lease is given, and is no use: the
+    // session's last use stays the run's.
+    world.keeper.lease(probing).await.unwrap();
+    assert_eq!(world.fake.sign_ins(), 1);
 }
 
 #[tokio::test]

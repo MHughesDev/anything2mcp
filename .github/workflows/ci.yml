@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Started by hand on a commit the gate passed in other machines, which was
+  # pushed with [skip ci] so that no run started for it before (decision 0372).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,12 +17,21 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # A build in CI is never built again in the same folder, so incremental
+  # files are only cost; and the debug and test builds keep line tables, which
+  # a backtrace needs, without the full debug information, which made most of
+  # the link time and of the folder, above all on Windows. What is compiled
+  # and what is checked are the same (decision 0372).
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   rust:
     name: Rust on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # The whole workspace is built, linted, and tested here, and its tests
+    # alone took close to thirty minutes on Windows by 2026-11-23.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +43,22 @@ jobs:
           persist-credentials: false
       - name: Install the toolchain pinned in rust-toolchain.toml
         run: rustup toolchain install
+      # The dependencies compiled in the last run with the same lock file and
+      # toolchain, restored before anything is built (decision 0372). Only what
+      # was compiled is restored; every step below still builds and runs all
+      # of its own crates.
+      # Pinned by commit; this is v6.1.0.
+      - name: Restore the compiled dependencies
+        id: deps
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: deps-${{ runner.os }}-
       - name: Show versions
         run: cargo --version && rustc --version
       - name: Format
@@ -43,12 +71,90 @@ jobs:
       # shows every failure on this operating system.
       - name: Test
         run: cargo test --workspace --locked --no-fail-fast
-      # The harness and its sample scenario; nothing is gated until a budgeted
-      # path is measured (spec section 225).
+      # The compiled dependencies are stored when this lock file and toolchain
+      # had none stored, before the release builds below: the workspace's own
+      # crates are taken out first, since they change with every commit.
+      - name: Take the workspace's own crates out of what is stored
+        if: ${{ !cancelled() && steps.deps.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: python3 tools/ci_cache.py prune target/debug
+      # Pinned by commit; this is v6.1.0.
+      - name: Store the compiled dependencies
+        if: ${{ !cancelled() && steps.deps.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+      # The vault's root key in the operating system's own key store, which
+      # no other test touches (package 2.2). On macOS the keychain is a
+      # throwaway one, created and unlocked here, so that no prompt can
+      # appear; on Windows the Credential Manager of the runner is used.
+      # Linux takes the passphrase route and has no key store to try.
+      - name: A throwaway keychain for the real key store test
+        if: runner.os == 'macOS'
+        run: |
+          keychain="$RUNNER_TEMP/a2m-test.keychain-db"
+          security create-keychain -p test-only "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p test-only "$keychain"
+          security default-keychain -d user -s "$keychain"
+          security list-keychains -d user -s "$keychain"
+      - name: The real key store holds the root
+        if: runner.os != 'Linux'
+        run: cargo test -p a2m-vault --locked -- --ignored the_real_key_store_holds_the_root
+      # The harness and its scenarios (spec section 225); the comparison below
+      # gates once a baseline from a quiet runner is stored.
+      # The scenarios that start the product's program find it beside the
+      # harness; build it first on Linux, where the budgets are measured.
+      - name: Build the program the benchmark starts
+        if: runner.os == 'Linux'
+        run: |
+          cargo build --locked --release -p anything2mcp
+          # The target is of the stripped program, as the wheel carries it.
+          strip target/release/anything2mcp
       - name: Benchmark
         run: cargo run --locked --release -p a2m-bench -- run --out bench-results
         env:
           A2M_BENCH_COMMIT: ${{ github.sha }}
+      # The size of the program is the one budget every operating system can
+      # be held to (package F4): the full run above measures it on Linux, where
+      # the program is built first, and here the program is built after the
+      # run, so that no process scenario starts on an operating system whose
+      # numbers nobody has read yet. It is stored beside the run.
+      - name: Build the program whose size is measured
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          cargo build --locked --release -p anything2mcp
+          # The target is of the stripped program, as the wheel carries it;
+          # a Windows program keeps its symbols in a separate file already.
+          if [ "$RUNNER_OS" = macOS ]; then strip target/release/anything2mcp; fi
+      - name: Measure the size of the program
+        if: runner.os != 'Linux'
+        run: cargo run --locked --release -p a2m-bench -- run --out bench-results/size --scenario program_size
+        env:
+          A2M_BENCH_COMMIT: ${{ github.sha }}
+      # The comparison holds the floor of each number to a result stored from a
+      # quiet runner, which is a file a person puts in bench/baseline/ on
+      # purpose: bench/baseline/<os>-<arch>.json (decision 0369). With none
+      # stored the step says so and passes; a budgeted number that rose more
+      # than 10% over its stored floor, or went missing, fails it.
+      - name: Compare the benchmark with the stored baseline
+        shell: bash
+        run: |
+          arch=$(uname -m | sed 's/arm64/aarch64/')
+          case "$RUNNER_OS" in Linux) os=linux;; macOS) os=macos;; *) os=windows; arch=x86_64;; esac
+          baseline="bench/baseline/$os-$arch.json"
+          new=$(ls bench-results/a2m-bench-"$os"-*.json | head -n 1)
+          if [ ! -f "$baseline" ]; then
+            echo "No baseline is stored for $os on $arch; nothing is compared."
+            exit 0
+          fi
+          cargo run --locked --release -p a2m-bench -- compare "$baseline" "$new"
       # Pinned by commit; this is v7.0.2.
       - name: Store the benchmark result
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -56,6 +162,23 @@ jobs:
           name: bench-${{ matrix.os }}
           path: bench-results/
           if-no-files-found: error
+
+  promotion:
+    name: The exit test of Phase 4, in a release build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # A request binding gained through shadow is identical and at least ten
+      # times faster, asserted in a release build and run alone, so that no
+      # other test shares the machine while it measures.
+      - name: Promotion speed-up
+        run: cargo test --locked --release -p a2m-bench --test promotion
 
   dependencies:
     name: Licences and advisories of dependencies
@@ -86,6 +209,10 @@ jobs:
         run: python3 tools/test_docs_audit.py
       - name: Prove the field-test fault proxy
         run: python3 tools/test_field_proxy.py
+      - name: Prove the field-test runner's closed network
+        run: python3 tools/test_field_test.py
+      - name: Prove the packaging check fails when a package holds another binary
+        run: python3 tools/test_check_packages.py
 
   bindings:
     name: Wheel and npm packages on ${{ matrix.os }}
@@ -137,6 +264,8 @@ jobs:
           "$RUNNER_TEMP/tools/$VENV_BIN/maturin" build --release --out dist
           "$RUNNER_TEMP/tools/$VENV_BIN/maturin" sdist --out dist
           ls -l dist
+      - name: Check the wheel holds the product's program and no other binary
+        run: python3 tools/check_packages.py wheel bindings/python/dist/*.whl
       - name: Install the wheel into a clean environment and run both names and the import
         run: |
           python -m venv "$RUNNER_TEMP/try"
@@ -262,6 +391,21 @@ jobs:
           persist-credentials: false
       - name: Install the toolchain pinned in rust-toolchain.toml
         run: rustup toolchain install
+      # The dependencies compiled in the last run with the same lock file and
+      # toolchain, restored before anything is built (decision 0372). Only what
+      # was compiled is restored; every step below still builds and runs all
+      # of its own crates.
+      # Pinned by commit; this is v6.1.0.
+      - name: Restore the compiled dependencies
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: deps-${{ runner.os }}-
       # HTTPS is in the default build, which the job above tests. This job
       # holds the build without it, which `--no-default-features` gives.
       - name: Lint with TLS off
@@ -295,6 +439,8 @@ jobs:
         run: cargo clippy -p a2m-pack-data --all-targets --locked --features postgres -- -D warnings
       - name: Test with the server store on
         run: cargo test -p a2m-pack-data --locked --no-fail-fast --features postgres
+      - name: Test the writes through the product with the server store on
+        run: cargo test -p anything2mcp --locked --no-fail-fast --features a2m-pack-data/postgres --test data_write
 
   nats:
     name: The stream pack against a real NATS server
@@ -334,6 +480,17 @@ jobs:
             exit 1
           fi
           grep -q "test result: ok. 1 passed" nats-test.log
+      - name: Publishing through the product against the real server
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build -p anything2mcp --locked
+          cargo test -p anything2mcp --locked --test stream_write -- --nocapture 2>&1 | tee stream-write.log
+          if grep -q "skipped:" stream-write.log; then
+            echo "a test skipped itself"
+            exit 1
+          fi
+          grep -q "test result: ok. 5 passed" stream-write.log
       - name: Show the server's log
         if: always()
         run: docker logs nats
@@ -377,6 +534,21 @@ jobs:
           persist-credentials: false
       - name: Install the toolchain pinned in rust-toolchain.toml
         run: rustup toolchain install
+      # The dependencies compiled in the last run with the same lock file and
+      # toolchain, restored before anything is built (decision 0372). Only what
+      # was compiled is restored; every step below still builds and runs all
+      # of its own crates.
+      # Pinned by commit; this is v6.1.0.
+      - name: Restore the compiled dependencies
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: deps-${{ runner.os }}-
       # The test starts a display server of its own and gives the browser
       # its number; nothing is shown to anyone.
       - name: Install the virtual display server
@@ -385,6 +557,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends xvfb
       - name: Test the browser base and the web pack, the window tests among them
         run: cargo test --locked --no-fail-fast -p a2m-pack-web-browser -p a2m-pack-web-ui
+      - name: Test the sign-in in a window through the product
+        run: cargo test --locked --no-fail-fast -p anything2mcp --test signed_in_web_read
 
   desktop-windows:
     name: The desktop pack on Windows, against its stand

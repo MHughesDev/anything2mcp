@@ -1,6 +1,6 @@
 # The manifest of the web pack's drivers. What is not built is not declared:
 # the `site_tools` mode, the `page_http` writes beyond `update` by PUT, the auth providers, the screen
-# matcher, platform profiles, and every control beyond the ones listed here.
+# matcher, and platform profiles.
 manifest_format = 1
 contract = 1
 
@@ -43,13 +43,29 @@ session_reads = 4
 session_writes = 1
 exclusive = "none"
 
+# A tool the page registers in the browser for agents (WebMCP), called by
+# name from an acting tab. A tool runs the page's own script, so what it does
+# is whatever that script does: the binding is held to the least effect that
+# cannot be taken back, and the page's own hints are never evidence
+# (decision 0359, the `site_tools` record).
+[[modes]]
+name = "site_tools"
+archetype = "request"
+verbs = ["call", "submit"]
+steps = ["goto", "wait", "call_tool"]
+commit_steps = ["call_tool"]
+rank = 30
+session_reads = 4
+session_writes = 1
+exclusive = "none"
+
 [[surface_kinds]]
 name = "web"
 archetype = "interface"
 session = true
 
 [points]
-driver = ["ui", "page_http"]
+driver = ["ui", "page_http", "site_tools"]
 # A sign-in through the application's own sign-in page with a stored
 # credential (decision 0245), and a sign-in the person carries out in a
 # window, on the application's pages or an identity provider's (decision 0254).
@@ -114,10 +130,67 @@ name = "select"
 [[controls]]
 name = "checkbox"
 
+[[controls]]
+name = "radio"
+
+[[controls]]
+name = "date"
+
+[[controls]]
+name = "combobox"
+
+[[controls]]
+name = "autocomplete"
+
+[[controls]]
+name = "datetime"
+
+[[controls]]
+name = "time"
+
+[[controls]]
+name = "slider"
+
+[[controls]]
+name = "file"
+
+[[controls]]
+name = "rich_text"
+
+[[controls]]
+name = "grid"
+
+[[controls]]
+name = "tree"
+
+[[controls]]
+name = "tabs"
+
+[[controls]]
+name = "accordion"
+
+[[controls]]
+name = "toggle"
+
 [[lint_rules]]
 code = "web.css_not_last"
 level = "error"
 summary = "A `css` locator is written only last in a list of locators."
+
+[[lint_rules]]
+code = "web.generated_id"
+level = "error"
+summary = "No locator is built on an identifier that the surface's platform profile says the platform makes."
+
+[[lint_rules]]
+code = "web.profile_unknown"
+level = "error"
+summary = "A surface's `profile` is the name of a platform profile, or `auto`."
+
+[[lint_rules]]
+code = "web.profile_readonly"
+level = "error"
+summary = "No write is bound through a screen of a surface whose platform profile's tier is `read_only` or `unsupported`."
 
 [[lint_rules]]
 code = "web.css_used"
@@ -188,6 +261,50 @@ code = "read_too_large"
 [[failure_codes]]
 class = "rejected"
 code = "app_validation_error"
+
+[[failure_codes]]
+class = "edge_blocked"
+code = "challenge_page"
+
+[[failure_codes]]
+class = "edge_blocked"
+code = "rate_limited_by_edge"
+
+[[failure_codes]]
+class = "edge_blocked"
+code = "forbidden_by_edge"
+
+[[failure_codes]]
+class = "busy"
+code = "surface_in_maintenance"
+
+[[failure_codes]]
+class = "drift"
+code = "site_tool_not_offered"
+
+[[failure_codes]]
+class = "drift"
+code = "site_tool_changed"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "site_tools_unavailable"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "download_not_offered"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "download_too_large"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "download_incomplete"
+
+[[failure_codes]]
+class = "input"
+code = "file_not_staged"
 
 [[failure_codes]]
 class = "policy"

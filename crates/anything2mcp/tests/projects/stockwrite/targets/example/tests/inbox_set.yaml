@@ -1,0 +1,5 @@
+test: example_inbox_set
+kind: offline
+fixture: inbox_set
+inputs: {name: "note-1.txt", content: "Changed note.\n"}
+expect: {content: "Changed note.\n"}

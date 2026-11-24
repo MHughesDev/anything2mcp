@@ -132,8 +132,9 @@ fn files_of(folder: &Path) -> Vec<(RelPath, Vec<u8>)> {
     out
 }
 
-/// Compiles a target folder, leaving out each file that holds an open
-/// question, with `change` applied to the text of the file at `path`.
+/// Compiles a target folder, leaving out the holding folder `held/`, which
+/// the loader does not read and where each file that holds an open question
+/// waits, with `change` applied to the text of the file at `path`.
 fn compile_drafts(
     stand: &Stand,
     folder: &Folder,
@@ -143,13 +144,33 @@ fn compile_drafts(
 ) -> Result<Plan, Diagnostics> {
     let mut files: Vec<(RelPath, Vec<u8>)> = files_of(folder.path())
         .into_iter()
-        .filter(|(file, _)| !report.open_questions.iter().any(|open| open.file == *file))
+        .filter(|(file, _)| !file.as_str().starts_with("held/"))
         .collect();
+    // Every file with a question is held, so none is in what compiles.
+    assert!(
+        report
+            .open_questions
+            .iter()
+            .all(|open| open.file.as_str().starts_with("held/")),
+        "{report:?}"
+    );
     for (file, bytes) in &mut files {
         if file.as_str() == path {
             *bytes = change(std::str::from_utf8(bytes).unwrap()).into_bytes();
         }
     }
+    let set = stand.registry.compiler_set();
+    let sources = a2m_files::load_files(&TargetRoot::new(folder.path()), &files, set)?;
+    a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
+        .map(|compiled| compiled.plan)
+}
+
+/// Compiles a target folder as it stands, leaving out the holding folder.
+fn compile_without_held(stand: &Stand, folder: &Folder) -> Result<Plan, Diagnostics> {
+    let files: Vec<(RelPath, Vec<u8>)> = files_of(folder.path())
+        .into_iter()
+        .filter(|(file, _)| !file.as_str().starts_with("held/"))
+        .collect();
     let set = stand.registry.compiler_set();
     let sources = a2m_files::load_files(&TargetRoot::new(folder.path()), &files, set)?;
     a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
@@ -234,6 +255,16 @@ async fn a_snapshot_of_a_page_that_shows_an_order_drafts_a_read_that_reads_what_
     }
     let operation = std::fs::read_to_string(folder.path().join(OPERATION)).unwrap();
     assert!(!operation.contains("examples"), "{operation}");
+    // Nothing on the page is named as a secret's, so the description says
+    // nothing was left out for its name (decision 0302).
+    assert!(
+        operation.contains("its name is provisional."),
+        "{operation}"
+    );
+    assert!(
+        !operation.contains("Left out because") && !operation.contains("never an output"),
+        "{operation}"
+    );
 
     let plan = compile_drafts(&stand, &folder, &report, "", str::to_owned)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
@@ -370,13 +401,14 @@ fn a_form_is_never_drafted_and_a_table_that_cannot_be_told_apart_is_a_question()
     let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
     assert_eq!(
         written,
-        [
-            "operations/form_lines_list.yaml",
-            "screens/form_lines.yaml",
-            "screens/twice_lines.yaml",
-        ],
+        ["operations/form_lines_list.yaml", "screens/form_lines.yaml",],
         "{report:?}"
     );
+    // The two tables of one name are a question, so the screen file waits
+    // in the holding folder and is not also in place (decision 0298).
+    let held: Vec<&str> = report.held.iter().map(RelPath::as_str).collect();
+    assert_eq!(held, ["held/screens/twice_lines.yaml"]);
+    assert!(!folder.path().join("screens/twice_lines.yaml").exists());
     // The form drafts nothing of its own: no field, no action. The column
     // whose heading another shares is left out.
     let screen = std::fs::read_to_string(folder.path().join("screens/form_lines.yaml")).unwrap();
@@ -389,7 +421,7 @@ fn a_form_is_never_drafted_and_a_table_that_cannot_be_told_apart_is_a_question()
     assert_eq!(report.open_questions.len(), 1, "{report:?}");
     assert_eq!(
         report.open_questions[0].file.as_str(),
-        "screens/twice_lines.yaml"
+        "held/screens/twice_lines.yaml"
     );
     assert!(
         report.open_questions[0]
@@ -745,9 +777,19 @@ fn a_label_two_terms_share_is_a_question_apart_and_the_other_values_are_read() {
         [
             "operations/order_values_get.yaml",
             "screens/order_values.yaml",
-            "screens/order_values_undecided.yaml",
         ],
         "{report:?}"
+    );
+    // The screen file of the label two terms share holds the question, so
+    // it waits in the holding folder and is not also in place; the read and
+    // the screen of the other values name nothing of it (decision 0298).
+    let held: Vec<&str> = report.held.iter().map(RelPath::as_str).collect();
+    assert_eq!(held, ["held/screens/order_values_undecided.yaml"]);
+    assert!(
+        !folder
+            .path()
+            .join("screens/order_values_undecided.yaml")
+            .exists()
     );
     let read =
         std::fs::read_to_string(folder.path().join("operations/order_values_get.yaml")).unwrap();
@@ -756,7 +798,7 @@ fn a_label_two_terms_share_is_a_question_apart_and_the_other_values_are_read() {
         report
             .open_questions
             .iter()
-            .all(|open| open.file.as_str() == "screens/order_values_undecided.yaml")
+            .all(|open| open.file.as_str() == "held/screens/order_values_undecided.yaml")
     );
     // The label is the page's own words, quoted apart from the product's
     // sentence.
@@ -822,7 +864,7 @@ fn a_label_two_terms_share_is_a_question_apart_and_the_other_values_are_read() {
             "{path:?}"
         );
         assert!(!text.contains(" now now"), "{path:?}: {text}");
-        if path.as_str() != "screens/order_values_undecided.yaml" {
+        if path.as_str() != "held/screens/order_values_undecided.yaml" {
             assert!(!text.contains("Ignore"), "{path:?}: {text}");
         }
     }
@@ -929,4 +971,261 @@ fn a_page_whose_address_held_a_token_drafts_a_read_by_key_and_no_file_holds_the_
     }
     compile_drafts(&stand, &folder, &report, "", str::to_owned)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+}
+
+/// A table column headed as a secret, a labelled value labelled as one, a
+/// password field in a form, and a cell that holds an invented value
+/// (decision 0302). The snapshot keeps no cell's text, so the value is in
+/// no file; the column and the labelled value are neither a drafted
+/// output; the others are read; the target compiles.
+#[test]
+fn a_column_or_a_value_named_as_a_secret_is_never_a_drafted_output() {
+    const INVENTED: &str = "example-not-a-secret-0002";
+    let origin = "http://127.0.0.1:4010";
+    let stand = Stand::new("named-secrets", Arc::new(NoSecrets));
+    let page = snapshot(&[
+        (0, "main", Some("")),
+        (1, "DescriptionList", None),
+        (2, "term", Some("Customer")),
+        (2, "definition", Some("Customer")),
+        (2, "term", Some("API key")),
+        (2, "definition", Some("API key")),
+        (1, "table", Some("Line items")),
+        (2, "row", None),
+        (3, "columnheader", Some("Sku")),
+        (3, "columnheader", Some("Client secret")),
+        (3, "columnheader", Some("Quantity")),
+        (2, "row", None),
+        (3, "cell", Some("A-1")),
+        (3, "cell", Some(INVENTED)),
+        (3, "cell", Some("2")),
+        // A form beside them drafts nothing, and its password field is
+        // no input.
+        (1, "form", Some("")),
+        (2, "textbox", Some("Password")),
+        (2, "button", Some("Save")),
+    ]);
+    let folder = new_target("named-secrets", origin);
+    let report = draft(&stand, &folder, &[screen_finding(origin, "/order", &page)]);
+    let written: Vec<&str> = report.written.iter().map(RelPath::as_str).collect();
+    assert_eq!(
+        written,
+        [
+            "operations/order_line_items_list.yaml",
+            "operations/order_values_get.yaml",
+            "screens/order_line_items.yaml",
+            "screens/order_values.yaml",
+        ],
+        "{report:?}"
+    );
+    let list = std::fs::read_to_string(folder.path().join("operations/order_line_items_list.yaml"))
+        .unwrap();
+    let values =
+        std::fs::read_to_string(folder.path().join("operations/order_values_get.yaml")).unwrap();
+    assert!(
+        list.contains("sku:") && list.contains("quantity:"),
+        "{list}"
+    );
+    assert!(values.contains("customer:"), "{values}");
+    for (text, left_out) in [(&list, "`client_secret`"), (&values, "`api_key`")] {
+        assert!(text.contains(left_out), "{text}");
+        assert!(
+            text.contains("so that a secret is never an output"),
+            "{text}"
+        );
+    }
+    for (path, bytes) in files_of(folder.path()) {
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(!text.contains(INVENTED), "{path:?}");
+        for key in ["client_secret:", "api_key:", "password:", "Password"] {
+            assert!(!text.contains(key), "{path:?} holds {key}: {text}");
+        }
+    }
+    compile_drafts(&stand, &folder, &report, "", str::to_owned)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+
+    // A page whose address holds a placeholder named as a secret drafts no
+    // read: the placeholder would be an input that is a secret.
+    let folder = new_target("named-secrets-address", origin);
+    let report = draft(
+        &stand,
+        &folder,
+        &[screen_finding(origin, "/orders/{api_key}", &page)],
+    );
+    assert!(report.written.is_empty(), "{report:?}");
+}
+
+/// The order screen's finding as a scout gives it of a page that loads from
+/// other origins: the origins its observing tab refused, in the finding.
+fn order_screen_that_loads(origin: &str, path: &str, refused: &[&str]) -> Finding {
+    let text = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("findings")
+            .join("order_screen.json"),
+    )
+    .unwrap();
+    let shared: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let mut found: serde_json::Value =
+        serde_json::from_str(shared["found"].as_str().unwrap()).unwrap();
+    found["refused_origins"] = serde_json::json!(refused);
+    screen_finding(origin, path, &found.to_string())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_that_loads_from_its_other_name_drafts_a_read_that_declares_that_origin_and_it_runs()
+{
+    let app = TestApp::start().await.unwrap();
+    let origin = app.url("");
+    let other = origin.replacen("127.0.0.1", "localhost", 1);
+    // The page of the order that loads an image and sends a `fetch` to the
+    // application's other name while it loads.
+    let path = "/leaving/loads/orders/A-100";
+    let finding = order_screen_that_loads(&origin, path, &[other.as_str()]);
+    let stand = Stand::new("drafted-destinations", Arc::new(NoSecrets));
+    let folder = new_target("drafts-destinations", &origin);
+    let report = draft(&stand, &folder, std::slice::from_ref(&finding));
+    assert!(
+        report.refused.is_empty() && report.kept_failing.is_empty(),
+        "{report:?}"
+    );
+    // The page put the origin there, not a person, and declaring it widens
+    // where the tool's browser may send: both reads wait in the holding
+    // folder, each with a question for the origin, and are not in place
+    // (decision 0298). The screens name nothing held and are written.
+    let list = "operations/leaving_loads_orders_a_100_line_items_list.yaml";
+    let get = "operations/leaving_loads_orders_a_100_values_get.yaml";
+    let mut held: Vec<&str> = report.held.iter().map(RelPath::as_str).collect();
+    held.sort_unstable();
+    assert_eq!(held, [format!("held/{list}"), format!("held/{get}")]);
+    assert!(!folder.path().join(list).exists() && !folder.path().join(get).exists());
+    assert_eq!(report.open_questions.len(), 2, "{report:?}");
+    for open in &report.open_questions {
+        let quoting = open.quoting.as_ref().unwrap();
+        assert!(quoting.sentence().contains("Keep it"), "{open:?}");
+        assert!(quoting.words().contains(&other), "{open:?}");
+    }
+    let screen = std::fs::read_to_string(
+        folder
+            .path()
+            .join("screens/leaving_loads_orders_a_100_line_items.yaml"),
+    )
+    .unwrap();
+    assert!(!screen.contains(&other), "{screen}");
+    // A person keeps the origin: writes it in the question's place and
+    // moves the file out. Then the target compiles, with the origin as the
+    // operation's destination.
+    let held_file = folder.path().join("held").join(list);
+    let text = std::fs::read_to_string(&held_file).unwrap();
+    let kept: Vec<String> = text
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("- ") && line.contains("Keep it") {
+                format!("    - \"{other}\"")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect();
+    assert!(kept.iter().any(|line| line.contains(&other)), "{text}");
+    std::fs::create_dir_all(folder.path().join("operations")).unwrap();
+    std::fs::write(folder.path().join(list), kept.join("\n") + "\n").unwrap();
+    std::fs::remove_file(&held_file).unwrap();
+    let plan = compile_without_held(&stand, &folder)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    let read = plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str().ends_with("_line_items_list"))
+        .unwrap();
+    assert_eq!(read.manifest.destinations, std::slice::from_ref(&other));
+    let name = read.name.as_str().to_owned();
+
+    // Without the declaration the page stops the run, naming the origin, and
+    // nothing reaches it.
+    let mut scene = Scene::over(stand, plan.clone(), &origin);
+    let stopped = look(&scene, &name).await.unwrap_err();
+    assert_eq!(
+        class_and_code(&stopped),
+        (FailureClass::Policy, "origin_not_declared"),
+        "{stopped}"
+    );
+    assert!(stopped.failure.message().contains(&other), "{stopped}");
+    assert!(app.trap_writes().await.unwrap().is_empty());
+
+    // With what the drafted operation declares, as the run is given it, the
+    // page loads from the other name, and the read is made.
+    scene.destinations = a2m_provider::Destinations::new(
+        std::iter::once(origin.clone()).chain(read.manifest.destinations.iter().cloned()),
+    );
+    let ran = look(&scene, &name).await.unwrap();
+    let stored = app.stored_order("A-100").await.unwrap().unwrap();
+    assert_eq!(
+        ran.values.get("item_code"),
+        Some(&Value::List(
+            stored
+                .items
+                .values()
+                .map(|item| Value::from(item.item_code.clone()))
+                .collect()
+        ))
+    );
+    let arrived = app.trap_writes().await.unwrap();
+    assert!(arrived.contains_key("leaving/loads-image"), "{arrived:?}");
+    assert!(app.writes().await.unwrap().is_empty());
+    scene.stand.end().await;
+}
+
+#[test]
+fn only_an_origin_with_its_scheme_and_nothing_more_is_drafted_as_a_destination() {
+    let origin = "http://127.0.0.1:4010";
+    let stand = Stand::new("drafted-destinations-bad", Arc::new(NoSecrets));
+    let folder = new_target("drafts-destinations-bad", origin);
+    let finding = order_screen_that_loads(
+        origin,
+        "/orders/A-100",
+        &[
+            // One good, one twice, and what is no destination: a path, no
+            // scheme, a name and a password, a wildcard, another scheme, the
+            // page's own origin, and a word.
+            "https://assets.example.com",
+            "https://assets.example.com",
+            "https://assets.example.com/fonts",
+            "assets.example.com",
+            "https://someone:word@assets.example.com",
+            "https://*.example.com",
+            "ftp://assets.example.com",
+            origin,
+            "elsewhere",
+        ],
+    );
+    let report = draft(&stand, &folder, std::slice::from_ref(&finding));
+    // One question for the one origin that is a destination, in each of the
+    // two reads, which wait in the holding folder.
+    let asked: Vec<&a2m_files::OpenQuestion> = report
+        .open_questions
+        .iter()
+        .filter(|open| open.file.as_str() == format!("held/{OPERATION}"))
+        .collect();
+    assert_eq!(asked.len(), 1, "{report:?}");
+    let words = asked[0].quoting.as_ref().unwrap().words();
+    assert!(
+        words.contains(&"https://assets.example.com".to_owned()),
+        "{words:?}"
+    );
+    assert_eq!(report.open_questions.len(), 2, "{report:?}");
+    assert!(!folder.path().join(OPERATION).exists());
+
+    // A page that tried no other origin drafts as before: in place, with no
+    // question and no permissions.
+    let plain = new_target("drafts-destinations-none", origin);
+    let none = order_screen_that_loads(origin, "/orders/A-100", &[]);
+    let report = draft(&stand, &plain, std::slice::from_ref(&none));
+    assert!(
+        report.held.is_empty() && report.open_questions.is_empty(),
+        "{report:?}"
+    );
+    let text = std::fs::read_to_string(plain.path().join(OPERATION)).unwrap();
+    assert!(!text.contains("permissions"), "{text}");
 }

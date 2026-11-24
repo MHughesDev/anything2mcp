@@ -222,6 +222,7 @@ pub(crate) fn schema() -> JsonSchema {
                 "json",
                 JsonSchema::object()
                     .optional("lines", JsonSchema::bool())
+                    .optional("at", JsonSchema::non_empty_list(JsonSchema::text()))
                     .required("fields", JsonSchema::map_of(json_field)),
             )
             .optional(
@@ -248,9 +249,12 @@ pub(crate) fn schema() -> JsonSchema {
         .optional("exits", exits_schema())
         .required("output", output)
         .optional("assigns", JsonSchema::map_of(JsonSchema::text()))
+        .optional("absent", JsonSchema::words(&["empty_output"]))
         .optional(
             "reaches",
-            JsonSchema::object().optional("network", JsonSchema::list(JsonSchema::text())),
+            JsonSchema::object()
+                .optional("network", JsonSchema::list(JsonSchema::text()))
+                .optional("own_server", JsonSchema::list(JsonSchema::text())),
         )
         .optional("limits", limits_schema())
         .optional(
@@ -1154,10 +1158,28 @@ fn output(doc: &Located<Doc>, found: &mut Found) -> Option<Output> {
                 };
                 fields.insert(entry.key.value.clone(), JsonField { kind, required });
             }
-            Some(Output::Json {
-                lines: json.get("lines").and_then(Located::as_bool) == Some(true),
-                fields,
-            })
+            let lines = json.get("lines").and_then(Located::as_bool) == Some(true);
+            let at = texts(json.get("at"));
+            if lines && !at.is_empty() {
+                found.bad(
+                    "output_malformed",
+                    &json.at,
+                    "A JSON output with `lines: true` is one document a line, each a record; it has no path to its records."
+                        .to_owned(),
+                    "Remove `at`, or `lines`.",
+                );
+                return None;
+            }
+            if at.iter().any(String::is_empty) {
+                found.bad(
+                    "output_malformed",
+                    &json.at,
+                    "A path to the records in a JSON output names each key.".to_owned(),
+                    "Write the keys to follow, such as `at: [items]`.",
+                );
+                return None;
+            }
+            Some(Output::Json { lines, fields, at })
         }
         ["table"] if doc.get("match").is_none() => {
             let table = doc.get("table")?;
@@ -1236,6 +1258,33 @@ fn command(
             &doc.at,
             format!("The command `{name}` reaches outside the target and declares no hazard."),
             "Add `hazard: sends_outside`, and `effect: irreversible`.",
+        );
+    }
+    let own_server = texts(
+        doc.get("reaches")
+            .and_then(|reaches| reaches.get("own_server")),
+    );
+    if let Some(odd) = own_server
+        .iter()
+        .find(|host| host.is_empty() || host.contains(['/', ' ', '\t']))
+    {
+        found.bad(
+            "own_server_malformed",
+            &doc.at,
+            format!(
+                "The command `{name}` names the own server `{}`, which is not a host name.",
+                codes::shown(odd)
+            ),
+            "Name the server's host as the program is given it, with no scheme and no path, such as `store.example.com`.",
+        );
+    }
+    let absent_when_empty = doc.text("absent") == Some("empty_output");
+    if absent_when_empty && effect != Effect::Read {
+        found.bad(
+            "absent_empty_needs_read",
+            &doc.at,
+            format!("The command `{name}` is not a read and declares `absent: empty_output`."),
+            "Only a read answers \"none\" by printing nothing: a write that printed nothing is not known to have done what it was asked.",
         );
     }
     if hazard != "none" && effect != Effect::Irreversible {
@@ -1375,6 +1424,8 @@ fn command(
         exits,
         output: output?,
         assigns,
+        absent_when_empty,
+        own_server,
         limits,
     })
 }
@@ -1411,13 +1462,34 @@ fn compile_file(
         } == shared
     });
     let index = u32::try_from(same.unwrap_or(section.programs.len())).unwrap_or(u32::MAX);
+    let mut compiled_here = Vec::new();
     for entry in doc
         .get("commands")
         .map(Located::entries)
         .unwrap_or_default()
     {
         if let Some(compiled) = command(&entry.key.value, &entry.value, index, &shared, cx, found) {
+            compiled_here.push((entry.key.value.clone(), compiled.clone()));
             section.commands.insert(entry.key.value.clone(), compiled);
+        }
+    }
+    // A program the name list refuses that has commands which run no code
+    // but its own: each of this file's argument lists is one of them
+    // (decision 0299, step one). A file that declares an interpreter is
+    // held to the rules of a pair instead.
+    if shared.interpreter.is_none()
+        && let Some(row) = a2m_provider::runs_its_own_code(surface.address)
+    {
+        let commands = compiled_here
+            .iter()
+            .map(|(name, command)| (name.as_str(), command));
+        if let Some(why) = crate::own_code::refusal(row, surface.address, &shared, commands) {
+            found.bad(
+                "shell_program",
+                &block.at,
+                why,
+                "Give the program only the commands of it that run no code but its own, in their exact form, each declared `read`, with no variable and no help form; any other command of it is never started.",
+            );
         }
     }
     if same.is_none() {

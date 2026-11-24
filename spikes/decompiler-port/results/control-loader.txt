@@ -1,0 +1,101 @@
+engine x86:LE:64:default base 0x100000; port x86:LE:64:default:gcc
+functions listed: engine 18, port 10, both 9, only engine 9, only port 1
+decompiled by port: 10; by engine: 18; compared (both): 9; port only: 1; engine only: 9
+| exact | blanks only | addresses/hash marks only | spelling only | different |
+| --- | --- | --- | --- | --- |
+| 0 | 1 | 2 | 1 | 5 |
+line similarity of the different ones after spelling: min 0.38 median 0.67 max 0.77
+
+--- 0x1000 _init
+--- engine
++++ port
+@@ -1 +1 @@
+-int _init(EVP_PKEY_CTX *ctx)
++void _init(void)
+@@ -3,4 +3,2 @@
+-int Var1;
+-Var1 = 0;
+-if (PTR___gmon_start___00003fe8 != (undefined *)0x0) {
+-Var1 = (*(code *)PTR___gmon_start___00003fe8)();
++if (pcRam0000000000003fe8 != __cxa_finalize@GLIBC_2.2.5) {
++(*pcRam0000000000003fe8)();
+@@ -8 +6 @@
+-return Var1;
++return;
+
+--- 0x1060 _start
+--- engine
++++ port
+@@ -1 +1 @@
+-void processEntry _start(undefined8 param_1,undefined8 param_2)
++void _start(undefined8 param_1,undefined8 param_2,undefined8 param_3)
+@@ -2,0 +3,2 @@
++undefined8 unaff_retaddr;
++undefined1 xStack0000000000000008;
+@@ -4 +6 @@
+-(*(code *)PTR___libc_start_main_00003fd8)(main,param_2,&stack0x00000008,0,0,param_1,stk_8);
++(*pcRam0000000000003fd8)(main,unaff_retaddr,&xStack0000000000000008,0,0,param_3,stk_8);
+
+--- 0x1100 __do_global_dtors_aux
+--- engine
++++ port
+@@ -3,3 +3,5 @@
+-if (completed_0 == '\0') {
+-if (PTR___cxa_finalize_00003ff8 != (undefined *)0x0) {
+-__cxa_finalize(__dso_handle);
++if (cRam0000000000004010 != '\0') {
++return;
++}
++if (iRam0000000000003ff8 != 0) {
++func_0x00001040(xRam0000000000004008);
+@@ -8 +10 @@
+-completed_0 = 1;
++cRam0000000000004010 = 1;
+@@ -11,2 +12,0 @@
+-return;
+
+--- 0x1140 frame_dummy
+--- engine
++++ port
+@@ -0,0 +1,2 @@
++/* WARNING: Removing unreachable block (ram,0x000010e4) */
++/* WARNING: Removing unreachable block (ram,0x000010f0) */
+@@ -3 +4,0 @@
+-register_tm_clones();
+
+--- 0x116b main
+--- engine
++++ port
+@@ -5,2 +5,2 @@
+-char *Var3;
+-byte Var4;
++uchar *Var3;
++uchar Var4;
+@@ -12 +12 @@
+-goto LAB_0000119c;
++goto code_r0x0000119c;
+@@ -16 +16 @@
+-goto LAB_000011ac;
++goto code_r0x000011ac;
+@@ -25 +25 @@
+-LAB_0000119c:
++code_r0x0000119c:
+ROW	0x127c	_fini	blanks	6	1.00
+ROW	0x1090	deregister_tm_clones	addresses	9	1.00
+ROW	0x10c0	register_tm_clones	addresses	9	1.00
+ROW	0x1149	example_fact	spelling	12	1.00
+ROW	0x1000	_init	different	9	0.38
+ROW	0x1060	_start	different	13	0.67
+ROW	0x1100	__do_global_dtors_aux	different	14	0.50
+ROW	0x1140	frame_dummy	different	9	0.73
+ROW	0x116b	main	different	67	0.77
+ROW	0x0	__libc_start_main@GLIBC_2.34	port-only	9
+ROW	0x1020	FUN_00101020	engine-only	8
+ROW	0x1040	<EXTERNAL>::__cxa_finalize	engine-only	8
+ROW	0x1050	<EXTERNAL>::__printf_chk	engine-only	8
+ROW	0x5000	<EXTERNAL>::__libc_start_main	engine-only	11
+ROW	0x5008	<EXTERNAL>::_ITM_deregisterTMCloneTable	engine-only	10
+ROW	0x5010	<EXTERNAL>::__gmon_start__	engine-only	10
+ROW	0x5018	<EXTERNAL>::__printf_chk	engine-only	11
+ROW	0x5020	<EXTERNAL>::_ITM_registerTMCloneTable	engine-only	10
+ROW	0x5028	<EXTERNAL>::__cxa_finalize	engine-only	11

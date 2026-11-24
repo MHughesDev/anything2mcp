@@ -1,6 +1,13 @@
 //! Compares a new result with a stored one and decides whether a budgeted
 //! scenario has regressed.
 //!
+//! What is compared is the floor of each number, not its middle: the fastest
+//! iteration of a time, the fastest operation less the fastest baseline of an
+//! overhead ([`crate::budgets::Metric::floor_in`], decision 0369). Load on a
+//! shared machine only adds time, so the floor holds still where the median
+//! moves threefold between two runs of the same build. The limit of a budget
+//! is still held to the median, in [`standing`].
+//!
 //! A budgeted scenario has regressed when its number rose by more than the
 //! regression percentage of the budget file **and** by more than the noise
 //! floor. The second condition is what keeps microsecond jitter from failing a
@@ -95,18 +102,18 @@ impl Comparison {
     /// The comparison as lines for a person to read, times in microseconds.
     #[must_use]
     pub fn render(&self) -> String {
-        let shown = |value: Option<i64>| value.map_or_else(|| "-".to_owned(), micros);
         let mut out = String::new();
         let _ = writeln!(
             out,
             "{:<22} {:>12} {:>12} {:>12}  verdict",
-            "budgeted scenario", "limit us", "stored us", "new us"
+            "budgeted scenario", "limit us/KB", "stored", "new"
         );
         for line in &self.lines {
-            let limit = match line.budget.limit.unit {
-                crate::budgets::Unit::Mb => "-".to_owned(),
-                _ => micros(line.budget.limit.amount()),
+            let unit = line.budget.limit.unit;
+            let shown = |value: Option<i64>| {
+                value.map_or_else(|| "-".to_owned(), |value| show(unit, value))
             };
+            let limit = show(unit, line.budget.limit.amount());
             let over = if line.over_limit() {
                 ", over the target"
             } else {
@@ -169,7 +176,7 @@ pub fn compare(
     let number = |budget: &Budget, report: &RunReport| {
         report
             .scenario(&budget.scenario)
-            .and_then(|result| budget.metric.value_in(result))
+            .and_then(|result| budget.metric.floor_in(result))
     };
     let lines = budgets
         .budgets
@@ -216,6 +223,15 @@ pub fn compare(
     Ok(Comparison { lines, unbudgeted })
 }
 
+/// A number as the table shows it: a time in microseconds, memory in
+/// kilobytes with its unit, so that a row never passes for the other kind.
+fn show(unit: crate::budgets::Unit, value: i64) -> String {
+    match unit {
+        crate::budgets::Unit::Mb => format!("{} KB", micros(value)),
+        _ => micros(value),
+    }
+}
+
 /// The budgets against one result alone, with no stored result to compare
 /// with: what a run prints so that every unmeasured budget is seen as such.
 #[must_use]
@@ -224,20 +240,18 @@ pub fn standing(budgets: &BudgetFile, report: &RunReport) -> String {
     let _ = writeln!(
         out,
         "{:<22} {:>12} {:>12}  standing",
-        "budgeted scenario", "limit us", "measured us"
+        "budgeted scenario", "limit us/KB", "measured"
     );
     for budget in &budgets.budgets {
         let measured = report
             .scenario(&budget.scenario)
             .and_then(|result| budget.metric.value_in(result));
-        let limit = match budget.limit.unit {
-            crate::budgets::Unit::Mb => "-".to_owned(),
-            _ => micros(budget.limit.amount()),
-        };
+        let unit = budget.limit.unit;
+        let limit = show(unit, budget.limit.amount());
         let (shown, standing) = match measured {
             None => ("-".to_owned(), "not measured"),
-            Some(value) if value > budget.limit.amount() => (micros(value), "over the target"),
-            Some(value) => (micros(value), "within the target"),
+            Some(value) if value > budget.limit.amount() => (show(unit, value), "over the target"),
+            Some(value) => (show(unit, value), "within the target"),
         };
         let _ = writeln!(
             out,
@@ -272,6 +286,8 @@ mod tests {
         ScenarioResult {
             name: name.to_owned(),
             overhead: Some(Overhead::between(&operation, &baseline)),
+            resident_bytes: None,
+            size_bytes: None,
             operation,
             baseline: Some(baseline),
         }
@@ -355,6 +371,8 @@ mod tests {
             operation: stats(400_000),
             baseline: None,
             overhead: None,
+            resident_bytes: None,
+            size_bytes: None,
         };
         let stored = report(vec![direct.clone()]);
         let new = report(vec![direct]);
@@ -399,6 +417,8 @@ mod tests {
             operation: stats(1_400_000),
             baseline: None,
             overhead: None,
+            resident_bytes: None,
+            size_bytes: None,
         }]);
         let unmeasured = compare(&budgets, &with, &no_baseline, None).unwrap();
         assert_eq!(verdict_of(&unmeasured, "http_operation"), Verdict::Missing);
@@ -407,10 +427,10 @@ mod tests {
     #[test]
     fn results_from_different_systems_are_not_compared_and_a_number_over_its_limit_is_shown() {
         let budgets = BudgetFile::built_in().unwrap();
-        let stored = report(vec![with_overhead("http_operation", 6_000_000)]);
-        let new = report(vec![with_overhead("http_operation", 6_000_000)]);
+        let stored = report(vec![with_overhead("http_operation", 16_000_000)]);
+        let new = report(vec![with_overhead("http_operation", 16_000_000)]);
         let comparison = compare(&budgets, &stored, &new, None).unwrap();
-        // 6 ms is over the 5 ms target; the target is shown and does not fail.
+        // 16 ms is over the 15 ms target; the target is shown and does not fail.
         assert!(comparison.lines.iter().any(BudgetLine::over_limit));
         assert!(comparison.render().contains("over the target"));
         assert!(!comparison.failed());
@@ -421,5 +441,81 @@ mod tests {
             compare(&budgets, &stored, &elsewhere, None),
             Err(BenchError::NotComparable(_))
         ));
+    }
+    /// A scenario whose iterations are as given: the floor and the middle apart.
+    fn with_spread(name: &str, min_ns: u64, median_ns: u64) -> ScenarioResult {
+        let operation = Stats {
+            min_ns,
+            ..stats(median_ns)
+        };
+        let baseline = Stats {
+            min_ns: 400_000,
+            ..stats(400_000)
+        };
+        ScenarioResult {
+            name: name.to_owned(),
+            overhead: Some(Overhead::between(&operation, &baseline)),
+            resident_bytes: None,
+            size_bytes: None,
+            operation,
+            baseline: Some(baseline),
+        }
+    }
+
+    #[test]
+    fn a_median_that_moves_threefold_on_a_busy_machine_is_not_a_regression_while_the_floor_holds() {
+        let budgets = BudgetFile::built_in().unwrap();
+        // The same build twice: its fastest read is 9.4 ms both times, and its
+        // median moved from 10 ms to 31 ms because the machine was busy.
+        let stored = report(vec![with_spread("http_operation", 9_400_000, 10_400_000)]);
+        let new = report(vec![with_spread("http_operation", 9_450_000, 31_400_000)]);
+        let comparison = compare(&budgets, &stored, &new, None).unwrap();
+        assert_eq!(verdict_of(&comparison, "http_operation"), Verdict::Within);
+        assert!(!comparison.failed());
+    }
+
+    #[test]
+    fn a_floor_that_rises_fails_even_when_the_median_does_not_move() {
+        let budgets = BudgetFile::built_in().unwrap();
+        // The fastest read goes from 9 ms to 11 ms: no run was quiet enough to
+        // see the old time, so the code is slower, whatever the median says.
+        let stored = report(vec![with_spread("http_operation", 9_000_000, 12_000_000)]);
+        let new = report(vec![with_spread("http_operation", 11_000_000, 12_000_000)]);
+        let comparison = compare(&budgets, &stored, &new, None).unwrap();
+        assert_eq!(
+            verdict_of(&comparison, "http_operation"),
+            Verdict::Regression
+        );
+    }
+
+    #[test]
+    fn a_program_that_grows_by_more_than_ten_percent_fails() {
+        let budgets = BudgetFile::built_in().unwrap();
+        let sized = |bytes: u64| ScenarioResult {
+            name: "program_size".to_owned(),
+            operation: stats(0),
+            baseline: None,
+            overhead: None,
+            resident_bytes: None,
+            size_bytes: Some(bytes),
+        };
+        let stored = report(vec![sized(20_000_000)]);
+        let grown = compare(&budgets, &stored, &report(vec![sized(23_000_000)]), None).unwrap();
+        assert_eq!(verdict_of(&grown, "program_size"), Verdict::Regression);
+        let same = compare(&budgets, &stored, &report(vec![sized(21_000_000)]), None).unwrap();
+        assert_eq!(verdict_of(&same, "program_size"), Verdict::Within);
+        // A size over the 25 MB target is shown, as any number over its limit is.
+        let over = compare(
+            &budgets,
+            &report(vec![sized(26_000_000)]),
+            &report(vec![sized(26_000_000)]),
+            None,
+        )
+        .unwrap();
+        assert!(
+            over.lines
+                .iter()
+                .any(|l| l.budget.scenario == "program_size" && l.over_limit())
+        );
     }
 }

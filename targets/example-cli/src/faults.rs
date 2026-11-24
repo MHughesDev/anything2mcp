@@ -107,6 +107,23 @@ pub enum FaultKind {
     /// Print the secrets the program was given: the password `login` read, and
     /// the token variable. On both streams.
     LeakSecret,
+    /// Set out every listing of commands in help with a tab between a name
+    /// and its text, as programs written in one widely used language do.
+    /// It applies to `help`, which a fault that names no command skips.
+    TabbedHelp,
+    /// Add to the program's listing of commands in help one line that holds
+    /// no command name a reader can take: `  [options]` and a text. It
+    /// applies to `help`.
+    UnnamedHelpLine,
+    /// Answer `item show` of a code the store does not hold with no output
+    /// and status 0, as a program that answers "none" with silence does.
+    SilentMiss,
+    /// Print a second line after the version line, the version of the
+    /// program's interface. It applies to the version command only.
+    InterfaceLine,
+    /// Print `item list --format=json` as one nested document: a header,
+    /// and the items under the key `items`.
+    NestedJson,
     /// Start a child process that keeps the program's output streams and
     /// outlives it.
     SpawnChild {
@@ -191,7 +208,13 @@ impl Fault {
                         .strip_prefix(named.as_str())
                         .is_some_and(|rest| rest.starts_with(' '))
             }
-            None if matches!(self.kind, FaultKind::ReportVersion { .. }) => command == "version",
+            None if matches!(
+                self.kind,
+                FaultKind::ReportVersion { .. } | FaultKind::InterfaceLine
+            ) =>
+            {
+                command == "version"
+            }
             None => command != "help" && command != "version",
         }
     }

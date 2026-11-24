@@ -526,6 +526,25 @@ impl RegistryBuilder {
                 for rule in &given.drafting_rules {
                     steps.push(builder.drafting_rule(name, Arc::clone(rule)).map(|_| ()));
                 }
+                // The rank its manifest states for each mode it brings a
+                // lowering for, so that the compiler orders an operation's
+                // bindings by it (decision 0337).
+                let mut ranked: Vec<&a2m_core::Mode> = Vec::new();
+                for lowering in &given.lowerings {
+                    let mode = lowering.mode();
+                    let Some(declared) = one.manifest.mode(&mode) else {
+                        continue;
+                    };
+                    if ranked.contains(&&declared.name) {
+                        continue;
+                    }
+                    ranked.push(&declared.name);
+                    steps.push(
+                        builder
+                            .mode_rank(name, declared.name.clone(), declared.rank)
+                            .map(|_| ()),
+                    );
+                }
                 if let Some(failure) = steps.into_iter().find_map(Result::err) {
                     refused = Some((index, failure));
                     break 'providers;

@@ -38,6 +38,10 @@ use crate::kernel::{Kernel, fact, set_fact};
 /// kernel's wake notice ends it early.
 const CLAIM_WAIT: Duration = Duration::from_secs(30);
 
+/// The slots kept for the session keeper's jobs, beside the ones a runner
+/// loop is started with.
+const KEEPER_SLOTS: u32 = 1;
+
 /// The most rate budgets noted as set. Past it the notes are dropped, and a
 /// budget is set once more the next time its surface is used.
 const BUDGETS_NOTED: usize = 4096;
@@ -309,6 +313,8 @@ pub(crate) fn run_call(tx: &mut Tx<'_>, run: &RunRow) -> Result<Option<RunCall>,
 /// What the kernel keeps about its runner loop.
 pub(crate) struct RunnerState {
     pub(crate) task: Mutex<Option<JoinHandle<()>>>,
+    /// The loop that serves the slot kept for the session keeper's jobs.
+    keeper_task: Mutex<Option<JoinHandle<()>>>,
     engine: OnceLock<Arc<Engine>>,
     budgets: Mutex<BTreeSet<String>>,
 }
@@ -317,6 +323,7 @@ impl Default for RunnerState {
     fn default() -> Self {
         Self {
             task: Mutex::new(None),
+            keeper_task: Mutex::new(None),
             engine: OnceLock::new(),
             budgets: Mutex::new(BTreeSet::new()),
         }
@@ -402,6 +409,7 @@ impl Kernel {
                 let offer = Slots {
                     total: free,
                     per_mode: modes.iter().map(|mode| (mode.clone(), free)).collect(),
+                    keeper: 0,
                 };
                 let leases = match sched.claim(runner, offer, CLAIM_WAIT).await {
                     Ok(leases) => leases,
@@ -435,6 +443,46 @@ impl Kernel {
             }
         });
         *lock(&self.inner.runner.task) = Some(task);
+        // One more slot, kept for the session keeper's jobs and served by
+        // a loop of its own, so that a run that waits for a session's check
+        // never holds the only slot that check needs (spec section 215).
+        // A keeper job also takes an ordinary slot when one is free.
+        let kernel = self.clone();
+        let sched = self.sched()?.clone();
+        let kept = Arc::new(Semaphore::new(KEEPER_SLOTS as usize));
+        let keeper_task = tokio::spawn(async move {
+            loop {
+                let Ok(permit) = Arc::clone(&kept).acquire_owned().await else {
+                    break;
+                };
+                drop(permit);
+                let free = u32::try_from(kept.available_permits()).unwrap_or(1).max(1);
+                let offer = Slots {
+                    total: 0,
+                    per_mode: std::collections::BTreeMap::new(),
+                    keeper: free,
+                };
+                let Ok(leases) = sched.claim(runner, offer, CLAIM_WAIT).await else {
+                    tokio::select! {
+                        () = kernel.inner.wake.notified() => {}
+                        () = tokio::time::sleep(CLAIM_WAIT) => {}
+                    }
+                    continue;
+                };
+                for lease in leases {
+                    let Ok(permit) = Arc::clone(&kept).acquire_owned().await else {
+                        return;
+                    };
+                    let kernel = kernel.clone();
+                    let runtime = tokio::runtime::Handle::current();
+                    tokio::task::spawn_blocking(move || {
+                        runtime.block_on(kernel.work(lease, terms));
+                        drop(permit);
+                    });
+                }
+            }
+        });
+        *lock(&self.inner.runner.keeper_task) = Some(keeper_task);
         Ok(RunnerLoop {
             kernel: self.clone(),
             runner,
@@ -531,11 +579,22 @@ impl Kernel {
     }
 
     pub(crate) async fn stop_runner_loop(&self) {
-        let task = lock(&self.inner.runner.task).take();
-        if let Some(task) = task {
+        let tasks = [
+            lock(&self.inner.runner.task).take(),
+            lock(&self.inner.runner.keeper_task).take(),
+        ];
+        for task in tasks.into_iter().flatten() {
             task.abort();
             let _ = task.await;
         }
+    }
+
+    /// Whether the runner loop runs: whether a job submitted now is
+    /// carried out without anyone starting it.
+    pub(crate) fn runner_running(&self) -> bool {
+        lock(&self.inner.runner.task)
+            .as_ref()
+            .is_some_and(|task| !task.is_finished())
     }
 
     /// Whether the runner loop runs, as `engine.status` shows it.
@@ -817,6 +876,16 @@ impl Kernel {
             (ToolRef::Tool(row.tool_name.clone()), input)
         };
         let health = self.health();
+        let sessions = self.session_conditions(&row, &plan).await;
+        // The bindings a drift mark of the target stops (decision 0380). A
+        // store that cannot say ends the job here: nothing is run on a
+        // guess that nothing drifted.
+        let drifted = {
+            let (workspace, plan) = (row.workspace, Arc::clone(&plan));
+            store
+                .read(move |tx| crate::drift::stopped(tx, workspace, &plan))
+                .await?
+        };
         let capture = |key: &str| match self.settings().text(key) {
             Some("full") => CaptureLevel::Full,
             Some("standard") => CaptureLevel::Standard,
@@ -848,6 +917,8 @@ impl Kernel {
                             }),
                     ),
                 },
+                sessions,
+                drifted,
                 ..Conditions::default()
             },
             pin: None,
@@ -890,10 +961,28 @@ impl Kernel {
             })
         };
 
+        // A keeper job is a session's probe: its lease of the session is a
+        // probe's, which never signs in and never counts as a use.
+        let purpose = if lease.requirements.kind == a2m_sched::JobKind::SessionKeepalive {
+            a2m_auth::Purpose::Probe
+        } else {
+            a2m_auth::Purpose::Run
+        };
         let control =
             InProcessControl::new(self.clone(), fence, lease.lease_ref(), row, plan, caller)
-                .with_discovery_files(handed);
+                .with_discovery_files(handed)
+                .with_purpose(purpose);
         let outcome = engine.run_job(&job, &control).await;
+        // The check after a lost runner is the reconcile's own last part,
+        // in its lease, while the heartbeats go on: the run has one live
+        // job throughout, and a resume waits for it as for the reconcile
+        // (decision 0347).
+        if kind == JobKind::Reconcile
+            && lease.requirements.verify_after_loss
+            && matches!(outcome, JobOutcome::Settled { .. })
+        {
+            self.verify_after_loss(&engine, &job, &control, fence).await;
+        }
         beat.abort();
         let _ = beat.await;
 
@@ -966,6 +1055,129 @@ impl Kernel {
             },
         };
         Ok(end)
+    }
+
+    /// After a lost lease, at the end of the reconcile that settled the
+    /// run: every record the ledger holds as verified is read once more,
+    /// through the same control and under the same lease, and a record that
+    /// no longer reads as it was written is kept as late evidence of the
+    /// run (spec section 223). It changes no state of the run or of a
+    /// record. What it came to is one event of the run; a check that could
+    /// not be carried through says so there, and the reconcile ends as it
+    /// would have without it (decision 0347).
+    async fn verify_after_loss(
+        &self,
+        engine: &Engine,
+        reconciled: &JobSpec,
+        control: &InProcessControl,
+        fence: a2m_ledger::Fence,
+    ) {
+        let Ok(store) = self.store() else {
+            return;
+        };
+        let run = fence.run;
+        let Ok(row) = store.read(move |tx| tx.ledger().run(run)).await else {
+            return;
+        };
+        let snapshot = match self.snapshot(&row).await {
+            Ok(snapshot) => snapshot,
+            Err(failure) => {
+                self.note_verify(fence, self.not_finished(&failure)).await;
+                return;
+            }
+        };
+        let mut job = reconciled.clone();
+        job.kind = JobKind::VerifyAfterLoss;
+        job.snapshot = snapshot;
+        let payload = match engine.run_job(&job, control).await {
+            JobOutcome::Settled { .. } => json!({"verify_after_loss": "read"}),
+            JobOutcome::Left(failure)
+            | JobOutcome::Stopped(failure)
+            | JobOutcome::Finished {
+                failure: Some(failure),
+                ..
+            }
+            | JobOutcome::Rests {
+                failure: Some(failure),
+                ..
+            } => self.not_finished(&failure),
+            // The engine gives a check back with no failure only when the
+            // lease is ending, or the run asks for something first.
+            _ => json!({"verify_after_loss": "not_finished"}),
+        };
+        self.note_verify(fence, payload).await;
+    }
+
+    /// The note of a check after a lost runner that could not be carried
+    /// through, with the failure that ended it, redacted.
+    fn not_finished(&self, failure: &Failure) -> Json {
+        let failure = self.redact().redact_failure(failure);
+        json!({
+            "verify_after_loss": "not_finished",
+            "class": failure.class().as_str(),
+            "code": failure.code().as_str(),
+            "message": failure.message(),
+        })
+    }
+
+    /// Records, as one event of the run, that the check after a lost
+    /// runner was made, or why it could not be carried through.
+    async fn note_verify(&self, fence: a2m_ledger::Fence, payload: Json) {
+        let Ok(store) = self.store() else {
+            return;
+        };
+        // Best effort: the check changes nothing, and a note that cannot be
+        // stored leaves the reconcile as it ended.
+        let _ = store
+            .write(Durability::Relaxed, move |tx| {
+                tx.ledger()
+                    .append_event(&fence, EventKind::Need, &payload, None)
+                    .map(|_| ())
+            })
+            .await;
+        self.run_changed();
+    }
+
+    /// The state of the session of each surface of the plan that is signed
+    /// in to, as the session keeper holds it at claim time, for guard's
+    /// third check (decision 0309). Only a session that was ended on
+    /// purpose is listed: it is never signed in again by a lease, so a call
+    /// on it can only stop with `needs_login`. A session that is absent or
+    /// expired may still be signed in from a stored credential at the
+    /// lease, one that waits is waited for, one the keeper holds no row for
+    /// has its first sign-in at the lease, and a keeper that cannot be
+    /// asked leaves everything unlisted: the lease decides all of those. No
+    /// source of edge blocks exists here, so `edge_blocked` stays empty.
+    async fn session_conditions(
+        &self,
+        row: &RunRow,
+        plan: &a2m_core::Plan,
+    ) -> Vec<(a2m_core::SurfaceName, a2m_core::SessionState)> {
+        let Ok(keeper) = self.keeper() else {
+            return Vec::new();
+        };
+        let identity = Identity::Person(row.principal);
+        let Ok(held) = keeper.status(&row.workspace, Some(&identity)).await else {
+            return Vec::new();
+        };
+        let Some(ours) = held
+            .iter()
+            .find(|status| status.target == row.target && status.environment == row.environment)
+        else {
+            return Vec::new();
+        };
+        if ours.state != a2m_core::SessionState::Revoked {
+            return Vec::new();
+        }
+        plan.surfaces
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                u32::try_from(*index)
+                    .is_ok_and(|at| plan.auth_of(a2m_core::SurfaceIndex::new(at)).is_some())
+            })
+            .map(|(_, surface)| (surface.name.clone(), ours.state))
+            .collect()
     }
 
     /// What the ledger holds of a run that has been worked on before, with

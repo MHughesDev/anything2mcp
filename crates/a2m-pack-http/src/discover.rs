@@ -103,6 +103,32 @@ fn produced_by(provider: &ProviderName) -> ProducedBy {
     }
 }
 
+/// What a `sign_in_method` finding of this pack holds: the sign by the name
+/// `a2m_auth::SignInSign` knows, and what it was read from. The second
+/// factor is not something a description or a challenge says, so it is
+/// unknown, and nothing was sent.
+fn sign_in_found(sign: &str, read_from: &str) -> Json {
+    Json::Object(vec![
+        ("format".to_owned(), Json::Text("1".to_owned())),
+        ("sign_in".to_owned(), Json::Text(sign.to_owned())),
+        ("second_factor".to_owned(), Json::Text("unknown".to_owned())),
+        ("read_from".to_owned(), Json::Text(read_from.to_owned())),
+        ("submitted".to_owned(), Json::Bool(false)),
+    ])
+}
+
+/// The sign a challenge's scheme names, by the fixed rules of decision
+/// 0367: a scheme the rules know, or `challenge` for one they do not.
+fn sign_of_challenge(scheme: &str) -> &'static str {
+    match scheme {
+        "basic" => "http_basic",
+        "digest" => "http_digest",
+        "bearer" => "bearer_token",
+        "negotiate" | "ntlm" => "integrated",
+        _ => "challenge",
+    }
+}
+
 fn suits_http(surface: &SurfaceDescription) -> bool {
     surface.kind == HTTP_SURFACE
         && (surface.address.starts_with("http://")
@@ -115,6 +141,7 @@ pub(crate) struct HttpSurface {
     provider: ProviderName,
     clock: Arc<dyn Clock>,
     kind: FindingKind,
+    sign_in_kind: FindingKind,
     name: DiscovererName,
 }
 
@@ -124,6 +151,7 @@ impl HttpSurface {
             provider,
             clock,
             kind: FindingKind::new("endpoint")?,
+            sign_in_kind: FindingKind::new("sign_in_method")?,
             name: DiscovererName::new("http_surface")?,
         })
     }
@@ -152,6 +180,7 @@ impl Discoverer for HttpSurface {
                 coverage: Coverage::Complete,
                 ..DiscoveryReport::default()
             };
+            let mut signs: Vec<&'static str> = Vec::new();
             for (method, answer) in [
                 ("GET", client.get("/").await),
                 ("OPTIONS", client.options("/").await),
@@ -169,13 +198,22 @@ impl Discoverer for HttpSurface {
                         .and_then(Value::as_text)
                         .map_or(Json::Null, |text| Json::Text(text.to_owned()))
                 };
-                let challenges = answer
+                let schemes: Vec<&str> = answer
                     .get("challenges")
                     .and_then(Value::as_list)
                     .unwrap_or_default()
                     .iter()
                     .filter_map(Value::as_text)
-                    .map(|scheme| Json::Text(scheme.to_owned()))
+                    .collect();
+                for scheme in &schemes {
+                    let sign = sign_of_challenge(scheme);
+                    if !signs.contains(&sign) {
+                        signs.push(sign);
+                    }
+                }
+                let challenges = schemes
+                    .iter()
+                    .map(|scheme| Json::Text((*scheme).to_owned()))
                     .collect();
                 let status = answer.get("status").and_then(Value::as_int).unwrap_or(0);
                 let found = Json::Object(vec![
@@ -203,6 +241,29 @@ impl Discoverer for HttpSurface {
                 .build()?;
                 out.found(finding)?;
             }
+            // A challenge the surface itself sent is seen, not claimed: a
+            // sign of how it is signed in to, at the level `discovered`,
+            // for the rules that recommend a mode (decision 0367).
+            for sign in signs {
+                let found = sign_in_found(sign, "challenge");
+                out.found(
+                    Finding::about(
+                        Subject::Address(Address::new(&origin.text, &root)?),
+                        self.sign_in_kind.clone(),
+                        scope.redact.redact(&found.to_text()),
+                        Source::LiveSystem,
+                        produced_by(&self.provider),
+                        self.clock.now(),
+                    )
+                    .level(EvidenceLevel::Discovered)
+                    .coverage(Coverage::Complete)
+                    .limitation(
+                        LimitationCode::NotExercised,
+                        "The surface named the scheme in a challenge; nothing was sent with it, and a second factor does not show in a challenge.",
+                    )
+                    .build()?,
+                )?;
+            }
             Ok(report)
         })
     }
@@ -214,6 +275,7 @@ pub(crate) struct HttpDescription {
     provider: ProviderName,
     clock: Arc<dyn Clock>,
     kind: FindingKind,
+    sign_in_kind: FindingKind,
     name: DiscovererName,
 }
 
@@ -223,6 +285,7 @@ impl HttpDescription {
             provider,
             clock,
             kind: openapi::described_operation()?,
+            sign_in_kind: FindingKind::new("sign_in_method")?,
             name: DiscovererName::new("http_description")?,
         })
     }
@@ -253,6 +316,35 @@ impl HttpDescription {
         .limitation(
             LimitationCode::NotExercised,
             "The description says the operation exists; the operation was not called.",
+        )
+        .build()?)
+    }
+}
+
+impl HttpDescription {
+    /// One sign of how the description says the service is signed in to,
+    /// as a `sign_in_method` finding (decision 0367). It is a claim of the
+    /// description, at the level `inferred`: no request was sent with it.
+    fn sign_in(
+        &self,
+        origin: &Origin,
+        sign: &str,
+        redact: &dyn Redact,
+    ) -> Result<Finding, Failure> {
+        let found = sign_in_found(sign, "description");
+        Ok(Finding::about(
+            Subject::Address(Address::new(&origin.text, "/")?),
+            self.sign_in_kind.clone(),
+            redact.redact(&found.to_text()),
+            Source::PublishedDescription,
+            produced_by(&self.provider),
+            self.clock.now(),
+        )
+        .level(EvidenceLevel::Inferred)
+        .coverage(Coverage::Complete)
+        .limitation(
+            LimitationCode::NotExercised,
+            "The description declares how the service is signed in to; no request was sent with it, and a second factor is not something a description says.",
         )
         .build()?)
     }
@@ -326,6 +418,9 @@ impl Discoverer for HttpDescription {
             for operation in &operations {
                 out.found(self.finding(&origin, operation, scope.redact)?)?;
             }
+            for sign in openapi::sign_in_signs(text.as_bytes())? {
+                out.found(self.sign_in(&origin, sign, scope.redact)?)?;
+            }
             Ok(DiscoveryReport {
                 coverage: Coverage::Complete,
                 ..DiscoveryReport::default()
@@ -378,5 +473,28 @@ impl Describer for HttpDescriber {
             },
             untrusted,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sign_of_challenge;
+
+    #[test]
+    fn a_challenge_scheme_is_classified_by_a_fixed_rule() {
+        for (scheme, sign) in [
+            ("basic", "http_basic"),
+            ("digest", "http_digest"),
+            ("bearer", "bearer_token"),
+            ("negotiate", "integrated"),
+            ("ntlm", "integrated"),
+            ("cookie", "challenge"),
+        ] {
+            assert_eq!(sign_of_challenge(scheme), sign);
+            if sign != "challenge" {
+                assert!(a2m_auth::SignInSign::parse(sign).is_some());
+            }
+        }
+        assert!(a2m_auth::SignInSign::parse("challenge").is_some());
     }
 }

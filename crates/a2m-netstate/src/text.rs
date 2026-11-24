@@ -327,9 +327,64 @@ pub fn proxy_list(from: &str, list: &str) -> (Vec<ProxySetting>, Option<Absent>)
     (settings, None)
 }
 
+/// The DHCP server a lease file of the `KEY=value` form states, as
+/// systemd-networkd and NetworkManager write it: the `SERVER_ADDRESS` line.
+/// A value that is not an address gives none; nothing is resolved.
+#[must_use]
+pub fn dhcp_lease_server(text: &str) -> Option<IpAddr> {
+    text.lines()
+        .filter_map(|line| line.trim().strip_prefix("SERVER_ADDRESS="))
+        .find_map(|value| value.trim().trim_matches('"').parse::<IpAddr>().ok())
+}
+
+/// The DHCP server of each interface a `dhclient` lease file states: for each
+/// interface, the `dhcp-server-identifier` of the last lease that names one.
+/// The leases are blocks of `interface "name";` and `option ...;` lines. A
+/// line that does not parse is left out.
+#[must_use]
+pub fn dhclient_leases(text: &str) -> Vec<(String, IpAddr)> {
+    let mut found: Vec<(String, IpAddr)> = Vec::new();
+    let mut interface: Option<String> = None;
+    let mut server: Option<IpAddr> = None;
+    for line in text.lines() {
+        let line = line.trim().trim_end_matches(';').trim();
+        if line.starts_with("lease ") {
+            interface = None;
+            server = None;
+        } else if let Some(name) = line.strip_prefix("interface ") {
+            interface = Some(bound::text(name.trim().trim_matches('"')));
+        } else if let Some(value) = line.strip_prefix("option dhcp-server-identifier ") {
+            server = value.trim().parse::<IpAddr>().ok();
+        } else if line == "}"
+            && let (Some(name), Some(address)) = (interface.take(), server.take())
+        {
+            found.retain(|(known, _)| *known != name);
+            found.push((name, address));
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dhcp_server_is_read_from_the_lease_forms() {
+        assert_eq!(
+            dhcp_lease_server("ADDRESS=192.168.1.20\nSERVER_ADDRESS=192.168.1.1\n"),
+            Some("192.168.1.1".parse().unwrap())
+        );
+        assert_eq!(dhcp_lease_server("SERVER_ADDRESS=router\n"), None);
+        assert_eq!(dhcp_lease_server(""), None);
+        let leases = "lease {\n  interface \"eth0\";\n  option dhcp-server-identifier 10.0.0.1;\n}\n\
+            lease {\n  interface \"eth0\";\n  option dhcp-server-identifier 10.0.0.2;\n}\n\
+            lease {\n  interface \"wlan0\";\n}\n";
+        assert_eq!(
+            dhclient_leases(leases),
+            vec![("eth0".to_owned(), "10.0.0.2".parse().unwrap())]
+        );
+    }
 
     #[test]
     fn the_name_server_file_is_read_by_its_manuals_rules() {

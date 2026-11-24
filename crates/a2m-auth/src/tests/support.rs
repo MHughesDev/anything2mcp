@@ -15,7 +15,10 @@ use a2m_core::{
 };
 use a2m_ledger::{Store, StoreConfig};
 use a2m_telemetry::{Clock, LogLevel, ManualClock, Telemetry};
-use a2m_vault::{BoxFuture, MemoryKeyStore, Vault};
+use a2m_vault::{
+    Binding, BoxFuture, KeyMaterial, KeyStore, MemoryKeyStore, StoreDescription, StoreHealth,
+    Vault, Wrapped,
+};
 use tokio::sync::Semaphore;
 
 use crate::failure;
@@ -532,14 +535,86 @@ impl Drop for Folder {
     }
 }
 
+/// A key store that can stop answering, as an operating system's store does
+/// when it is locked or its service is stopped (section 224).
+pub(super) struct SwitchableKeys {
+    inner: MemoryKeyStore,
+    down: AtomicBool,
+}
+
+impl SwitchableKeys {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: MemoryKeyStore::new(),
+            down: AtomicBool::new(false),
+        })
+    }
+
+    fn refused(&self) -> Option<Failure> {
+        self.down.load(Ordering::SeqCst).then(|| {
+            Failure::new(
+                a2m_core::FailureClass::Busy,
+                a2m_vault::codes::KEY_STORE_UNREACHABLE,
+                "The key store does not answer.",
+                "Unlock or start the key store, then try again.",
+            )
+        })
+    }
+}
+
+impl KeyStore for SwitchableKeys {
+    fn describe(&self) -> StoreDescription {
+        self.inner.describe()
+    }
+
+    fn wrap<'a>(
+        &'a self,
+        key: &'a KeyMaterial,
+        bound_to: &'a Binding,
+    ) -> BoxFuture<'a, Result<Wrapped, Failure>> {
+        Box::pin(async move {
+            match self.refused() {
+                Some(failure) => Err(failure),
+                None => self.inner.wrap(key, bound_to).await,
+            }
+        })
+    }
+
+    fn unwrap<'a>(
+        &'a self,
+        wrapped: &'a Wrapped,
+        bound_to: &'a Binding,
+    ) -> BoxFuture<'a, Result<KeyMaterial, Failure>> {
+        Box::pin(async move {
+            match self.refused() {
+                Some(failure) => Err(failure),
+                None => self.inner.unwrap(wrapped, bound_to).await,
+            }
+        })
+    }
+
+    fn health(&self) -> BoxFuture<'_, StoreHealth> {
+        Box::pin(async move {
+            if self.refused().is_some() {
+                StoreHealth::Unreachable
+            } else {
+                self.inner.health().await
+            }
+        })
+    }
+}
+
 /// One engine: a keeper and its worker in one process, over the store, a
 /// key store, and a clock that outlive it.
 pub(super) struct World {
     pub(super) clock: Arc<ManualClock>,
-    keys: Arc<MemoryKeyStore>,
+    keys: Arc<SwitchableKeys>,
     /// Where the store's file is, for a world that can be restarted.
     folder: Option<Folder>,
     pub(super) store: SessionStore,
+    /// The ledger under the session store, whose lock on its data folder
+    /// a restart lets go of, as a closed engine does.
+    ledger: Store,
     pub(super) vault: Arc<Vault>,
     pub(super) credentials: StoredCredentials,
     pub(super) fake: Arc<Fake>,
@@ -565,7 +640,7 @@ impl World {
     async fn fresh(needs: ProviderNeeds, folder: Option<Folder>) -> Self {
         Self::over(
             Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START))),
-            Arc::new(MemoryKeyStore::new()),
+            SwitchableKeys::new(),
             folder,
             Arc::new(Fake::new(needs)),
             Arc::new(Person::new()),
@@ -589,15 +664,20 @@ impl World {
             fake,
             person,
             probe,
+            ledger,
             ..
         } = self;
         assert!(folder.is_some(), "only a world on disk can be restarted");
+        // The engine before the restart has closed: its store lets go of
+        // its lock on the data folder, as a closed engine's does, although
+        // work it left in flight still holds the store.
+        ledger.release_folder();
         Self::over(clock, keys, folder, fake, person, probe).await
     }
 
     async fn over(
         clock: Arc<ManualClock>,
-        keys: Arc<MemoryKeyStore>,
+        keys: Arc<SwitchableKeys>,
         folder: Option<Folder>,
         fake: Arc<Fake>,
         person: Arc<Person>,
@@ -610,7 +690,7 @@ impl World {
         let ledger = Store::open(config.with_clock(clock.clone())).await.unwrap();
         let vault = Arc::new(Vault::new(keys.clone(), Arc::new(ledger.key_records())));
         ledger.attach(Arc::clone(&vault)).await.unwrap();
-        let store = SessionStore::new(ledger);
+        let store = SessionStore::new(ledger.clone());
         let credentials = StoredCredentials::new(store.clone(), Arc::clone(&vault));
         let providers = ProviderSet::neutral()
             .with(Arc::clone(&fake) as Arc<dyn AuthProvider>)
@@ -643,6 +723,7 @@ impl World {
             keys,
             folder,
             store,
+            ledger,
             vault,
             credentials,
             fake,
@@ -655,6 +736,43 @@ impl World {
         }
     }
 
+    /// A second engine over the same store: a keeper and its worker of its
+    /// own, sharing only the store's rows, the clock, the key store, and
+    /// the world outside (the system, the person, the probe). What two
+    /// keepers know of each other is what the store's compare-and-set on
+    /// the session's state and epoch tells them.
+    pub(super) fn second_engine(&self) -> Keeper {
+        let store = SessionStore::new(self.ledger.clone());
+        let credentials = StoredCredentials::new(store.clone(), Arc::clone(&self.vault));
+        let providers = ProviderSet::neutral()
+            .with(Arc::clone(&self.fake) as Arc<dyn AuthProvider>)
+            .unwrap();
+        let worker = Arc::new(KeeperWorker::new(
+            providers.clone(),
+            Arc::clone(&self.vault),
+            Arc::new(credentials),
+            self.clock.clone(),
+        ));
+        let work = Arc::new(Relay::new(InProcessWork::new(
+            Arc::clone(&worker),
+            self.person.clone(),
+            self.probe.clone(),
+        ))) as Arc<dyn KeeperWork>;
+        Keeper::builder(store, providers, work, self.clock.clone())
+            .local_worker(worker)
+            .build()
+    }
+
+    /// The store's file, opened beside the store, for a test that makes
+    /// it what an older engine left.
+    pub(super) fn raw(&self) -> rusqlite::Connection {
+        let folder = self
+            .folder
+            .as_ref()
+            .expect("only a world on disk has a file");
+        rusqlite::Connection::open(folder.0.join(a2m_ledger::DATABASE_FILE_NAME)).unwrap()
+    }
+
     pub(super) async fn store_credential(&self, key: &SessionKey, name: &str, value: &str) {
         self.credentials
             .put(
@@ -665,6 +783,11 @@ impl World {
             )
             .await
             .unwrap();
+    }
+
+    /// The key store stops answering, or answers again.
+    pub(super) fn keys_unreachable(&self, down: bool) {
+        self.keys.down.store(down, Ordering::SeqCst);
     }
 
     pub(super) fn is_registered(&self, value: &str) -> bool {

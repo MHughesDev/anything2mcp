@@ -21,8 +21,8 @@ use rcgen::{
     BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
     KeyUsagePurpose, date_time_ymd,
 };
+use rustls::ServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
@@ -155,20 +155,6 @@ impl TestAuthority {
         config.alpn_protocols = vec![b"http/1.1".to_vec()];
         Ok(Arc::new(config))
     }
-}
-
-/// The harness's own client configuration: ring, stated, and no roots. The
-/// harness speaks plain HTTP only. `None` if ring offered no version, which
-/// it always does.
-pub(crate) fn plain_client_config() -> Option<ClientConfig> {
-    ClientConfig::builder_with_provider(provider())
-        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
-        .ok()
-        .map(|builder| {
-            builder
-                .with_root_certificates(RootCertStore::empty())
-                .with_no_client_auth()
-        })
 }
 
 /// A listener that completes a TLS handshake on each connection before it

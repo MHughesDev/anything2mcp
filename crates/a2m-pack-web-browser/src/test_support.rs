@@ -61,6 +61,37 @@ pub fn requirement() -> String {
     )
 }
 
+/// How many browser programs were started in this process, by profile
+/// root: one more for each launch [`Browsers::open`](crate::Browsers::open)
+/// makes, and none for a browser it uses again. A test reads it with
+/// [`launches_under`]; the product, whose sets of browsers are made inside
+/// it, cannot be asked otherwise.
+static LAUNCHES: std::sync::Mutex<std::collections::BTreeMap<PathBuf, u64>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Counts one launch under `root`.
+pub(crate) fn launched(root: &std::path::Path) {
+    *LAUNCHES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entry(root.to_path_buf())
+        .or_default() += 1;
+}
+
+/// How many browser programs this process started for a profile root
+/// inside `folder`, such as a test machine's home: each test has a folder
+/// of its own, so the count is not another test's.
+#[must_use]
+pub fn launches_under(folder: &std::path::Path) -> u64 {
+    LAUNCHES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter(|(root, _)| root.starts_with(folder))
+        .map(|(_, count)| count)
+        .sum()
+}
+
 /// When set to `1`, a test that needs a screen fails where none can be
 /// had, instead of saying so and passing: the same variable the desktop
 /// pack's tests heed.

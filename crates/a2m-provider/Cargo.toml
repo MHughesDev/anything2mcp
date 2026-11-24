@@ -12,6 +12,7 @@ a2m-auth = { path = "../a2m-auth" }
 a2m-core = { path = "../a2m-core" }
 a2m-files = { path = "../a2m-files" }
 a2m-ledger = { path = "../a2m-ledger" }
+a2m-netstate = { path = "../a2m-netstate" }
 a2m-sources = { path = "../a2m-sources" }
 a2m-telemetry = { path = "../a2m-telemetry" }
 getrandom.workspace = true
@@ -36,6 +37,7 @@ a2m-ledger = { path = "../a2m-ledger", features = ["testing"] }
 a2m-files = { path = "../a2m-files", features = ["testing"] }
 a2m-vault = { path = "../a2m-vault" }
 example-cli = { path = "../../targets/example-cli" }
+example-decompiler = { path = "../../targets/example-decompiler" }
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

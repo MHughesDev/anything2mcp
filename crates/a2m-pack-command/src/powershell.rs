@@ -14,7 +14,7 @@ use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath};
 use serde::{Deserialize, Serialize};
 
 use crate::codes::{self, FILE_KIND, FOLDER};
-use crate::draft::slug;
+use crate::draft::{named_as_secret, slug};
 
 /// The fixed arguments of Windows PowerShell's one form as a pair: the
 /// provider's closed table holds the same, and a test holds the two
@@ -199,6 +199,7 @@ const EFFECT_CHANGES: &str = "Does the quoted PowerShell command read, write, or
 const SCRIPT: &str = "Which script, kept in the target's folder, runs the quoted PowerShell command? Give its path and its SHA-256. Windows PowerShell runs it with `-File`, and binds the parameters below to it by name.";
 const DIGESTS: &str = "What is the SHA-256 of Windows PowerShell's program, on each platform the target runs on? A PowerShell command runs only as a fixed pair of Windows PowerShell and a script the target keeps, and a help file names neither.";
 const TYPED: &str = "What type is the value of the quoted parameter of the quoted PowerShell command? The first quoted words are the command, the second the parameter, and the rest the type its help file gives and what the file says of it. A text param also needs an anchored `pattern`.";
+const SECRET_ARGS: &str = "What are the arguments of the quoted PowerShell command? Its help requires a parameter under a name that is a secret's, and a secret is never an input.";
 const REQUIRED: &str = "Must the quoted parameter of the quoted PowerShell command always be given? Its help file does not say. The first quoted words are the command, the second the parameter.";
 const OUTPUT: &str = "What does the quoted PowerShell command print? Its output was not seen, because the command was not run.";
 
@@ -206,20 +207,28 @@ const OUTPUT: &str = "What does the quoted PowerShell command print? Its output 
 /// files.
 pub(crate) struct PowerShellFromFinding;
 
-/// The params and args of one parameter set.
+/// The params and args of one parameter set, and whether the set requires a
+/// parameter named as a secret, which is never a param (decision 0302): an
+/// optional one is left out, and a required one makes the arguments a
+/// question.
 fn set_of(
     found: &PowerShellCommandFound,
     set: &[ParameterFound],
     cx: &DraftContext<'_>,
-) -> (Vec<(String, DraftValue)>, Vec<DraftValue>) {
+) -> (Vec<(String, DraftValue)>, Vec<DraftValue>, bool) {
     let command = found.name.as_str();
     let mut params: Vec<(String, DraftValue)> = Vec::new();
     let mut args: Vec<DraftValue> = Vec::new();
+    let mut required_secret = false;
     for parameter in set {
         if SHOULD_PROCESS
             .iter()
             .any(|own| own.eq_ignore_ascii_case(&parameter.name))
         {
+            continue;
+        }
+        if named_as_secret(&parameter.name) {
+            required_secret |= parameter.required == Some(true);
             continue;
         }
         let name = slug(&parameter.name);
@@ -272,7 +281,7 @@ fn set_of(
             ("param", DraftValue::Text(name)),
         ]));
     }
-    (params, args)
+    (params, args, required_secret)
 }
 
 impl DraftingRule for PowerShellFromFinding {
@@ -327,7 +336,7 @@ impl DraftingRule for PowerShellFromFinding {
                 Some(own) => cx.open_question_quoting(EFFECT_CHANGES, &[&found.name, own]),
                 None => cx.open_question_quoting(EFFECT, &[&found.name]),
             };
-            let (params, args) = set_of(&found, set, cx);
+            let (params, args, required_secret) = set_of(&found, set, cx);
             let mut command = vec![
                 ("effect", effect),
                 ("script", cx.open_question_quoting(SCRIPT, &[&found.name])),
@@ -335,7 +344,14 @@ impl DraftingRule for PowerShellFromFinding {
             if !params.is_empty() {
                 command.push(("params", DraftValue::Map(params)));
             }
-            command.push(("args", DraftValue::List(args)));
+            command.push((
+                "args",
+                if required_secret {
+                    cx.open_question_quoting(SECRET_ARGS, &[&found.name])
+                } else {
+                    DraftValue::List(args)
+                },
+            ));
             command.push(("output", cx.open_question_quoting(OUTPUT, &[&found.name])));
             commands.push((key, DraftValue::map(command)));
         }

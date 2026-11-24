@@ -7,15 +7,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use a2m_core::{
     AddressOverride, ApproveWrites, AuthPlan, AuthProviderName, AuthSetting, BindingPlan,
     BindingStatus, CanonicalJson, CaptureLevel, Checkpoint, CredentialRef, CredentialUse, Date,
-    Decimal, DecisionPoint, DeclaredProgram, Digest, DriftRisk, EffectClass, EncodedPlan,
-    Environment, EnvironmentIndex, EnvironmentKind, EnvironmentPlan, FieldOf, FieldTypeIndex,
-    FileKindName, Hazard, IdentityPlan, IdentityStrategy, InputIndex, InputPlan, LintCode, Millis,
-    Mode, OperationIndex, OperationName, OperationPlan, OutputPlan, PLAN_FORMAT, PackPayload,
-    PackRef, PackSection, PermissionManifest, PipelineIndex, PipelineLimits, PipelinePlan,
-    PipelineStep, Plan, PlanHeader, ProbePlan, RatePlan, RecordKey, SectionIndex, SignInMode,
-    SourcePlan, Stands, Step, StepArg, SurfaceIndex, SurfaceKind, SurfaceName, SurfacePlan,
-    TargetName, TargetPlan, TestKind, TestPlan, ToolAnnotations, ToolIndex, ToolPlan, ToolRuns,
-    Value, ValueType, Values, Verb, Version, WriteEvidence,
+    Decimal, DecisionPoint, DeclaredProgram, DescriptionBy, Digest, DriftRisk, EffectClass,
+    EncodedPlan, Environment, EnvironmentIndex, EnvironmentKind, EnvironmentPlan, FieldOf,
+    FieldTypeIndex, FileKindName, Hazard, IdentityPlan, IdentityStrategy, InputIndex, InputPlan,
+    LintCode, Millis, Mode, OperationIndex, OperationName, OperationPlan, OutputPlan, PLAN_FORMAT,
+    PackPayload, PackRef, PackSection, PermissionManifest, PipelineIndex, PipelineLimits,
+    PipelinePlan, PipelineStep, Plan, PlanHeader, ProbePlan, RatePlan, RecordKey, SectionIndex,
+    SignInMode, SourcePlan, Stands, Step, StepArg, StepKind, SurfaceIndex, SurfaceKind,
+    SurfaceName, SurfacePlan, TargetName, TargetPlan, TestKind, TestPlan, ToolAnnotations,
+    ToolIndex, ToolPlan, ToolRuns, Value, ValueType, Values, Verb, Version, WriteEvidence,
 };
 use a2m_expr::{TypeEnv, names};
 
@@ -27,7 +27,8 @@ use crate::kernel::{
 };
 use crate::load::{SourceFile, Sources};
 use crate::register::{
-    CompileMode, CompilerSet, Lowered, Lowering, Possible, StepCommits, SurfaceKindSpec,
+    CompileMode, CompilerSet, Lowered, Lowering, Possible, StepChanges, StepCommits,
+    SurfaceKindSpec,
 };
 use crate::review::{OpReview, PlaceReview, ReviewSummary, review_of};
 use crate::schema::{JsonSchema, Reference, fix_for_unknown, shown};
@@ -96,6 +97,8 @@ pub fn compile(
         auth: Vec::new(),
         operations: Vec::new(),
         op_plans: Vec::new(),
+        described_by: BTreeMap::new(),
+        binding_files: BTreeMap::new(),
         pipelines: Vec::new(),
         source_plans: BTreeMap::new(),
         tools: Vec::new(),
@@ -128,6 +131,10 @@ pub fn lint_one(previous: &Sources, edited: SourceFile, set: &CompilerSet) -> Di
     }
 }
 
+/// The most characters a tool's description may have (decision 0307,
+/// point 6).
+const MOST_DESCRIPTION_CHARACTERS: usize = 1024;
+
 struct PipelineInfo {
     plan: PipelinePlan,
     title: String,
@@ -149,6 +156,13 @@ struct Compiler<'a> {
     auth: Vec<AuthPlan>,
     operations: Vec<OpInfo>,
     op_plans: Vec<(OperationPlan, String, String)>,
+    /// Who wrote each tool's description, by tool name; a tool not here is
+    /// a builder's.
+    described_by: BTreeMap<String, DescriptionBy>,
+    /// For each operation, the place in its file of each binding of its
+    /// plan, in the plan's order: the two differ where the compiler ordered
+    /// the bindings by rank.
+    binding_files: BTreeMap<OperationName, Vec<usize>>,
     pipelines: Vec<PipelineInfo>,
     source_plans: BTreeMap<String, (SourcePlan, ValueType)>,
     tools: Vec<ToolPlan>,
@@ -1795,11 +1809,54 @@ impl<'a> Compiler<'a> {
                         .text("description")
                         .unwrap_or_default()
                         .to_owned(),
+                    precondition: entry
+                        .value
+                        .get("precondition")
+                        .and_then(Located::as_bool)
+                        .unwrap_or(false),
                 },
                 at: entry.key.at.clone(),
             });
         }
         inputs
+    }
+
+    /// Holds every input marked `precondition` to what it may be
+    /// (decision 0378): an input of an operation that writes, not part of
+    /// its key. A pipeline's inputs are never one: a pipeline writes
+    /// through its operations, whose own inputs say it.
+    fn preconditions(
+        &mut self,
+        inputs: &[InputInfo],
+        effect: EffectClass,
+        key: &[String],
+        pipeline: Option<&str>,
+    ) {
+        for input in inputs.iter().filter(|input| input.plan.precondition) {
+            let name = &input.plan.name;
+            let why = if let Some(pipeline) = pipeline {
+                format!(
+                    "The input `{name}` of the pipeline `{pipeline}` is marked `precondition`, and a pipeline's input is never one."
+                )
+            } else if effect == EffectClass::Read {
+                format!(
+                    "The input `{name}` is marked `precondition`, and the operation only reads."
+                )
+            } else if key.iter().any(|part| part == name) {
+                format!(
+                    "The input `{name}` is marked `precondition`, and it is part of the record's key."
+                )
+            } else {
+                continue;
+            };
+            self.error(
+                codes::PRECONDITION_INVALID,
+                Stage::Validate,
+                &input.at,
+                why,
+                "Mark `precondition` only on an input of a write that the system checks and no read gives back, such as the version a guard compares.".to_owned(),
+            );
+        }
     }
 
     fn identity(
@@ -2052,9 +2109,15 @@ impl<'a> Compiler<'a> {
                     name: entry.key.value.clone(),
                     ty: if list { ValueType::list_of(ty) } else { ty },
                     field_type: Some(field_type),
+                    may_be_absent: entry
+                        .value
+                        .get("may_be_absent")
+                        .and_then(Located::as_bool)
+                        .unwrap_or(false),
                 });
             }
             let (strategy, key, fixed) = self.identity(doc, effect, &inputs);
+            self.preconditions(&inputs, effect, &key, None);
             let info = OpInfo {
                 name,
                 doc: doc.clone(),
@@ -2079,9 +2142,21 @@ impl<'a> Compiler<'a> {
                 plan.decision_points = decision_points;
                 let title = doc.text("title").unwrap_or(info.name.as_str()).to_owned();
                 let description = doc.text("description").unwrap_or_default().to_owned();
+                self.note_description_by(doc, info.name.as_str());
                 self.op_plans.push((plan, title, description));
                 self.operations.push(info);
             }
+        }
+    }
+
+    /// Notes who wrote the description of the tool a document defines: the
+    /// document's `description_by`, a builder when it states none.
+    fn note_description_by(&mut self, doc: &Located<Doc>, tool: &str) {
+        if let Some(by) = doc
+            .text("description_by")
+            .and_then(|text| text.parse::<DescriptionBy>().ok())
+        {
+            self.described_by.insert(tool.to_owned(), by);
         }
     }
 
@@ -2208,6 +2283,10 @@ impl<'a> Compiler<'a> {
             (names::RECORD, record_type()),
         ]);
         let mut bindings = Vec::new();
+        // The place in the file of each binding of `bindings`, in step.
+        let mut file_places: Vec<usize> = Vec::new();
+        // The outputs a lowering finds may be absent (decision 0305).
+        let mut absent: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         let mut review = OpReview::default();
         let mut fine = true;
         // Whatever a pack marks, a write saves at least once and a read
@@ -2433,6 +2512,7 @@ impl<'a> Compiler<'a> {
                     }
                 }
             }
+            absent.extend(lowering.absent_outputs(&resolved, &lowered));
             let evidence = lowering.evidence(&resolved, &lowered);
             let by = LoweredBy {
                 lowering: lowering.as_ref(),
@@ -2444,6 +2524,7 @@ impl<'a> Compiler<'a> {
             match self.analyze(info, binding, &mode, &by, &lowered, declared_commits) {
                 Some(surface) => bindings.push({
                     review.bindings.push((mode.clone(), surface, statement));
+                    file_places.push(position);
                     BindingPlan {
                         mode,
                         verb,
@@ -2464,6 +2545,23 @@ impl<'a> Compiler<'a> {
         if !fine {
             return None;
         }
+        // The order of the bindings is the file's where the operation says
+        // `binding_order: listed`; otherwise each mode's rank in its
+        // provider's manifest, and the file's among bindings of one rank
+        // (decision 0337).
+        if doc.text("binding_order") != Some("listed") {
+            let mut order: Vec<usize> = (0..bindings.len()).collect();
+            order.sort_by_key(|&at| (set.mode_rank(&bindings[at].mode), file_places[at]));
+            if order.iter().enumerate().any(|(to, &from)| to != from) {
+                bindings = order.iter().map(|&at| bindings[at].clone()).collect();
+                review.bindings = order
+                    .iter()
+                    .map(|&at| review.bindings[at].clone())
+                    .collect();
+                file_places = order.iter().map(|&at| file_places[at]).collect();
+            }
+        }
+        self.binding_files.insert(info.name.clone(), file_places);
         self.reviews.insert(info.name.clone(), review);
         let key: Vec<InputIndex> = info
             .key
@@ -2496,7 +2594,14 @@ impl<'a> Compiler<'a> {
             effect: info.effect,
             hazard: info.hazard,
             inputs: info.inputs.iter().map(|input| input.plan.clone()).collect(),
-            outputs: info.outputs.clone(),
+            outputs: info
+                .outputs
+                .iter()
+                .map(|output| OutputPlan {
+                    may_be_absent: output.may_be_absent || absent.contains(&output.name),
+                    ..output.clone()
+                })
+                .collect(),
             identity: IdentityPlan {
                 strategy: info.strategy,
                 key,
@@ -2662,6 +2767,8 @@ impl<'a> Compiler<'a> {
             ("read_back", &lowered.read_back),
             ("lookup", &lowered.lookup),
         ];
+        // The kinds of step this binding holds that can change the system.
+        let mut acting: Vec<StepKind> = Vec::new();
         for (list, steps) in lists {
             for step in steps {
                 if !step_kinds.contains(&step.kind) {
@@ -2692,6 +2799,20 @@ impl<'a> Compiler<'a> {
                     );
                     fine = false;
                 }
+                let changes = by.lowering.changes(&step.kind);
+                if changes == StepChanges::Never && step.commits {
+                    self.error(
+                        codes::LOWERING_INVALID,
+                        Stage::Lower,
+                        &binding.at,
+                        format!("A `{list}` step of kind `{}` of this `{mode}` binding is marked as a save, and its pack declares that a step of that kind cannot change the system.", step.kind),
+                        "Correct the pack: a kind of step that can save is one that can change the system.".to_owned(),
+                    );
+                    fine = false;
+                }
+                if changes == StepChanges::Can && !acting.contains(&step.kind) {
+                    acting.push(step.kind.clone());
+                }
                 if step.commits && list != "act" {
                     self.error(
                         codes::LOWERING_INVALID,
@@ -2703,6 +2824,25 @@ impl<'a> Compiler<'a> {
                     fine = false;
                 }
             }
+        }
+        // A read that acts, whichever pack lowered it (decision 0307, point
+        // 4): a kind the pack does not mark counts as one that can change
+        // the system.
+        if info.effect == EffectClass::Read && !acting.is_empty() {
+            let at = info
+                .doc
+                .get("effect")
+                .map_or(&info.doc.at, |effect| &effect.at)
+                .clone();
+            let kinds: Vec<String> = acting.iter().map(|kind| format!("`{kind}`")).collect();
+            self.error(
+                codes::READ_ACTS,
+                Stage::Analyze,
+                &at,
+                format!("The operation declares the effect `read`, and its `{mode}` binding has steps of the kinds {}, which the pack `{}` does not state cannot change the system.", kinds.join(", "), by.pack),
+                "Declare the effect the binding has, or bind the operation to something that only reads. If a kind cannot change the system, its pack states so for the kind.".to_owned(),
+            );
+            fine = false;
         }
         let commits = index(lowered.act.iter().filter(|step| step.commits).count());
         let writes = info.effect >= EffectClass::Write;
@@ -3189,6 +3329,7 @@ impl<'a> Compiler<'a> {
             if let Some(plan) = self.pipeline(doc, name) {
                 let title = doc.text("title").unwrap_or(plan.name.as_str()).to_owned();
                 let description = doc.text("description").unwrap_or_default().to_owned();
+                self.note_description_by(doc, plan.name.as_str());
                 self.pipelines.push(PipelineInfo {
                     plan,
                     title,
@@ -3202,6 +3343,7 @@ impl<'a> Compiler<'a> {
     fn pipeline(&mut self, doc: &Located<Doc>, name: OperationName) -> Option<PipelinePlan> {
         let mut fine = true;
         let mut inputs = self.inputs(doc);
+        self.preconditions(&inputs, EffectClass::Write, &[], Some(name.as_str()));
         let declared_inputs = input_type(&inputs);
         let mut source = None;
         let mut row_type = None;
@@ -3231,6 +3373,7 @@ impl<'a> Compiler<'a> {
                                     required: true,
                                     default: None,
                                     description: format!("The file to read, in the form of the source template `{text}`."),
+                                    precondition: false,
                                 },
                                 at: template.at.clone(),
                             });
@@ -3618,11 +3761,35 @@ impl<'a> Compiler<'a> {
                 .outputs
                 .iter()
                 .map(|output| {
-                    (
-                        output.name.clone(),
-                        self.output_schema_of_type(&output.ty, output.field_type),
-                    )
+                    let schema = self.output_schema_of_type(&output.ty, output.field_type);
+                    // An output that may be absent is returned as `null`
+                    // under its own name, so its schema admits `null`
+                    // beside its type (decision 0305). A list of them is
+                    // a list whose items may each be `null`, as a value
+                    // taken through `*` is one item at a time.
+                    let schema = if output.may_be_absent {
+                        let schema = match (schema, &output.ty) {
+                            (mut list, ValueType::List(_)) => {
+                                if let Some(items) = list.get_mut("items") {
+                                    let item = items.take();
+                                    *items = serde_json::json!({"anyOf": [item, {"type": "null"}]});
+                                }
+                                list
+                            }
+                            (schema, _) => schema,
+                        };
+                        serde_json::json!({"anyOf": [schema, {"type": "null"}]})
+                    } else {
+                        schema
+                    };
+                    (output.name.clone(), schema)
                 })
+                .collect();
+            // Every output is in every result, so every output is required.
+            let required: Vec<&str> = plan
+                .outputs
+                .iter()
+                .map(|output| output.name.as_str())
                 .collect();
             let at = self.operations[position].doc.at.clone();
             let tool = self.tool(
@@ -3631,7 +3798,7 @@ impl<'a> Compiler<'a> {
                 title,
                 description,
                 &plan.inputs,
-                serde_json::json!({"type": "object", "properties": output}),
+                serde_json::json!({"type": "object", "properties": output, "required": required}),
                 ToolAnnotations {
                     read_only: plan.effect == EffectClass::Read,
                     destructive: plan.effect == EffectClass::Irreversible
@@ -3774,13 +3941,26 @@ impl<'a> Compiler<'a> {
         at: &Place,
     ) -> Option<ToolPlan> {
         let length = description.trim().chars().count();
-        if !(20..=1024).contains(&length) {
+        if length > MOST_DESCRIPTION_CHARACTERS
+            || description
+                .trim()
+                .chars()
+                .any(|c| c.is_control() && c != '\n')
+        {
+            self.problems.push(Diagnostic::error(
+                kernel(codes::DESCRIPTION_UNBOUNDED),
+                Stage::Lint,
+                at,
+                format!("The description of `{name}` has {length} characters or a control character; a description is plain text of at most {MOST_DESCRIPTION_CHARACTERS} characters, with no control character but a line end."),
+                "Shorten the description and take out any control character but a line end; a client reads it as plain text.",
+            ));
+        } else if length < 20 {
             self.problems.push(
                 Diagnostic::error(
                     kernel(codes::DESCRIPTION_WEAK),
                     Stage::Lint,
                     at,
-                    format!("The description of `{name}` has {length} characters; a description has from 20 to 1024."),
+                    format!("The description of `{name}` has {length} characters; a description has at least 20."),
                     "Say what the tool does, when to prefer another tool, and its side effects and limits.",
                 )
                 .as_warning(),
@@ -3814,12 +3994,18 @@ impl<'a> Compiler<'a> {
             return None;
         };
         let module = self.module_of(&name);
+        let description_by = self
+            .described_by
+            .get(name.as_str())
+            .copied()
+            .unwrap_or_default();
         Some(ToolPlan {
             name,
             runs,
             module,
             title,
             description: description.trim().to_owned(),
+            description_by,
             input_schema,
             output_schema,
             annotations,
@@ -3856,12 +4042,18 @@ impl<'a> Compiler<'a> {
             .and_then(|position| position.as_int())
             .and_then(|position| usize::try_from(position).ok())
             .and_then(|position| position.checked_sub(1));
-        let bindings = &self.op_plans[operation.get()].0.bindings;
+        let plan = &self.op_plans[operation.get()].0;
+        let bindings = &plan.bindings;
+        // A test counts positions in the operation's file, whatever order
+        // the compiler put the bindings in; the plan's place is what it keeps.
+        let in_file = self.binding_files.get(&plan.name);
         let of_mode: Vec<usize> = bindings
             .iter()
             .enumerate()
             .filter(|(at, binding)| {
-                binding.mode.as_str() == mode && position.is_none_or(|position| position == *at)
+                let in_file = in_file.and_then(|places| places.get(*at)).copied();
+                binding.mode.as_str() == mode
+                    && position.is_none_or(|position| Some(position) == in_file.or(Some(*at)))
             })
             .map(|(at, _)| at)
             .collect();
@@ -4237,27 +4429,77 @@ enum KeyNames {
     PerhapsSecret,
 }
 
+/// The words that make a key a certain secret's.
+const SECRET_WORDS: [&str; 15] = [
+    "password",
+    "passwd",
+    "passphrase",
+    "secret",
+    "api_key",
+    "apikey",
+    "private_key",
+    "access_token",
+    "refresh_token",
+    "auth_token",
+    "id_token",
+    "session_token",
+    "bearer_token",
+    "client_secret",
+    "secret_key",
+];
+
+/// Whether a key, already in lower case with `-` as `_`, holds one of them.
+fn secret_key_word(key: &str) -> bool {
+    SECRET_WORDS.iter().any(|word| key.contains(word))
+}
+
+/// Whether a drafter leaves `name` out because it may name a secret: a key
+/// the compiler takes for a certain secret's (one of the words of a
+/// password, a private key, a secret, or an access token), or one with a
+/// word that perhaps names one (`token`, `cookie`, `pin`, `bearer`,
+/// `authorization`, in any case and at any place, so `api_token` and
+/// `accessToken` are both left out). A drafter that asks it cannot write a
+/// key the compiler would refuse, and leaves out more than the compiler
+/// refuses, because a field left out of a draft costs a person one line and
+/// a secret drafted as an output is never taken back (decisions 0302, 0345).
+#[must_use]
+pub fn names_a_secret(name: &str) -> bool {
+    key_names(name).is_some()
+}
+
+/// The sentence that ends a drafted description when inputs, outputs,
+/// columns, or values were left out because their names are a secret's:
+/// each name quoted in backticks and cut at 60 characters, no more than
+/// eight named, and the rest counted. It is empty when nothing was left
+/// out. Every pack's drafter ends a description with it, so the sentence
+/// has one form (decision 0302).
+#[must_use]
+pub fn left_out_sentence(secrets: &[String]) -> String {
+    const MOST_NAMED: usize = 8;
+    if secrets.is_empty() {
+        return String::new();
+    }
+    let named: Vec<String> = secrets
+        .iter()
+        .take(MOST_NAMED)
+        .map(|name| format!("`{}`", name.chars().take(60).collect::<String>()))
+        .collect();
+    let more = secrets.len().saturating_sub(MOST_NAMED);
+    let tail = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    format!(
+        " Left out because their names are a secret's, so that a secret is never an output: {}{tail}.",
+        named.join(", ")
+    )
+}
+
 /// What the name of a key says of its value, when it says anything. `exact`
 /// is true when the whole key is the word, which is all a number is judged
 /// by: `pin: 4821` is a secret, and `token_ttl_ms: 60000` is not.
 fn key_names(key: &str) -> Option<(KeyNames, bool)> {
-    const SECRET: [&str; 15] = [
-        "password",
-        "passwd",
-        "passphrase",
-        "secret",
-        "api_key",
-        "apikey",
-        "private_key",
-        "access_token",
-        "refresh_token",
-        "auth_token",
-        "id_token",
-        "session_token",
-        "bearer_token",
-        "client_secret",
-        "secret_key",
-    ];
     const PERHAPS: [&str; 7] = [
         "token",
         "tokens",
@@ -4281,8 +4523,8 @@ fn key_names(key: &str) -> Option<(KeyNames, bool)> {
     }
     let words = spaced.to_ascii_lowercase().replace('-', "_");
     let key = key.to_ascii_lowercase().replace('-', "_");
-    if SECRET.iter().any(|word| key.contains(word)) {
-        return Some((KeyNames::Secret, SECRET.contains(&key.as_str())));
+    if secret_key_word(&key) {
+        return Some((KeyNames::Secret, SECRET_WORDS.contains(&key.as_str())));
     }
     words
         .split(['_', '.'])
@@ -4527,4 +4769,62 @@ fn destination_problem(text: &str) -> Option<&'static str> {
 #[must_use]
 pub fn is_error(diagnostic: &Diagnostic) -> bool {
     diagnostic.level == Level::Error
+}
+
+#[cfg(test)]
+mod secret_names {
+    use super::{KeyNames, key_names, left_out_sentence, names_a_secret};
+
+    /// The answers `key_names` gave before the certain-secret test was
+    /// shared: the certain words, the perhaps words, and ordinary names.
+    #[test]
+    fn the_shared_test_gives_the_answers_the_compiler_always_gave() {
+        // A drafter leaves out the perhaps words too (decision 0345).
+        assert!(names_a_secret("api_token"));
+        assert!(names_a_secret("accessToken"));
+        let table: [(&str, Option<(bool, bool)>); 20] = [
+            ("password", Some((true, true))),
+            ("client_secret", Some((true, true))),
+            ("clientSecret", Some((true, false))),
+            ("X-Api-Key", Some((true, false))),
+            ("apiKey", Some((true, true))),
+            ("access_token", Some((true, true))),
+            ("secrets_count", Some((true, false))),
+            ("secretary", Some((true, false))),
+            ("accessToken", Some((false, false))),
+            ("token", Some((false, true))),
+            ("tokens", Some((false, true))),
+            ("cookie", Some((false, true))),
+            ("pin", Some((false, true))),
+            ("pinCode", Some((false, false))),
+            ("X-Auth-Token", Some((true, false))),
+            ("spinner_count", None),
+            ("tokenizer_mode", None),
+            ("order_id", None),
+            ("name", None),
+            ("", None),
+        ];
+        for (key, want) in table {
+            let got = key_names(key).map(|(kind, exact)| (kind == KeyNames::Secret, exact));
+            assert_eq!(got, want, "{key:?}");
+            assert_eq!(names_a_secret(key), want.is_some(), "{key:?}");
+        }
+    }
+
+    /// The one sentence every drafter ends a description with: nothing when
+    /// nothing was left out, eight names at most, each cut at 60 characters.
+    #[test]
+    fn the_left_out_sentence_names_eight_and_counts_the_rest() {
+        assert_eq!(left_out_sentence(&[]), "");
+        assert_eq!(
+            left_out_sentence(&["client_secret".to_owned()]),
+            " Left out because their names are a secret's, so that a secret is never an output: `client_secret`."
+        );
+        let many: Vec<String> = (0..10).map(|n| format!("token_{n}")).collect();
+        let sentence = left_out_sentence(&many);
+        assert!(sentence.ends_with("`token_7` and 2 more."), "{sentence}");
+        assert!(!sentence.contains("token_8"), "{sentence}");
+        let long = "p".repeat(80);
+        assert!(left_out_sentence(&[long]).contains(&format!("`{}`", "p".repeat(60))));
+    }
 }

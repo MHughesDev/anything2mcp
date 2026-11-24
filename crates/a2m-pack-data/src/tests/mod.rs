@@ -429,9 +429,16 @@ pub(crate) fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Val
         .unwrap();
     let mut out = Values::new();
     for output in &operation.outputs {
-        let raw = observed
-            .get(&output.name)
-            .unwrap_or_else(|| panic!("no value for the output `{}`", output.name));
+        // An output that may be absent and was not observed is `null`
+        // (decision 0315).
+        let raw = match observed.get(&output.name) {
+            Some(raw) => raw,
+            None if output.may_be_absent => {
+                out.insert(output.name.clone(), Value::Null);
+                continue;
+            }
+            None => panic!("no value for the output `{}`", output.name),
+        };
         let value = match output
             .field_type
             .and_then(|index| plan.field_types[index.get()].normalizer)
@@ -455,6 +462,17 @@ pub(crate) fn outputs_of(plan: &Plan, operation: &str, observed: &Values) -> Val
             "the output `{}` is not a {}: {value:?}",
             output.name,
             output.ty.name()
+        );
+        // A `null`, whole or as an item, stops the engine in an output
+        // that may not be absent (decision 0305).
+        let holds_null = match &value {
+            Value::List(items) => items.iter().any(Value::is_null),
+            other => other.is_null(),
+        };
+        assert!(
+            output.may_be_absent || !holds_null,
+            "the output `{}` holds a null and may not be absent",
+            output.name
         );
         out.insert(output.name.clone(), value);
     }

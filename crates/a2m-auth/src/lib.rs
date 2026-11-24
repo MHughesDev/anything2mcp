@@ -31,6 +31,7 @@ mod name;
 mod person;
 mod provider;
 pub mod providers;
+mod recommend;
 mod sink;
 mod state;
 mod store;
@@ -56,6 +57,7 @@ pub use provider::{
     AuthProvider, ExpirySign, ProviderNeeds, ProviderSet, RawSign, Rung, SignInAddress,
     SignInContext, SignedIn, sign_in_addresses,
 };
+pub use recommend::{Choice, INFERRED, Recommendation, SIGN_IN_METHOD, SignInSign, recommend};
 pub use sink::{ChallengeScheme, CredentialSink};
 pub use state::{CallRule, call_rule, legal_move};
 pub use store::{EventKind, SessionEvent, SessionRow, SessionStore};

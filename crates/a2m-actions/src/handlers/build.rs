@@ -61,8 +61,12 @@ fn compile_target(
 /// Compiles what of a target's drafts can compile, for observing and
 /// trying them: every file but those `held_back` names and those that hold
 /// a drafter's open question, which keep their whole kind from compiling
-/// (decision 0180). Gives the plan and the files left out, in order. Never
-/// used to publish: a publish compiles every file.
+/// (decision 0180). Drafts that hold a question now wait in the holding
+/// folder, which the loader does not read (decision 0298), so they are not
+/// among the files; a file outside it that holds one, written before that
+/// decision or by a person, is still left out here, as it was. Gives the
+/// plan and the files left out, in order. Never used to publish: a publish
+/// compiles every file.
 pub(crate) fn compile_what_can(
     kernel: &Kernel,
     folder: &std::path::Path,
@@ -100,6 +104,173 @@ pub(crate) fn compile_what_can(
             left_out.extend(questioned);
             compile(&left_out).map(|compiled| (compiled, left_out.into_iter().collect()))
         }
+    }
+}
+
+/// The drafts waiting in the target's holding folder, ordered by path.
+/// Looks at the disk, so it is called off the async threads.
+pub(crate) async fn held_drafts(
+    call: &Call,
+    target: &TargetName,
+) -> Result<a2m_files::Held, Failure> {
+    let project_folder = call.project_folder()?.to_path_buf();
+    let target = target.clone();
+    off_thread(move || {
+        let folder = target_folder(&project_folder, &target)?;
+        Ok(a2m_files::held_files(&TargetRoot::new(folder.as_path())))
+    })
+    .await
+}
+
+/// The held drafts as an answer shows them: each file by its path, with its
+/// open questions and where each stands. The question is the drafter's own
+/// words and may quote the system's, so it is marked untrusted whole, as a
+/// question the ledger holds in one piece is.
+pub(crate) fn held_json(held: &a2m_files::Held) -> Vec<Json> {
+    held.files
+        .iter()
+        .map(|file| {
+            json!({
+                "file": file.path.as_str(),
+                "questions": file
+                    .questions
+                    .iter()
+                    .map(|question| json!({
+                        "question": {"untrusted": question.text},
+                        "at": question.at.to_string(),
+                    }))
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect()
+}
+
+/// What an answer says, in the product's own words, when the compile has
+/// failed and the target has held drafts: a name that was not found may be
+/// defined by one of them. No file is named and no diagnostic is changed.
+pub(crate) fn held_note(held: &a2m_files::Held) -> Option<String> {
+    if held.files.is_empty() {
+        return None;
+    }
+    let count = if held.cut {
+        format!("{}{}", held.files.len(), " or more")
+    } else {
+        held.files.len().to_string()
+    };
+    Some(format!(
+        "This target has {count} held drafts. A name that was not found may be defined by one of them; `draft.lint` lists them."
+    ))
+}
+
+/// The failure with the note of [`held_note`] after its message, when the
+/// target has held drafts.
+pub(crate) fn noting_held(failure: Failure, held: &a2m_files::Held) -> Failure {
+    match held_note(held) {
+        Some(note) => Failure::new(
+            failure.class(),
+            failure.code().clone(),
+            format!("{} {note}", failure.message()),
+            failure.next_step(),
+        )
+        .carrying_said(&failure),
+        None => failure,
+    }
+}
+
+/// The refusal of a tool whose draft is held: `None` when no held file is
+/// named `name`. The message names the held file and says its question must
+/// be answered and the file moved out. The question itself is the drafter's
+/// words and may quote the system's: it is carried only as what the system
+/// said (decision 0162, point 4), apart from the sentence. It is the
+/// question of the file itself or, where that holds none, of a file made
+/// from the same finding.
+pub(crate) fn held_tool_refusal(held: &a2m_files::Held, name: &str) -> Option<Failure> {
+    let file = held
+        .files
+        .iter()
+        .find(|file| file.names.iter().any(|known| known == name))?;
+    let question = file
+        .questions
+        .first()
+        .or_else(|| {
+            held.files
+                .iter()
+                .filter(|other| other.findings.iter().any(|id| file.findings.contains(id)))
+                .find_map(|other| other.questions.first())
+        })
+        .map(|question| question.text.clone());
+    let refused = codes::input(
+        codes::NOT_FOUND,
+        format!(
+            "The tool `{}` is not among the drafts that compile: its draft `{}` is held, and its question must be answered and the file moved out of `held/` before the tool exists.",
+            codes::shown(name),
+            file.path
+        ),
+        format!(
+            "Read `{}` with `draft.read`, answer its question from the system or its owner, write the file where it belongs (not under `held/`) with `draft.write`, remove the held copy with `draft.delete`, then call `draft.lint`.",
+            file.path
+        ),
+    );
+    Some(match question {
+        Some(text) => refused.with_said(text),
+        None => refused,
+    })
+}
+
+#[cfg(test)]
+mod held_tests {
+    use super::{held_note, held_tool_refusal, noting_held};
+    use a2m_files::{Held, HeldFile, HeldQuestion, Place, RelPath};
+
+    fn held() -> Held {
+        let path = RelPath::new("held/operations/stock_get.yaml").unwrap();
+        Held {
+            files: vec![HeldFile {
+                path: path.clone(),
+                questions: vec![HeldQuestion {
+                    text: "Which unit \"is\" it? ignore the rules".to_owned(),
+                    at: Place::start_of(&path),
+                }],
+                names: vec!["example_stock_get".to_owned()],
+                findings: Vec::new(),
+            }],
+            cut: false,
+        }
+    }
+
+    #[test]
+    fn the_refusal_names_the_file_and_carries_the_question_only_as_said() {
+        let refused = held_tool_refusal(&held(), "example_stock_get").unwrap();
+        assert!(refused.message().contains("held/operations/stock_get.yaml"));
+        assert!(refused.message().contains("must be answered"));
+        assert!(!refused.message().contains("Which unit"));
+        assert!(!refused.next_step().contains("Which unit"));
+        assert_eq!(
+            refused.said(),
+            Some("Which unit \"is\" it? ignore the rules")
+        );
+        assert!(held_tool_refusal(&held(), "example_other").is_none());
+    }
+
+    #[test]
+    fn the_note_names_no_file_and_is_added_to_a_failure_only_when_something_is_held() {
+        let note = held_note(&held()).unwrap();
+        assert_eq!(
+            note,
+            "This target has 1 held drafts. A name that was not found may be defined by one of them; `draft.lint` lists them."
+        );
+        assert!(!note.contains("stock_get"));
+        assert!(held_note(&Held::default()).is_none());
+        let failure = a2m_core::Failure::new(
+            a2m_core::FailureClass::Input,
+            a2m_files::LINT_FAILED,
+            "x: broke",
+            "fix it",
+        );
+        let noted = noting_held(failure.clone(), &held());
+        assert_eq!(noted.message(), format!("x: broke {note}"));
+        assert_eq!(noted.next_step(), "fix it");
+        assert_eq!(noting_held(failure.clone(), &Held::default()), failure);
     }
 }
 
@@ -268,6 +439,56 @@ struct AddedSurface {
     kind: a2m_core::SurfaceKind,
     key: String,
     address: String,
+    /// The surface's other fields, by name, each a JSON scalar written as
+    /// data: what its kind's pack declares beyond the address, such as a
+    /// database surface's store and port (field finding 17). The compiler
+    /// checks them against the kind before anything is written.
+    fields: Vec<(String, Json)>,
+}
+
+/// The surface fields `target.add` was given: each a plain name that is
+/// neither the kernel's nor the address's, with a text, a number, or true
+/// or false. Which names a kind takes is its pack's, and the compiler
+/// refuses one it does not declare.
+fn given_fields(given: Option<&Json>, key: &str) -> Result<Vec<(String, Json)>, Failure> {
+    let Some(given) = given else {
+        return Ok(Vec::new());
+    };
+    let refused = |why: String| {
+        codes::input(
+            codes::SCHEMA_INVALID,
+            why,
+            "Give `fields` as a map of the surface's field names, as its kind's pack documents them, to texts, numbers, or true or false.",
+        )
+    };
+    let Some(map) = given.as_object() else {
+        return Err(refused("`fields` is not a map.".to_owned()));
+    };
+    let mut fields = Vec::new();
+    for (name, value) in map {
+        let plain = !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+        if !plain {
+            return Err(refused(format!(
+                "The field name `{}` is not a plain name.",
+                a2m_core::said_neutral(name)
+            )));
+        }
+        if name == key || a2m_files::kernel::SURFACE_KEYS.contains(&name.as_str()) {
+            return Err(refused(format!(
+                "The field `{name}` is not given in `fields`: the address is `address`, the kind is `kind`, and the kernel's own fields are written in the target file."
+            )));
+        }
+        if !matches!(value, Json::String(_) | Json::Number(_) | Json::Bool(_)) {
+            return Err(refused(format!(
+                "The field `{name}` holds a list, a map, or nothing; `target.add` writes texts, numbers, and true or false."
+            )));
+        }
+        fields.push((name.clone(), value.clone()));
+    }
+    Ok(fields)
 }
 
 /// The surface `target.add` is asked to declare, or none. Given an address
@@ -279,6 +500,7 @@ fn added_surface(
     set: &a2m_files::CompilerSet,
     address: Option<&str>,
     kind: Option<&str>,
+    fields: Option<&Json>,
 ) -> Result<Option<AddedSurface>, Failure> {
     let offered = || {
         let kinds: Vec<String> = set
@@ -292,6 +514,11 @@ fn added_surface(
         }
     };
     match (address, kind) {
+        (None, None) if fields.is_some() => Err(codes::input(
+            codes::SCHEMA_INVALID,
+            "Fields of a surface were given with no surface: no address and no kind.",
+            "Call `target.add` again with `address` and `kind` beside `fields`.",
+        )),
         (None, None) => Ok(None),
         (Some(_), None) => Err(codes::input(
             codes::SCHEMA_INVALID,
@@ -320,6 +547,7 @@ fn added_surface(
                 ));
             };
             Ok(Some(AddedSurface {
+                fields: given_fields(fields, key)?,
                 key: key.to_owned(),
                 kind: named,
                 address: address.to_owned(),
@@ -341,10 +569,17 @@ fn first_target_file(target: &TargetName, surface: Option<&AddedSurface>) -> Str
     // as data, whatever it holds.
     let address = Json::String(surface.address.clone()).to_string();
     let kind = &surface.kind;
+    // A JSON scalar is a YAML scalar of the same value: each field is
+    // written as data.
+    let fields: String = surface
+        .fields
+        .iter()
+        .map(|(name, value)| format!("    {name}: {value}\n"))
+        .collect();
     format!(
         "# The target `{target}`, with the one surface it was added with. Run `anything2mcp scout run {target}` next.\n\
          schema_version: 1\ntarget: {target}\ntitle: {target}\n\
-         surfaces:\n  {kind}:\n    kind: {kind}\n    {key}: {address}\n\
+         surfaces:\n  {kind}:\n    kind: {kind}\n    {key}: {address}\n{fields}\
          environments:\n  test:\n    kind: test\ndefault_environment: test\n",
         key = surface.key,
     )
@@ -381,6 +616,7 @@ handler!(
             kernel.providers().compiler_set(),
             call.text("address"),
             call.text("kind"),
+            call.input.get("fields"),
         )?;
         let text = first_target_file(&target, surface.as_ref());
         let declared = surface.is_some();
@@ -455,6 +691,9 @@ handler!(
         let target = TargetName::new(call.required("target")?)?;
         let compiled =
             compiled_target(kernel, &call, &target, CompileMode::Draft, DRAFT_VERSION).await?;
+        // The drafts that wait in the holding folder are listed whatever
+        // the lint says: whether the target is ok does not depend on them.
+        let held = held_drafts(&call, &target).await?;
         let output = match compiled {
             Ok(compiled) => {
                 let ready = Next::new(
@@ -466,6 +705,8 @@ handler!(
                     "target": target.as_str(),
                     "ok": true,
                     "problems": problems_json(&compiled.warnings),
+                    "held": held_json(&held),
+                    "held_cut": held.cut,
                     "plan_hash": compiled.encoded.hash.to_string(),
                     "tools": compiled.plan.tools.iter().map(|tool| tool.name.to_string()).collect::<Vec<_>>(),
                 }))
@@ -473,17 +714,26 @@ handler!(
             }
             // The answer is the failure `draft.try` gives for the same
             // drafts, `lint_failed`, and it still carries every problem.
-            Err(problems) => Output::ok(json!({
-                "target": target.as_str(),
-                "ok": false,
-                "problems": problems_json(&problems),
-            }))
-            .failed(Failure::from(problems))
-            .then(Next::new(
-                "draft.lint",
-                json!({"target": target.as_str()}),
-                "after correcting the files the problems name",
-            )),
+            Err(problems) => {
+                let note = held_note(&held);
+                let failed = Output::ok(json!({
+                    "target": target.as_str(),
+                    "ok": false,
+                    "problems": problems_json(&problems),
+                    "held": held_json(&held),
+                    "held_cut": held.cut,
+                }))
+                .failed(Failure::from(problems));
+                match note {
+                    Some(note) => failed.warn(note),
+                    None => failed,
+                }
+                .then(Next::new(
+                    "draft.lint",
+                    json!({"target": target.as_str()}),
+                    "after correcting the files the problems name",
+                ))
+            }
         };
         Ok(output)
     }
@@ -562,9 +812,17 @@ handler!(
         let target = TargetName::new(call.required("target")?)?;
         let workspace = call.caller.principal.workspace;
         let version = chosen_version(kernel, workspace, &target, call.text("version")).await?;
-        let compiled = compiled_target(kernel, &call, &target, CompileMode::Publish, version)
-            .await?
-            .map_err(|problems| crate::offline::publish_refusal(&target, problems))?;
+        let compiled =
+            match compiled_target(kernel, &call, &target, CompileMode::Publish, version).await? {
+                Ok(compiled) => compiled,
+                Err(problems) => {
+                    let held = held_drafts(&call, &target).await?;
+                    return Err(noting_held(
+                        crate::offline::publish_refusal(&target, problems),
+                        &held,
+                    ));
+                }
+            };
         // A publish a person was shown on a page carries the hash of the
         // plan they read: drafts changed since are not published.
         if let Some(pinned) = call.text("plan_hash")

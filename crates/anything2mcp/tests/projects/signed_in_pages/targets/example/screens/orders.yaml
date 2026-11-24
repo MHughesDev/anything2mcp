@@ -1,0 +1,22 @@
+# The first page a signed-in person sees: who is signed in, and the table
+# of every order.
+screen: orders
+surface: app
+reach: {url: "/secure/orders"}
+ready: {visible: {role: heading, name: "Orders"}}
+fields:
+  signed_in_as:
+    type: text
+    control: text
+    read: text
+    locate:
+      - {text: "Signed in as", contains: true}
+    fingerprint: {section: {role: main, name: ""}}
+rows:
+  locate:
+    - {role: table, name: "All orders"}
+  fingerprint: {section: {role: main, name: ""}}
+  header: ["Order", "Customer", "Lines"]
+  columns:
+    order_ids: {header: "Order", type: identifier}
+    customers: {header: "Customer", type: text}

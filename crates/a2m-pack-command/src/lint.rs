@@ -90,14 +90,30 @@ impl LintRule for ShellProgram {
                         "The surface `{}` names an interpreter that {why}.",
                         surface.name
                     ),
-                    "Name an interpreter the pack starts as a pair (the POSIX shell, Python, Windows PowerShell, or AppleScript), with the fixed arguments of its form, or name the program itself.",
+                    "Name an interpreter the pack starts as a pair (the POSIX shell, Python, the JavaScript runtime, Windows PowerShell, or AppleScript), with the fixed arguments of its form, or name the program itself.",
                 ));
             }
         }
+        // A program of the provider's closed list whose files declare no
+        // interpreter runs only the commands of it that run no code but its
+        // own; the file kind holds each of its argument lists to them
+        // (decision 0299, step one).
+        let own_code_only = |surface: &str, address: &str| {
+            a2m_provider::runs_its_own_code(address).is_some()
+                && docs
+                    .iter()
+                    .filter(|doc| doc.text("surface").or(first) == Some(surface))
+                    .all(|doc| {
+                        doc.get("program")
+                            .and_then(|program| program.get("interpreter"))
+                            .is_none()
+                    })
+        };
         found.extend(surfaces
             .iter()
             .filter(|surface| is_shell_or_interpreter(surface.address))
             .filter(|surface| !pairs_only(surface.name.as_str()))
+            .filter(|surface| !own_code_only(surface.name.as_str(), surface.address))
             .map(|surface| {
                 Diagnostic::error(
                     self.code(),

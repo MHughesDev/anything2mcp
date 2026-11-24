@@ -1,0 +1,5 @@
+test: example_line_item_update
+kind: offline
+fixture: line_item_update
+inputs: {order_id: "A-100", item_code: "L-101", length: "151.25", unit_price: "13.10"}
+expect: {unit_price: "13.10"}

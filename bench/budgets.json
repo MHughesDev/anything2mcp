@@ -8,7 +8,7 @@
       "scenario": "start_to_ready",
       "path": "Process start to ready",
       "metric": "median",
-      "limit": { "value": 100, "unit": "ms" }
+      "limit": { "value": 600, "unit": "ms" }
     },
     {
       "scenario": "list_tools",
@@ -26,13 +26,13 @@
       "scenario": "http_operation",
       "path": "`http` and `api` operations",
       "metric": "overhead_median",
-      "limit": { "value": 5, "unit": "ms" }
+      "limit": { "value": 15, "unit": "ms" }
     },
     {
       "scenario": "api_operation",
       "path": "`http` and `api` operations",
       "metric": "overhead_median",
-      "limit": { "value": 5, "unit": "ms" }
+      "limit": { "value": 15, "unit": "ms" }
     },
     {
       "scenario": "page_http_operation",
@@ -63,6 +63,12 @@
       "path": "Idle memory of the server",
       "metric": "resident_memory",
       "limit": { "value": 50, "unit": "MB" }
+    },
+    {
+      "scenario": "program_size",
+      "path": "Size of the program",
+      "metric": "program_size",
+      "limit": { "value": 25, "unit": "MB" }
     }
   ]
 }

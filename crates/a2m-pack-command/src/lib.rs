@@ -14,6 +14,7 @@
 //! The product crate makes one call: [`register`].
 
 mod args;
+pub mod binary;
 pub mod codes;
 mod discover;
 mod draft;
@@ -28,6 +29,7 @@ mod manual;
 mod metadata;
 mod model;
 mod output;
+mod own_code;
 mod pattern;
 mod powershell;
 mod psd1;
@@ -105,6 +107,14 @@ impl Pack for CommandPack {
                 clock: cx.telemetry().clock(),
             }),
             Arc::new(discover::HelpDescriber {
+                redact: Arc::clone(cx.redact()),
+            }),
+        )?;
+        to.discoverer(
+            Arc::new(binary::BinaryDiscoverer {
+                clock: cx.telemetry().clock(),
+            }),
+            Arc::new(binary::BinaryDescriber {
                 redact: Arc::clone(cx.redact()),
             }),
         )?;

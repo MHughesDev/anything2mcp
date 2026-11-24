@@ -11,12 +11,13 @@ use std::path::PathBuf;
 
 use a2m_actions::{
     ActionDef, ActionRegistry, CommandArg, CommandFace, Effect, PROCESS_COMMANDS, PROGRAM,
-    PersonNeed, RunsIn, SHORTCUTS, Shortcut, ShortcutRun, ShortcutStep, codes, command_faces,
+    PersonNeed, RunsIn, SHORTCUTS, Shortcut, ShortcutOption, ShortcutRun, ShortcutStep, codes,
+    command_faces,
 };
 use a2m_core::{Failure, FailureClass};
 
 use super::shown;
-use serde_json::{Map, Value as Json};
+use serde_json::{Map, Value as Json, json};
 
 /// The global flags: their form, and what each is for. They are the same
 /// for every command and are never an action's argument.
@@ -484,6 +485,8 @@ impl Tree {
         rest: &[String],
     ) -> Result<Vec<Step>, Failure> {
         let single = shortcut.steps.len() == 1;
+        let (given, rest) = shortcut_options(shortcut, rest)?;
+        let rest = rest.as_slice();
         let mut steps = Vec::new();
         for step in run {
             let Some(face) = self.face_of(step.action) else {
@@ -526,6 +529,21 @@ impl Tree {
                 }
                 (Json::Object(input), None)
             };
+            let mut input = input;
+            for (option, value) in &given {
+                if option.action != step.action {
+                    continue;
+                }
+                if let Json::Object(map) = &mut input {
+                    map.insert(
+                        option.field.to_owned(),
+                        match option.key {
+                            Some(key) => json!({ key: value }),
+                            None => Json::String(value.clone()),
+                        },
+                    );
+                }
+            }
             steps.push(Step {
                 action: face.action.clone(),
                 input,
@@ -626,6 +644,18 @@ impl Tree {
         if shortcut.steps.is_empty() {
             out.push_str("\nNo action is beneath it yet.\n");
             return out;
+        }
+        if !shortcut.options.is_empty() {
+            out.push_str("\nFlags:\n");
+            for option in shortcut.options {
+                out.push_str(&row(
+                    "  ",
+                    &format!("--{} <value>", option.flag),
+                    24,
+                    option.does,
+                    width,
+                ));
+            }
         }
         out.push('\n');
         out.push_str(&wrap(
@@ -850,6 +880,68 @@ fn tokens(rest: &[String]) -> (Vec<String>, Option<String>) {
         }
     }
     (positional, flag)
+}
+
+/// The flags of a shortcut that were written, each with its value.
+type GivenOptions<'a> = Vec<(&'a ShortcutOption, String)>;
+
+/// The flags a shortcut takes beside its argument, taken out of what was
+/// written: each with its value, and the words that are left. A flag the
+/// shortcut does not take is left for the rest of the parse to refuse.
+fn shortcut_options<'a>(
+    shortcut: &'a Shortcut,
+    rest: &[String],
+) -> Result<(GivenOptions<'a>, Vec<String>), Failure> {
+    let mut given: Vec<(&ShortcutOption, String)> = Vec::new();
+    let mut left = Vec::new();
+    let mut at = 0;
+    let mut literal = false;
+    while at < rest.len() {
+        let word = &rest[at];
+        at += 1;
+        if literal || !word.starts_with("--") {
+            left.push(word.clone());
+            continue;
+        }
+        if word == "--" {
+            literal = true;
+            left.push(word.clone());
+            continue;
+        }
+        let (name, inline) = match word.split_once('=') {
+            Some((name, value)) => (name, Some(value.to_owned())),
+            None => (word.as_str(), None),
+        };
+        let Some(option) = shortcut
+            .options
+            .iter()
+            .find(|option| format!("--{}", option.flag) == name)
+        else {
+            left.push(word.clone());
+            continue;
+        };
+        let value = match inline {
+            Some(value) => value,
+            None => {
+                let Some(value) = rest.get(at) else {
+                    return Err(malformed(
+                        format!("`--{}` takes a value, and none was given.", option.flag),
+                        format!("Run `{PROGRAM} {} --help`.", shortcut.word),
+                    ));
+                };
+                at += 1;
+                value.clone()
+            }
+        };
+        if given.iter().any(|(one, _)| one.flag == option.flag) {
+            return Err(malformed(
+                format!("`--{}` was given twice.", option.flag),
+                format!("Run `{PROGRAM} {} --help`.", shortcut.word),
+            ));
+        }
+        given.push((option, value));
+    }
+    Ok((given, left))
 }
 
 /// One argument's written value as the JSON its type asks for. A value

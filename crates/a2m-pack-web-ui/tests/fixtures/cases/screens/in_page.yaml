@@ -1,0 +1,17 @@
+# Case 8: the address changes with no new document, and the page shows its
+# answer a moment later. The action is done when the page shows both what
+# it was moved to and its own words for it.
+screen: in_page
+surface: app
+reach: {url: "/cases/in-page"}
+ready: {text: {locate: {role: status, name: ""}, equals: "Orders shown."}}
+actions:
+  customers:
+    locate:
+      - {role: button, name: Customers}
+    fingerprint: {section: {role: navigation, name: ""}}
+    confirm:
+      all:
+        - {text: {locate: {role: status, name: ""}, equals: "Customers shown."}}
+        - {text: {locate: {role: heading, name: Customers}, equals: Customers}}
+    commits: true

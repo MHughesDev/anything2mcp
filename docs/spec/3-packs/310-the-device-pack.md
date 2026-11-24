@@ -174,7 +174,7 @@ A sequence of device writes is a pipeline of these operations, one commit point 
 
 **The identifier is the unit's serial, and the surface declares it** for each environment, under `serials` ([decision 0137](../../decisions/0137-a-device-is-held-to-its-serial-a-write-frame-is-recorded-before-it-is-sent-and-a-run-has-a-frame-ceiling.md)). A map is written for a model; the surface says which unit answers where. A device that reports another serial than the one declared for the run's environment is `unknown_variant`, `device_identity_mismatch`, for reads as well as writes: a map proven on one unit does not drive another of the same model at the same address. Where no serial is declared for the environment, a read goes on by model and firmware, and a write stops unsent with `policy`, `device_serial_not_declared`. The compiler refuses a binding that writes through a surface that declares no serial at all (`device.write_without_serial`).
 
-**A firmware version outside the map stops reads too.** A device that does not match is `unknown_variant`, `device_identity_mismatch`, for reads as well as writes, because a register's meaning may change with firmware. This is stricter than the general rule of [section 219](../2-kernel/219-the-evidence-ladder.md), under which a version that is already current keeps running until a canary fails. For a device, a new firmware version drops the bindings on that surface to `reconstructed`, and nothing runs on them until the gates pass again with the new version added to the map's list. Lowering the bindings' level is not built: each run stops at its `open` step.
+**A firmware version outside the map stops reads too.** A device that does not match is `unknown_variant`, `device_identity_mismatch`, for reads as well as writes, because a register's meaning may change with firmware. This is stricter than the general rule of [section 219](../2-kernel/219-the-evidence-ladder.md), under which a version that is already current keeps running until a canary fails. For a device, a new firmware version drops the bindings on that surface to `reconstructed`, and nothing runs on them until the map's list names the new version. The level does not stop the run: each run stops at its `open` step, which checks the firmware version, and lowering the bindings' level is not built.
 
 Devices reached through the request and command packs need the same identity check before acting. It has no kernel home yet; it is proposed as a precondition the kernel offers to every pack.
 
@@ -217,11 +217,11 @@ All are `enforced`.
 
 ## Firmware
 
-Nothing in this part is built: neither inspection nor update.
+Built, against the simulated device only ([decision 0316](../../decisions/0316-firmware-is-inspected-by-an-optional-provider-and-updated-by-one-operation-through-the-devices-own-sequence.md)): inspection of an image given as a file, and the update through the device's own register sequence. Not built: what a person sees to approve an update, an image as a stored blob in place of hexadecimal text, inspection of an image the device offers, a signature check, and an update through the request pack.
 
-**Inspection is discovery only.** An optional provider, off by default, reads an image the person supplies as a file, or one the device offers through its own interface for that purpose. The subject of every finding is the image, by digest. What it finds is `inferred`: a setting named in an image is a claim about a device, not an observation of one. It lists regions, files, and settings, and decrypts nothing and recovers no keys. The image is never changed. An image that is encrypted or protected is a named stop: `edge_blocked`, `image_protected`.
+**Inspection is discovery only.** An optional provider, off by default, reads an image the person supplies as a file, or one the device offers through its own interface for that purpose. The subject of every finding is the image, by digest. What it finds is `inferred`: a setting named in an image is a claim about a device, not an observation of one. It lists regions, files, and settings, and decrypts nothing and recovers no keys. The image is never changed. An image that is encrypted or protected is a named stop: `edge_blocked`, `image_protected`. As built, the optional provider is `device_firmware`, in the device pack's crate with a manifest of its own, and it is off until a product registers it. It reads one file handed under the name `firmware_image`, sends no frame, and makes one finding of the kind `firmware_image` with the source `artifact`: the image's form, version, regions with their offsets and lengths, whether its checksum holds, and the settings its payload states, with the value of a setting named as a secret left out. An image of a form it does not read makes no finding; one that looks encrypted is the named stop, by a heuristic that decrypts nothing.
 
-**An update goes only through the device's own documented mechanism.** Where the fieldbus protocol defines one, this pack carries it; where the device's management protocol does, the request pack does, under the same rules. An update is one operation with one commit point, and the strictest handling in the design. It is always `irreversible`, with the hazard `device_function`.
+**An update goes only through the device's own documented mechanism.** Where the fieldbus protocol defines one, this pack carries it; where the device's management protocol does, the request pack does, under the same rules. An update is one operation with one commit point, and the strictest handling in the design. It is always `irreversible`, with the hazard `device_function`. As built, a map declares the mechanism under `firmware_update` (the mechanism `register_blocks`: the offsets of a command register, a length register, and one block address, the registers that report the update's state, its error, and the device's checksum, and the window in which the device must come back), and an `update` binding names it with a `firmware` field: the image, the version it carries, the recovery route, what cannot be undone, whether the device checks the maker's signature, the preconditions, and optionally the digests it accepts. The offsets the update writes are named by no register, so no other operation can write them. One step commits and carries the whole sequence: the length, update mode, each block, verify, a read of the state, and the commit command, whose reply the confirm steps read.
 
 | Stage | What happens |
 | --- | --- |
@@ -248,6 +248,8 @@ The pack never builds, patches, or signs an image, and never checks a signature 
 
 The drafter writes a map of readable registers with their data types, and one `read` operation for each. It writes no write, no range, no hazard, no safe state, and no unit the device or its map did not state. As built, from identification it writes the start of a map: the model, the firmware version, the identity fields the device reported, and no register. From a published map it writes a map of each input or holding register whose data type the map states, each `access: read`, with the model and firmware versions the map states (a question where it states none), and one read of each; a number whose unit the map states is read as an exact number and its description gives the unit as the map's, because a target's field type is not the drafter's to write; one whose unit it does not state holds that question in its read alone. The map file is hostile input: it is bounded in size, rows, and cells, and a unit, a model, or a version reaches a drafted file only from a closed set of characters, or else only quoted apart in a question ([decision 0197](../../decisions/0197-no-client-takes-a-proxy-from-the-environment-and-stand-only-protocols.md)). A coil, a discrete input, a register that can only be written, a row with no data type, and one whose address the protocol cannot hold give no register and no read, and the describer names each by its line and why.
 
+**A register named as a secret is never drafted.** A row of a published map whose name the compiler takes for a secret's is left out of the drafted map and has no read; the pack's description of the map says so ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
+
 ## Where the loop fits, and where it strains
 
 | Part | Fit |
@@ -273,10 +275,14 @@ None of these needs a kernel change beyond the identity precondition above. They
 | `unknown_variant` | `device_identity_mismatch`, `unexpected_reply` | Model or firmware not in the map, or another serial than the surface declares; a reply of no declared form |
 | `unknown_variant` | `physical_not_built` | A step that writes a `physical` register reached the driver; nothing is sent |
 | `rejected` | `device_refused` | The device answers with an exception: an address or a value it will not take |
-| `edge_blocked` | `device_protected`, `image_protected` | A protection on the device or the image refuses. Not yet raised: the pack as built has no firmware path and no protection check |
+| `edge_blocked` | `device_protected`, `image_protected` | A protection on the device or the image refuses. `image_protected` is raised by the optional provider for an image that looks encrypted. `device_protected` is not yet raised: there is no protection check on a device |
 | `transient` | `timeout`, `connection_lost`, `frame_corrupt` | On a read, or before a write frame was sent |
 | `transient` | `device_busy` | The device answered that it is busy, on a read or a write |
-| `possible_commit` | `no_confirmation`, `device_not_returned` | A write frame was sent and no clear acknowledgement came; an update did not come back. `device_not_returned` is not yet raised: firmware updates are not built |
+| `possible_commit` | `no_confirmation`, `device_not_returned` | A write frame was sent and no clear acknowledgement came; an update was committed and the device did not come back in its window |
+| `input` | `image_not_accepted` | An update's image is not hexadecimal text, not of the form an image has, damaged, too large, of another version than the operation names, or not on its list of digests. Nothing is sent |
+| `policy` | `update_precondition_unmet` | A condition the update declares, or the device's own update state, does not hold. Nothing is written |
+| `rejected` | `image_refused` | The device refused the image or a block after update mode began; it was told to leave update mode, and its other slot's image was given up |
+| `mismatch` | `image_checksum_differs` | After an update the device's checksum of its image is not the one the image carries |
 | `mismatch` | `read_back_differs`, `sensor_out_of_tolerance` | The register or the declared sensor disagrees. `read_back_differs` is the engine's comparison, not the pack's. `sensor_out_of_tolerance` is not yet raised: `confirm_by` is not built |
 
 A device may also answer that it is busy: `device_busy`. On a read that is `transient`. On a write it is never retried, like every write in this pack.
@@ -310,7 +316,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 | 2 | Read-back for every write | Read the register again. A `write` register, a console command, or a register with a `read_effect` has none, and its write is `irreversible`. Any hazard other than `none` makes a write `irreversible` whatever its read-back |
 | 3 | Each identity strategy | `natural`, by the register's or object's name in the map. A command is `none`. `composite`, `stamped`, and `find` are refused with a reason |
 | 4 | A test stand | The simulated device above, with its control interface |
-| 5 | A discoverer | Identification, the device's own listing, a published map, and firmware inspection through the optional provider. Only identification is built |
+| 5 | A discoverer | Identification, the device's own listing, a published map, and firmware inspection through the optional provider. Identification, a published map, and firmware inspection are built |
 | 6 | Failures mapped | The table above |
 | 7 | Effects and hazards | The tables above. Every writable register carries a hazard and a range |
 | 8 | A record per new mode | [Decision 0107](../../decisions/0107-the-device-mode-and-the-device-pack-as-building-it-settled-it.md) |
@@ -325,7 +331,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 6. Firmware update against the simulator's slots, including the device that does not come back.
 7. The real device, with the owner.
 
-Steps 1, 3, and 4 are built in `a2m-pack-device`, except what the [crate's design](../../architecture/crates/a2m-pack-device.md) lists as not built. Step 2 is built through the driver's handle: its five runs give one signature there, and the engine loop has not run the mode. Steps 5 to 7 are not built.
+Steps 1, 3, and 4 are built in `a2m-pack-device`, except what the [crate's design](../../architecture/crates/a2m-pack-device.md) lists as not built. Step 2 is built through the driver's handle: its five runs give one signature there, and the engine loop has not run the mode. Step 6 is built in `a2m-pack-device` as decision 0316 states it. Steps 5 and 7 are not built.
 
 ## Open points
 

@@ -11,11 +11,12 @@ use a2m_core::{
     SectionIndex, Step, StepArg, StepKind, SurfaceKind, Verb, WriteEvidence,
 };
 use a2m_files::{
-    Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place,
-    Possible, ResolvedBinding, Stage, StepCommits,
+    BindingStatement, Diagnostic, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered,
+    Lowering, Place, Possible, ResolvedBinding, Sends, Stage, Statement as ReviewStatement,
+    StepChanges, StepCommits,
 };
 
-use crate::model::{Access, Does, Returns, Section, Statement, StepDetail};
+use crate::model::{Access, Does, FOUND, Returns, Section, Statement, StepDetail};
 use crate::names::{
     BEGIN, COMMIT, CREATE, DATABASE, DELETE, EXECUTE, EXPECT_ROWS, FETCH, LIST, READ, SEARCH,
     STATEMENT, UPDATE, codes, lint,
@@ -45,6 +46,16 @@ impl SqlLowering {
 
 fn problem(code: &LintCode, stage: Stage, at: &Place, message: String, fix: &str) -> Diagnostic {
     Diagnostic::error(code.clone(), stage, at, message, fix)
+}
+
+/// Whether a store's file is named by a path that begins with two
+/// separators, `\\host\share` or `//host/share`: another machine's.
+fn names_another_machine(address: &str) -> bool {
+    let mut chars = address.chars();
+    matches!(
+        (chars.next(), chars.next()),
+        (Some('/' | '\\'), Some('/' | '\\'))
+    )
 }
 
 /// A step that fails as the code of `row`, in the class its table gives it.
@@ -166,6 +177,19 @@ impl Lower<'_, '_> {
         assigned: bool,
         problems: &mut Diagnostics,
     ) -> Option<Vec<Step>> {
+        // A read by key whose operation declares an output `found` answers a
+        // row that is not there with `found: false` (decision 0348). The
+        // read-back of a write keeps `absent`, which reconcile needs.
+        let answers = !assigned
+            && statement.access == Access::ReadOnly
+            && statement.returns == Returns::OneOrNone
+            && !statement.columns.iter().any(|column| column.field == FOUND)
+            && self
+                .cx
+                .operation()
+                .outputs()
+                .iter()
+                .any(|o| o.name == FOUND);
         let drift = || fails(&codes::row::SCHEMA_CHANGED);
         let begin = self.step(
             BEGIN,
@@ -175,13 +199,27 @@ impl Lower<'_, '_> {
                 access: Some(Access::ReadOnly),
                 isolation: Some(statement.isolation),
                 rows: None,
+                nullable: Vec::new(),
+                answers_missing: false,
             },
             fails(&codes::row::STORE_LOCKED),
         )?;
         let mut execute = self.step(EXECUTE, name, statement, &StepDetail::default(), drift())?;
         execute.args = self.args(name, statement, at, assigned, problems);
-        let mut fetch = self.step(FETCH, name, statement, &StepDetail::default(), drift())?;
-        fetch.lookup = statement.returns == Returns::OneOrNone;
+        // The fields that may hold no value travel with the `fetch` that
+        // returns them, for `absent_outputs` (decision 0305).
+        let fetched = StepDetail {
+            nullable: statement
+                .columns
+                .iter()
+                .filter(|column| column.nullable || answers)
+                .map(|column| column.field.clone())
+                .collect(),
+            answers_missing: answers,
+            ..StepDetail::default()
+        };
+        let mut fetch = self.step(FETCH, name, statement, &fetched, drift())?;
+        fetch.lookup = statement.returns == Returns::OneOrNone && !answers;
         Some(vec![begin, execute, fetch])
     }
 
@@ -201,6 +239,8 @@ impl Lower<'_, '_> {
                 access: Some(Access::ReadWrite),
                 isolation: Some(statement.isolation),
                 rows: None,
+                nullable: Vec::new(),
+                answers_missing: false,
             },
             fails(&codes::row::STORE_LOCKED),
         )?;
@@ -226,9 +266,15 @@ impl Lower<'_, '_> {
                 access: None,
                 isolation: None,
                 rows: Some(1),
+                nullable: Vec::new(),
+                answers_missing: false,
             },
             none_changed,
         )?;
+        // The values the write sends, which the commit point carries too, so
+        // that an offline test can hold them (field finding 22). The driver
+        // reads them at `execute`, and `commit` ignores them.
+        let sent = execute.args.clone();
         let mut steps = vec![begin, execute, expect];
         if statement.returns == Returns::AssignedKey {
             steps.push(self.step(
@@ -247,6 +293,7 @@ impl Lower<'_, '_> {
             fails(&a2m_provider::codes::row::NO_CONFIRMATION),
         )?;
         commit.commits = true;
+        commit.args = sent;
         steps.push(commit);
         Some(steps)
     }
@@ -284,6 +331,20 @@ impl Lowering for SqlLowering {
         }
     }
 
+    /// A `commit` saves and can change the store. An `execute` runs a
+    /// statement as its file declares it, and the driver runs one declared
+    /// `read_only` on the reading connection, where a write is refused.
+    /// `begin`, `fetch`, and `expect_rows` change nothing.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == COMMIT {
+            StepChanges::Can
+        } else if *kind == EXECUTE {
+            StepChanges::AsDeclared
+        } else {
+            StepChanges::Never
+        }
+    }
+
     /// By the verb, which `lower` holds to what the statement does: a
     /// `create` or an `update` writes, and a `delete` cannot be undone.
     fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
@@ -310,6 +371,56 @@ impl Lowering for SqlLowering {
         } else {
             WriteEvidence::ReadBack
         }
+    }
+
+    /// A binding of this pack starts no program and sets no variable. On a
+    /// store in a file it sends no request: the driver opens the one file
+    /// the surface names, inside the engine's roots, and that is stated
+    /// where the file's address is a local path in form. An address that
+    /// names another machine (`\\host\share` or `//host/share`) is reached
+    /// over the network by the operating system, and is not stated. On a
+    /// store on a server it sends to the surface's address and to no other:
+    /// the driver dials only a surface among the run's destinations, and an
+    /// input never names a host or a file (decision 0334).
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        lowered: &Lowered,
+        cx: &LowerContext<'_>,
+    ) -> ReviewStatement {
+        let Some(surface) = cx.target().surface(lowered.surface.as_str()) else {
+            return ReviewStatement::NotStated;
+        };
+        let surface_sends = if *surface.kind == DATABASE {
+            if names_another_machine(surface.address) {
+                return ReviewStatement::NotStated;
+            }
+            false
+        } else if crate::names::is_database(surface.kind) {
+            true
+        } else {
+            return ReviewStatement::NotStated;
+        };
+        ReviewStatement::Stated(BindingStatement {
+            sends: Sends::Only {
+                surface: surface_sends,
+                addresses: Vec::new(),
+            },
+            ..BindingStatement::default()
+        })
+    }
+
+    /// The fields the statements file declares `nullable`, as the `fetch`
+    /// steps of the binding's reads carry them (decision 0305).
+    fn absent_outputs(&self, _binding: &ResolvedBinding<'_>, lowered: &Lowered) -> Vec<String> {
+        lowered
+            .act
+            .iter()
+            .chain(&lowered.read_back)
+            .filter(|step| step.kind == FETCH)
+            .filter_map(|step| step.payload.decode::<StepDetail>().ok())
+            .flat_map(|detail| detail.nullable)
+            .collect()
     }
 
     fn binding_schema(&self) -> &JsonSchema {

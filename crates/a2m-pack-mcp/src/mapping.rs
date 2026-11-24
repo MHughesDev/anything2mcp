@@ -20,6 +20,11 @@ pub(crate) const SECTION_FORMAT: u16 = 1;
 
 /// The revision whose connection starts with the `initialize` handshake.
 pub(crate) const REVISION_HANDSHAKE: &str = "2025-11-25";
+/// The earlier revision with the same handshake, which the pack speaks as a
+/// client: what it uses of the protocol, the handshake, the version header,
+/// `tools/list`, `tools/call`, output schemas, and structured content, is
+/// the same in it (decision 0365).
+pub(crate) const REVISION_HANDSHAKE_EARLIER: &str = "2025-06-18";
 /// The revision with no handshake: every request names it.
 pub(crate) const REVISION_NO_HANDSHAKE: &str = "2026-07-28";
 /// What a local server program's surface writes as its address.
@@ -29,8 +34,20 @@ pub(crate) const LOCAL_ADDRESS: &str = "stdio";
 pub(crate) const UNENCRYPTED_CREDENTIALS: &str = "unencrypted_credentials";
 pub(crate) const ACCEPTED: &str = "accepted";
 
+/// The result's values are its structured content.
+pub(crate) const RESULT_STRUCTURED: &str = "structured";
+/// The result's value is its text, under one name, `text`.
+pub(crate) const RESULT_TEXT: &str = "text";
+/// The result's text items are JSON, read as its members: one object, or,
+/// under the entry's `records`, one row for each item (decision 0365).
+pub(crate) const RESULT_JSON_TEXT: &str = "json_text";
+
 /// The `mcp` surface kind: its address, and for a local server program the
-/// program by path and digest with its arguments and its environment.
+/// program by path and digest with its arguments and its environment. A
+/// server started through a launcher names the launcher as its program and
+/// the server's installed entry file as `entry`, pinned by `entry_digest`,
+/// with the fixed arguments of the launcher's form as `launcher_args`
+/// (decision 0371): the plan declares both files as the surface's programs.
 pub(crate) fn surface_kind_spec() -> SurfaceKindSpec {
     SurfaceKindSpec::new(
         names::surface_kind(),
@@ -39,12 +56,19 @@ pub(crate) fn surface_kind_spec() -> SurfaceKindSpec {
             .required("address", JsonSchema::text())
             .optional("program", JsonSchema::text())
             .optional("digest", JsonSchema::text())
+            .optional(ENTRY, JsonSchema::text())
+            .optional(ENTRY_DIGEST, JsonSchema::text())
+            .optional(LAUNCHER_ARGS, JsonSchema::list(JsonSchema::text()))
             .optional("args", JsonSchema::list(JsonSchema::text()))
             .optional("environment", JsonSchema::map_of(JsonSchema::text()))
             .optional("pass_environment", JsonSchema::list(JsonSchema::text()))
             .optional(
                 "revision",
-                JsonSchema::words(&[REVISION_HANDSHAKE, REVISION_NO_HANDSHAKE]),
+                JsonSchema::words(&[
+                    REVISION_HANDSHAKE,
+                    REVISION_HANDSHAKE_EARLIER,
+                    REVISION_NO_HANDSHAKE,
+                ]),
             )
             .optional(UNENCRYPTED_CREDENTIALS, JsonSchema::words(&[ACCEPTED])),
     )
@@ -56,6 +80,36 @@ pub(crate) fn surface_kind_spec() -> SurfaceKindSpec {
         a2m_core::SurfaceNotice::UnencryptedCredentials,
     )
     .with_program("program", Some("digest"))
+    .with_program(ENTRY, Some(ENTRY_DIGEST))
+}
+
+/// The surface fields of a server started through a launcher.
+pub(crate) const ENTRY: &str = "entry";
+pub(crate) const ENTRY_DIGEST: &str = "entry_digest";
+pub(crate) const LAUNCHER_ARGS: &str = "launcher_args";
+
+/// The package runners: programs that fetch the package their arguments
+/// name and run it at the moment they start (decision 0299, point 5), and
+/// the package managers that do the same by a subcommand (`exec`, `dlx`,
+/// `x`, `tool run`). Each is on the provider's name list too, so it is
+/// refused as a program whatever this list says; the list lets the refusal
+/// say what to do instead. A test holds every name to the provider's list.
+pub(crate) const PACKAGE_RUNNERS: &[&str] = &[
+    "npx", "pnpx", "bunx", "uvx", "pipx", "npm", "pnpm", "yarn", "yarnpkg", "corepack", "uv",
+    "jbang",
+];
+
+/// Whether the path names a package runner, by the name of its file, in
+/// any letter case and without a suffix that a program or a script of one
+/// has on Windows.
+pub(crate) fn is_package_runner(path: &str) -> bool {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let lower = name.to_ascii_lowercase();
+    let stem = [".exe", ".cmd", ".com", ".bat", ".ps1"]
+        .iter()
+        .find_map(|suffix| lower.strip_suffix(suffix))
+        .unwrap_or(&lower);
+    PACKAGE_RUNNERS.contains(&stem)
 }
 
 /// Words that name a credential when they end a variable's name. A copy of
@@ -130,7 +184,18 @@ pub(crate) struct SurfaceFields {
     /// The digest the program must have.
     #[serde(default)]
     pub digest: Option<String>,
-    /// Its arguments. Fixed; nothing from a caller is ever added.
+    /// The server's installed entry file, when the program is a launcher
+    /// of the provider's table that runs it (decision 0371).
+    #[serde(default)]
+    pub entry: Option<String>,
+    /// The digest the entry file must have at every start.
+    #[serde(default)]
+    pub entry_digest: Option<String>,
+    /// The fixed arguments of the launcher's form, before the entry file.
+    #[serde(default)]
+    pub launcher_args: Vec<String>,
+    /// Its arguments, after the entry file where there is one. Fixed;
+    /// nothing from a caller is ever added.
     #[serde(default)]
     pub args: Vec<String>,
     /// Variables it is started with. Never a secret.
@@ -196,7 +261,9 @@ pub(crate) struct ToolEntry {
     /// passed on. A member that can hold text and is not named here, or
     /// under `key` or `records`, is left out of what a step returns.
     pub untrusted_fields: Vec<String>,
-    /// `structured` or `text`: where the result's values are.
+    /// `structured`, `text`, or `json_text`: where the result's values
+    /// are. `json_text` reads the result's text items as JSON (decision
+    /// 0365).
     pub result: String,
     /// An error result whose text starts with this means the record is
     /// absent.
@@ -295,6 +362,14 @@ impl Section {
 pub(crate) struct CallPayload {
     pub surface: String,
     pub tool: String,
+    /// The members every result of the call holds: the record's key, which
+    /// the driver requires to be text or a whole number, and `text` for a
+    /// tool whose result is its text. Whether any other member is there is
+    /// known only from the server's output schema, which the mapping pins
+    /// by its digest and which the target's files do not hold, so every
+    /// other output may be absent (decision 0315). Left out when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub certain: Vec<String>,
 }
 
 fn tool_schema() -> JsonSchema {
@@ -306,7 +381,10 @@ fn tool_schema() -> JsonSchema {
         )
         .optional("read_back", JsonSchema::text())
         .optional("untrusted_fields", JsonSchema::list(JsonSchema::text()))
-        .optional("result", JsonSchema::words(&["structured", "text"]))
+        .optional(
+            "result",
+            JsonSchema::words(&[RESULT_STRUCTURED, RESULT_TEXT, RESULT_JSON_TEXT]),
+        )
         .optional("absent_error", JsonSchema::text())
         .optional("records", JsonSchema::text())
         .optional("key", JsonSchema::list(JsonSchema::text()))
@@ -366,7 +444,7 @@ pub(crate) fn tool_entry(entry: &Located<Doc>) -> ToolEntry {
         effect: text("effect").unwrap_or_else(|| "write".to_owned()),
         read_back: text("read_back"),
         untrusted_fields: texts(entry.get("untrusted_fields")),
-        result: text("result").unwrap_or_else(|| "structured".to_owned()),
+        result: text("result").unwrap_or_else(|| RESULT_STRUCTURED.to_owned()),
         absent_error: text("absent_error"),
         records: text("records"),
         key: texts(entry.get("key")),
@@ -516,6 +594,27 @@ mod tests {
 
     use super::MappingKind;
     use crate::names::{self, Names};
+
+    /// Every package runner the pack names is refused as a program by the
+    /// provider's name list as well, so the pack's list only ever makes a
+    /// refusal say more, never lets a program through; and it is known by
+    /// its name in any case and with a Windows suffix.
+    #[test]
+    fn every_package_runner_is_refused_by_the_providers_name_list_too() {
+        for name in super::PACKAGE_RUNNERS {
+            assert!(
+                a2m_provider::is_shell_or_interpreter(&format!("/usr/bin/{name}")),
+                "{name}"
+            );
+            assert!(super::is_package_runner(&format!("/usr/bin/{name}")));
+            assert!(super::is_package_runner(&format!(
+                r"C:\Tools\{}.CMD",
+                name.to_ascii_uppercase()
+            )));
+        }
+        assert!(!super::is_package_runner("/usr/bin/node"));
+        assert!(!super::is_package_runner("/opt/example/bin/example-mcp"));
+    }
 
     #[test]
     fn a_mapping_describes_a_write_when_a_tool_is_mapped_as_anything_but_read() {

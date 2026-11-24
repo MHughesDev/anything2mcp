@@ -13,7 +13,7 @@ use a2m_core::{
 use a2m_files::{
     BindingStatement, CompileMode, Diagnostic, Diagnostics, Doc, FixedPlace, JsonSchema, Level,
     LintRule, Located, LowerContext, Lowered, Lowering, OperationView, Possible, ResolvedBinding,
-    ResolvedView, Sends, Stage, Statement, StepCommits, SurfaceView,
+    ResolvedView, Sends, Stage, Statement, StepChanges, StepCommits, SurfaceView,
 };
 
 use crate::codes;
@@ -168,11 +168,12 @@ impl Steps<'_> {
         )
     }
 
-    fn one(&self, record: &str) -> Result<Step, Diagnostic> {
+    fn one(&self, record: &str, spec: &RecordSpec) -> Result<Step, Diagnostic> {
         self.step(
             READ,
             &StepSpec::One {
                 record: record.to_owned(),
+                may_be_empty: spec.may_be_empty(),
             },
             Vec::new(),
             &codes::row::VALUE_UNREADABLE,
@@ -298,6 +299,43 @@ impl Lowering for FileLowering {
         &self.step_kinds
     }
 
+    /// An entry of a folder has no size or digest unless it is a file (and
+    /// no digest past the folder's bound), and no time it was changed where
+    /// the machine does not say: those outputs may be absent (decision
+    /// 0305). A document's place may be empty, a cell of a table or a
+    /// sheet as much as a key of a JSON or settings file: every field the
+    /// `read` steps read that is not part of the record's key and is not
+    /// declared `required: true` may be absent, as the steps' payloads
+    /// carry it (decision 0315).
+    fn absent_outputs(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> Vec<String> {
+        if binding.field("folder").is_some() {
+            return ["size", "modified", "digest"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+        }
+        let mut names: Vec<String> = Vec::new();
+        for step in lowered
+            .act
+            .iter()
+            .chain(&lowered.confirm)
+            .chain(&lowered.read_back)
+            .chain(&lowered.lookup)
+            .filter(|step| step.kind == READ)
+        {
+            if let Ok(StepSpec::One { may_be_empty, .. } | StepSpec::List { may_be_empty, .. }) =
+                step.payload.decode::<StepSpec>()
+            {
+                for name in may_be_empty {
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+        names
+    }
+
     /// `save` is the one kind that saves, and it always does: it replaces
     /// the file. `open` reads or probes the file and writes nothing, `locate`
     /// finds a place in what was read, `set` builds the new bytes in memory,
@@ -307,6 +345,16 @@ impl Lowering for FileLowering {
             StepCommits::Always
         } else {
             StepCommits::Never
+        }
+    }
+
+    /// A `save` replaces the file and can change it. `open`, `locate`,
+    /// `set`, which builds bytes in memory, and `read` change nothing.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == SAVE {
+            StepChanges::Can
+        } else {
+            StepChanges::Never
         }
     }
 
@@ -519,6 +567,7 @@ impl Lowering for FileLowering {
                         &StepSpec::List {
                             record: record_name.to_owned(),
                             limit,
+                            may_be_empty: record.may_be_empty(),
                         },
                         Vec::new(),
                         &codes::row::VALUE_UNREADABLE,
@@ -546,7 +595,7 @@ impl Lowering for FileLowering {
                 lowered.act = vec![
                     steps.open(false)?,
                     steps.locate(record_name, Expect::Present, key, true)?,
-                    steps.one(record_name)?,
+                    steps.one(record_name, record)?,
                 ];
                 return Ok(lowered);
             }
@@ -582,8 +631,15 @@ impl Lowering for FileLowering {
             }
             // A new row carries its key and its fields; the other writes
             // carry the key at `locate` and the fields at `set`.
+            // The `save` that commits carries every one of them again, so
+            // that what the write sends is plain to an offline test, which
+            // compares the committing step's arguments with the values its
+            // `<step>.request.json` states (finding 22 of field test 4).
+            // The driver reads none of them at `save`: it saves what
+            // `set` built.
+            let save_args: Vec<StepArg> = key.iter().cloned().chain(fields.clone()).collect();
             let set_args = if change == Change::Create {
-                key.iter().cloned().chain(fields).collect()
+                save_args.clone()
             } else {
                 fields
             };
@@ -604,7 +660,7 @@ impl Lowering for FileLowering {
                 steps.step(
                     SAVE,
                     &StepSpec::Save,
-                    Vec::new(),
+                    save_args,
                     &a2m_provider::codes::row::NO_CONFIRMATION,
                     true,
                     false,
@@ -621,7 +677,7 @@ impl Lowering for FileLowering {
             lowered.read_back = vec![
                 steps.open(false)?,
                 steps.locate(record_name, Expect::Present, key, true)?,
-                steps.one(record_name)?,
+                steps.one(record_name, record)?,
             ];
             Ok(lowered)
         })();

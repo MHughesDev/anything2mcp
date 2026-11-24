@@ -1,0 +1,31 @@
+operation: example_firmware_update
+title: Update the firmware
+# An update is always irreversible, with the hazard `device_function`: a
+# person approves every run, and the operation declares how the device is
+# recovered, and what cannot be undone, before it is published.
+effect: irreversible
+hazard: device_function
+commit_points: 1
+inputs:
+  image: {type: text, description: "The image the device's maker issued, as hexadecimal text"}
+  version: {type: text, description: "The version the image carries"}
+outputs:
+  version: {type: device_text}
+  checksum: {type: device_text}
+bindings:
+  - mode: device
+    verb: update
+    status: shadow
+    device_map: controller.main
+    firmware:
+      image: input.image
+      version: input.version
+      recovery: "A person at the device starts it from the slot it ran before."
+      cannot_undo:
+        - "The count of images ever committed only rises."
+        - "Entering update mode gives up the image in the other slot."
+      signature_checked: false
+      preconditions: {pump_speed_setpoint: "0", pump_speed_measured: "0"}
+description: >
+  Sends an image through the device's own update sequence and reads the
+  version and checksum it reports after it restarts.

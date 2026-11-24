@@ -1,0 +1,42 @@
+# 0317. The command pack's scout reads the plain facts of a binary it is handed
+
+**Status:** Accepted. Design decision. The owner had not read this record when it was merged.
+
+**Date:** 2026-11-23
+
+**Carries out** point 3 of [decision 0276](0276-what-the-scout-may-learn-from-a-program-itself-and-by-which-means.md): roadmap package X5, after X4b. **Changes** the command pack's manifest (a second discoverer, a finding kind, four failure codes), adds one dependency, and adds a paragraph to [section 306](../spec/3-packs/306-the-command-pack.md) and to the [design of `a2m-pack-command`](../architecture/crates/a2m-pack-command.md). The evidence is [research note 30](../research/30-what-can-tell-what-a-compiled-program-does.md), its rows on the plain facts of a binary, the version resource, the manifest, and entitlements.
+
+## Context
+
+A program's file says a good deal that its help does not: which system it is for, which libraries it needs, which symbols it imports and exports, and, on Windows and macOS, a version resource, a manifest of how it asks to be run, entitlements, and a signature. All of it can be read from the bytes, and none of it needs the program to be started. Research note 30 weighed linking `object` against writing the readers and against running `readelf` and its kin; the second reading of that note, with the crate checked again today (version 0.41.0, Apache-2.0 OR MIT, one dependency, `memchr`, which the tree already has), is that linking it is right for the headers and the symbol tables and that the version resource, the manifest, and the entitlements are small enough to write on top of it.
+
+## Decision
+
+1. **A second discoverer, `binary`.** The discoverer `help` runs a program's declared help forms; reading a binary must never start anything, and a person who hands only a binary should not have a program started because of it. So the reader is its own discoverer in the same pack, for the surface kind `program`, with the one file name `binary`. A person puts the file in the project's `sources` folder and hands it with `scout run --files '{"binary": "sources/<file>"}'`. It is not the file at the surface's path, which only the driver starts. With no file handed it makes no finding and says nothing. Its port is never asked for a step; a test hands it a port that fails the test if it is.
+2. **Bytes only.** The file is read whole (at most 256 MiB, the discoverer's bound; a larger file is refused by the path reader), never run, loaded, or handed to the system's loader. The first four bytes sort it into ELF, PE, Mach-O, or fat Mach-O. Every text in the finding passes the redactor whole and is then cut to 256 characters; a list of imports or exports is cut at 2,000 and its total kept.
+3. **What is read, and by whom.** `object` (default features off; `read_core`, `elf`, `macho`, `pe`, and `std` on, so no decompressor is linked) gives the processor, the kind, the needed libraries, and the imports and exports of the three formats. This crate reads what `object` does not, bounded: the extent each header declares; a PE file's version resource (the fixed versions and the first string table, at most 64 strings) and manifest (the assembly identity, the requested execution level, and `uiAccess`, with `quick-xml`, a document type refused); and the keys of the top-level dictionary of a Mach-O file's entitlements. The Mach-O identifier, team identifier, and ad hoc flag come from `object`'s code-signature reader.
+4. **The system is what the file says.** PE is `windows`; Mach-O is the platform of its build-version or minimum-version command (`macos`, `ios`, and so on), or `macho_unspecified`; ELF is by its OS/ABI byte (`linux` for 3, `unix_sysv` for 0, and so on, else `elf_osabi_N`). A position-independent ELF program has the type of a shared object and is told from a library by the interpreter it names, so its kind is `executable`.
+5. **Four named stops, no guess.** A file of no known kind, or one that starts `MZ` with no PE signature: `unknown_variant`, `binary_kind_unknown`. A file shorter than its own headers say, in any part: `input`, `binary_truncated`. A file that leads back to a part of itself it is reading, meaning a resource table reached again from below itself, or a fat slice that starts at the fat header or is itself a fat file: `input`, `binary_cyclic`. Anything else not well formed, such as a resource tree deeper than the three levels the format has or a load command smaller than its own header: `input`, `binary_malformed`. Nothing partial is made of any of them.
+6. **What the finding claims.** One finding of kind `binary` for each file: its subject is the file by its digest, as `binary_pe`, `binary_elf`, `binary_macho`, or `binary_macho_fat`; it is `inferred` from `artifact` (the highest level that source supports is `inferred`, and the manifest allows no more), its coverage is `complete` unless a list was cut or a table could not be read, and it is `not_exercised`. Where a signature was seen it also carries `unverified_component`: the identifier and team a code signature states were read, and nothing was checked against anything.
+7. **Who signed a PE file is not read.** A PE file's certificate table is reported as present and how large it is. The name inside it is a CMS structure; the survey's choice of a reader for it takes two more crates and a port of two files, and is not part of this slice. The finding says so. The Mach-O requirements and CMS signature are left out in the same way.
+8. **Nothing is drafted from it.** The finding states no command and has no drafting rule; it tells the scout, and later readers, what a program is.
+
+## Alternatives weighed
+
+- **Run the system's tools (`readelf`, `otool`, `dumpbin`).** Different on each system, the output shape drifts, and a tool may load what it is given. Not taken; the tools are the proof's comparison, not the reader.
+- **Write the headers' readers here.** Four to six weeks by the note's estimate, for something `object` does well and many programs exercise. Not taken for the headers and tables; taken for the three small readers `object` does not have.
+- **Read the facts inside the `help` discoverer.** One discoverer, no second registration, but its bound is 1 MiB, it runs the declared help forms, and a person with only a binary would have a program started. Not taken.
+- **Read the program at the surface's own path.** The scout would need no handing. Not taken: the pack's read root is the project, and reading a path the plan names is the driver's alone; handing a file keeps a file read and a program started as different acts.
+- **Write the stops as one code with a reason.** Fewer rows. Not taken: a caller acts differently on a file that is cut short (copy it again), one of no known kind (hand a different file), and one that loops (do not trust it).
+
+## Dependencies
+
+One new package: `object` 0.41.0, Apache-2.0 OR MIT, both on the list in `deny.toml`; its one dependency, `memchr`, is already in `Cargo.lock`. It is maintained (the `gimli-rs` organisation; its 0.41.0 was published on 2026-11-10 according to the research note) and reads ELF, PE, and Mach-O on all three systems, being plain Rust over bytes. `cargo deny` was not installed where this was built, so the licence check is CI's; the licence was read from the package's own manifest.
+
+## What was proven, and where
+
+The proof of package X5 is held by `crates/a2m-pack-command/tests/binary.rs`. The program of the test stand is read and compared with the system's own tool: on Linux `readelf` (header, `NEEDED` libraries, and the dynamic symbols as imports and exports, set for set); on macOS `otool -L` for the libraries and `nm -u` for the imports (not run here, CI's first run); on Windows, which has no tool a runner is given, what any PE program holds. A PE file and a Mach-O file are built byte by byte in the test, because only one of the three formats exists on each system, and their values were also read from the files by `llvm-readobj` and `llvm-objdump` (the machine, the subsystem, the imports, the exports, the resource types, the load commands, the exports trie, and the code-signature offsets agree). The truncated file is cut at seven places in a PE file, five in a Mach-O file, and in a fat file, and the cyclic file is made four ways; each ends in its named stop with nothing started.
+
+## Not proven here
+
+The Windows and macOS comparisons run in CI only. On Windows no system tool is compared. The values of a PE file's version resource are not compared with any tool.

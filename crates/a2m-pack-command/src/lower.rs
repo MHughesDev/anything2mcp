@@ -11,7 +11,7 @@ use a2m_core::{
 use a2m_files::{
     BindingStatement, Diagnostic, Diagnostics, Doc, EnvironmentVariable, JsonSchema, Located,
     LowerContext, Lowered, Lowering, Place, Possible, ProgramRun, ResolvedBinding, Sends, Stage,
-    Statement, StepCommits, VariableValue,
+    Statement, StepChanges, StepCommits, VariableValue,
 };
 
 use crate::codes::{self, EXPECT, FILE_KIND, PARSE, SPAWN, SURFACE_KIND, lint};
@@ -187,6 +187,7 @@ fn steps(
     let payload = PackPayload::encode(&StepPayload::Command {
         key_params,
         one: run.role == Role::Lookup,
+        absent: command.output.may_be_absent(),
     })
     .ok()?;
     let step = |kind: StepKind, row: &CodeEntry, args: Vec<StepArg>, commits, lookup| Step {
@@ -273,6 +274,17 @@ impl Lowering for CliLowering {
         }
     }
 
+    /// A `spawn` changes the system exactly when its command is declared a
+    /// write, and the driver refuses a `spawn` whose mark and command
+    /// disagree. `expect` and `parse` read how the start ended.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == SPAWN {
+            StepChanges::AsDeclared
+        } else {
+            StepChanges::Never
+        }
+    }
+
     /// `create` and `update` write; `delete` cannot be taken back and is
     /// `irreversible`. A read verb, and `call`, claim nothing more than a
     /// read: what a `call` does is its command's declared effect, which the
@@ -303,6 +315,30 @@ impl Lowering for CliLowering {
         } else {
             WriteEvidence::ReadBack
         }
+    }
+
+    /// The outputs the command's output form does not make certain to be
+    /// there, read from the payloads of the steps the lowering made
+    /// (decision 0305).
+    fn absent_outputs(&self, _binding: &ResolvedBinding<'_>, lowered: &Lowered) -> Vec<String> {
+        let mut names = Vec::new();
+        for step in lowered
+            .act
+            .iter()
+            .chain(&lowered.confirm)
+            .chain(&lowered.read_back)
+            .chain(&lowered.lookup)
+            .filter(|step| step.kind == PARSE)
+        {
+            if let Ok(StepPayload::Command { absent, .. }) = step.payload.decode::<StepPayload>() {
+                for name in absent {
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+        names
     }
 
     fn binding_schema(&self) -> &JsonSchema {

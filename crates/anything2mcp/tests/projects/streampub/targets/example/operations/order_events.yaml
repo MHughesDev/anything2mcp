@@ -1,0 +1,20 @@
+operation: example_order_event_record
+title: Record an event of an order
+effect: irreversible
+hazard: sends_outside
+identity: {strategy: stamped}
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+  event: {type: text, description: "What happened"}
+outputs:
+  position: {type: integer}
+bindings:
+  - mode: stream
+    verb: publish
+    status: verified
+    channel: orders.events
+    key: {order_id: input.order_id}
+    body: {order_id: input.order_id, event: input.event}
+    read_back: {channel: orders.events}
+description: >
+  Appends one event to the order log, where others read it. It cannot be recalled.

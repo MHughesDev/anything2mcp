@@ -61,6 +61,40 @@ a2m_core::failure_codes! {
     ORIGIN_NOT_DECLARED = Policy, "origin_not_declared",
         meaning "The page, a frame of it, or a worker sent a request to an origin that is neither the surface's nor one the operation declares. The browser failed it before it left (decision 0292).",
         next "Declare the origin in the operation's `permissions.destinations`, with its scheme, if the system's pages really load from it; otherwise look at why the page sends there.";
+    CHALLENGE_PAGE = EdgeBlocked, "challenge_page",
+        meaning "The edge answered with a challenge that asks the visitor to prove it is not a program. The engine does not answer a challenge, and the surface is left alone for a while.",
+        next "Ask the application's owner or its IT to allow the engine's address; a person may open the application in a browser of their own.";
+    RATE_LIMITED_BY_EDGE = EdgeBlocked, "rate_limited_by_edge",
+        meaning "The surface answered a page with status 429.",
+        next "Look at the surface in a browser, and ask its owner before trying again.";
+    FORBIDDEN_BY_EDGE = EdgeBlocked, "forbidden_by_edge",
+        meaning "The surface answered a page with status 403.",
+        next "Look at the surface in a browser, and ask its owner before trying again.";
+    SURFACE_IN_MAINTENANCE = Busy, "surface_in_maintenance",
+        meaning "The surface answered 503: it is being worked on. Nothing is retried, and the surface is left alone for a while.",
+        next "Try again after the maintenance ends.",
+        passes by_itself;
+    SITE_TOOL_NOT_OFFERED = Drift, "site_tool_not_offered",
+        meaning "The page registered no tool of the name the binding calls, in the time given.",
+        next "Look at which tools the page offers now; the page may have stopped offering the tool, or the binding names another.";
+    SITE_TOOL_CHANGED = Drift, "site_tool_changed",
+        meaning "The tool the page registered under the name is not the tool the binding was written for: its description or its input schema differs from the digest the binding holds. Nothing was sent.",
+        next "Look at the tool the page offers now, and, if it is the one meant, pin the digest this message gives in the binding.";
+    SITE_TOOLS_UNAVAILABLE = UnknownVariant, "site_tools_unavailable",
+        meaning "The browser has no tools of pages to offer: the browser the engine owns does not carry the experimental domain they are called through, or a page of it has no place to register one (`document.modelContext`), as a page that is not a secure context has none.",
+        next "Use a browser of a version that carries it, or bind the operation through the interface.";
+    DOWNLOAD_NOT_OFFERED = UnknownVariant, "download_not_offered",
+        meaning "The action declares a download, and the page began none before the step's time ended.",
+        next "Look at the page; the action's click does not offer a file, or the file is offered another way than a download.";
+    DOWNLOAD_TOO_LARGE = UnknownVariant, "download_too_large",
+        meaning "The file the page offered is larger than the most the action declares. It was cancelled and nothing was kept.",
+        next "Raise `download.most_bytes` of the action if the file is the one meant; otherwise look at what the page offers.";
+    DOWNLOAD_INCOMPLETE = UnknownVariant, "download_incomplete",
+        meaning "The browser ended the download before the file was whole, or the step's time ended before it was. Nothing was kept.",
+        next "Run the tool again; if it ends the same way, look at the page in a browser of your own.";
+    FILE_NOT_STAGED = Input, "file_not_staged",
+        meaning "A file input was given a name that is not the name of a file in the staging folder: it holds no file of that name, or the name is not one plain name.",
+        next "Put the file in the staging folder under the name, and give that name; no path is taken.";
     STEP_NOT_USABLE = Input, "step_not_usable",
         meaning "A step this driver cannot carry out as the plan wrote it.",
         next "Compile the target again with the version of the web pack that is enabled.";

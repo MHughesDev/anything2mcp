@@ -12,7 +12,10 @@
 //! kept: discovery reads no row, so a read by key has no example.
 
 use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName};
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
+use a2m_files::{
+    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, left_out_sentence,
+    names_a_secret,
+};
 
 use crate::discover::{ColumnFound, TableFound};
 use crate::names::{FOLDER, STATEMENT};
@@ -44,6 +47,40 @@ struct Shaped {
     names: Vec<String>,
     types: Vec<Option<&'static str>>,
     key: Vec<usize>,
+}
+
+/// Whether a column is named as a secret, as the store writes its name or as
+/// the field it becomes (decision 0302).
+fn named_as_secret(column: &str) -> bool {
+    names_a_secret(column) || names_a_secret(&plain_name(column, "c_"))
+}
+
+/// The table as it is drafted: without any column named as a secret, and
+/// the names of those left out, as the fields they would have been. A key
+/// that held such a column is no key, so the draft holds the question of
+/// the key, as it does for a table whose store states none.
+fn without_secrets(table: &TableFound) -> (TableFound, Vec<String>) {
+    let mut kept = table.clone();
+    let left_out: Vec<String> = table
+        .columns
+        .iter()
+        .filter(|column| named_as_secret(&column.name))
+        .map(|column| plain_name(&column.name, "c_"))
+        .collect();
+    if left_out.is_empty() {
+        return (kept, left_out);
+    }
+    if table
+        .columns
+        .iter()
+        .any(|column| column.key_position > 0 && named_as_secret(&column.name))
+    {
+        for column in &mut kept.columns {
+            column.key_position = 0;
+        }
+    }
+    kept.columns.retain(|column| !named_as_secret(&column.name));
+    (kept, left_out)
 }
 
 impl Shaped {
@@ -144,6 +181,14 @@ fn field_type(column: &ColumnFound, store: &str) -> Option<&'static str> {
         Some("date")
     } else if declared == "TIMESTAMP" || declared == "DATETIME" {
         Some("datetime")
+    } else if declared == "TIMESTAMP WITH TIME ZONE" || declared == "TIMESTAMP WITHOUT TIME ZONE" {
+        // A server's moment is read as exact text: a moment with its zone as
+        // the same moment in UTC, to the microsecond, and a wall time as the
+        // figures it holds with no zone added. The built-in `datetime` reads
+        // whole seconds in one fixed form, so it would refuse or round them;
+        // `text` keeps every figure, and a person may give the field a type
+        // with a format and a zone later (field finding 19).
+        Some("text")
     } else {
         None
     }
@@ -177,9 +222,11 @@ impl DraftingRule for TableToStatements {
     }
 
     fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
-        let table: TableFound = serde_json::from_str(finding.found()).map_err(|_| unreadable())?;
+        let found: TableFound = serde_json::from_str(finding.found()).map_err(|_| unreadable())?;
         // A finding of a store this build does not speak to is not drafted.
-        opener(&table.store).ok_or_else(unreadable)?;
+        opener(&found.store).ok_or_else(unreadable)?;
+        // A column named as a secret is no field of the record (decision 0302).
+        let (table, _) = without_secrets(&found);
         let shaped = Shaped::of(&table);
         let (record, names) = (&shaped.record, &shaped.names);
         // The type the store states, or a question where it states none.
@@ -200,13 +247,17 @@ impl DraftingRule for TableToStatements {
             .zip(names)
             .enumerate()
             .map(|(position, (column, name))| {
-                (
-                    name.clone(),
-                    DraftValue::map(vec![
-                        ("column", DraftValue::text(&column.name)),
-                        ("type", type_of(position)),
-                    ]),
-                )
+                let mut field = vec![
+                    ("column", DraftValue::text(&column.name)),
+                    ("type", type_of(position)),
+                ];
+                // A column that takes a null may hold no value, and an
+                // output read from it may be absent (decision 0305). A
+                // column of the key names the row, and is never drafted so.
+                if !column.not_null && column.key_position == 0 {
+                    field.push(("nullable", DraftValue::Bool(true)));
+                }
+                (name.clone(), DraftValue::map(field))
             })
             .collect();
         let keyed = !shaped.key.is_empty();
@@ -294,8 +345,14 @@ impl DraftingRule for TableToReads {
     }
 
     fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
-        let table: TableFound = serde_json::from_str(finding.found()).map_err(|_| unreadable())?;
-        opener(&table.store).ok_or_else(unreadable)?;
+        let found: TableFound = serde_json::from_str(finding.found()).map_err(|_| unreadable())?;
+        opener(&found.store).ok_or_else(unreadable)?;
+        let (table, secrets) = without_secrets(&found);
+        let left_out = if secrets.is_empty() {
+            String::new()
+        } else {
+            left_out_sentence(&secrets)
+        };
         // A tool is named after its target; with none there is no name.
         let Some(target) = cx.target() else {
             return Ok(Vec::new());
@@ -337,20 +394,25 @@ impl DraftingRule for TableToReads {
                 )
             })
             .collect();
+        // A row that is not there is an answer, `found: false`, with every
+        // other output absent (decision 0348).
+        let mut get_outputs: Vec<(String, DraftValue)> = (0..table.columns.len())
+            .filter(|position| !shaped.key.contains(position))
+            .map(|position| field(position, false))
+            .collect();
+        let says_found = !shaped.names.iter().any(|name| name == crate::model::FOUND);
+        if says_found {
+            get_outputs.push((
+                crate::model::FOUND.to_owned(),
+                DraftValue::map(vec![("type", DraftValue::text("boolean"))]),
+            ));
+        }
         let get = DraftValue::map(vec![
             ("operation", DraftValue::text(&get_name)),
             ("effect", DraftValue::text("read")),
             ("key", DraftValue::List(key)),
             ("inputs", DraftValue::Map(inputs)),
-            (
-                "outputs",
-                DraftValue::Map(
-                    (0..table.columns.len())
-                        .filter(|position| !shaped.key.contains(position))
-                        .map(|position| field(position, false))
-                        .collect(),
-                ),
-            ),
+            ("outputs", DraftValue::Map(get_outputs)),
             (
                 "bindings",
                 DraftValue::List(vec![DraftValue::map(vec![
@@ -361,7 +423,7 @@ impl DraftingRule for TableToReads {
             (
                 "description",
                 DraftValue::text(&format!(
-                    "Reads one row of the table `{record}` by its key, inside a read-only transaction. Drafted by rule from the store's catalog; its name is provisional."
+                    "Reads one row of the table `{record}` by its key, inside a read-only transaction. Drafted by rule from the store's catalog; its name is provisional.{left_out}"
                 )),
             ),
         ]);
@@ -397,7 +459,7 @@ impl DraftingRule for TableToReads {
                 (
                     "description",
                     DraftValue::text(&format!(
-                        "Lists the rows of the table `{record}` in the order of its key, as many as the pack's row limit allows, inside a read-only transaction. Drafted by rule from the store's catalog; its name is provisional."
+                        "Lists the rows of the table `{record}` in the order of its key, as many as the pack's row limit allows, inside a read-only transaction. Drafted by rule from the store's catalog; its name is provisional.{left_out}"
                     )),
                 ),
             ]);

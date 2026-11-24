@@ -52,6 +52,32 @@ pub(crate) fn version(
     .transpose()
 }
 
+/// One row of the history of published versions.
+pub(crate) struct VersionRow {
+    pub(crate) version: String,
+    pub(crate) published_by: Option<String>,
+    pub(crate) presence: Option<String>,
+    pub(crate) published_at: Timestamp,
+}
+
+/// Every stored version, oldest first.
+pub(crate) fn versions(tx: &mut Tx<'_>, key: &PolicyKey) -> Result<Vec<VersionRow>, Failure> {
+    let rows = tables(tx, key)?.query(
+        "SELECT version, published_by, presence_check, published_at FROM policy_versions ORDER BY seq",
+        &[],
+    )?;
+    rows.iter()
+        .map(|row| {
+            Ok(VersionRow {
+                version: row.text(0)?.to_owned(),
+                published_by: row.opt_text(1)?.map(str::to_owned),
+                presence: row.opt_text(2)?.map(str::to_owned),
+                published_at: Timestamp::from_unix_millis(row.int(3)?),
+            })
+        })
+        .collect()
+}
+
 /// Stores a version as the newest. Storing the version that is already the
 /// newest changes nothing.
 pub(crate) fn insert_version(

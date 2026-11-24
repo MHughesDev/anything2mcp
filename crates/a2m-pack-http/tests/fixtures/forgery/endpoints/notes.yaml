@@ -1,0 +1,101 @@
+endpoint: note_get
+surface: api
+method: GET
+path: "/api/orders/{order_id}/note"
+auth: none
+effect: read
+headers: {accept: "application/json"}
+responses: {absent: [404]}
+response_schema:
+  type: object
+  required: [order_id, note]
+  properties:
+    order_id: {type: string}
+    note: {type: string}
+---
+endpoint: note_put
+surface: api
+method: PUT
+path: "/api/orders/{order_id}/note"
+auth: none
+effect: write
+headers: {accept: "application/json"}
+anti_forgery:
+  page: "/orders/{order_id}/note"
+  from: {meta: csrf-token}
+  header: X-CSRF-Token
+request_schema:
+  type: object
+  required: [note]
+  properties:
+    note: {type: string}
+responses:
+  ok: [200]
+  refused:
+    - {status: 403, when: {error: forgery_token_invalid}}
+    - {status: 403, when: {error: forgery_token_missing}}
+    - {status: 422, when: {error: invalid}}
+response_schema:
+  type: object
+  required: [order_id, note]
+  properties:
+    order_id: {type: string}
+    note: {type: string}
+---
+endpoint: note_put_field
+surface: api
+method: PUT
+path: "/api/orders/{order_id}/note"
+auth: none
+effect: write
+headers: {accept: "application/json"}
+anti_forgery:
+  page: "/orders/{order_id}/note"
+  from: {input: authenticity_token}
+  field: authenticity_token
+request_schema:
+  type: object
+  required: [note]
+  properties:
+    note: {type: string}
+responses:
+  ok: [200]
+  refused:
+    - {status: 403, when: {error: forgery_token_invalid}}
+    - {status: 403, when: {error: forgery_token_missing}}
+    - {status: 422, when: {error: invalid}}
+response_schema:
+  type: object
+  required: [order_id, note]
+  properties:
+    order_id: {type: string}
+    note: {type: string}
+---
+endpoint: note_put_cookie
+surface: api
+method: PUT
+path: "/api/orders/{order_id}/note"
+auth: none
+effect: write
+headers: {accept: "application/json"}
+anti_forgery:
+  page: "/orders/{order_id}/note"
+  from: {cookie: example_xsrf}
+  header: X-CSRF-Token
+request_schema:
+  type: object
+  required: [note]
+  properties:
+    note: {type: string}
+responses:
+  ok: [200]
+  refused:
+    - {status: 403, when: {error: forgery_token_invalid}}
+    - {status: 403, when: {error: forgery_token_missing}}
+    - {status: 422, when: {error: invalid}}
+response_schema:
+  type: object
+  required: [order_id, note]
+  properties:
+    order_id: {type: string}
+    note: {type: string}

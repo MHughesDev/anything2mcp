@@ -74,12 +74,24 @@ pub fn answers_to(name: &str, step: &Step) -> bool {
     }
 }
 
-/// The name an answer must carry to be a step's.
+/// The name an answer must carry to be a step's, and the name a fixture's
+/// file for the step carries: the last part of the entry the step refers to,
+/// after its last `/`, or, for a step that refers to none, its kind. A file
+/// cannot carry a whole entry such as `surface/tool`, so the name a test
+/// records a save's request under, the name the engine is said to have
+/// sent, and the name a refusal tells a person to write a file under are
+/// all this one (field test 6, finding 40).
 #[must_use]
 pub fn answer_name(step: &Step) -> &str {
-    step.refers_to
-        .as_ref()
-        .map_or_else(|| step.kind.as_str(), |reference| reference.entry.as_str())
+    step.refers_to.as_ref().map_or_else(
+        || step.kind.as_str(),
+        |reference| {
+            reference
+                .entry
+                .rsplit_once('/')
+                .map_or(reference.entry.as_str(), |(_, last)| last)
+        },
+    )
 }
 
 /// The replay of one offline test: its recorded answers, each used once.
@@ -206,5 +218,72 @@ impl Driver for Replay {
 
     fn release<'a>(&'a self, _prepared: Prepared, _poisoned: bool) -> BoxFuture<'a, Cleanup> {
         Box::pin(async move { Cleanup::complete() })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        reason = "a test: a value that cannot be made stops the test"
+    )]
+
+    use std::time::Duration;
+
+    use a2m_core::{
+        FailsAs, FailureClass, FailureCode, PackPayload, PackRef, SectionIndex, StepKind,
+    };
+
+    use super::*;
+    use crate::driver::Deadline;
+
+    fn step(entry: Option<&str>, commits: bool) -> Step {
+        Step {
+            kind: StepKind::fixed("call_tool"),
+            refers_to: entry.map(|entry| PackRef {
+                section: SectionIndex::new(0),
+                entry: entry.to_owned(),
+            }),
+            args: Vec::new(),
+            timeout_ms: 1_000,
+            fails_as: FailsAs {
+                class: FailureClass::Drift,
+                code: FailureCode::new("response_schema_mismatch").unwrap(),
+            },
+            commits,
+            lookup: false,
+            idempotent: false,
+            when: None,
+            payload: PackPayload::none(),
+        }
+    }
+
+    /// Field test 6, finding 40: a save whose entry is `surface/tool` is
+    /// said to have been sent under the name a fixture's file carries, so
+    /// the request recorded in `<tool>.request.json` is the one compared.
+    #[tokio::test]
+    async fn a_save_is_sent_under_the_name_its_fixture_file_carries() {
+        let save = step(Some("orders/orders_update"), true);
+        assert_eq!(answer_name(&save), "orders_update");
+        assert_eq!(answer_name(&step(Some("order_put"), true)), "order_put");
+        assert_eq!(answer_name(&step(None, false)), "call_tool");
+        // Both spellings still answer the step.
+        assert!(answers_to("orders_update", &save));
+        assert!(answers_to("orders/orders_update", &save));
+
+        let replay = Replay::new(vec![RecordedAnswer {
+            name: answer_name(&save).to_owned(),
+            args: None,
+            answer: Recorded::Done(Values::new()),
+            repeats: false,
+        }]);
+        let args = Values::new().with("order_id", "A-100");
+        let input = StepInput::new(&args, Deadline::after(Duration::from_secs(5)));
+        let mut prepared = Prepared::new(());
+        let outcome = replay.act(&mut prepared, &save, &input).await;
+        assert!(matches!(outcome, Ok(StepOutcome::Done(_))));
+        assert_eq!(replay.sent(), vec![("orders_update".to_owned(), args)]);
+        assert_eq!(replay.asked(), vec!["orders_update".to_owned()]);
+        assert!(replay.unused().is_empty());
     }
 }

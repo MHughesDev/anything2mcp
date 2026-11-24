@@ -729,7 +729,12 @@ async fn a_page_request_stops_by_name_at_each_declared_sign_of_expiry_and_reads_
         plan.surfaces[0].address.clone_from(&origin);
         let unknown = Scene::over(stand, plan, &origin);
         let refused = totals(&unknown, &third).await.unwrap_err();
-        assert_eq!(refused.failure.code().as_str(), "step_not_usable", "{sign}");
+        assert_eq!(
+            refused.failure.code().as_str(),
+            "step_not_usable",
+            "{sign}: {:?}",
+            refused.failure
+        );
         assert_eq!(refused.sent, Sent::NotSent);
         unknown.stand.end().await;
     }

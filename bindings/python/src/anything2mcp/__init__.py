@@ -17,8 +17,10 @@ would start one, unless it is given ``start=False``.
 from ._channel import ChannelError, socket_path
 from ._client import LOCAL_API, Client, Error, Response, connect
 from ._binary import binary_path
+from ._providers import ENTRY_POINT_GROUP, provider_site_folders
 
 __all__ = [
+    "ENTRY_POINT_GROUP",
     "LOCAL_API",
     "ChannelError",
     "Client",
@@ -26,5 +28,6 @@ __all__ = [
     "Response",
     "binary_path",
     "connect",
+    "provider_site_folders",
     "socket_path",
 ]

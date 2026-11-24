@@ -562,6 +562,10 @@ pub struct ReadBack {
     pub after: Option<BlobRef>,
     /// The evidence of the read.
     pub evidence: BlobRef,
+    /// The record's outputs as the read-back showed them, kept in place of
+    /// those stored with its `acted` mark, so that a resume hands back what
+    /// the verified record gave. `None` keeps those stored with the mark.
+    pub outputs: Option<BlobRef>,
 }
 
 /// What reading a record in doubt showed (spec section 208, "Resume,
@@ -751,7 +755,9 @@ fn may_move(from: RunState, to: RunState) -> bool {
         ),
         NeedsInput => matches!(to, Running | Stopped | Failed | Cancelled),
         NeedsLogin => matches!(to, Running | Validating | Stopped | Failed | Cancelled),
-        Stopped => matches!(to, Running | Failed | Cancelled),
+        // A stopped run takes a new failure when a later lease ends it
+        // again for another reason, so that it never shows a stale one.
+        Stopped => matches!(to, Running | Stopped | Failed | Cancelled),
         Rejected | Expired | Completed | Failed | Cancelled => false,
     }
 }
@@ -759,11 +765,12 @@ fn may_move(from: RunState, to: RunState) -> bool {
 /// The presence checks that show a person was present, as the policy engine
 /// writes them in `approvals.presence_check`. `not_available` is the one
 /// other word: a machine with no such check.
-const PRESENCE_PROVED: [&str; 5] = [
+const PRESENCE_PROVED: [&str; 6] = [
     "os_prompt",
     "polkit",
     "local_authentication",
     "windows_hello",
+    "field_harness",
     "signed_in",
 ];
 
@@ -1504,7 +1511,16 @@ impl Ledger<'_, '_> {
         why: Option<&Failure>,
     ) -> Result<(), Failure> {
         let run = self.fenced(fence)?;
-        if !may_move(run.state, to) {
+        // A run stopped before anything was planned, such as a write a
+        // drift or an edge block stopped at its preview, goes back to
+        // `validating` when it is resumed, so its records can be planned;
+        // one with a planned record or a stored diff never does (decision
+        // 0381, the state rule).
+        let replans = run.state == RunState::Stopped
+            && to == RunState::Validating
+            && run.diff_hash.is_none()
+            && self.tally(run.id)? == RecordTally::default();
+        if !replans && !may_move(run.state, to) {
             return Err(failure::unexpected(format!(
                 "a run cannot move from `{}` to `{to}`",
                 run.state
@@ -2684,11 +2700,13 @@ impl Ledger<'_, '_> {
             read_back.after.into(),
             read_back.evidence.into(),
             self.tx.now().into(),
+            read_back.outputs.into(),
         ]);
         self.tx.exec(
             "UPDATE run_records
              SET state = 'verified', read_back_hash = ?4, after_ref = ?5, evidence_ref = ?6,
-                 verified_at = ?7, failure_class = NULL, failure_code = NULL
+                 verified_at = ?7, failure_class = NULL, failure_code = NULL,
+                 outputs_ref = COALESCE(?8, outputs_ref)
              WHERE run_id = ?1 AND step_seq = ?2 AND record_seq = ?3",
             &params,
         )?;

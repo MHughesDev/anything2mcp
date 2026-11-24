@@ -957,3 +957,68 @@ async fn the_same_idempotency_key_is_the_same_run_and_the_run_list_shows_it() {
     assert_eq!(world.app.write_count("A-102", "L-320").await.unwrap(), 0);
     world.close().await;
 }
+
+/// Headers a manipulated agent might send to pass as another caller, as a
+/// person, or as another front door.
+const CLAIMS: [(&str, &str); 7] = [
+    ("x-a2m-caller", "sam"),
+    ("x-a2m-principal", "person:sam"),
+    ("x-a2m-door", "command"),
+    ("x-a2m-agent", "false"),
+    ("x-forwarded-user", "sam"),
+    ("x-remote-user", "sam"),
+    ("authorization", "Bearer example-token-for-the-claims-test"),
+];
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_header_cannot_change_the_caller() {
+    // Section 502: the caller is what the mount verified, never what a
+    // request says. With no verified caller, no header makes one; with one,
+    // no header changes who it is or that it is an agent.
+    let world = World::ready().await;
+    let with_claims = |url: String, body: &Json| {
+        let mut request = world
+            .http
+            .post(url)
+            .header("content-type", "application/json")
+            .body(body.to_string());
+        for (name, value) in CLAIMS {
+            request = request.header(name, value);
+        }
+        request
+    };
+    let read = json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}});
+    let (status, body) = world
+        .raw(with_claims(
+            format!("{}/bare/api/v1/actions/tool.call", world.base),
+            &read,
+        ))
+        .await;
+    assert_eq!(status, 401, "{body}");
+    assert_refusal(&body, "policy", "caller_missing");
+    assert!(
+        !body
+            .to_string()
+            .contains("example-token-for-the-claims-test")
+    );
+
+    // Under the verified caller, an agent, a write that claims a person
+    // still rests for the person's approval, and the run is the caller's.
+    let (status, rested) = world
+        .raw(with_claims(
+            format!("{}/api/v1/actions/tool.call", world.base),
+            &write_call(),
+        ))
+        .await;
+    assert_eq!(status, 202, "{rested}");
+    assert_eq!(rested["result"]["status"], "needs_approval", "{rested}");
+    let run = rested["result"]["run_id"].as_str().unwrap().to_owned();
+    let (_, listed) = world.get("/api/v1/runs?tool=example_item_upsert").await;
+    let runs = listed["result"]["runs"].as_array().unwrap();
+    assert!(
+        runs.iter().any(|found| found["run_id"] == run.as_str()),
+        "{listed}"
+    );
+    assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 0);
+    world.close().await;
+}

@@ -10,6 +10,7 @@ surfaces:
     kind: desktop
     program: "/opt/example/bin/example-desk"
     application: example-desk
+    service: org.example.Desk
 environments:
   test:
     kind: test

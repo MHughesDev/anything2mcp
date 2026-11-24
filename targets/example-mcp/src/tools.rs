@@ -170,6 +170,11 @@ fn apply(drift: &Drift, tool: &mut Value) {
                 .unwrap_or(false);
             tool["annotations"]["readOnlyHint"] = json!(!was);
         }
+        Drift::TextRows { tool: t } if *t == name => {
+            if let Some(definition) = tool.as_object_mut() {
+                definition.remove("outputSchema");
+            }
+        }
         Drift::DescriptionChanged { tool: t } if *t == name => {
             let was = tool["description"].as_str().unwrap_or_default();
             tool["description"] = json!(format!("{was} {INSTRUCTION_TEXT}"));
@@ -360,9 +365,48 @@ fn run_listed(
     }
 }
 
+/// A structured result as the `text_rows` drift has a tool answer: JSON as
+/// text with no structured content, one content item for each row of a
+/// list (a result whose one member is a list), the record as one item, and
+/// one empty text for a record the stand does not hold.
+fn as_text_rows(result: &Value) -> Value {
+    let item = |value: &Value| json!({"type": "text", "text": value.to_string()});
+    let content: Vec<Value> = match result.get("structuredContent") {
+        Some(Value::Object(members)) if members.len() == 1 => match members.values().next() {
+            Some(Value::Array(rows)) => rows.iter().map(item).collect(),
+            _ => vec![item(&Value::Object(members.clone()))],
+        },
+        Some(other) => vec![item(other)],
+        None => return result.clone(),
+    };
+    json!({"content": content, "isError": false})
+}
+
 /// Runs a listed tool. A refusal is an error result, and stores nothing.
 pub(crate) fn run(state: &mut State, call: u64, name: &str, args: &Map<String, Value>) -> ToolRun {
-    match run_listed(state, call, name, args) {
+    let text_rows = state
+        .settings
+        .drift
+        .iter()
+        .any(|d| matches!(d, Drift::TextRows { tool } if tool == name));
+    if text_rows && name == "orders_get" {
+        let held = required(args, "order_id")
+            .is_ok_and(|order_id| state.truth.store.orders.contains_key(order_id));
+        if !held {
+            return ToolRun {
+                result: json!({"content": [{"type": "text", "text": ""}], "isError": false}),
+                is_error: false,
+                delay_ms: 0,
+            };
+        }
+    }
+    let ran = run_listed(state, call, name, args);
+    let ran = if text_rows {
+        ran.map(|(result, delay)| (as_text_rows(&result), delay))
+    } else {
+        ran
+    };
+    match ran {
         Ok((result, delay_ms)) => ToolRun {
             result,
             is_error: false,

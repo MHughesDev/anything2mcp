@@ -37,8 +37,17 @@ a2m_core::failure_codes! {
         meaning "A credential would cross plain `http` to an address that is not a loopback address, from a surface that does not accept it. Nothing is sent (decision 0188).",
         next "Reach the server over `https`. For a server on a private network that offers nothing else, the surface may declare `unencrypted_credentials: accepted` in `target.yaml`.";
     PROGRAM_PATH_UNSAFE = Policy, "program_path_unsafe",
-        meaning "A local server program another user could change, or that is a shell, an interpreter, or a script, is not started (decision 0250).",
-        next "Name a program that is itself the server, by its absolute path on a local drive, and give the file and every folder above it to the engine's user or the administrator, with no write access for anyone else.";
+        meaning "A local server program, a launcher, or a server's entry file that another user could change, or a program that is a shell, an interpreter, or a script, is not started (decision 0250).",
+        next "Name a program that is itself the server, or a launcher of the provider's table with the server's entry file, by absolute paths on a local drive, and give each file and every folder above it to the engine's user or the administrator, with no write access for anyone else.";
+    ENTRY_DIGEST_CHANGED = Drift, "entry_digest_changed",
+        meaning "The entry file of a server started through a launcher is not the one its `entry_digest` pins. Nothing is started (decision 0371).",
+        next "Review the installed server's entry file, write the SHA-256 of its bytes under the surface's `entry_digest`, and publish.";
+    PACKAGE_RUNNER_REFUSED = Policy, "package_runner_refused",
+        meaning "The local server program is a package runner, which fetches the code it runs at the moment it starts; nothing the product starts fetches code then (decision 0299). Nothing is started.",
+        next "Install the server's package, then name the launcher of the provider's table as the surface's `program` and the installed entry file as `entry`, each with its digest.";
+    LAUNCHER_NOT_IN_TABLE = Policy, "launcher_not_in_table",
+        meaning "A surface names an entry file, and its program is not a launcher of the provider's closed table of interpreter forms, or is not given that launcher's one form. Nothing is started (decision 0371).",
+        next "Name a launcher of the table as `program`, with the fixed arguments of its form as `launcher_args`, or name a program that is itself the server and no entry file.";
     PRODUCT_HEADER_REFUSED = Policy, "product_header_refused",
         meaning "A session's provider placed a header whose name begins `a2m-`, one of the product's own carriers between its parts, which never goes on the wire. Nothing is sent (decision 0270).",
         next "Sign in to this surface with `upstream_mcp`, or with a provider made for an HTTP service, such as `bearer_static` or `api_key`.";
@@ -247,11 +256,53 @@ pub(crate) fn variable_refused(name: &str, why: &str) -> Failure {
     )
 }
 
-/// Why the provider's check of who may change a program refused the local
-/// server program at `path`. A program that is not there is the contract's
-/// `input`/`program_not_found`, as the supervisor says it; every other
-/// refusal is `policy`/`program_path_unsafe`.
-pub(crate) fn program_refused(why: &a2m_provider::ProgramRefused, path: &str) -> Failure {
+/// The entry file of a server started through a launcher is not the one its
+/// digest pins; `place` says where it was read.
+pub(crate) fn entry_digest_changed(path: &str, place: &str) -> Failure {
+    Failure::new(
+        FailureClass::Drift,
+        ENTRY_DIGEST_CHANGED,
+        format!(
+            "The entry file `{}` of the local server {place} is not the one its `entry_digest` names; nothing was started.",
+            shown_path(path)
+        ),
+        "Review the installed server's entry file, write the SHA-256 of its bytes under the surface's `entry_digest`, and publish.",
+    )
+}
+
+/// The local server program is a package runner.
+pub(crate) fn package_runner_refused(path: &str) -> Failure {
+    Failure::new(
+        FailureClass::Policy,
+        PACKAGE_RUNNER_REFUSED,
+        format!(
+            "The local server program `{}` is a package runner: it fetches the code it runs when it starts, and nothing the product starts fetches code then; nothing was started.",
+            shown_path(path)
+        ),
+        "Install the server's package, then name the launcher of the provider's table as the surface's `program` and the installed entry file as `entry`, each with its digest.",
+    )
+}
+
+/// The program of a surface that names an entry file is not a launcher of
+/// the table, or not in its form; `why` says which.
+pub(crate) fn launcher_not_in_table(path: &str, why: &str) -> Failure {
+    Failure::new(
+        FailureClass::Policy,
+        LAUNCHER_NOT_IN_TABLE,
+        format!(
+            "The local server program `{}` is given an entry file, and {why}; nothing was started.",
+            shown_path(path)
+        ),
+        "Name a launcher of the table as `program`, with the fixed arguments of its form as `launcher_args`, or name a program that is itself the server and no entry file.",
+    )
+}
+
+/// Why the provider's check of who may change a program refused the file
+/// at `path`, named by `noun`: the local server program, the launcher, or
+/// the entry file of a server started through a launcher. A file that is
+/// not there is the contract's `input`/`program_not_found`, as the
+/// supervisor says it; every other refusal is `policy`/`program_path_unsafe`.
+pub(crate) fn file_refused(why: &a2m_provider::ProgramRefused, path: &str, noun: &str) -> Failure {
     use a2m_provider::ProgramRefused;
     let at = shown_path(path);
     let unsafe_path = |what: String, next: &str| {
@@ -267,45 +318,43 @@ pub(crate) fn program_refused(why: &a2m_provider::ProgramRefused, path: &str) ->
         ProgramRefused::Missing => Failure::new(
             FailureClass::Input,
             a2m_provider::codes::PROGRAM_NOT_FOUND,
-            format!(
-                "The local server program `{at}` is not there, is not a file, or cannot be run."
-            ),
+            format!("The {noun} `{at}` is not there, is not a file, or cannot be run."),
             "Install the program at the path its surface declares, or correct the path in `target.yaml`.",
         ),
         ProgramRefused::NotAbsolute => unsafe_path(
-            format!("The local server program `{at}` is not named by an absolute path."),
+            format!("The {noun} `{at}` is not named by an absolute path."),
             "Name the program by its absolute path in `target.yaml`; it is never searched for.",
         ),
         ProgramRefused::Script => unsafe_path(
             format!(
-                "The local server program `{at}` is a shell, an interpreter, a launcher, package runner, container runner, or build tool that runs code its arguments name, a batch file, or a script that one of them would run."
+                "The {noun} `{at}` is a shell, an interpreter, a launcher, package runner, container runner, or build tool that runs code its arguments name, a batch file, or a script that one of them would run."
             ),
-            "Name a program that is itself the server. A server that an interpreter runs from a script is not started yet: the pack pins the program's digest, and nothing would pin the script's.",
+            "Name a program that is itself the server, or, for a server a launcher runs, name a launcher of the provider's table as `program` and the server's installed entry file as `entry`, with `entry_digest` (decision 0371).",
         ),
         ProgramRefused::Writable(what) => unsafe_path(
             format!(
-                "The local server program `{at}` could be replaced by another user: `{}` is theirs to write.",
+                "The {noun} `{at}` could be replaced by another user: `{}` is theirs to write.",
                 place(what)
             ),
             "Give the file and every folder above it to the engine's user or the administrator, with no write access for anyone else.",
         ),
         ProgramRefused::Unreadable(what) => unsafe_path(
             format!(
-                "The local server program `{at}` is not started: who may change `{}` could not be read.",
+                "The {noun} `{at}` is not started: who may change `{}` could not be read.",
                 place(what)
             ),
             "Give the file and every folder above it an access list the engine's user can read, naming only that user and the system's own identities.",
         ),
         ProgramRefused::Link(what) => unsafe_path(
             format!(
-                "The local server program `{at}` is not started: `{}` is a link, which is not followed on this system.",
+                "The {noun} `{at}` is not started: `{}` is a link, which is not followed on this system.",
                 place(what)
             ),
             "Name the program by the path it has with no link on the way.",
         ),
         ProgramRefused::Elsewhere => unsafe_path(
             format!(
-                "The local server program `{at}` is on another machine's share, a device, a drive that is not fixed in this machine, or a drive letter that stands for a folder."
+                "The {noun} `{at}` is on another machine's share, a device, a drive that is not fixed in this machine, or a drive letter that stands for a folder."
             ),
             "Install the program on a local drive and name it by that path.",
         ),

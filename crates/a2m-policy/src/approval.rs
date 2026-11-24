@@ -42,6 +42,10 @@ word! {
         LocalAuthentication => "local_authentication",
         /// The Windows prompt for the user's face, fingerprint, or PIN.
         WindowsHello => "windows_hello",
+        /// A field test's prompt, which reads a line from a pipe only the
+        /// test runner holds. The shipped program never records it
+        /// (decision 0310).
+        FieldHarness => "field_harness",
         /// The person signed in to the console or the approval page.
         SignedIn => "signed_in",
         /// This machine offers no such check.

@@ -15,17 +15,17 @@
 
 use a2m_core::{
     EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef, SectionIndex,
-    Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
+    Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb, WriteEvidence,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
-    ResolvedBinding, Stage, Statement, StepCommits,
+    ResolvedBinding, Stage, Statement, StepChanges, StepCommits,
 };
 
 use crate::codes::{self, shown};
 use crate::model::{
-    GotoStep, InvokeStep, PAYLOAD_FORMAT, ReadItem, ReadStep, Screen, ScreenSection, SetStep,
-    TabKind, WaitStep,
+    CallToolStep, GotoStep, InvokeStep, PAYLOAD_FORMAT, ReadItem, ReadStep, Screen, ScreenSection,
+    SetStep, TabKind, WaitStep,
 };
 use crate::screens::{SCREEN_KIND, WEB_SURFACE, problem};
 
@@ -51,6 +51,9 @@ const DEFAULT_TIMEOUT_MS: u32 = 30_000;
 
 /// The name of the argument of a `set` step.
 pub(crate) const VALUE_ARG: &str = "value";
+/// What the name of a grid field's row key argument starts with, followed by
+/// the field's name.
+pub(crate) const ROW_ARG: &str = "row.";
 /// What the name of a `goto` step's argument starts with.
 pub(crate) const REACH_ARG: &str = "reach.";
 
@@ -69,10 +72,13 @@ impl UiLowering {
             schema: JsonSchema::object()
                 .required("screen", JsonSchema::name())
                 .optional("fields", JsonSchema::map_of(JsonSchema::expression()))
+                .optional("rows", JsonSchema::map_of(JsonSchema::expression()))
                 .optional("action", JsonSchema::name())
                 .optional(
                     "read_back",
-                    JsonSchema::object().required("screen", JsonSchema::name()),
+                    JsonSchema::object()
+                        .required("screen", JsonSchema::name())
+                        .optional("rows", JsonSchema::map_of(JsonSchema::expression())),
                 ),
             verbs: READ_VERBS
                 .iter()
@@ -224,8 +230,9 @@ impl<'a> Lower<'a, '_> {
     /// The `read` step: one value for each output of the operation, from
     /// the screen's field of the same name, or, for a list, from the column
     /// of that name of the screen's table.
-    fn read(&mut self, found: &Found<'_>) -> Step {
+    fn read(&mut self, found: &Found<'_>, binding: &Located<Doc>) -> Step {
         let mut payload = ReadStep::default();
+        let mut args = Vec::new();
         for output in self.cx.operation().outputs() {
             let listed = matches!(output.ty, ValueType::List(_));
             let known = if listed {
@@ -265,6 +272,18 @@ impl<'a> Lower<'a, '_> {
                 output: output.name.clone(),
                 from: output.name.clone(),
             };
+            if !listed
+                && found
+                    .screen
+                    .fields
+                    .get(&output.name)
+                    .is_some_and(|field| field.control == "grid")
+            {
+                match self.row_key(&output.name, found, binding) {
+                    Some(arg) => args.push(arg),
+                    None => continue,
+                }
+            }
             if listed {
                 payload.columns.push(item);
             } else {
@@ -272,8 +291,92 @@ impl<'a> Lower<'a, '_> {
             }
         }
         let mut step = self.step(READ, found, FailsAs::from(&codes::row::LOCATOR_NOT_FOUND));
+        step.args = args;
         step.payload = self.encoded(&payload, found.at);
         step
+    }
+
+    /// The argument that carries the key of the row a grid field is read
+    /// or set in: the expression the binding's `rows` gives under the
+    /// field's name, which must be text or a whole number.
+    fn row_key(
+        &mut self,
+        name: &str,
+        found: &Found<'_>,
+        binding: &Located<Doc>,
+    ) -> Option<StepArg> {
+        let Some(entry) = binding
+            .get("rows")
+            .map(Located::entries)
+            .unwrap_or_default()
+            .iter()
+            .find(|entry| entry.key.value == name)
+        else {
+            self.refuse(
+                "row_missing",
+                Stage::Resolve,
+                &binding.at,
+                format!(
+                    "The field `{name}` of the screen `{}` is a cell of a grid, and the binding does not say which row.",
+                    found.name
+                ),
+                "Add `rows:` with the field's name and an expression for the key of the row, which is the text its first cell shows.",
+            );
+            return None;
+        };
+        let index = match self.cx.expr(&entry.value, None) {
+            Ok(index) => index,
+            Err(wrong) => {
+                self.problems.push(wrong);
+                return None;
+            }
+        };
+        let fits = self
+            .cx
+            .expr_type(index)
+            .is_some_and(|ty| matches!(ty, ValueType::Text | ValueType::Choice | ValueType::Int));
+        if !fits {
+            self.refuse(
+                "value_type",
+                Stage::TypeCheck,
+                &entry.value.at,
+                format!("The key of the row for the field `{name}` is not text, a code, or a whole number."),
+                "Give the key a field type that is one of those.",
+            );
+            return None;
+        }
+        Some(StepArg {
+            name: format!("{ROW_ARG}{name}"),
+            value: index,
+        })
+    }
+
+    /// A `rows` entry that names a field that is not a grid cell, or none.
+    fn stray_rows(&mut self, found: &Found<'_>, binding: &Located<Doc>) {
+        for entry in binding
+            .get("rows")
+            .map(Located::entries)
+            .unwrap_or_default()
+        {
+            let grid = found
+                .screen
+                .fields
+                .get(&entry.key.value)
+                .is_some_and(|field| field.control == "grid");
+            if !grid {
+                self.refuse(
+                    "rows_not_fitting",
+                    Stage::Resolve,
+                    &entry.key.at,
+                    format!(
+                        "`rows` names `{}`, which is not a `grid` field of the screen `{}`.",
+                        shown(&entry.key.value),
+                        found.name
+                    ),
+                    "Name only the grid cells a binding sets or reads.",
+                );
+            }
+        }
     }
 
     /// One `set` step for each entry of the binding's `fields`, in the
@@ -308,7 +411,7 @@ impl<'a> Lower<'a, '_> {
                 }
             };
             let fits = self.cx.expr_type(index).is_some_and(|ty| {
-                if field.control == "checkbox" {
+                if field.control == "checkbox" || field.control == "toggle" {
                     ty == ValueType::Bool
                 } else {
                     matches!(
@@ -323,7 +426,7 @@ impl<'a> Lower<'a, '_> {
                     Stage::TypeCheck,
                     &entry.value.at,
                     format!(
-                        "The value for the field `{name}` cannot be given to a `{}` control: a `checkbox` takes a truth value, and every other control this version operates takes text, a code, a whole number, or an exact number.",
+                        "The value for the field `{name}` cannot be given to a `{}` control: a `checkbox` and a `toggle` take a truth value, and every other control takes text, a code, a whole number, or an exact number.",
                         shown(&field.control)
                     ),
                     "Give a value of such a type. Formatting a date or a quantity for a control is not built yet.",
@@ -334,6 +437,12 @@ impl<'a> Lower<'a, '_> {
                 name: VALUE_ARG.to_owned(),
                 value: index,
             }];
+            if field.control == "grid" {
+                match self.row_key(name, found, binding) {
+                    Some(arg) => step.args.push(arg),
+                    None => continue,
+                }
+            }
             step.payload = self.encoded(
                 &SetStep {
                     field: name.clone(),
@@ -437,6 +546,17 @@ impl Lowering for UiLowering {
             StepCommits::AsDeclared
         } else {
             StepCommits::Never
+        }
+    }
+
+    /// A `goto`, `wait`, or `read` only looks at a page. A `set` types into
+    /// one and an `invoke` presses one of its actions, and either can change
+    /// the system whatever the screen says, so a read holds neither.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == SET || *kind == INVOKE {
+            StepChanges::Can
+        } else {
+            StepChanges::Never
         }
     }
 
@@ -551,16 +671,18 @@ impl Lowering for UiLowering {
             // A read of one record may find none, when the screen declares
             // how that looks; a list answers with the rows there are.
             let lookup = binding.verb.as_str() == "read" && found.screen.can_be_absent();
+            lower.stray_rows(&found, binding.doc);
             let mut steps = vec![
                 lower.goto(&found, TabKind::Observe),
                 lower.wait(&found, false),
-                lower.read(&found),
+                lower.read(&found, binding.doc),
             ];
             for step in &mut steps {
                 step.lookup = lookup;
             }
             lowered.act = steps;
         } else {
+            lower.stray_rows(&found, binding.doc);
             let mut act = vec![lower.goto(&found, TabKind::Act), lower.wait(&found, true)];
             act.extend(lower.sets(&found, binding.doc));
             act.extend(lower.invoke(&found, binding.doc));
@@ -583,10 +705,11 @@ impl Lowering for UiLowering {
                 // The read-back is a new visit, in a tab that cannot
                 // write: it, and the preview and the freshness check that
                 // run it on their own, are reads.
+                lower.stray_rows(&reader, read_back);
                 let mut steps = vec![
                     lower.goto(&reader, TabKind::Observe),
                     lower.wait(&reader, false),
-                    lower.read(&reader),
+                    lower.read(&reader, read_back),
                 ];
                 for step in &mut steps {
                     step.lookup = true;
@@ -596,6 +719,284 @@ impl Lowering for UiLowering {
         }
         if lower.problems.is_empty() {
             Ok(lowered)
+        } else {
+            Err(lower.problems)
+        }
+    }
+}
+
+/// The step that calls a tool the page registered.
+pub const CALL_TOOL: StepKind = StepKind::fixed("call_tool");
+/// What the name of a tool argument's step argument starts with.
+pub(crate) const TOOL_ARG: &str = "arg.";
+
+/// The lowering of the `site_tools` mode: one binding into `goto` in an
+/// acting tab, `wait` for the screen it names, and `call_tool`, the commit
+/// point. A tool runs the page's own script, so the binding is held to the
+/// least effect that cannot be taken back (decision 0359, the `site_tools`
+/// record): the page's hints are its own claims and are never evidence.
+pub(crate) struct SiteToolsLowering {
+    mode: Mode,
+    schema: JsonSchema,
+    verbs: Vec<Verb>,
+    step_kinds: Vec<StepKind>,
+}
+
+impl SiteToolsLowering {
+    pub(crate) fn new(mode: Mode) -> Self {
+        Self {
+            mode,
+            schema: JsonSchema::object()
+                .required("screen", JsonSchema::name())
+                .required("tool", JsonSchema::text())
+                .required("digest", JsonSchema::text())
+                .optional("args", JsonSchema::map_of(JsonSchema::expression()))
+                .optional("result", JsonSchema::name()),
+            verbs: ["call", "submit"]
+                .iter()
+                .map(|verb| Verb::fixed(verb))
+                .collect(),
+            step_kinds: vec![GOTO, WAIT, CALL_TOOL],
+        }
+    }
+}
+
+impl Lower<'_, '_> {
+    /// The `call_tool` step of a binding.
+    fn call_tool(&mut self, found: &Found<'_>, binding: &Located<Doc>) -> Option<Step> {
+        let tool = binding.get("tool")?.as_text()?.to_owned();
+        let digest_at = binding.get("digest")?;
+        let digest = digest_at.as_text()?.to_owned();
+        if digest.len() != 64
+            || !digest
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            self.refuse(
+                "digest_invalid",
+                Stage::Resolve,
+                &digest_at.at,
+                "The `digest` of a tool is 64 lowercase hexadecimal characters.".to_owned(),
+                "Copy the digest the engine gives for the tool the page offers.",
+            );
+            return None;
+        }
+        let mut args = Vec::new();
+        let mut names = Vec::new();
+        for entry in binding
+            .get("args")
+            .map(Located::entries)
+            .unwrap_or_default()
+        {
+            let name = entry.key.value.clone();
+            let index = match self.cx.expr(&entry.value, None) {
+                Ok(index) => index,
+                Err(wrong) => {
+                    self.problems.push(wrong);
+                    continue;
+                }
+            };
+            let fits = self.cx.expr_type(index).is_some_and(|ty| {
+                matches!(
+                    ty,
+                    ValueType::Text
+                        | ValueType::Choice
+                        | ValueType::Int
+                        | ValueType::Decimal
+                        | ValueType::Bool
+                )
+            });
+            if !fits {
+                self.refuse(
+                    "value_type",
+                    Stage::TypeCheck,
+                    &entry.value.at,
+                    format!(
+                        "The argument `{}` is not text, a code, a number, or a truth value.",
+                        shown(&name)
+                    ),
+                    "Give the argument a value of one of those types.",
+                );
+                continue;
+            }
+            args.push(StepArg {
+                name: format!("{TOOL_ARG}{name}"),
+                value: index,
+            });
+            names.push(name);
+        }
+        let result = binding
+            .get("result")
+            .and_then(Located::as_text)
+            .map(str::to_owned);
+        if let Some(result) = &result
+            && !self
+                .cx
+                .operation()
+                .outputs()
+                .iter()
+                .any(|output| &output.name == result)
+        {
+            self.refuse(
+                "unknown_output",
+                Stage::Resolve,
+                &binding.at,
+                format!(
+                    "The `result` names the output `{}`, which the operation does not have.",
+                    shown(result)
+                ),
+                "Name an output of the operation, whose field type is untrusted text.",
+            );
+            return None;
+        }
+        let mut step = self.step(
+            CALL_TOOL,
+            found,
+            FailsAs::from(&a2m_provider::codes::row::NO_CONFIRMATION),
+        );
+        step.args = args;
+        step.commits = true;
+        step.payload = self.encoded(
+            &CallToolStep {
+                tool,
+                digest,
+                args: names,
+                result,
+            },
+            &binding.at,
+        );
+        Some(step)
+    }
+}
+
+impl Lowering for SiteToolsLowering {
+    fn mode(&self) -> Mode {
+        self.mode.clone()
+    }
+
+    /// A call sends to the page's own origin, as the page's script does
+    /// whatever it does; the browser holds the tab to the origins declared.
+    fn statement(
+        &self,
+        _binding: &ResolvedBinding<'_>,
+        _lowered: &Lowered,
+        _cx: &LowerContext<'_>,
+    ) -> Statement {
+        web_statement()
+    }
+
+    fn verbs(&self) -> &[Verb] {
+        &self.verbs
+    }
+
+    fn reads(&self) -> &[(FileKindName, SurfaceKind)] {
+        &[]
+    }
+
+    fn step_kinds(&self) -> &[StepKind] {
+        &self.step_kinds
+    }
+
+    /// The call is the commit point, and the only step that saves.
+    fn commits(&self, kind: &StepKind) -> StepCommits {
+        if *kind == CALL_TOOL {
+            StepCommits::Always
+        } else {
+            StepCommits::Never
+        }
+    }
+
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == CALL_TOOL {
+            StepChanges::Can
+        } else {
+            StepChanges::Never
+        }
+    }
+
+    /// What a page's own script does is not known, and the page's hint that
+    /// a tool only reads is its own word: the least effect is the one that
+    /// cannot be taken back.
+    fn least_effect(&self, _binding: &ResolvedBinding<'_>) -> EffectClass {
+        EffectClass::Irreversible
+    }
+
+    fn binding_schema(&self) -> &JsonSchema {
+        &self.schema
+    }
+
+    /// A call of a page's tool has nothing to read back: what the page
+    /// says it did is its own word, so the evidence is the page's
+    /// acknowledgement, the operation is held to `irreversible`, and the
+    /// engine ends its record acted, never verified.
+    fn evidence(&self, _binding: &ResolvedBinding<'_>, _lowered: &Lowered) -> WriteEvidence {
+        WriteEvidence::Acknowledged
+    }
+
+    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+        match strategy {
+            IdentityStrategy::None => Possible::Yes,
+            _ => Possible::No(
+                "a call of a page's tool names no read of the record it changes, so no identity is known."
+                    .to_owned(),
+            ),
+        }
+    }
+
+    fn lower(
+        &self,
+        binding: &ResolvedBinding<'_>,
+        cx: &LowerContext<'_>,
+    ) -> Result<Lowered, Diagnostics> {
+        let mut lower = Lower {
+            cx,
+            section: None,
+            problems: Diagnostics::new(),
+        };
+        if let Some((index, section)) = cx.section(&SCREEN_KIND, &WEB_SURFACE) {
+            let decoded = if section.format == PAYLOAD_FORMAT {
+                section.payload.decode::<ScreenSection>()
+            } else {
+                Err(codes::row::STEP_NOT_USABLE.failure(
+                    "The screens were compiled in another format.",
+                    "Compile the target again.",
+                ))
+            };
+            match decoded {
+                Ok(decoded) => lower.section = Some((index, decoded)),
+                Err(failure) => lower.refuse(
+                    "not_encodable",
+                    Stage::Lower,
+                    &binding.doc.at,
+                    failure.message().to_owned(),
+                    "Report this to the web pack's author.",
+                ),
+            }
+        }
+        let Some(found) = lower.screen(binding.doc) else {
+            return Err(lower.problems);
+        };
+        let surface = SurfaceName::new(&found.screen.surface).map_err(|_| {
+            Diagnostics::from(problem(
+                "unknown_screen",
+                Stage::Resolve,
+                found.at,
+                "The screen's surface has no well-formed name.",
+                "Name a surface the target declares.",
+            ))
+        })?;
+        let mut act = vec![lower.goto(&found, TabKind::Act), lower.wait(&found, false)];
+        act.extend(lower.call_tool(&found, binding.doc));
+        if lower.problems.is_empty() {
+            Ok(Lowered {
+                surface,
+                act,
+                confirm: Vec::new(),
+                read_back: Vec::new(),
+                lookup: Vec::new(),
+                settle_ms: 0,
+                prefer_response: false,
+            })
         } else {
             Err(lower.problems)
         }

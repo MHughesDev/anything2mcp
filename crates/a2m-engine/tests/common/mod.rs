@@ -10,6 +10,7 @@
     reason = "each test binary uses some of these helpers and not others"
 )]
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -187,6 +188,10 @@ class = "drift"
 code = "example_shape_changed"
 
 [[failure_codes]]
+class = "drift"
+code = "example_screen_changed"
+
+[[failure_codes]]
 class = "unknown_variant"
 code = "example_unexpected"
 
@@ -218,6 +223,10 @@ code = "example_not_covered"
 class = "unknown_variant"
 code = "example_nothing_recorded"
 
+[[failure_codes]]
+class = "edge_blocked"
+code = "example_held_at_edge"
+
 [effects]
 network = "surfaces"
 sessions = ["json_app"]
@@ -241,8 +250,18 @@ pub struct Hooks {
     pub fail_unsent: AtomicBool,
     /// Every step of the first mode fails as drift.
     pub first_mode_drifts: AtomicBool,
+    /// The layout the test application's screens show, once a test has
+    /// changed it on purpose: a step that refers to a screen the plan
+    /// models with another layout finds no element its model names, and
+    /// fails as drift with nothing sent (package 9.1). `None`: every
+    /// screen looks as its model says.
+    pub screen_shows: Mutex<Option<String>>,
     /// Every step is refused as it would be when the session has ended.
     pub session_ended: AtomicBool,
+    /// The driver's health says every surface is unavailable, with this
+    /// code, as a driver does that holds an origin off after its edge
+    /// refused a visit.
+    pub unavailable: Mutex<Option<&'static str>>,
     /// The posture each `prepare` was given.
     pub postures: Mutex<Vec<String>>,
     /// A step of this kind asks, before it acts, whether another record
@@ -282,6 +301,11 @@ pub struct Hooks {
     pub late: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// A read of an order says how it was done, and captures the answer.
     pub tells_acting: AtomicBool,
+    /// A read of an order also reads the application's hand-off of it and
+    /// answers the hand-off's `client_secret` as the customer: the
+    /// application's own answer carries a value a person registered as a
+    /// secret.
+    pub echoes_handoff: AtomicBool,
     /// What the system says with each failure it answers with.
     pub says: Mutex<Option<String>>,
     /// The project folder and the destinations each `prepare` was given.
@@ -371,6 +395,30 @@ struct AppState {
     http: reqwest::Client,
     /// The posture the context was prepared in.
     posture: Posture,
+    /// The layout each screen of the plan is modelled with, by its section
+    /// and its name: a section of the kind `screen` maps each screen's name
+    /// to its layout.
+    screens: BTreeMap<(usize, String), String>,
+}
+
+/// The layout of every screen the plan models, from its sections of the
+/// kind `screen`.
+fn modelled_screens(plan: &Plan) -> BTreeMap<(usize, String), String> {
+    let mut screens = BTreeMap::new();
+    for (at, section) in plan.packs.iter().enumerate() {
+        if section.kind.as_str() != "screen" {
+            continue;
+        }
+        let Ok(models) = section.payload.decode::<Values>() else {
+            continue;
+        };
+        for (name, layout) in models.iter() {
+            if let Some(layout) = layout.as_text() {
+                screens.insert((at, name.to_owned()), layout.to_owned());
+            }
+        }
+    }
+    screens
 }
 
 impl AppState {
@@ -568,6 +616,20 @@ impl AppDriver {
                     "Sign in again.",
                 )));
             }
+            let shown = hooks.screen_shows.lock().unwrap().clone();
+            if let (Some(shown), Some(reference), Some(state)) =
+                (shown, step.refers_to.as_ref(), prepared.state::<AppState>())
+                && state
+                    .screens
+                    .get(&(reference.section.get(), reference.entry.clone()))
+                    .is_some_and(|modelled| *modelled != shown)
+            {
+                return Err(StepFailure::not_sent(failure(
+                    FailureClass::Drift,
+                    "example_screen_changed",
+                    "The screen no longer shows what its model names.",
+                )));
+            }
             if hooks.first_mode_drifts.load(Ordering::SeqCst) && self.mode.as_str() == FIRST_MODE {
                 return Err(StepFailure::answered(failure(
                     FailureClass::Drift,
@@ -602,6 +664,13 @@ impl AppDriver {
                         )));
                     }
                     let lines = body["items"].as_array().map_or(0, Vec::len);
+                    let mut body = body;
+                    if hooks.echoes_handoff.load(Ordering::SeqCst) {
+                        let (_, handoff) = self
+                            .get(state, &format!("/api/orders/{order}/handoff"))
+                            .await?;
+                        body["customer"] = handoff["client_secret"].clone();
+                    }
                     let read = hooks.reads.fetch_add(1, Ordering::SeqCst);
                     let captures = if hooks.tells_acting.load(Ordering::SeqCst) {
                         vec![
@@ -1035,6 +1104,7 @@ impl Driver for AppDriver {
                     .build()
                     .unwrap(),
                 posture: cx.posture,
+                screens: modelled_screens(cx.plan),
             }))
         })
     }
@@ -1084,7 +1154,10 @@ impl Driver for AppDriver {
     }
 
     fn health(&self, _surface: &SurfaceRef) -> DriverHealth {
-        DriverHealth::Ready
+        match *self.hooks.unavailable.lock().unwrap() {
+            Some(code) => DriverHealth::Unavailable(FailureCode::new(code).unwrap()),
+            None => DriverHealth::Ready,
+        }
     }
 
     fn release<'a>(&'a self, _prepared: Prepared, _poisoned: bool) -> BoxFuture<'a, Cleanup> {
@@ -1336,6 +1409,7 @@ fn input(name: &str, field_type: u32, ty: ValueType, required: bool) -> InputPla
         required,
         default: None,
         description: String::new(),
+        precondition: false,
     }
 }
 
@@ -1346,6 +1420,7 @@ fn tool(name: &OperationName, runs: ToolRuns) -> ToolPlan {
         module: None,
         title: name.to_string(),
         description: String::new(),
+        description_by: a2m_core::DescriptionBy::Builder,
         input_schema: CanonicalJson::none(),
         output_schema: CanonicalJson::none(),
         annotations: ToolAnnotations {
@@ -1381,6 +1456,44 @@ pub fn sheet(rows: &[(&str, &str, &str, &str)]) -> Vec<u8> {
         text.push_str(&format!("{code},{description},{quantity},{length}\n"));
     }
     text.into_bytes()
+}
+
+/// The entry of the screen both the read of an order and the write of a
+/// line item go through.
+pub const SCREEN: &str = "order_screen";
+
+/// A pack section of screens, as a pack would compile one, and every step
+/// of the read of an order and of the first write of a line item referring
+/// to the one screen in it. `layout` stands for what the screen model
+/// says of the screen: a repair changes it.
+pub fn screens(plan: &mut Plan, layout: &str) {
+    let section = a2m_core::SectionIndex::new(u32::try_from(plan.packs.len()).unwrap());
+    plan.packs.push(a2m_core::PackSection {
+        pack: "example_app".to_owned(),
+        kind: a2m_core::FileKindName::new("screen").unwrap(),
+        surface_kind: SurfaceKind::new("json_app").unwrap(),
+        format: 1,
+        payload: PackPayload::encode(&Values::new().with(SCREEN, layout)).unwrap(),
+    });
+    for operation in &mut plan.operations {
+        if ![ORDER_GET, ITEM_UPSERT].contains(&operation.name.as_str()) {
+            continue;
+        }
+        for binding in &mut operation.bindings {
+            for step in binding
+                .act
+                .iter_mut()
+                .chain(&mut binding.confirm)
+                .chain(&mut binding.read_back)
+                .chain(&mut binding.lookup)
+            {
+                step.refers_to = Some(a2m_core::PackRef {
+                    section,
+                    entry: SCREEN.to_owned(),
+                });
+            }
+        }
+    }
 }
 
 /// The plan of the imaginary `example` target, over the test application
@@ -1537,21 +1650,25 @@ pub fn plan(address: &str) -> Plan {
                 name: "order_id".to_owned(),
                 ty: ValueType::Text,
                 field_type: Some(FieldTypeIndex::new(identifier)),
+                may_be_absent: false,
             },
             OutputPlan {
                 name: "customer".to_owned(),
                 ty: ValueType::Text,
                 field_type: Some(FieldTypeIndex::new(free_text)),
+                may_be_absent: false,
             },
             OutputPlan {
                 name: "status".to_owned(),
                 ty: ValueType::Text,
                 field_type: Some(FieldTypeIndex::new(identifier)),
+                may_be_absent: false,
             },
             OutputPlan {
                 name: "lines".to_owned(),
                 ty: ValueType::Int,
                 field_type: None,
+                may_be_absent: false,
             },
         ]
     };
@@ -1591,6 +1708,7 @@ pub fn plan(address: &str) -> Plan {
             name: "in_stock".to_owned(),
             ty: ValueType::Int,
             field_type: None,
+            may_be_absent: false,
         }],
         identity: IdentityPlan {
             strategy: IdentityStrategy::Natural,
@@ -1626,6 +1744,7 @@ pub fn plan(address: &str) -> Plan {
                 name: "version".to_owned(),
                 ty: ValueType::Int,
                 field_type: None,
+                may_be_absent: false,
             }],
             identity: IdentityPlan {
                 strategy: IdentityStrategy::Composite,
@@ -1670,11 +1789,13 @@ pub fn plan(address: &str) -> Plan {
                 name: "item_code".to_owned(),
                 ty: ValueType::Text,
                 field_type: Some(FieldTypeIndex::new(identifier)),
+                may_be_absent: false,
             },
             OutputPlan {
                 name: "version".to_owned(),
                 ty: ValueType::Int,
                 field_type: None,
+                may_be_absent: false,
             },
         ]
     };
@@ -2117,6 +2238,17 @@ pub struct Faults {
     pub outputs_refused: AtomicBool,
     /// The call of this name never answers.
     pub hangs_on: Mutex<Option<&'static str>>,
+    /// When `abort_armed` is set, the calls to `Control` answered before
+    /// the next one never answers, and [`Faults::aborted`] is notified: the
+    /// test then drops the job's future, as a process killed at that point
+    /// would leave it.
+    pub abort_after: AtomicU32,
+    /// Whether `abort_after` applies.
+    pub abort_armed: AtomicBool,
+    /// The calls to `Control` made since the count was last reset.
+    pub calls: AtomicU32,
+    /// Notified when the call after `abort_after` is held.
+    pub aborted: tokio::sync::Notify,
 }
 
 pub struct StoreControl {
@@ -2198,6 +2330,18 @@ impl StoreControl {
     /// else to do, the runtime moves it straight on to the engine's limit.
     /// The clock runs again when the engine gives the call up. A test's
     /// runtime runs on one thread, which is what lets a test stop its clock.
+    /// Counts one call to `Control`. Once `abort_after` calls have been
+    /// answered, with the abort armed, this one never answers.
+    async fn called(&self) {
+        let made = self.faults.calls.fetch_add(1, Ordering::SeqCst);
+        if self.faults.abort_armed.load(Ordering::SeqCst)
+            && made >= self.faults.abort_after.load(Ordering::SeqCst)
+        {
+            self.faults.aborted.notify_one();
+            std::future::pending::<()>().await;
+        }
+    }
+
     async fn hang(&self, call: &'static str) {
         let hangs = *self.faults.hangs_on.lock().unwrap() == Some(call);
         if hangs {
@@ -2249,11 +2393,15 @@ impl StoreControl {
 
 impl Control for StoreControl {
     fn plan<'a>(&'a self, _hash: &'a Digest) -> BoxFuture<'a, Result<Arc<Plan>, Failure>> {
-        Box::pin(async move { Ok(Arc::clone(&self.plan)) })
+        Box::pin(async move {
+            self.called().await;
+            Ok(Arc::clone(&self.plan))
+        })
     }
 
     fn decide<'a>(&'a self, question: &'a GuardQuestion) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             self.hang("decide").await;
             self.questions.lock().unwrap().push(question.clone());
             if self.faults.denied.load(Ordering::SeqCst) {
@@ -2272,6 +2420,7 @@ impl Control for StoreControl {
         want: &'a SessionWant,
     ) -> BoxFuture<'a, Result<SessionLease, Failure>> {
         Box::pin(async move {
+            self.called().await;
             self.wants.lock().unwrap().push(want.clone());
             // No test signs a person in, so every lease is refused as the
             // keeper refuses one for a session that needs a person.
@@ -2290,6 +2439,7 @@ impl Control for StoreControl {
         _sign: ExpirySign,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
+            self.called().await;
             self.expiry_reports.fetch_add(1, Ordering::SeqCst);
         })
     }
@@ -2299,11 +2449,15 @@ impl Control for StoreControl {
         _surface: &'a SurfaceName,
         want: u32,
     ) -> BoxFuture<'a, Result<u32, Failure>> {
-        Box::pin(async move { Ok(want) })
+        Box::pin(async move {
+            self.called().await;
+            Ok(want)
+        })
     }
 
     fn store_preview<'a>(&'a self, preview: &'a Preview) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             let fence = self.fence();
             let preview = preview.clone();
             self.hooks.note("store_preview");
@@ -2319,6 +2473,7 @@ impl Control for StoreControl {
 
     fn approval<'a>(&'a self, _diff: &'a Digest) -> BoxFuture<'a, Result<Clearance, Failure>> {
         Box::pin(async move {
+            self.called().await;
             let fence = self.fence();
             let Some(approval) = *self.approval.lock().unwrap() else {
                 return Ok(Clearance::Waits);
@@ -2345,6 +2500,7 @@ impl Control for StoreControl {
 
     fn lock<'a>(&'a self, record: RecordRef) -> BoxFuture<'a, Result<LockHeld, Failure>> {
         Box::pin(async move {
+            self.called().await;
             let fence = self.fence();
             self.hooks.note("lock");
             self.store
@@ -2360,6 +2516,7 @@ impl Control for StoreControl {
         intents: Vec<RecordIntent>,
     ) -> BoxFuture<'a, Result<Vec<IntentToken>, Failure>> {
         Box::pin(async move {
+            self.called().await;
             self.hang("intend").await;
             if self.faults.intend_refused.swap(false, Ordering::SeqCst) {
                 return Err(failure(
@@ -2403,6 +2560,7 @@ impl Control for StoreControl {
         acted: Acted,
     ) -> BoxFuture<'a, Result<ActedToken, Failure>> {
         Box::pin(async move {
+            self.called().await;
             self.sent.store(true, Ordering::SeqCst);
             self.hang("acted").await;
             if self.faults.acted_refused.load(Ordering::SeqCst) {
@@ -2427,6 +2585,7 @@ impl Control for StoreControl {
         read_back: ReadBack,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             if self.faults.verified_refused.load(Ordering::SeqCst) {
                 return Err(failure(
                     FailureClass::Busy,
@@ -2475,6 +2634,7 @@ impl Control for StoreControl {
         evidence: Option<BlobRef>,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             let fence = self.fence();
             let why = why.clone();
             self.hooks.note(format!("failed:{}", why.class()));
@@ -2492,6 +2652,7 @@ impl Control for StoreControl {
         seen: Reconciled,
     ) -> BoxFuture<'a, Result<Settled, Failure>> {
         Box::pin(async move {
+            self.called().await;
             let fence = self.fence();
             let settled = self
                 .store
@@ -2506,6 +2667,7 @@ impl Control for StoreControl {
 
     fn send<'a>(&'a self, event: EngineEvent) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             let fence = self.fence();
             match &event {
                 EngineEvent::Moved(to) => {
@@ -2556,6 +2718,7 @@ impl Control for StoreControl {
 
     fn evidence<'a>(&'a self, blob: Evidence) -> BoxFuture<'a, Result<BlobRef, Failure>> {
         Box::pin(async move {
+            self.called().await;
             if self.faults.evidence_down.load(Ordering::SeqCst) {
                 return Err(failure(
                     FailureClass::Busy,
@@ -2602,6 +2765,7 @@ impl Control for StoreControl {
 
     fn keep_capture<'a>(&'a self, capture: KeptCapture) -> BoxFuture<'a, Result<BlobRef, Failure>> {
         Box::pin(async move {
+            self.called().await;
             if !self.keeps_captures.load(Ordering::SeqCst) {
                 return Err(failure(
                     FailureClass::Busy,
@@ -2632,6 +2796,7 @@ impl Control for StoreControl {
         evidence: Option<BlobRef>,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             if !self.keeps_acknowledgements.load(Ordering::SeqCst) {
                 return Err(failure(
                     FailureClass::Busy,
@@ -2685,6 +2850,7 @@ impl Control for StoreControl {
         want: u32,
     ) -> BoxFuture<'a, Result<bool, Failure>> {
         Box::pin(async move {
+            self.called().await;
             if self.shadow_rate_refused.load(Ordering::SeqCst) {
                 return Ok(false);
             }
@@ -2698,6 +2864,7 @@ impl Control for StoreControl {
         compared: a2m_engine::ShadowCompared,
     ) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
+            self.called().await;
             self.hooks.note("shadow");
             self.shadows.lock().unwrap().push(compared.clone());
             // As the action registry's control plane does: the ledger keeps
@@ -2759,6 +2926,9 @@ pub struct Scene {
     pub environment: Mutex<Option<Environment>>,
     /// The vault whose redactor the engine and the registry were given.
     pub vault: Arc<Vault>,
+    /// The engine's telemetry, as the registry was given it.
+    pub telemetry: a2m_telemetry::Telemetry,
+    logs: PathBuf,
     runs: AtomicU64,
     _folder: Folder,
 }
@@ -2791,6 +2961,17 @@ impl Scene {
         change: impl FnOnce(&mut Plan),
         settings: impl FnOnce(&mut EngineSettings),
     ) -> Self {
+        Self::with_packs(tool, change, settings, |_, _| {}).await
+    }
+
+    /// A scene whose registry holds more packs than the test pack: `more`
+    /// adds them to the builder, and is given the redactor of the vault.
+    pub async fn with_packs(
+        tool: &str,
+        change: impl FnOnce(&mut Plan),
+        settings: impl FnOnce(&mut EngineSettings),
+        more: impl FnOnce(&mut RegistryBuilder, &Arc<dyn a2m_core::Redact>),
+    ) -> Self {
         let app = TestApp::start().await.unwrap();
         let folder = Folder::new("scene");
         let hooks = Arc::new(Hooks::default());
@@ -2799,16 +2980,14 @@ impl Scene {
         std::fs::create_dir_all(&logs).unwrap();
         let (store, vault) = open_store(&folder).await;
         let redact: Arc<dyn a2m_core::Redact> = vault.redactor();
+        let telemetry =
+            a2m_telemetry::start(&TelemetrySettings::default(), Arc::clone(&redact), &logs)
+                .unwrap();
         let host = HostServices {
             supervisor: Supervisor::new(SupervisorLimits::default()),
             roots: Roots::none(),
             redact: Arc::clone(&redact),
-            telemetry: a2m_telemetry::start(
-                &TelemetrySettings::default(),
-                Arc::clone(&redact),
-                &logs,
-            )
-            .unwrap(),
+            telemetry: telemetry.clone(),
         };
         let pack = AppPack {
             hooks: Arc::clone(&hooks),
@@ -2816,6 +2995,7 @@ impl Scene {
         };
         let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
         builder.add_pack(&pack);
+        more(&mut builder, &redact);
         let (registry, problems) = builder.build();
         assert!(problems.is_empty(), "{problems:?}");
         let registry: Arc<Registry> = Arc::new(registry);
@@ -2920,6 +3100,8 @@ impl Scene {
             source: Mutex::new(None),
             environment: Mutex::new(None),
             vault,
+            telemetry,
+            logs,
             runs: AtomicU64::new(0),
             _folder: folder,
         }
@@ -3189,6 +3371,19 @@ impl Scene {
             .into_iter()
             .filter(|entry| kinds.contains(&entry.as_str()))
             .collect()
+    }
+
+    /// Every line the engine logged to file, and every line it holds in
+    /// memory, as one text.
+    pub fn logged(&self) -> String {
+        let mut text = self.telemetry.log_lines().join("\n");
+        for entry in std::fs::read_dir(&self.logs).unwrap().flatten() {
+            text.push('\n');
+            text.push_str(&String::from_utf8_lossy(
+                &std::fs::read(entry.path()).unwrap(),
+            ));
+        }
+        text
     }
 
     pub fn last_result(&self) -> Values {

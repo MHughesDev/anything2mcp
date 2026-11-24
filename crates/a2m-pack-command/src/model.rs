@@ -185,6 +185,18 @@ pub struct Command {
     pub output: Output,
     /// The output field that holds the key the program assigned.
     pub assigns: Option<String>,
+    /// Whether a command that printed nothing but white space found no
+    /// record, as a status the program does not use would say it
+    /// (decision 0364). Only a read declares it. Left out of the text when
+    /// it is not declared.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub absent_when_empty: bool,
+    /// The servers the program reaches that are the target's own system,
+    /// where the records are kept (decision 0364). A declaration, shown with
+    /// the command; it does not make a write `irreversible`. Left out of the
+    /// text when none is declared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub own_server: Vec<String>,
     /// Its limits.
     pub limits: Limits,
     /// The script its program, an interpreter, is given.
@@ -323,6 +335,13 @@ pub enum Output {
         lines: bool,
         /// The fields of a document. Any other field is drift.
         fields: BTreeMap<String, JsonField>,
+        /// Where the records are in a document that holds more: the keys to
+        /// follow, from the document down, to the list of records (or the
+        /// record). Whatever else the document holds is not read. Empty when
+        /// the document is the record or the list (decision 0364). Left out
+        /// of the text when empty.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        at: Vec<String>,
     },
     /// Rows of columns split by a tab.
     Table {
@@ -341,6 +360,27 @@ pub enum Output {
 }
 
 impl Output {
+    /// The fields that may come back as `null` because the output form does
+    /// not make them certain: a JSON field that is not required, and a named
+    /// group of a pattern that is not certain to take part in a match. A
+    /// pattern with no alternation, no optional or repeated part, and no
+    /// counted repeat has every group certain; of any other, every group is
+    /// counted possibly absent, which can only say more than is so.
+    #[must_use]
+    pub fn may_be_absent(&self) -> Vec<String> {
+        match self {
+            Self::Json { fields, .. } => fields
+                .iter()
+                .filter(|(_, field)| !field.required)
+                .map(|(name, _)| name.clone())
+                .collect(),
+            Self::Pattern { pattern, .. } if pattern.contains(['|', '?', '*', '{']) => {
+                self.fields()
+            }
+            Self::Ignored | Self::Table { .. } | Self::Pattern { .. } => Vec::new(),
+        }
+    }
+
     /// The names of the fields a record or a row holds.
     #[must_use]
     pub fn fields(&self) -> Vec<String> {
@@ -387,6 +427,12 @@ pub enum StepPayload {
         /// Whether the rows of the output must be exactly one record: none
         /// is `absent`, more is ambiguous.
         one: bool,
+        /// The outputs of the command that its output form leaves possibly
+        /// absent (decision 0305): the plan states them, and the driver
+        /// returns a `null` for each when the program printed no value.
+        /// Left out of the text when empty.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        absent: Vec<String>,
     },
     /// A declared help or version form, which discovery may run.
     Probe {

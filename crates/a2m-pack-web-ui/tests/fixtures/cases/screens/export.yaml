@@ -1,0 +1,32 @@
+# Case 24: an export that finishes later and offers a file to download.
+screen: export
+surface: app
+reach: {url: "/cases/export"}
+ready: {visible: {role: heading, name: "Export"}}
+actions:
+  start:
+    locate:
+      - {role: button, name: "Start export"}
+    fingerprint: {section: {role: main, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, equals: "Export ready."}}
+    commits: true
+  download:
+    locate:
+      - {role: link, name: "Download export"}
+    fingerprint: {section: {role: main, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, equals: "Export downloaded."}}
+    commits: true
+  download_declared:
+    locate:
+      - {role: link, name: "Download export"}
+    fingerprint: {section: {role: main, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, equals: "Export downloaded."}}
+    commits: true
+    download: {most_bytes: 100000, into: file}
+  download_large:
+    locate:
+      - {role: link, name: "Download large export"}
+    fingerprint: {section: {role: main, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, equals: "Large export downloaded."}}
+    commits: true
+    download: {most_bytes: 1000, into: file}

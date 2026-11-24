@@ -58,7 +58,8 @@ pub use shadow::{
     ShadowStanding, ShadowSubject, ShadowThreshold, Shadows,
 };
 pub use store::{
-    BLOB_FOLDER_NAME, COMMIT_SPAN, DATABASE_FILE_NAME, Store, StoreConfig, StoreHealth,
+    BLOB_FOLDER_NAME, COMMIT_SPAN, DATABASE_FILE_NAME, STORE_LOCK_NAME, Store, StoreConfig,
+    StoreHealth,
 };
 pub use tx::{Durability, Owner, PolicyKey, Row, SqlValue, Tables, Tx};
 pub use version::{PublishedVersion, VersionRow, Versions};

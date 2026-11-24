@@ -59,8 +59,8 @@ pub use a2m_provider::Deadline;
 
 pub use browsers::{
     Address, BROWSER_KIND, Browser, BrowserHealth, BrowserSettings, BrowserState, Browsers,
-    DIGESTS_SETTING, Observer, OpenBrowser, PROFILE_ROOT, ProfileKey, SharedBrowsers, StateCookie,
-    Visibility,
+    DIGESTS_SETTING, DOWNLOADS_FOLDER, Observer, OpenBrowser, PROFILE_ROOT, ProfileKey,
+    STAGING_FOLDER, SharedBrowsers, StateCookie, Visibility,
 };
 pub use error::{BrowserError, Dispatch, LaunchReason, Reason, RequestShape, codes};
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
@@ -78,7 +78,8 @@ pub use structure::{
 };
 pub use tab::{
     ActTab, BROWSER_DEFAULT_HEADERS, BROWSER_HEADERS, By, CREDENTIAL_HEADER_WORDS, DialogAnswer,
-    EXCHANGES_KEPT, Element, Input, Key, Loaded, Look, OUTSIDE, ObserveTab, PageEnvironment,
-    PageExchange, PageExchanges, PageRequest, PageResponse, Primitive, Query, RawValue, ReadWhat,
-    SafeRequest, SafeRequests, TextMatch,
+    Download, DownloadError, EXCHANGES_KEPT, Element, Input, Key, Loaded, Look, OUTSIDE,
+    ObserveTab, OpenDialog, PageEnvironment, PageExchange, PageExchanges, PageRequest,
+    PageResponse, Primitive, Query, RawValue, ReadWhat, SafeRequest, SafeRequests, SiteAnswer,
+    SiteTool, TextMatch, digest_of,
 };

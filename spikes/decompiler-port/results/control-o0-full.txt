@@ -1,0 +1,113 @@
+engine x86:LE:64:default base 0x100000; port x86:LE:64:default:gcc
+functions listed: engine 24, port 16, both 16, only engine 8, only port 0
+decompiled by port: 16; by engine: 24; compared (both): 16; port only: 0; engine only: 8
+| exact | blanks only | addresses/hash marks only | spelling only | different |
+| --- | --- | --- | --- | --- |
+| 0 | 1 | 2 | 3 | 10 |
+line similarity of the different ones after spelling: min 0.29 median 0.67 max 0.83
+
+--- 0x1000 _init
+--- engine
++++ port
+@@ -1 +1 @@
+-int _init(EVP_PKEY_CTX *ctx)
++void _init(void)
+@@ -3,4 +3,2 @@
+-int Var1;
+-Var1 = 0;
+-if (PTR___gmon_start___00003fe8 != (undefined *)0x0) {
+-Var1 = (*(code *)PTR___gmon_start___00003fe8)();
++if (__gmon_start__@got != (code *)0x0) {
++(*__gmon_start__@got)();
+@@ -8 +6 @@
+-return Var1;
++return;
+
+--- 0x1050 __cxa_finalize
+--- engine
++++ port
+@@ -3 +3,3 @@
+-(*(code *)PTR___cxa_finalize_00003ff8)();
++/* WARNING: Could not recover jumptable at 0x00001054. Too many branches */
++/* WARNING: Treating indirect jump as call */
++(*__cxa_finalize@got)();
+
+--- 0x1060 __stack_chk_fail
+--- engine
++++ port
+@@ -3 +3,3 @@
+-(*(code *)PTR___stack_chk_fail_00003fc8)();
++/* WARNING: Could not recover jumptable at 0x00001064. Too many branches */
++/* WARNING: Treating indirect jump as call */
++(*__stack_chk_fail@got)();
+
+--- 0x1070 printf
+--- engine
++++ port
+@@ -1,2 +1 @@
+-/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+-int printf(char *__format,...)
++void printf(void)
+@@ -4,3 +3,4 @@
+-int Var1;
+-Var1 = (*(code *)PTR_printf_00003fd0)();
+-return Var1;
++/* WARNING: Could not recover jumptable at 0x00001074. Too many branches */
++/* WARNING: Treating indirect jump as call */
++(*printf@got)();
++return;
+
+--- 0x1080 _start
+--- engine
++++ port
+@@ -1 +1 @@
+-void processEntry _start(undefined8 param_1,undefined8 param_2)
++void _start(undefined8 param_1,undefined8 param_2,undefined8 param_3)
+@@ -2,0 +3,2 @@
++undefined8 unaff_retaddr;
++undefined1 xStack0000000000000008;
+@@ -4 +6 @@
+-(*(code *)PTR___libc_start_main_00003fd8)(main,param_2,&stack0x00000008,0,0,param_1,stk_8);
++(*__libc_start_main@got)(main,unaff_retaddr,&xStack0000000000000008,0,0,param_3,stk_8);
+
+--- 0x1120 __do_global_dtors_aux
+--- engine
++++ port
+@@ -3,3 +3,5 @@
+-if (completed_0 == '\0') {
+-if (PTR___cxa_finalize_00003ff8 != (undefined *)0x0) {
+-__cxa_finalize(__dso_handle);
++if (completed.0 != '\0') {
++return;
++}
++if (__cxa_finalize@got != 0) {
++__cxa_finalize(xRam0000000000004008);
+@@ -8 +10 @@
+-completed_0 = 1;
++completed.0 = 1;
+@@ -11,2 +12,0 @@
+-return;
+ROW	0x1454	_fini	blanks	6	1.00
+ROW	0x10b0	deregister_tm_clones	addresses	9	1.00
+ROW	0x10e0	register_tm_clones	addresses	9	1.00
+ROW	0x11b2	example_find	spelling	16	1.00
+ROW	0x1250	example_fact	spelling	15	1.00
+ROW	0x128a	example_classify	spelling	32	1.00
+ROW	0x1000	_init	different	9	0.38
+ROW	0x1050	__cxa_finalize	different	9	0.67
+ROW	0x1060	__stack_chk_fail	different	9	0.67
+ROW	0x1070	printf	different	9	0.29
+ROW	0x1080	_start	different	13	0.67
+ROW	0x1120	__do_global_dtors_aux	different	14	0.50
+ROW	0x1160	frame_dummy	different	9	0.73
+ROW	0x1169	example_sum	different	13	0.80
+ROW	0x1209	example_hash	different	13	0.80
+ROW	0x12f6	main	different	62	0.83
+ROW	0x1020	FUN_00101020	engine-only	8
+ROW	0x5000	<EXTERNAL>::__libc_start_main	engine-only	11
+ROW	0x5008	<EXTERNAL>::_ITM_deregisterTMCloneTable	engine-only	10
+ROW	0x5010	<EXTERNAL>::__stack_chk_fail	engine-only	11
+ROW	0x5018	<EXTERNAL>::printf	engine-only	12
+ROW	0x5020	<EXTERNAL>::__gmon_start__	engine-only	10
+ROW	0x5028	<EXTERNAL>::_ITM_registerTMCloneTable	engine-only	10
+ROW	0x5030	<EXTERNAL>::__cxa_finalize	engine-only	11

@@ -246,9 +246,10 @@ async fn a_changed_screen_is_drift_and_what_has_no_rule_stops() {
         .find(|section| section.pack == "web")
         .unwrap();
     let text = String::from_utf8(section.payload.as_bytes().to_vec()).unwrap();
-    let other: serde_json::Value =
-        serde_json::from_str(&text.replace(r#""control":"number""#, r#""control":"slider""#))
-            .unwrap();
+    let other: serde_json::Value = serde_json::from_str(
+        &text.replace(r#""control":"number""#, r#""control":"signature_pad""#),
+    )
+    .unwrap();
     section.payload = PackPayload::encode(&other).unwrap();
     let unknown = read_with(&mut scene, plan).await.unwrap_err();
     assert_eq!(
@@ -886,5 +887,106 @@ async fn a_page_that_loads_from_an_origin_the_tool_does_not_declare_stops_and_se
     );
     let arrived = app.trap_writes().await.unwrap();
     assert!(arrived.contains_key("leaving/loads-image"), "{arrived:?}");
+    scene.stand.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_origin_the_surface_refuses_quietly_is_refused_and_the_read_goes_on() {
+    // The same page that loads an image and sends a `fetch` to the
+    // application's other name while it loads.
+    let (app, mut scene) = scene("quiet").await;
+    the_other_name_is_reachable(&app).await;
+    let other = app.url("").replace("127.0.0.1", "localhost");
+    let other = other.trim_end_matches('/').to_owned();
+    let surface = app.url("");
+    let surface = surface.trim_end_matches('/').to_owned();
+    let loads = |text: &str| {
+        text.replace(
+            "reach: {url: \"/orders/",
+            "reach: {url: \"/leaving/loads/orders/",
+        )
+    };
+    let refusing = |origins: &str| {
+        let origins = origins.to_owned();
+        move |text: &str| {
+            text.replace(
+                "    reduced_motion: true\n",
+                &format!("    reduced_motion: true\n    refuse_quietly: [{origins}]\n"),
+            )
+        }
+    };
+    let loading = changed(&scene, "screens/line_item.yaml", loads);
+    let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
+
+    // Declared as refused quietly, the origin is failed in the browser and
+    // the run does not stop: the read is made, whether or not the tool
+    // declares the origin as a destination too, and nothing reaches it.
+    let quiet = compile_changed(
+        &scene.stand.registry,
+        "example",
+        "target.yaml",
+        refusing(&format!("\"{other}\"")),
+    )
+    .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
+    .plan;
+    scene.surface.surface.payload = quiet.surfaces[0].payload.clone();
+    for destinations in [vec![surface.clone()], vec![surface.clone(), other.clone()]] {
+        scene.destinations = Destinations::new(destinations.clone());
+        let read = read_with(&mut scene, loading.clone()).await.unwrap();
+        assert_eq!(
+            read.values.get("description"),
+            Some(&Value::from(stored.description.as_str())),
+            "{destinations:?}"
+        );
+        // The stand's count: not the image, not the `fetch`.
+        assert!(app.trap_writes().await.unwrap().is_empty());
+    }
+
+    // Declared as refused quietly, an origin is told from one that is
+    // merely not declared: the page that loads from another origin that is
+    // neither declared nor refused quietly still stops.
+    let aside = compile_changed(
+        &scene.stand.registry,
+        "example",
+        "target.yaml",
+        refusing("\"http://elsewhere.invalid\""),
+    )
+    .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
+    .plan;
+    scene.surface.surface.payload = aside.surfaces[0].payload.clone();
+    scene.destinations = Destinations::new([surface.clone()]);
+    let failure = read_with(&mut scene, loading.clone()).await.unwrap_err();
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Policy, "origin_not_declared"),
+        "{failure}"
+    );
+    assert!(app.trap_writes().await.unwrap().is_empty());
+
+    // A declaration that is not one origin is a stop by name: a path, no
+    // scheme, and the surface's own origin.
+    for bad in [
+        format!("\"{other}/fonts\""),
+        "\"localhost\"".to_owned(),
+        format!("\"{surface}\""),
+    ] {
+        let plan = compile_changed(
+            &scene.stand.registry,
+            "example",
+            "target.yaml",
+            refusing(&bad),
+        )
+        .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
+        .plan;
+        scene.surface.surface.payload = plan.surfaces[0].payload.clone();
+        let Err(failure) = scene.try_prepare(None, Posture::Live).await else {
+            panic!("{bad}: the run was prepared");
+        };
+        assert_eq!(failure.sent, Sent::NotSent, "{bad}");
+        assert!(
+            failure.failure.message().contains("refuses quietly"),
+            "{bad}: {failure}"
+        );
+    }
     scene.stand.end().await;
 }

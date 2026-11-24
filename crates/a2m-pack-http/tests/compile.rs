@@ -59,6 +59,7 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     // The step kinds the lowering and the discoverers make are the mode's.
     let steps = &manifest.modes[0].steps;
     for kind in [
+        a2m_pack_http::TOKEN,
         a2m_pack_http::REQUEST,
         a2m_pack_http::VALIDATE,
         a2m_pack_http::EXTRACT,
@@ -66,8 +67,8 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     ] {
         assert!(steps.contains(&kind), "{kind}");
     }
-    assert_eq!(steps.len(), 4);
-    assert!(!steps.contains(&StepKind::fixed("token")));
+    assert_eq!(steps.len(), 5);
+    assert_eq!(a2m_pack_http::TOKEN, StepKind::fixed("token"));
 }
 
 #[test]
@@ -227,7 +228,7 @@ fn what_an_endpoint_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
     // What is not built is refused by name, not ignored.
     let not_built = refused(
         orders,
-        |text| text.replacen("auth: none", "auth: none\nanti_forgery: {cookie: xsrf}", 1),
+        |text| text.replacen("auth: none", "auth: none\ngraphql: {query: orders}", 1),
         "http.not_built",
     );
     assert_eq!(not_built.at.line, 6);
@@ -496,4 +497,189 @@ fn the_review_states_what_the_http_pack_runs_and_where_it_sends() {
             item.tool
         );
     }
+}
+
+/// Decision 0305: an output the endpoint's shape does not make certain to
+/// be there is compiled as one that may be absent; one it makes certain is
+/// not, and cannot be declared absent by hand; a plan that declares none is
+/// the bytes it was.
+#[test]
+fn an_output_the_shape_does_not_make_certain_is_compiled_as_possibly_absent() {
+    let folder = Folder::new("absent");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let flags = |plan: &a2m_core::Plan| -> Vec<(String, bool)> {
+        plan.operations
+            .iter()
+            .find(|operation| operation.name.as_str() == "example_order_get")
+            .unwrap()
+            .outputs
+            .iter()
+            .map(|output| (output.name.clone(), output.may_be_absent))
+            .collect()
+    };
+
+    // Both outputs are required by the endpoint: neither may be absent, and
+    // the encoded plan says nothing of it.
+    let plain = compile(&registry, "example");
+    assert_eq!(
+        flags(&plain.plan),
+        [("status".to_owned(), false), ("customer".to_owned(), false)]
+    );
+    let outputs = &plain
+        .plan
+        .operations
+        .iter()
+        .find(|o| o.name.as_str() == "example_order_get")
+        .unwrap()
+        .outputs;
+    assert!(
+        !serde_json::to_string(outputs)
+            .unwrap()
+            .contains("may_be_absent")
+    );
+
+    // The endpoint no longer requires `customer`: the lowering sets the flag.
+    let optional = |text: &str| {
+        text.replacen(
+            "required: [order_id, customer, status, items]",
+            "required: [order_id, status, items]",
+            1,
+        )
+    };
+    let compiled = compile_changed(&registry, "example", "endpoints/orders.yaml", optional)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    assert_eq!(
+        flags(&compiled.plan),
+        [("status".to_owned(), false), ("customer".to_owned(), true)]
+    );
+    assert!(
+        serde_json::to_string(
+            &compiled
+                .plan
+                .operations
+                .iter()
+                .find(|o| o.name.as_str() == "example_order_get")
+                .unwrap()
+                .outputs
+        )
+        .unwrap()
+        .contains("\"may_be_absent\":true")
+    );
+
+    // A person's declaration over a value the endpoint makes optional
+    // stands, and over one it makes certain is refused.
+    let declared = |text: &str| {
+        text.replacen(
+            "customer: {type: text}",
+            "customer: {type: text, may_be_absent: true}",
+            1,
+        )
+    };
+    let stands = common::compile_changed_files(
+        &registry,
+        "example",
+        &[
+            ("endpoints/orders.yaml", &optional),
+            ("operations/orders.yaml", &declared),
+        ],
+    )
+    .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    assert_eq!(
+        flags(&stands.plan),
+        [("status".to_owned(), false), ("customer".to_owned(), true)]
+    );
+    let untrue = refused("operations/orders.yaml", declared, "http.absent_untrue");
+    assert!(untrue.message.contains("`customer`"), "{untrue}");
+    assert!(!untrue.fix.is_empty(), "{untrue}");
+}
+
+/// The output schema of one tool of a compiled plan.
+fn output_schema(plan: &a2m_core::Plan, tool: &str) -> serde_json::Value {
+    let tool = plan
+        .tools
+        .iter()
+        .find(|found| found.name.as_str() == tool)
+        .unwrap();
+    serde_json::from_slice(tool.output_schema.as_bytes()).unwrap()
+}
+
+/// Decision 0305: a required property of the type `any` admits `null`, so
+/// an output taken from it may be absent, and a person may say so.
+#[test]
+fn an_output_from_an_untyped_required_property_may_be_absent() {
+    let folder = Folder::new("absent-untyped");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let untyped = |text: &str| {
+        text.replacen(
+            "    customer: {type: string}\n    status: {type: string, enum: [draft, submitted]}\n    items:",
+            "    customer: {type: any}\n    status: {type: string, enum: [draft, submitted]}\n    items:",
+            1,
+        )
+    };
+    let compiled = compile_changed(&registry, "example", "endpoints/orders.yaml", untyped)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    let operation = compiled
+        .plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_order_get")
+        .unwrap();
+    let customer = operation
+        .outputs
+        .iter()
+        .find(|output| output.name == "customer")
+        .unwrap();
+    assert!(customer.may_be_absent);
+    let schema = output_schema(&compiled.plan, "example_order_get");
+    assert!(
+        common::schema_fits(&schema["properties"]["customer"], &serde_json::Value::Null).is_ok()
+    );
+
+    // Declared by hand, it is not refused as untrue.
+    let declared = |text: &str| {
+        text.replacen(
+            "customer: {type: text}",
+            "customer: {type: text, may_be_absent: true}",
+            1,
+        )
+    };
+    common::compile_changed_files(
+        &registry,
+        "example",
+        &[
+            ("endpoints/orders.yaml", &untyped),
+            ("operations/orders.yaml", &declared),
+        ],
+    )
+    .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+}
+
+/// Decision 0305: an output taken through `*` from a property that may be
+/// absent is a list whose items may each be `null`, and its schema says so.
+#[test]
+fn a_list_output_that_may_be_absent_admits_null_items_in_its_schema() {
+    let folder = Folder::new("absent-list");
+    let registry = registry(&folder, Arc::new(NoSecrets));
+    let optional = |text: &str| {
+        text.replacen(
+            "    required: [order_id, status]",
+            "    required: [status]",
+            1,
+        )
+    };
+    let compiled = compile_changed(&registry, "example", "endpoints/orders.yaml", optional)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    let schema = output_schema(&compiled.plan, "example_order_list");
+    let fits = |value: serde_json::Value| common::schema_fits(&schema, &value);
+    fits(serde_json::json!({"order_ids": ["A-100", null]})).unwrap();
+    fits(serde_json::json!({"order_ids": null})).unwrap();
+    assert!(fits(serde_json::json!({"order_ids": ["A-100", 7]})).is_err());
+
+    // Where every item is certain, a `null` item does not fit.
+    let plain = compile(&registry, "example");
+    let schema = output_schema(&plain.plan, "example_order_list");
+    assert!(
+        common::schema_fits(&schema, &serde_json::json!({"order_ids": ["A-100", null]})).is_err()
+    );
+    common::schema_fits(&schema, &serde_json::json!({"order_ids": ["A-100"]})).unwrap();
 }

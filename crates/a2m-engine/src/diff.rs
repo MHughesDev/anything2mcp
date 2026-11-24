@@ -101,6 +101,23 @@ pub struct DiffRecord {
     /// names it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub could_take: Vec<DiffBinding>,
+    /// The values the write is sent with as its preconditions, such as the
+    /// version a guard compares, each normalized, or its hash when
+    /// restricted (decision 0378). They are what was approved and are in
+    /// the hash, but they are no field of the record: the system checks
+    /// them, and nothing compares them with a read. In the hash only when
+    /// there are any, so a diff of before this field hashes the same.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preconditions: Vec<DiffPrecondition>,
+}
+
+/// One precondition of a record's write, as a diff shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffPrecondition {
+    /// The input's name.
+    pub name: String,
+    /// Its value after normalization, or its hash when restricted.
+    pub value: Value,
 }
 
 /// One binding of an operation, as a diff names it for a record.
@@ -293,6 +310,16 @@ impl Diff {
                 hasher.field("current", &value_bytes(field.current.as_ref()));
                 hasher.field("proposed", &value_bytes(Some(&field.proposed)));
             }
+            if !record.preconditions.is_empty() {
+                let mut preconditions: Vec<&DiffPrecondition> =
+                    record.preconditions.iter().collect();
+                preconditions.sort_by(|left, right| left.name.cmp(&right.name));
+                hasher.field("preconditions", &(preconditions.len() as u64).to_le_bytes());
+                for precondition in preconditions {
+                    hasher.field("name", precondition.name.as_bytes());
+                    hasher.field("value", &value_bytes(Some(&precondition.value)));
+                }
+            }
         }
         hasher.finish()
     }
@@ -318,5 +345,162 @@ impl Diff {
                 "Preview the run again.",
             )
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use a2m_core::{
+        Decimal, Digest, Environment, FieldTypeIndex, OperationName, RecordKey, Sensitivity,
+        TargetName, Value, WriteEvidence,
+    };
+
+    use super::{Diff, DiffAction, DiffField, DiffRecord};
+    use crate::compare::{Field, guarded};
+
+    /// The hash of [`sample`]. It is written here once, and the worked
+    /// example in `docs/reference/steps-snapshots-and-diffs.md` prints the
+    /// same value: a machine that computed another hash for the same diff
+    /// would refuse every approval given on another machine.
+    const DIFF_SAMPLE_HASH: &str =
+        "1b52a16688289f1af2c3a9b6a0cf2c7b84e468b6c628835ea70dff0e70e09017";
+
+    fn field(name: &str, current: Option<Value>, proposed: Value) -> DiffField {
+        DiffField {
+            changes: current.as_ref() != Some(&proposed),
+            name: name.to_owned(),
+            current_raw: current.clone(),
+            current,
+            proposed,
+        }
+    }
+
+    /// A restricted field's value as a diff holds it: the hash of its
+    /// normalized form, by the engine's own rule.
+    fn restricted(value: &str) -> Value {
+        let note = Field {
+            name: "note".to_owned(),
+            field_type: FieldTypeIndex::new(0),
+            sensitivity: Sensitivity::Restricted,
+        };
+        guarded(&note, Value::Text(value.to_owned()))
+    }
+
+    fn text(value: &str) -> Value {
+        Value::Text(value.to_owned())
+    }
+
+    fn price(value: &str) -> Value {
+        Value::Decimal(Decimal::parse(value).unwrap())
+    }
+
+    fn record(seq: u32, key: i64, action: DiffAction, fields: Vec<DiffField>) -> DiffRecord {
+        DiffRecord {
+            step_seq: 0,
+            record_seq: seq,
+            operation: OperationName::new("example_items_item_save").unwrap(),
+            key: RecordKey::new(vec![Value::Int(key)]).unwrap(),
+            action,
+            fields,
+            evidence: WriteEvidence::ReadBack,
+            binding: None,
+            could_take: Vec::new(),
+            preconditions: Vec::new(),
+        }
+    }
+
+    /// A fixed diff: a record to create, one to update, and one unchanged,
+    /// with a decimal and a field labelled restricted, whose raw form is
+    /// never kept. The records are not in the order of their keys, so the
+    /// hash's own order is exercised.
+    fn sample() -> Diff {
+        let created = record(
+            0,
+            3,
+            DiffAction::Create,
+            vec![
+                field("name", None, text("Bolt")),
+                field("price", None, price("2.5")),
+                field("note", None, restricted("keep dry")),
+            ],
+        );
+        let mut updated = record(
+            1,
+            1,
+            DiffAction::Update,
+            vec![
+                field("name", Some(text("Nut")), text("Nut")),
+                field("price", Some(price("0.75")), price("0.8")),
+                field("note", Some(restricted("old")), restricted("new")),
+            ],
+        );
+        updated.fields[2].current_raw = None;
+        let unchanged = record(
+            2,
+            2,
+            DiffAction::Unchanged,
+            vec![
+                field("name", Some(text("Washer")), text("Washer")),
+                field("price", Some(price("0.1")), price("0.10")),
+            ],
+        );
+        Diff {
+            tool: OperationName::new("example_items_item_save").unwrap(),
+            plan: Digest::of(b"the sample plan"),
+            target: TargetName::new("example").unwrap(),
+            environment: Environment::new("test").unwrap(),
+            identity: Some("account:example_writer".parse().unwrap()),
+            records: vec![created, updated, unchanged],
+        }
+    }
+
+    #[test]
+    fn a_diff_hashes_the_same_on_every_machine() {
+        let diff = sample();
+        assert_eq!(diff.hash().to_string(), DIFF_SAMPLE_HASH);
+        // The stored form reads back to the same diff and the same hash.
+        let stored = Diff::decode(&diff.encode().unwrap()).unwrap();
+        assert_eq!(stored, diff);
+        assert_eq!(stored.hash().to_string(), DIFF_SAMPLE_HASH);
+        // Neither the order of the records, nor the order of the fields,
+        // nor a raw form enters the hash.
+        let mut reordered = diff.clone();
+        reordered.records.reverse();
+        for item in &mut reordered.records {
+            item.fields.reverse();
+            for each in &mut item.fields {
+                each.current_raw = None;
+            }
+        }
+        assert_eq!(reordered.hash().to_string(), DIFF_SAMPLE_HASH);
+        // A proposed value does.
+        let mut changed = diff;
+        changed.records[0].fields[1].proposed = price("2.6");
+        assert_ne!(changed.hash().to_string(), DIFF_SAMPLE_HASH);
+    }
+
+    /// The worked example in the reference: the diff it prints is the
+    /// sample, and the hash it prints is the sample's.
+    #[test]
+    fn the_worked_example_in_the_reference_hashes_to_the_value_it_prints() {
+        let document = include_str!("../../../docs/reference/steps-snapshots-and-diffs.md");
+        let example = document
+            .split_once("**A worked example.**")
+            .expect("the reference has a worked example")
+            .1;
+        let json = example
+            .split_once("```json\n")
+            .and_then(|(_, rest)| rest.split_once("```"))
+            .expect("the worked example prints its diff as JSON")
+            .0;
+        let printed = example
+            .split_once("Its hash is `")
+            .and_then(|(_, rest)| rest.split_once('`'))
+            .expect("the worked example prints its hash")
+            .0;
+        let diff = Diff::decode(json.as_bytes()).expect("the printed diff reads as a diff");
+        assert_eq!(diff, sample());
+        assert_eq!(diff.hash().to_string(), printed);
+        assert_eq!(printed, DIFF_SAMPLE_HASH);
     }
 }

@@ -16,8 +16,11 @@
 //! before it opens the store; and a client that connects while the kernel
 //! opens waits for its hello instead of finding nothing.
 
+use std::convert::Infallible;
 use std::io::Write as _;
+use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use a2m_actions::{
@@ -33,6 +36,7 @@ use a2m_local::{
 use a2m_mcp::{McpService, McpSettings, mcp_path};
 use a2m_policy::ToolsetName;
 use axum::Router;
+use axum::body::{Body, Bytes};
 use axum::extract::{Request as HttpRequest, State};
 use axum::http::{HeaderMap, HeaderValue, Method, header};
 use axum::middleware::Next;
@@ -375,14 +379,55 @@ async fn stop_engine(
         .error
         .as_ref()
         .is_some_and(|error| error.code == codes::CLIENT_ACTION.as_str());
-    if allowed {
-        door.ask.ask(StopBy::EngineStop { process });
-        response.ok = true;
-        response.error = None;
-        response.result = Some(json!({"stopping": true}));
-        response.exit = ExitClass::Succeeded;
+    if !allowed {
+        return render(&response);
     }
-    render(&response)
+    response.ok = true;
+    response.error = None;
+    response.result = Some(json!({"stopping": true}));
+    response.exit = ExitClass::Succeeded;
+    // The answer is the last on its connection, and the stop is asked only
+    // once it has been handed over whole (decision 0382).
+    let (mut parts, _) = render(&response).into_parts();
+    // The body is sent as it comes; any length the rendered one had is not
+    // this body's.
+    parts.headers.remove(header::CONTENT_LENGTH);
+    parts
+        .headers
+        .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    let body = AskOnceAnswered {
+        answer: Some(Bytes::from(response.to_json().to_string())),
+        ask: door.ask.clone(),
+        by: StopBy::EngineStop { process },
+    };
+    HttpResponse::from_parts(parts, Body::from_stream(body))
+}
+
+/// The body of the answer to an `engine.stop` the dispatcher allowed. The
+/// stop is asked when the HTTP library lets go of this body: it does so
+/// once the whole answer is in the connection's write buffer, which it
+/// flushes before it closes the connection, or once the connection ended
+/// without it. So the channel never stops taking requests before the
+/// answer that says it is stopping is on its way, whatever the timing
+/// (decision 0382).
+struct AskOnceAnswered {
+    answer: Option<Bytes>,
+    ask: StopAsk,
+    by: StopBy,
+}
+
+impl futures_core::Stream for AskOnceAnswered {
+    type Item = Result<Bytes, Infallible>;
+
+    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Poll::Ready(self.answer.take().map(Ok))
+    }
+}
+
+impl Drop for AskOnceAnswered {
+    fn drop(&mut self) {
+        self.ask.ask(self.by);
+    }
 }
 
 /// The one router of the local engine: the REST router and the MCP
@@ -544,6 +589,23 @@ impl LocalEngine {
     #[must_use]
     pub fn stop_ask(&self) -> StopAsk {
         self.ask.clone()
+    }
+
+    /// Closes the kernel without ever serving the channel, then lets the
+    /// channel go. A client that connected meanwhile was never answered, so
+    /// it sees only a closed connection, and the line the engine wrote as
+    /// it stopped (`a2m_local::stopped_line`) is the one thing it learns.
+    /// The engine lock is held until the kernel has closed.
+    ///
+    /// An engine that stops before it serves must not serve even for a
+    /// moment: a client that is answered by it believes it has an engine,
+    /// and learns of the stop only as a lost connection, never why.
+    pub async fn stop_unserved(self) {
+        let Self {
+            engine, channel, ..
+        } = self;
+        engine.close_because(CloseReason::Asked).await;
+        drop(channel);
     }
 
     /// Serves the channel until the engine is asked to stop or has been

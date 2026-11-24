@@ -1,0 +1,210 @@
+<h1>Shipment options</h1>
+<form id="options" onsubmit="return false">
+  <div>
+    <label for="carrier">Carrier</label>
+    <input id="carrier" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false"
+           aria-controls="carrier-list" autocomplete="off">
+    <ul id="carrier-list" role="listbox" aria-label="Carriers" hidden></ul>
+  </div>
+  <div>
+    <label for="destination">Destination</label>
+    <input id="destination" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false"
+           aria-controls="destination-list" autocomplete="off">
+    <ul id="destination-list" role="listbox" aria-label="Destinations" hidden></ul>
+  </div>
+  <p>
+    <label for="pickup">Pickup time</label>
+    <input id="pickup" type="datetime-local">
+    <label for="cutoff">Cutoff</label>
+    <input id="cutoff" type="time">
+    <label for="picker">Picker only date</label>
+    <input id="picker" type="text" readonly value="2026-01-01">
+  </p>
+  <p>
+    <label for="level">Handling level</label>
+    <input id="level" type="range" min="0" max="10" step="1" value="0">
+    <span id="level-shown" aria-hidden="true">0</span>
+  </p>
+  <p>
+    <label for="attachment">Attachment</label>
+    <input id="attachment" type="file">
+  </p>
+  <div>
+    <span id="notes-label">Handling notes</span>
+    <div id="notes" role="textbox" aria-multiline="true" aria-labelledby="notes-label" contenteditable="true"
+         style="min-height:3em;border:1px solid #888;padding:2px"></div>
+  </div>
+  <p>
+    <button type="button" id="insured" role="switch" aria-checked="false" aria-label="Insured">Insured</button>
+  </p>
+  <div role="tablist" aria-label="Sections">
+    <button type="button" role="tab" id="tab-overview" aria-selected="true" aria-controls="panel-overview" data-code="overview">Overview</button>
+    <button type="button" role="tab" id="tab-handling" aria-selected="false" aria-controls="panel-handling" data-code="handling" tabindex="-1">Handling</button>
+    <button type="button" role="tab" id="tab-history" aria-selected="false" aria-controls="panel-history" data-code="history" tabindex="-1">History</button>
+  </div>
+  <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview"><p>Overview of the shipment.</p></div>
+  <div role="tabpanel" id="panel-handling" aria-labelledby="tab-handling" hidden><p>How it is handled.</p></div>
+  <div role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden><p>What happened to it.</p></div>
+  <div role="group" aria-label="Details">
+    <h3><button type="button" aria-expanded="false" aria-controls="part-billing" data-code="billing">Billing</button></h3>
+    <div id="part-billing" role="region" aria-label="Billing details" hidden><p>Invoiced monthly.</p></div>
+    <h3><button type="button" aria-expanded="false" aria-controls="part-customs" data-code="customs">Customs</button></h3>
+    <div id="part-customs" role="region" aria-label="Customs details" hidden><p>Declared on departure.</p></div>
+  </div>
+  <p id="location-label">Location</p>
+  <ul role="tree" aria-label="Location" id="tree">
+    <li role="treeitem" aria-label="Warehouse" aria-expanded="false" aria-selected="false" tabindex="-1">
+      <span>Warehouse</span>
+      <ul role="group" hidden>
+        <li role="treeitem" aria-label="North" aria-expanded="false" aria-selected="false" tabindex="-1">
+          <span>North</span>
+          <ul role="group" hidden>
+            <li role="treeitem" aria-label="Bay 1" aria-selected="false" tabindex="-1"><span>Bay 1</span></li>
+            <li role="treeitem" aria-label="Bay 2" aria-selected="false" tabindex="-1"><span>Bay 2</span></li>
+          </ul>
+        </li>
+        <li role="treeitem" aria-label="South" aria-expanded="false" aria-selected="false" tabindex="-1">
+          <span>South</span>
+          <ul role="group" hidden>
+            <li role="treeitem" aria-label="Bay 1" aria-selected="false" tabindex="-1"><span>Bay 1</span></li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+  </ul>
+  <table role="grid" aria-label="Parcels" id="parcels">
+    <tr role="row"><th scope="col">SKU</th><th scope="col">Item</th><th scope="col">Count</th></tr>
+    <tr role="row"><td>P-100</td><td>Crate</td><td data-column="count">4</td></tr>
+    <tr role="row"><td>P-200</td><td>Barrel</td><td data-column="count">9</td></tr>
+    <tr role="row"><td>P-300</td><td>Pallet</td><td data-column="count">1</td></tr>
+  </table>
+  <p>
+    <button type="button" id="save">Save options</button>
+    <span id="status" role="status">Not saved.</span>
+  </p>
+</form>
+<script>
+/*TELL*/
+const state = {
+  carrier: "", destination: "", pickup: "", cutoff: "", level: "0", attachment: "", notes: "",
+  insured: false, section: "overview", panel: "", location: "", counts: {"P-100": "4", "P-200": "9", "P-300": "1"},
+};
+const $ = (id) => document.getElementById(id);
+
+// A dropdown that filters as it is typed in. Its options arrive a moment
+// after the typing, as from a server, and each has a code.
+function combo(id, items, keep) {
+  const input = $(id);
+  const list = $(id + "-list");
+  let timer = 0;
+  const close = () => { list.hidden = true; input.setAttribute("aria-expanded", "false"); };
+  input.addEventListener("input", () => {
+    keep("");
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const wanted = input.value.trim().toLowerCase();
+      list.replaceChildren();
+      for (const [code, label] of items) {
+        if (!label.toLowerCase().includes(wanted)) continue;
+        const option = document.createElement("li");
+        option.setAttribute("role", "option");
+        option.textContent = label;
+        option.addEventListener("click", () => { input.value = label; keep(code); close(); });
+        list.append(option);
+      }
+      list.hidden = list.children.length === 0;
+      input.setAttribute("aria-expanded", String(!list.hidden));
+    }, 300);
+  });
+}
+combo("carrier", [["nw", "Northwind Freight"], ["sl", "Southern Line"], ["ee", "Eastbound Express"]],
+      (code) => { state.carrier = code; });
+combo("destination", [["", "Harbor Town"], ["", "Harbor View"], ["", "Lakeside"]],
+      () => { state.destination = $("destination").value; });
+$("destination").addEventListener("change", () => { state.destination = $("destination").value; });
+
+for (const id of ["pickup", "cutoff"]) {
+  $(id).addEventListener("change", () => { state[id] = $(id).value; });
+}
+$("level").addEventListener("input", () => { state.level = $("level").value; $("level-shown").textContent = $("level").value; });
+$("attachment").addEventListener("change", () => {
+  const file = $("attachment").files[0];
+  state.attachment = file ? file.name + ":" + file.size : "";
+});
+$("notes").addEventListener("input", () => { state.notes = $("notes").textContent; });
+$("insured").addEventListener("click", () => {
+  const on = $("insured").getAttribute("aria-checked") !== "true";
+  $("insured").setAttribute("aria-checked", String(on));
+  state.insured = on;
+});
+
+for (const tab of document.querySelectorAll('[role="tab"]')) {
+  tab.addEventListener("click", () => {
+    for (const other of document.querySelectorAll('[role="tab"]')) {
+      const on = other === tab;
+      other.setAttribute("aria-selected", String(on));
+      other.tabIndex = on ? 0 : -1;
+      $(other.getAttribute("aria-controls")).hidden = !on;
+    }
+    state.section = tab.dataset.code;
+  });
+}
+for (const header of document.querySelectorAll("[aria-controls^=part-]")) {
+  header.addEventListener("click", () => {
+    const open = header.getAttribute("aria-expanded") !== "true";
+    for (const other of document.querySelectorAll("[aria-controls^=part-]")) {
+      const on = open && other === header;
+      other.setAttribute("aria-expanded", String(on));
+      $(other.getAttribute("aria-controls")).hidden = !on;
+    }
+    state.panel = open ? header.dataset.code : "";
+  });
+}
+
+// A tree opened and selected by the keys of the tree pattern: Right opens a
+// closed item, Enter selects.
+function pathOf(item) {
+  const labels = [];
+  for (let node = item; node && node.id !== "tree"; node = node.parentElement) {
+    if (node.getAttribute("role") === "treeitem") labels.unshift(node.getAttribute("aria-label"));
+  }
+  return labels.join("/");
+}
+for (const item of document.querySelectorAll('[role="treeitem"]')) {
+  item.addEventListener("keydown", (event) => {
+    if (event.target !== item) return;
+    event.stopPropagation();
+    if (event.key === "ArrowRight" && item.getAttribute("aria-expanded") === "false") {
+      item.setAttribute("aria-expanded", "true");
+      item.querySelector(':scope > [role="group"]').hidden = false;
+    } else if (event.key === "Enter") {
+      for (const other of document.querySelectorAll('[role="treeitem"]')) other.setAttribute("aria-selected", "false");
+      item.setAttribute("aria-selected", "true");
+      state.location = pathOf(item);
+    }
+  });
+}
+
+// A grid whose cells are edited in place: press a cell, type, press Enter.
+for (const cell of document.querySelectorAll("[data-column=count]")) {
+  cell.addEventListener("click", () => {
+    if (cell.querySelector("input")) return;
+    const key = cell.parentElement.firstElementChild.textContent;
+    const editor = document.createElement("input");
+    editor.setAttribute("aria-label", "Count");
+    editor.value = cell.textContent;
+    cell.replaceChildren(editor);
+    editor.focus();
+    editor.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      state.counts[key] = editor.value;
+      cell.textContent = editor.value;
+    });
+  });
+}
+
+$("save").addEventListener("click", () => {
+  tell("saved", JSON.stringify(state));
+  $("status").textContent = "Saved.";
+});
+</script>

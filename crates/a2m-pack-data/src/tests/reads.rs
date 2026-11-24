@@ -255,6 +255,68 @@ async fn a_statement_declared_a_read_that_writes_is_refused_and_nothing_is_writt
     assert_eq!(stored.integer("quantity"), Some(2));
 }
 
+/// Decision 0305: a field the statements file declares `nullable` is an
+/// output that may be absent, its schema admits `null`, and a row with no
+/// value there gives `null`; a field not declared so is neither.
+#[tokio::test]
+async fn a_nullable_column_is_an_output_that_may_be_absent_and_comes_back_null() {
+    let scene = Scene::new();
+    let operation = scene
+        .plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_customer_get")
+        .unwrap();
+    let flags: Vec<(&str, bool)> = operation
+        .outputs
+        .iter()
+        .map(|output| (output.name.as_str(), output.may_be_absent))
+        .collect();
+    assert_eq!(
+        flags,
+        [
+            ("name", false),
+            ("credit_limit_cents", false),
+            ("notes", true)
+        ]
+    );
+    let tool = scene
+        .plan
+        .tools
+        .iter()
+        .find(|tool| tool.name.as_str() == "example_customer_get")
+        .unwrap();
+    let schema: serde_json::Value = serde_json::from_slice(tool.output_schema.as_bytes()).unwrap();
+    let admits_null = |name: &str| {
+        schema["properties"][name]["anyOf"]
+            .as_array()
+            .is_some_and(|arms| arms.iter().any(|arm| arm["type"] == "null"))
+    };
+    assert!(admits_null("notes"));
+    assert!(!admits_null("name") && !admits_null("credit_limit_cents"));
+
+    // The stand holds no notes for C-001: the read gives `null`.
+    let mut run = scene.prepare(Posture::Live).await;
+    let found = values(
+        run.steps(
+            &scene.binding("example_customer_get").act,
+            &inputs(&[("customer_id", "C-001")]),
+            None,
+        )
+        .await
+        .unwrap(),
+    );
+    run.release().await;
+    let stored = scene
+        .db
+        .stored_row(Table::Customers, &["C-001"])
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.text("notes"), None);
+    let outputs = super::outputs_of(&scene.plan, "example_customer_get", &found);
+    assert_eq!(outputs.get("notes"), Some(&Value::Null));
+}
+
 #[tokio::test]
 async fn text_the_store_holds_comes_back_as_data_of_an_untrusted_type() {
     let scene = Scene::new();

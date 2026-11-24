@@ -1,4 +1,4 @@
-# The build plan: what is left, at three levels
+# The Build Order: what is left, at three levels
 
 This is the one file to work from. It orders everything that is not yet built into eight stages, and describes each stage at three levels:
 
@@ -14,7 +14,7 @@ Written on 2026-11-23, after the first field test. The order is [decision 0296](
 
 ## Where the build stands
 
-**Done last:** FT3, and findings 1, 2, 4, 6 and half of 5 of FT2, each proven in field test 1. **In hand:** decision 0298 (a draft with an open question waits in a holding folder; the compiler does not change), which closes findings 5 and 9. Finding 8 is closed. **Next:** the two leftovers under FT2, then FT7. **Blocks:** nothing.
+**Progress:** 115 of 150 packages done, 76% (`python3 tools/progress.py`). **Done last:** 4.2 (the faults of a write from inside the page, decision 0373), L3, F4, 2.7, 1.7 (the measured budgets and the wheel), 3.10 and 2.5 (decisions 0360 and 0361), 8.2a (a tool a page registers, through the product), G3 (the data pack's writes, through the product), 4.1 (the HTTP pack's anti-forgery token and edge answers), J3 (publishing, through the product), 3.3 (a ui write through the engine loop), H3 (the file pack's writes, through the product), 8.5 (the web pack's edge cases), 2.4 and FT9 (decisions 0353 and 0354), D5 (writes through the command pack, proven through the product), 3.7 (stop and resume, a kill at any step), 8.4 (the remaining widget drivers, decision 0351), 1.6 (the hard web cases of Phase 1), L1 and L2 (decision 0349), 4.6 (a promoted binding runs first with no hand edit), J2 (the stream pack's reads), H2 (the file pack's reads), G2 (the data pack's reads, proven by its stand), D3 and D4 (decision 0344), X6 (decision 0343), 2.3 (the sign-in window, through the product), V5 and FT11 (decisions 0307, 0337 and 0340), N3 and 6.3 (decision 0339), FT4 (the first verified write of a field test, decision 0310), P2 (decisions 0334 and 0336), P3b (decision 0335), 1.5 (an MCP client reads what a command reads), X3 (decision 0333), X2 (decision 0332), X1 (decision 0331), FT7b (decision 0315), V2 (decision 0311), V4 (decision 0307), 2.2 (the vault across a restart), X7 (the decompiler port refuted, H-48), K4 (decision 0316), F3 (decision 0314), N2b (decision 0313), 4.5 (the Phase 4 exit test, about twelve times faster), V3 (decisions 0307 and 0312), S2 (decision 0306), FT7 (decision 0305), FT10 (decision 0302) and GD1 (decision 0309), then FT8 (decision 0302), proven in field test 1 three times; decisions 0302 to 0309, which settle every open question of stages 1 to 4. **In hand:** nothing. **Next:** the table under "The design is settled: build in this order", from S2. **Blocks:** nothing.
 
 - **Built and passing on three operating systems, against the test stands:** the kernel, ten packs, the local engine with its command line and bridge, the scout, and the flow from an address to a published read.
 - **Met existing software:** only the HTTP pack's reads, once ([field test results](../reviews/field-tests.md)). One read of three worked. Seven findings.
@@ -53,11 +53,11 @@ Stages 1 to 4 are one after another. Stage 5's packages can be taken in any orde
 | # | Package | What it builds | Proof |
 | --- | --- | --- | --- |
 | ~~FT3~~ | ~~An absent object~~ (done, pull request 20) | What a read does when the system answers `null` for a described object | The two reads of field test 1 return the stored values; a value of a kind the description does not allow still stops |
-| FT7 (new) | Outputs that may be absent | A tool's output schema says which outputs may be absent | A drafted tool declares such an output optional |
+| ~~FT7~~ | ~~Outputs that may be absent~~ (done) | A tool's output schema says which outputs may be absent | A drafted tool declares such an output optional |
 | FT2 | Findings 1, 2, 4, 5, 6 (2 done, pull request 20) | Swagger 2.0 read; the scout's summary gives the code and fix; a description handed in as a file is tied to the surface; no doubled tool name, and one bad draft does not block the rest; the credential lint matches whole words | Each `gap` step fails and is rewritten to expect the right behaviour |
 | 4.4 | Published descriptions, the rest | References to files outside the description, refused by name; the `api` mode | A described service becomes drafted reads that compile |
 | E4 | The drafter, the rest | Drafting rules for the packs that lack them | A draft made by rule compiles and carries no unit or key the system did not state |
-| 1.3 | The plan, the same on three systems | The compiled plan's bytes compared across systems in CI | The plan is byte-identical on three operating systems |
+| ~~1.3~~ | ~~The plan, the same on three systems~~ (done) | A pinned hash of the compiled plan, compared by each CI system | The plan is byte-identical on three operating systems |
 
 **Low level.**
 
@@ -98,7 +98,7 @@ E4: 1. List which packs draft by rule and which do not. 2. Add the missing rules
 | S2 | One command to a working read | `add` carries a system to drafted reads that passed their trial; an agent calls them at once through the trial action, in the sandbox | From an empty folder: `init`, `add`, `connect`, and an agent reads a value with no person and no publish |
 | V1 to V5 | What the review of S1 found | The evidence level decides nothing today; two gates are built; a web read that acts; one wrong help text; what a description may hold | Each has its proof in the roadmap |
 | 3.6 | The presence prompt on Windows and macOS | The prompts, run by a person | A person approves on each system; a script cannot |
-| 2.2 | The operating system's key store | The vault's key held by the system's store on each system | A saved value survives a restart and cannot be read without the key store |
+| ~~2.2~~ | ~~The operating system's key store~~, done; Windows and macOS are proven by the CI step | ~~The vault's key held by the system's store on each system~~ | A saved value survives a restart and cannot be read without the key store |
 | 5.2 | The shortcuts and `doctor` | What remains of the project folder, build state, and shortcuts | A new project goes from nothing to a linted draft with the shortcuts alone |
 | 5.3 | The built-in documents | The guidance an agent reads, brought up to the short path | An agent with no prior knowledge finds every step from `docs.get` |
 | 1.4, 1.5 | The local engine and the bridge, the rest | A shared browser between two commands; a different user refused; two outside MCP client libraries call a read | The roadmap's proofs for both |
@@ -111,7 +111,7 @@ S2: 1. Write the rule for which drafted reads are reported as ready: passed a tr
 
 2.2: 1. One system at a time: Linux secret service, macOS keychain, Windows credential store. 2. A CI test where the runner offers the store; a named stop where it does not.
 
-5.2, 5.3, 1.4, 1.5: take the "not shown" items from each roadmap row, one test each.
+5.2, 5.3, 1.4: take the "not shown" items from each roadmap row, one test each. Packages 1.4 and 1.5 are done; the shared browser is proven by a count of launches in the browser pack, and the first run on Windows and macOS is CI's.
 
 ## Stage 3: the web path
 
@@ -121,16 +121,16 @@ S2: 1. Write the rule for which drafted reads are reported as ready: passed a tr
 
 | # | Package | What it builds | Proof |
 | --- | --- | --- | --- |
-| 1.6 | Reading a page | The rest of the read verbs, locators, wait conditions, and widget drivers for reading | The Phase 1 cases of the test application pass on three systems |
+| ~~1.6~~ | ~~Reading a page~~ (done, [decision 0350](../decisions/0350-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md)) | The rest of the read verbs, locators, wait conditions, and widget drivers for reading | The Phase 1 cases of the test application pass on three systems |
 | 2.3 | The sign-in window | A visible window of the engine's own browser where the person signs in | A person signs in to the test application once; a read then works |
-| 2.4, 2.5, 2.6 | Sessions | Expiry in `page_http`; the keeper told when a sign-in is the person's own; single sign-on | The roadmap's proofs for each |
+| ~~2.4~~ (done, [decision 0353](../decisions/0353-a-session-is-probed-by-a-keeper-job-run-through-the-engine-in-a-slot-kept-for-it.md)), 2.5, ~~2.6~~ (done, [decision 0367](../decisions/0367-auth-detect-recommends-a-mode-and-a-provider-by-fixed-rules-and-marks-it-inferred.md)) | Sessions | The probe through the engine (done); expiry in `page_http`; the keeper told when a sign-in is the person's own; single sign-on | The roadmap's proofs for each |
 | E2 | Capture and inference | `screen.snapshot`, `capture.start`, `capture.stop`, `endpoints.infer` | The test application's cases for capture and inference |
 | E3 | Described against observed | The comparison, and the unknowns it raises | An endpoint described and never seen is reported as `inferred` |
 | E5 | The scout, the rest | Capture's findings flow into the scout's report | Scouting twice gives the same report, by hash |
 | 4.2 | Requests from inside the page | The `page_http` driver, with the page's own tokens | The anti-forgery case passes |
-| P3b | Destinations | Refused origins carried in findings and proposed as destinations | The roadmap's proof |
+| ~~P3b~~ | ~~Destinations~~ (done, [decision 0335](../decisions/0335-a-scout-carries-the-origins-a-page-tried-and-a-surface-may-refuse-origins-quietly.md)) | Refused origins carried in findings and proposed as destinations | The roadmap's proof |
 | FT6 (new) | The web field test | A recipe for a web application with a sign-in | Reads drafted from a capture run and match the database |
-| 2.7 | A design review round | One lens over the web path | Findings fixed or recorded |
+| ~~2.7~~ | ~~A design review round~~ (done, [the review](../reviews/sessions-and-secrets-review-2026-11-24.md)) | One lens over the web path | Findings fixed or recorded |
 
 **Low level.**
 
@@ -140,7 +140,7 @@ S2: 1. Write the rule for which drafted reads are reported as ready: passed a tr
 4. E3 and E5: the comparison in `a2m-provider`, then the scout's stage for it.
 5. 2.4 to 2.6: one sign-in variant of the test application per pull request.
 6. 4.2: measure first. The first measurement did not show it faster than a screen read; keep it only if it is, or if a case needs it.
-7. P3b: the first slice named in the journal of 2026-11-18.
+7. ~~P3b~~, done: the first slice named in the journal of 2026-11-18.
 8. FT6: the recipe signs in through the sign-in window driven by the recipe as a person would be, captures three screens, and checks the drafted reads against the database.
 9. The answer lost on macOS without TLS, noted on 2026-11-18, is investigated here, because the web path meets it first.
 
@@ -153,9 +153,9 @@ S2: 1. Write the rule for which drafted reads are reported as ready: passed a tr
 | # | Package | What it builds | Proof |
 | --- | --- | --- | --- |
 | FT4 | Faults on purpose | A proxy between the product and the software that drops, delays, or cuts a connection at a named point | A write whose answer is lost is reconciled; the database holds it once |
-| 3.3, 3.4, 3.5 | The write, the rest | Field types and normalization on real values; the diff's hash the same on three systems | The roadmap's proofs |
+| ~~3.3~~, 3.4, 3.5 | The write, the rest | Field types and normalization on real values; the diff's hash the same on three systems | The roadmap's proofs |
 | 3.7 | Stop and resume | A kill at a random step | Killed and resumed: no duplicate, nothing unverified |
-| 4.1 | The `http` driver, the rest | The cases still open | The test application's cases pass over direct requests |
+| ~~4.1~~, done | ~~The `http` driver, the rest~~ | ~~The cases still open~~ | ~~The test application's cases pass over direct requests~~ |
 | 2.1 | The redactor | A secret planted in the system's own answer | It appears in no result, log, or trace |
 | 3.10 | Faults and manipulation | The other kernel crates; a design review round | Each fault leaves no duplicate and no unverified record |
 | 9.1 | Canaries and drift | A changed system is caught before a write fails | A deliberately changed screen is caught by a canary |
@@ -185,14 +185,14 @@ The others: take each roadmap row's "not shown" items, one test each.
 | --- | --- | --- | --- |
 | L1, L2, L3 | Launchers ([decision 0299](../decisions/0299-programs-that-run-what-their-arguments-name-are-reached-in-two-steps.md), which decides 0282) | The listing commands of such programs; a launcher with its file pinned; an MCP server started that way | A server started through a launcher is wrapped and a write through it verified; a package runner is refused with what to do instead |
 | FT5 | A field test for each kind | Recipes: an existing MCP server; a command-line program; a database; files; a broker; a desktop application; a device's protocol | One recipe each, findings written down |
-| D3, D4, D5 | The command pack | The rest of reads; the result file of H-26; writes with a kill and resume | The roadmap's proofs |
-| G2, G3 | The data pack | Reads and writes, the rest | The roadmap's proofs |
-| H2, H3 | The file pack | Reads and writes, the rest | The roadmap's proofs |
-| J2, J3 | The stream pack | Reads and publishing, the rest | The roadmap's proofs |
+| ~~D3~~, ~~D4~~, ~~D5~~ | The command pack | The rest of reads; the result file of H-26; writes with a kill and resume | The roadmap's proofs |
+| ~~G2~~, G3 | The data pack | Reads, done; writes, the rest | The roadmap's proofs |
+| ~~H2~~, ~~H3~~ | The file pack | Reads and writes, done | The roadmap's proofs |
+| ~~J2~~, J3 | The stream pack | Reads and publishing, the rest | The roadmap's proofs |
 | 8.3 | The desktop pack | Writes on Windows and macOS | Case 28 passes on three systems |
-| P2 | What a tool starts, sets, and sends | The statement for the desktop, device, stream, and data packs | Each is shown on the publish page |
+| ~~P2~~ | ~~What a tool starts, sets, and sends~~ (done) | The statement for the desktop, device, stream, and data packs | Each is shown on the publish page |
 | W2d | Watches, the rest | Records compared by key; a removal reported | The roadmap's proof |
-| N2b, N3 | The network | The place of an address; the reach a person names | The roadmap's proofs |
+| ~~N2b~~, ~~N3~~ | The network | The place of an address; the reach a person names | The roadmap's proofs |
 | X1, X5 | What a program says of itself | The D-Bus reader; the plain facts of a binary | The roadmap's proofs |
 
 **Low level.**
@@ -218,8 +218,9 @@ The packs' own packages: after each field test, close what it found, a stand cas
 
 | # | Package | What it builds | Proof |
 | --- | --- | --- | --- |
-| 1.7 | Budgets measured | Every budget of section 225 measured; `a2m-bench compare` run in CI | Numbers recorded; budgets confirmed or revised by record |
-| F3, F4 | Provider packages; sizes | Packs found through a Python entry point; the binary and wheel measured | The roadmap's proofs |
+| ~~1.7~~ | ~~Budgets measured~~, done in part: six measured, two revised, four not yet measurable, and the comparison runs in CI against a stored baseline once a quiet runner has stored one ([0369](../decisions/0369-the-comparison-holds-the-floor-of-each-number-and-the-program-has-a-size-budget.md)) | Every budget of section 225 measured; `a2m-bench compare` run in CI | [0363](../decisions/0363-the-budgets-as-first-measured-two-are-revised-and-four-cannot-yet-be-told-from-the-systems-own-time.md) |
+| ~~F3~~ | ~~Provider packages~~, done | Packs found through a Python entry point | [0313](../decisions/0314-a-provider-package-is-found-by-reading-its-entry-and-no-package-code-runs.md) |
+| ~~F4~~ | ~~Sizes~~, done | ~~The binary and wheel measured~~ | [0369](../decisions/0369-the-comparison-holds-the-floor-of-each-number-and-the-program-has-a-size-budget.md) |
 | 5.4 | The clients | The Python and TypeScript clients on Windows | Each client calls a read |
 | 5.5 | The release pipeline | pip, crates.io, npm, standalone binaries, signed, with a bill of materials | A tagged pre-release installs by each route on three systems |
 | 5.6 | The exit test of Phase 5 | An agent takes a new system to published reads | The first tool in under ten minutes, measured |
@@ -237,7 +238,7 @@ The packs' own packages: after each field test, close what it found, a stand cas
 | # | Package | What it builds | Proof |
 | --- | --- | --- | --- |
 | 6.1 | Postgres beside SQLite | One schema, both back ends | Every ledger test passes on both |
-| 6.3 | Toolsets, grants, roles | The lower layers that only narrow; a second administrator on publish | Two users see different tools |
+| ~~6.3~~ | ~~Toolsets, grants, roles~~ | The lower layers that only narrow; a second administrator on publish | Two users see different tools |
 | 6.2 | MCP over HTTP | An OAuth resource server | A token for another audience is refused |
 | 6.4 | The REST interface | Its description, events, webhooks | A program follows a pipeline to its end |
 | 6.5 | Approval and sign-in pages on a server; the console | | An approver approves; the caller cannot |
@@ -255,16 +256,66 @@ The packs' own packages: after each field test, close what it found, a stand cas
 
 | # | Package | What it builds | Proof |
 | --- | --- | --- | --- |
-| 8.4, 8.5 | Widget drivers and edge cases of web interfaces | | Every control and every hard case of the test application passes |
-| 8.2a | Tools a site publishes | A mode of the web pack | A page registers a tool and it is called |
-| K4 | Firmware | Inspection as discovery; the update operation | An update without a recovery path cannot be published |
-| X2, X3, X6, X7 | More that a program says of itself | The macOS and Windows readers; the optional engine; the spike | The roadmap's proofs |
+| ~~8.4~~, done | ~~The remaining widget drivers~~ | ~~Every custom control of case 10, set and read back~~ | ~~Every control of the test application is set and read back~~ |
+| 8.4a | Platform profiles as data | `profiles/`, their loader | A profile that does not fit does not load |
+| ~~8.5~~, done | ~~Edge cases of web interfaces~~ | ~~The web pack's half of cases 22 to 27~~ | ~~Every hard case of the test application passes~~ |
+| ~~8.2a~~, done | ~~Tools a site publishes~~ | ~~A mode of the web pack~~ | ~~A page registers a tool and it is called~~ |
+| ~~K4~~, done | ~~Firmware~~ | ~~Inspection as discovery; the update operation~~ | ~~An update without a recovery path cannot be published~~ |
+| X2, X3, X7 | More that a program says of itself | The macOS and Windows readers; the spike | The roadmap's proofs |
+| ~~X6~~, done | ~~The optional engine~~ | ~~A discoverer that starts only a pinned program and reads one form~~ | ~~The roadmap's proof~~ |
 | 9.3 | Every failure and attack as a test | | Each test fails when its defence is removed |
 | 9.5 | Systems the project does not run | A read, then a write to a declared test record | The owner's, with the owner present |
 | 9.6 | An outside security review | | The owner's; a test for every finding |
 | R2 | Release 1.0 | | The owner's |
 
 **Low level.** Written when Stage 7 is reached. Until then the roadmap rows are the detail.
+
+## The design is settled: build in this order
+
+Written on 2026-11-23 for the lead that takes over. Every question that was open in stages 1 to 4 has a decision record. A lead builds from this section and does not have to design. Where the code turns out to differ from what a record assumed, the record's own "Context" says which fact it rested on: check that fact first, and write a new record only when it is false.
+
+**How to take one package.** Read its row in the [roadmap](roadmap.md), then the record this table names, then the design of each crate it touches. Build the record's "Proof" first as a failing test. Change nothing the record does not name. When the proof passes, run the whole list under "Before a pull request" below, mark the row done, and put the change on the architecture page.
+
+| Order | Package | Record | What to build, in steps | Size of worker |
+| --- | --- | --- | --- | --- |
+| ~~1~~ | ~~FT8~~, done; ~~FT11~~, done (decision 0337) | [0302](../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md) | 1. One public function in `a2m-files` that says whether a name is a secret's, used by the compiler's own check. 2. The HTTP drafter leaves such a property out of the outputs and such a parameter out of the inputs; a required one makes the read not drafted, reported. 3. The description's last sentence names what was left out. 4. A case of the test application. 5. Rerun field test 1 and change its `gap` steps for finding 10 to expect the right behaviour | Middle |
+| ~~2~~ | ~~S2~~, done | [0306](../decisions/0306-the-short-path-is-add-then-a-trial-and-only-a-built-action-is-listed-up-front.md) | 1. `Registry::toolset` skips an action with no handler; a test over the whole catalog. 2. `add --description <file>`. 3. Each proven read in the report carries its trial call. 4. The trial's answer carries `sandbox: true`, `published: false`, and the fixed sentence. 5. The test from an empty folder in `crates/anything2mcp/tests/`. 6. Measure, and write the numbers in the journal | Middle |
+| ~~3~~ | ~~FT7~~, done | [0305](../decisions/0305-an-output-that-may-be-absent-is-declared-so-in-the-plan-and-the-output-schema.md) | 1. A flag on a plan's output in `a2m-core`, default false; the file formats and the plan's version. 2. `output_schema_of` writes `required` and admits `null` where the flag is set. 3. The HTTP lowering sets it from `at_path`'s `certain`. 4. An absent value is returned as `null`; a `null` in a certain output stops. 5. `may_be_absent: true` by hand. 6. The proof validates a real result against the schema | Middle; the plan's form is a public contract, so the lead reads the whole change |
+| 4 | V4, ~~V1~~ (done) | [0307](../decisions/0307-what-the-evidence-level-is-for-and-what-a-review-shows-about-a-tools-evidence.md), points 5 and 1 | V4: one sentence in the help, one test. V1: find every document that says a level gates a listing or a call, and correct it | Small for the search, middle for the edits |
+| ~~5~~ | ~~V3~~, done | 0307, point 4 | 1. A pack states, where it registers a step kind, whether the kind can change the system. This changes the provider contract: say so in the technical reference. 2. The compiler refuses a read plan that holds such a step. 3. Every pack marks its kinds; the default for an unmarked kind is "can change", so a forgotten one fails closed | Large: it touches every pack. One writer, packs in turn |
+| ~~6~~ | ~~GD1~~, done | [0309](../decisions/0309-two-names-are-settled-the-source-folder-and-what-guard-checks.md) | Five tests, one for each of guard's checks, in order. Where the engine does not ask the session keeper at guard, add the question; the driver's own stop stays | Large: the engine loop |
+| ~~7~~ | ~~FT4~~, done | [0310](../decisions/0310-the-field-harness-runs-in-a-closed-network-and-says-in-the-ledger-what-it-is.md) | 1. `field_harness` as a prompt name and a presence check; `Host` gains `prompt`. Step 1 is built in part: the names exist in `a2m-local`, `a2m-policy`, and the ledger, `a2m-local` holds the field prompt (`FieldPrompt`) with its tests, and `system_prompt_for` is held never to return it; `Host` now has `prompt`, which the shipped program never sets, `ApprovalAsk` in `a2m-actions` carries the operation's effect class, and the surface puts it in the approval prompt as `PromptFor::Approval(Some(effect))`; a test serves with a `Host` that carries a prompt and sees the effect class reach it (all built). 2. The harness under `tools/field-harness/` and its field prompt on standard input (built: package `a2m-field-harness`, `serve` only; it refuses to serve when `1.1.1.1:443` answers, and only a refusal to route or no answer in time counts as closed, held by tests with an injected connector; the audit's layout and layering table name it as layer 12). Three of the record's four tests are built (the closed-network refusal, in the harness; the other hash and the irreversible operation, in `a2m-local`'s field prompt tests); the fourth is the packaging check. 3. The runner's closed container network (built: `tools/field_test.py` runs the system and, from a Debian image pinned by digest, every `a2m` step on an `--internal` network with no published port, checks that no public address answers, and removes all of it), and the packaging check of exact binaries (built: `tools/check_packages.py`, with `tools/test_check_packages.py`, runs in CI on each wheel and in the release workflow on each npm package, and fails when a package holds any binary but the product's own program, or anything named for the harness). Steps 4, 5, and 6 are built too, and field test 2 proved them three times alike ([results](../reviews/field-tests.md)). 4. The runner's `person` step, writing the short hash on the harness's standard input. 5. A write endpoint in the recipe of field test 1: change one issue's title, approved by the runner, through the fault proxy with the answer cut once. 6. Ask the software's own database: the title is there once. Step 4 runs the field harness, not the product, for every `a2m` step | Large for the crate; middle for the runner |
+| ~~8~~ | ~~FT9~~, done (decision 0354) | [0303](../decisions/0303-a-declared-sign-in-is-kept-and-a-read-that-waits-for-one-is-reported-as-waiting.md) | 1. `waiting` in the scout's `try` stage and report; the counts add up. 2. The trial's answer for a waiting read names `session.login`. 3. In the recipe: make an invented token with the software's own command, sign in with the `person` step, read through the session. 4. Search every file the run wrote for the token: none | Middle |
+| 9 | ~~V2~~ (done), V5 | [0311](../decisions/0311-the-review-shows-from-the-ledger-what-this-engine-proved.md); 0307, point 6 | V2: `fixture.record` writes the folder's digest in the ledger; the review looks it up, shows each tool's level by 0311's mapping, names hand-written `verified` bindings, and shows the gates from a table the runner holds. V5: the bound on a description in the compiler; `_meta` at the MCP door (built: the target and the version, as `anything2mcp/target` and `anything2mcp/version`; the third, who wrote the description, is carried by the plan since decision 0337, and `a2m-actions` and `a2m-mcp` do not send it yet) | Middle each |
+| 10 | ~~2.3~~ (done), then E2 | [0308](../decisions/0308-the-first-capture-records-reads-only-in-the-engines-own-browser-and-drafts-to-the-holding-folder.md) | The sign-in window first. Then the three handlers, in the order record, stop, infer, each with its test in the test application. Then FT6 | Large |
+| ~~11~~ | ~~FT10~~, done | 0302, point 5 | One pack at a time, each with a case in its own stand | Middle |
+| ~~12~~ | ~~L1~~, done; ~~L2~~, done (decision 0349); ~~L3~~, done (decision 0371) | [0299](../decisions/0299-programs-that-run-what-their-arguments-name-are-reached-in-two-steps.md) | As the roadmap's rows | Large |
+| 13 | FT5 | [0295](../decisions/0295-a-field-test-is-run-from-a-recipe-kept-outside-the-repository.md) | One recipe for each kind, in this order: a database, files, a command-line program, an existing MCP server, a broker, a page in a browser, a desktop application, a device's protocol. See "Choosing the software" below | Middle each |
+
+Stages 5 to 8 are as written further down. Their low level is rewritten when stage 4 is reached.
+
+**Choosing the software for a field test.** The recipe and the name stay outside the repository (rule 9). Take software that: is open source and runs in one container with no account anywhere; keeps its data where a test can ask it directly, without the product; can be seeded with invented data from its own commands; is pinned by digest. Write to our own copy only, and throw the copy away after the run ([decision 0293](../decisions/0293-software-we-run-ourselves-is-tested-against-during-the-build-and-may-be-written-to.md)). Nothing here is permission to touch a system the project does not run.
+
+**Before a pull request.** Run all of these and read the whole output, never the first lines of it:
+
+1. `cargo fmt --all --check`
+2. `cargo clippy --workspace --all-targets --locked -- -D warnings`
+3. `cargo test --workspace --locked --no-fail-fast`
+4. For a change that touches drafting or the data pack: `A2M_REQUIRE_POSTGRES=1 cargo test -p a2m-pack-data --locked --features postgres`. CI runs it and a plain workspace test does not.
+5. `python3 tools/docs_audit.py`, `python3 tools/failure_codes.py --check`, and the tests under `tools/`.
+6. The field test, three times, with one result.
+
+**What has caught a lead before.**
+
+- A test that needs a real server is skipped by the plain workspace run and fails in CI. Look for a feature or an environment variable in the CI file for every crate a change touches.
+- One build folder for every worker, and one `cargo` at a time. Separate build folders fill the disk.
+- A worker's copy is made from an older commit. Its first command brings in the branch.
+- A count in a document (decision records, ready packages) is checked by the audit. Change it in the same commit.
+- A crate's name in a document must be in section 605's layout, in the layering table, and on disk, all three. Name a new crate only in the change that creates it.
+- A reader's report is a lead and not a fact. Open the file before a decision rests on it.
+- An agent's finding that a design is wrong is common and useful. Have a larger model argue against a design before it is built, when the design touches a rule.
+
+**What is in no record and stays the owner's:** the list under "What is the owner's" below. Nothing in this section changes it.
 
 ## Who does which line of work
 

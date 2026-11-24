@@ -316,7 +316,7 @@ pub(crate) fn lower_folder(
             steps.step(
                 SET,
                 &StepSpec::FolderSet { change },
-                set_args,
+                set_args.clone(),
                 &codes::row::ROUND_TRIP_FAILED,
                 false,
                 false,
@@ -324,7 +324,9 @@ pub(crate) fn lower_folder(
             steps.step(
                 SAVE,
                 &StepSpec::FolderSave,
-                Vec::new(),
+                // The values written, again, so that an offline test sees
+                // what the committing step sends (finding 22).
+                set_args.clone(),
                 &a2m_provider::codes::row::NO_CONFIRMATION,
                 true,
                 false,

@@ -196,6 +196,8 @@ pub(crate) struct Inner {
     pub(crate) telemetry: Telemetry,
     pub(crate) policy: Option<Policy>,
     pub(crate) keeper: Option<Keeper>,
+    /// The keeper's way to run a session's probe through the engine.
+    pub(crate) probes: Arc<ProbeBridge>,
     pub(crate) credentials: Option<Arc<StoredCredentials>>,
     pub(crate) sched: Option<Scheduler>,
     pub(crate) providers: a2m_provider::Registry,
@@ -379,6 +381,7 @@ impl Kernel {
         let mut installation = None;
         let mut policy = None;
         let mut keeper = None;
+        let probes = Arc::new(ProbeBridge::default());
         let mut credentials = None;
         let mut sched = None;
         if let Some(store) = &prepared.store {
@@ -463,7 +466,7 @@ impl Kernel {
                     )
                     .with_random(Arc::clone(&prepared.random)),
                 );
-                let probe = Arc::new(ProbeBridge);
+                let probe = Arc::clone(&probes);
                 let work = Arc::new(InProcessWork::new(
                     Arc::clone(&held),
                     Arc::new(PersonBridge::new(Arc::clone(&person))),
@@ -506,6 +509,7 @@ impl Kernel {
                 telemetry: prepared.telemetry,
                 policy,
                 keeper,
+                probes,
                 credentials,
                 sched,
                 providers,
@@ -530,6 +534,7 @@ impl Kernel {
             }),
         };
         acts.bind(&kernel.inner);
+        kernel.inner.probes.bind(&kernel.inner);
         kernel.recheck().await;
         kernel.record_start().await;
         kernel.start_tending();
@@ -842,6 +847,16 @@ impl Kernel {
         }
     }
 
+    /// Notes the published version a run leased `session` under, whose
+    /// probe the keeper's checks of it then run.
+    pub(crate) fn note_probe(
+        &self,
+        session: a2m_core::SessionId,
+        source: crate::keeper::ProbeSource,
+    ) {
+        self.inner.probes.note(session, source);
+    }
+
     pub(crate) fn keeper(&self) -> Result<&Keeper, Failure> {
         self.inner.keeper.as_ref().ok_or_else(|| {
             codes::busy(
@@ -853,6 +868,38 @@ impl Kernel {
     }
 
     /// The environment an action that names none is decided in.
+    /// The toolset a decision names for a call that came through `named`
+    /// (decision 0339). A toolset the set in force defines is named as it
+    /// is, and narrows. One that the engine's own doors serve (`use`,
+    /// `build`, `admin`) and the set does not define is left out: it is a
+    /// list of what is shown up front and holds no permit, so a set that
+    /// begins to define toolsets does not stop the built-in ones. Any other
+    /// name is named as it is, and a set that defines toolsets refuses what
+    /// it does not define (unknown means stop). When the set in force
+    /// cannot be read, the name is kept, which narrows and never widens.
+    pub(crate) async fn toolset_for_decision(
+        &self,
+        named: Option<&a2m_policy::ToolsetName>,
+    ) -> Option<a2m_policy::ToolsetName> {
+        let named = named?;
+        if !matches!(named.as_str(), "use" | "build" | "admin") {
+            return Some(named.clone());
+        }
+        let (Some(policy), Ok(store)) = (self.policy().cloned(), self.store()) else {
+            return Some(named.clone());
+        };
+        let wanted = named.clone();
+        let defined = store
+            .read(move |tx| {
+                Ok(policy
+                    .layers_in_force(tx)
+                    .is_none_or(|layers| layers.toolsets.iter().any(|set| set.name == wanted)))
+            })
+            .await
+            .unwrap_or(true);
+        defined.then(|| named.clone())
+    }
+
     pub(crate) fn environment(&self) -> Environment {
         Environment::fixed("production")
     }
@@ -969,6 +1016,11 @@ impl Kernel {
                 },
             )
             .await;
+        // The engine is closed: the store's lock on its data folder goes,
+        // though a clone of the store may outlive this kernel for a while.
+        if let Some(store) = &self.inner.store {
+            store.release_folder();
+        }
     }
 }
 

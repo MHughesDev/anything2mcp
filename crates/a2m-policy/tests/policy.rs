@@ -24,10 +24,12 @@ use a2m_ledger::{
 use a2m_policy::{
     APPROVAL_MISSING, APPROVAL_REFUSED, APPROVAL_STALE, ActionName, ActionRef, Answer,
     ApprovalSurface, ApproveWrites, Approved, BuiltIn, Channel, Context, Decision, Declined, Grant,
-    IdentityMode, KILL_SWITCH_ON, KillScope, KillSwitch, LIMIT_EXCEEDED, LimitCheck, ModuleName,
-    Outcome, POLICY_EVALUATION_FAILED, POLICY_TESTS_FAILED, PRESENCE_REQUIRED, Policy,
-    PolicyHealth, PolicyLayers, PolicyTest, PreApproval, PresenceCheck, PrincipalRef, PublishProof,
-    Question, Quota, Request, Resource, Role, RoleBinding, Scope, Subject, ToolRef,
+    IdentityMode, KILL_SWITCH_ON, KillScope, KillSwitch, LIMIT_EXCEEDED, LayerChange, LimitCheck,
+    ModuleName, Outcome, POLICY_EVALUATION_FAILED, POLICY_TESTS_FAILED, PRESENCE_REQUIRED, Policy,
+    PolicyHealth, PolicyLayers, PolicyTest, PreApproval, PresenceCheck, PrincipalKind,
+    PrincipalRef, PublishProof, PublishReview, Question, Quota, Request, Resource, Role,
+    RoleBinding, RoleGrant, RuleKind, SECOND_ADMIN_REQUIRED, Scope, Subject, ToolRef, Toolset,
+    ToolsetName,
 };
 use a2m_telemetry::ManualClock;
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
@@ -1052,6 +1054,68 @@ async fn decisions_versions_and_switches_survive_a_restart_and_can_be_explained(
 }
 
 #[tokio::test]
+async fn a_new_version_that_fails_to_load_leaves_the_previous_one_in_force() {
+    // Section 224: a new policy version that fails to load is not used; the
+    // previous version stays in force and goes on deciding.
+    let stand = local("previous").await;
+    let PolicyHealth::Ok { version: before } = health(&stand.store, &stand.policy).await else {
+        panic!("no valid set")
+    };
+    let raw = stand.folder.raw();
+    let versions = count(&raw, "SELECT COUNT(*) FROM policy_versions");
+
+    // A rule whose condition does not compile, and a rule whose test fails:
+    // neither set is stored.
+    let mut broken = BuiltIn::local(person(1), workspace()).layers().clone();
+    broken.pre_approvals.push(PreApproval {
+        name: "does_not_compile".to_owned(),
+        who: Subject::Principal(person(1)),
+        scope: Scope::Pattern("example_order_*".to_owned()),
+        max_records: 5,
+        condition: Some("environment == (".to_owned()),
+    });
+    let present = PublishProof {
+        presence: Some(PresenceCheck::OsPrompt),
+    };
+    let refused = publish(&stand, broken, present).await.unwrap_err();
+    assert_eq!(refused.class(), FailureClass::Input, "{refused:?}");
+    let mut failing = BuiltIn::local(person(1), workspace()).layers().clone();
+    failing.grants.clear();
+    failing.tests.push(PolicyTest {
+        name: "the person reads".to_owned(),
+        request: ask(1, Question::UseTool, tool(), EffectClass::Read),
+        expect: Answer::Allow,
+    });
+    let refused = publish(&stand, failing, PublishProof::default())
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), &POLICY_TESTS_FAILED);
+    assert_eq!(
+        count(&raw, "SELECT COUNT(*) FROM policy_versions"),
+        versions
+    );
+
+    // The previous version decides, as before: the person reads, a stranger
+    // does not.
+    assert_eq!(
+        health(&stand.store, &stand.policy).await,
+        PolicyHealth::Ok { version: before }
+    );
+    let read = stand
+        .policy
+        .decide_alone(ask(1, Question::UseTool, tool(), EffectClass::Read))
+        .await;
+    assert_eq!(read.answer, Answer::Allow);
+    assert_eq!(read.version, Some(before));
+    let stranger = stand
+        .policy
+        .decide_alone(ask(2, Question::UseTool, tool(), EffectClass::Read))
+        .await;
+    assert_eq!(stranger.answer, Answer::Deny);
+    assert_eq!(stranger.version, Some(before));
+}
+
+#[tokio::test]
 async fn with_no_valid_set_every_decision_is_a_recorded_denial() {
     let stand = local("invalid").await;
     // Another program writes a newest version that cannot be read.
@@ -1198,6 +1262,7 @@ async fn an_approval_is_refused_for_another_tool_version_or_a_proof_not_of_now()
         PresenceCheck::Polkit,
         PresenceCheck::LocalAuthentication,
         PresenceCheck::WindowsHello,
+        PresenceCheck::FieldHarness,
     ] {
         assert!(check.proves_presence(), "{check}");
     }
@@ -1349,4 +1414,502 @@ async fn a_decision_is_explained_only_in_its_own_workspace() {
         .read(move |tx| policy.explain(tx, id, workspace()))
         .await
         .unwrap();
+}
+
+fn example_scope() -> Scope {
+    Scope::Target(TargetName::new("example").unwrap())
+}
+
+fn write_grant(who: u8) -> Grant {
+    Grant {
+        who: Subject::Principal(person(who)),
+        scope: example_scope(),
+        max_effect: EffectClass::Write,
+        identity_mode: IdentityMode::PerUserSession,
+    }
+}
+
+fn through(toolset: &str, mut request: Request) -> Request {
+    request.context.toolset = Some(ToolsetName::new(toolset).unwrap());
+    request
+}
+
+fn reporting_layers() -> PolicyLayers {
+    let mut layers = server_layers();
+    layers.grants.push(write_grant(2));
+    layers.toolsets = vec![
+        Toolset {
+            name: ToolsetName::new("reporting").unwrap(),
+            who: vec![Subject::Principal(person(1)), Subject::Principal(person(3))],
+            tools: vec![Scope::Pattern("example_order_get*".to_owned())],
+            max_effect: EffectClass::Read,
+            identity_mode: IdentityMode::PerUserSession,
+            allow_pre_approval: false,
+        },
+        Toolset {
+            name: ToolsetName::new("everyone").unwrap(),
+            who: vec![Subject::Anyone],
+            tools: vec![Scope::Pattern("*".to_owned())],
+            max_effect: EffectClass::Write,
+            identity_mode: IdentityMode::PerUserSession,
+            allow_pre_approval: true,
+        },
+    ];
+    layers
+}
+
+async fn decide(stand: &Stand, request: Request) -> Decision {
+    stand.policy.decide_alone(request).await
+}
+
+async fn explained(stand: &Stand, id: a2m_core::DecisionId) -> a2m_policy::Explanation {
+    let policy = stand.policy.clone();
+    stand
+        .store
+        .read(move |tx| policy.explain(tx, id, workspace()))
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_toolset_only_narrows_what_the_grants_allow() {
+    let stand = stand("toolset", BuiltIn::server()).await;
+    publish(&stand, reporting_layers(), PublishProof::default())
+        .await
+        .unwrap();
+    let get = || tool_in("example", "example_order_get");
+    let use_tool = |by: u8, resource: Resource, effect: EffectClass| {
+        ask(by, Question::UseTool, resource, effect)
+    };
+
+    // Inside the toolset: selected, connectable, and granted.
+    let inside = decide(
+        &stand,
+        through("reporting", use_tool(1, get(), EffectClass::Read)),
+    )
+    .await;
+    assert_eq!(inside.answer, Answer::Allow);
+    // The same call with no toolset is judged by the grants alone.
+    let bare = decide(&stand, use_tool(1, tool(), EffectClass::Write)).await;
+    assert_eq!(bare.answer, Answer::Allow);
+    // A tool the toolset does not select, though a grant covers it.
+    let outside = decide(
+        &stand,
+        through("reporting", use_tool(1, tool(), EffectClass::Write)),
+    )
+    .await;
+    assert_eq!(outside.answer, Answer::Deny);
+    let says = explained(&stand, outside.id).await;
+    let ids: Vec<&str> = says.rules.iter().map(|r| r.id.as_str()).collect();
+    assert!(ids.contains(&"toolset.reporting.not_selected"), "{ids:?}");
+    assert!(ids.contains(&"toolset.reporting.effect_ceiling"), "{ids:?}");
+    assert!(says.rules.iter().all(|r| r.kind == RuleKind::Toolset));
+    // Not someone the toolset lists, though a grant covers them.
+    let stranger = decide(
+        &stand,
+        through("reporting", use_tool(2, get(), EffectClass::Read)),
+    )
+    .await;
+    assert_eq!(stranger.answer, Answer::Deny);
+    assert_eq!(
+        explained(&stand, stranger.id).await.rules[0].id,
+        "toolset.reporting.not_connectable"
+    );
+    // A toolset lists a caller no grant covers: still denied. It cannot widen.
+    let ungranted = decide(
+        &stand,
+        through("reporting", use_tool(3, get(), EffectClass::Read)),
+    )
+    .await;
+    assert_eq!(ungranted.answer, Answer::Deny);
+    assert_eq!(
+        explained(&stand, ungranted.id).await.rules[0].id,
+        "default.deny"
+    );
+    // The identity mode of the toolset.
+    let mut act = through(
+        "reporting",
+        ask(
+            1,
+            Question::ActAs,
+            Resource::Identity(a2m_core::Identity::Person(person(1))),
+            EffectClass::Read,
+        ),
+    );
+    act.context.identity_mode = Some(IdentityMode::PerUserToken);
+    assert_eq!(decide(&stand, act.clone()).await.answer, Answer::Deny);
+    act.context.identity_mode = Some(IdentityMode::PerUserSession);
+    assert_eq!(decide(&stand, act).await.answer, Answer::Allow);
+    // Once a set defines toolsets, one it does not define is unknown.
+    let unknown = decide(
+        &stand,
+        through("nowhere", use_tool(1, get(), EffectClass::Read)),
+    )
+    .await;
+    assert_eq!(unknown.answer, Answer::Deny);
+    assert_eq!(
+        explained(&stand, unknown.id).await.rules[0].id,
+        "toolset.unknown"
+    );
+}
+
+#[tokio::test]
+async fn a_toolset_can_forbid_a_write_without_a_person() {
+    let stand = stand("toolset-pre", BuiltIn::server()).await;
+    let mut layers = reporting_layers();
+    layers.settings.pre_approval = true;
+    layers.settings.writes_outside_tests = true;
+    layers.pre_approvals.push(PreApproval {
+        name: "small_writes".to_owned(),
+        who: Subject::Anyone,
+        scope: Scope::Pattern("example_*".to_owned()),
+        max_records: 5,
+        condition: Some("tool != \"marker_condition_text\"".to_owned()),
+    });
+    publish(
+        &stand,
+        layers,
+        PublishProof {
+            presence: Some(PresenceCheck::SignedIn),
+        },
+    )
+    .await
+    .unwrap();
+    let fence = waiting_run(&stand.store, 1, "a").await;
+    let write = |toolset: &str, resource: Resource, effect: EffectClass| {
+        let mut request = through(
+            toolset,
+            ask(1, Question::WriteWithoutPerson, resource, effect),
+        );
+        request.run = Some(fence.run);
+        request.diff_hash = Some(diff());
+        request
+    };
+    // Where the toolset allows a rule to clear a write, the rule does.
+    let cleared = decide(&stand, write("everyone", tool(), EffectClass::Write)).await;
+    assert_eq!(cleared.outcome(), Outcome::Allow);
+    let says = explained(&stand, cleared.id).await;
+    assert_eq!(says.rules[0].kind, RuleKind::PreApproval);
+    assert!(says.summary.contains("small_writes"), "{}", says.summary);
+    assert!(
+        !says.summary.contains("marker_condition_text"),
+        "an explanation never prints a rule's condition: {}",
+        says.summary
+    );
+    // Where it does not, the run waits for a person: not a refusal.
+    let get = tool_in("example", "example_order_get");
+    let waits = decide(&stand, write("reporting", get, EffectClass::Read)).await;
+    assert_eq!(waits.outcome(), Outcome::NeedsApproval);
+    assert_eq!(
+        explained(&stand, waits.id).await.rules[0].id,
+        "toolset.reporting.no_pre_approval"
+    );
+}
+
+#[tokio::test]
+async fn a_role_is_a_bundle_of_grants() {
+    let stand = stand("rolegrants", BuiltIn::server()).await;
+    let mut layers = PolicyLayers::default();
+    layers.roles.push(RoleBinding {
+        who: Subject::Principal(person(2)),
+        role: Role::Operator,
+    });
+    layers.role_grants = vec![
+        RoleGrant {
+            role: Role::Operator,
+            scope: example_scope(),
+            max_effect: EffectClass::Write,
+            identity_mode: IdentityMode::PerUserSession,
+        },
+        RoleGrant {
+            role: Role::Viewer,
+            scope: example_scope(),
+            max_effect: EffectClass::Read,
+            identity_mode: IdentityMode::PerUserSession,
+        },
+    ];
+    publish(&stand, layers, PublishProof::default())
+        .await
+        .unwrap();
+    let held = decide(
+        &stand,
+        ask(2, Question::UseTool, tool(), EffectClass::Write),
+    )
+    .await;
+    assert_eq!(held.answer, Answer::Allow);
+    let says = explained(&stand, held.id).await;
+    assert_eq!(says.rules[0].id, "role_grant.0");
+    assert_eq!(says.rules[0].kind, RuleKind::RoleGrant);
+    assert!(
+        says.rules[0].says.contains("operator"),
+        "{}",
+        says.rules[0].says
+    );
+    // Not holding the role is holding nothing.
+    let without = decide(&stand, ask(3, Question::UseTool, tool(), EffectClass::Read)).await;
+    assert_eq!(without.answer, Answer::Deny);
+    // The role's own ceiling.
+    let high = decide(
+        &stand,
+        ask(2, Question::UseTool, tool(), EffectClass::Irreversible),
+    )
+    .await;
+    assert_eq!(
+        high.refusal.as_ref().unwrap().code(),
+        &a2m_policy::EFFECT_TOO_HIGH
+    );
+}
+
+#[tokio::test]
+async fn a_set_that_asks_for_a_second_administrator_cannot_be_published_by_one() {
+    let stand = stand("second", BuiltIn::server()).await;
+    let mut layers = server_layers();
+    layers.roles.push(RoleBinding {
+        who: Subject::Principal(person(5)),
+        role: Role::Admin,
+    });
+    layers.roles.push(RoleBinding {
+        who: Subject::Principal(person(6)),
+        role: Role::Publisher,
+    });
+    layers.second_admin_publish = true;
+    // The set that turns the need on needs no second one: nothing asked yet.
+    publish(&stand, layers.clone(), PublishProof::default())
+        .await
+        .unwrap();
+
+    let publisher = PrincipalRef::person(person(9));
+    let attempt = |review: Option<PublishReview>, next: PolicyLayers, proof: PublishProof| {
+        let policy = stand.policy.clone();
+        let store = stand.store.clone();
+        let publisher = publisher.clone();
+        async move {
+            store
+                .write(Durability::Synced, move |tx| {
+                    let candidate = policy.compile(&next)?;
+                    policy.publish_reviewed(tx, &candidate, &publisher, proof, review.as_ref())
+                })
+                .await
+        }
+    };
+    let mut next = layers.clone();
+    next.grants.push(write_grant(7));
+    let review = |who: PrincipalRef, drafted_by: Option<PrincipalId>| {
+        Some(PublishReview {
+            reviewer: who,
+            drafted_by,
+        })
+    };
+    let none = PublishProof::default();
+    // No reviewer; the publisher as reviewer; a person with no role; the author.
+    assert_eq!(
+        code(attempt(None, next.clone(), none).await),
+        SECOND_ADMIN_REQUIRED
+    );
+    for (who, drafted) in [
+        (PrincipalRef::person(person(9)), None),
+        (PrincipalRef::person(person(7)), None),
+        (PrincipalRef::person(person(5)), Some(person(5))),
+    ] {
+        assert_eq!(
+            code(attempt(review(who, drafted), next.clone(), none).await),
+            SECOND_ADMIN_REQUIRED
+        );
+    }
+    // An agent reviewer, even one that holds the role.
+    let mut agent = PrincipalRef::person(person(5));
+    agent.kind = PrincipalKind::Agent;
+    assert_eq!(
+        code(attempt(review(agent, None), next.clone(), none).await),
+        SECOND_ADMIN_REQUIRED
+    );
+    // Nothing was published by the refusals.
+    let before = decide(
+        &stand,
+        ask(7, Question::UseTool, tool(), EffectClass::Write),
+    )
+    .await;
+    assert_eq!(before.answer, Answer::Deny);
+    // An administrator, then a publisher, reviews it.
+    attempt(
+        review(PrincipalRef::person(person(5)), Some(person(9))),
+        next.clone(),
+        none,
+    )
+    .await
+    .unwrap();
+    let after = decide(
+        &stand,
+        ask(7, Question::UseTool, tool(), EffectClass::Write),
+    )
+    .await;
+    assert_eq!(after.answer, Answer::Allow);
+    let mut again = next.clone();
+    again.grants.push(write_grant(8));
+    attempt(review(PrincipalRef::person(person(6)), None), again, none)
+        .await
+        .unwrap();
+    // A set cannot switch the need off for itself: it needs the reviewer, and
+    // then, because it loosens a protected setting, a person present.
+    let mut off = next;
+    off.second_admin_publish = false;
+    assert_eq!(
+        code(attempt(None, off.clone(), none).await),
+        SECOND_ADMIN_REQUIRED
+    );
+    assert_eq!(
+        code(attempt(review(PrincipalRef::person(person(5)), None), off, none).await),
+        PRESENCE_REQUIRED
+    );
+}
+
+#[tokio::test]
+async fn one_grant_changes_through_a_new_version_with_its_own_tests() {
+    let stand = stand("change", BuiltIn::server()).await;
+    publish(&stand, server_layers(), PublishProof::default())
+        .await
+        .unwrap();
+    let by = PrincipalRef::person(person(9));
+    let change = |change: LayerChange, tests: Vec<PolicyTest>| {
+        let policy = stand.policy.clone();
+        let store = stand.store.clone();
+        let by = by.clone();
+        async move {
+            store
+                .write(Durability::Synced, move |tx| {
+                    policy.publish_change(tx, change, tests, &by, PublishProof::default(), None)
+                })
+                .await
+        }
+    };
+    let can = |who: u8| {
+        let request = ask(who, Question::UseTool, tool(), EffectClass::Write);
+        let policy = stand.policy.clone();
+        let store = stand.store.clone();
+        async move {
+            store
+                .read(move |tx| Ok(policy.would(tx, &request)))
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(can(2).await, Answer::Deny);
+    let own_test = PolicyTest {
+        name: "the new person writes".to_owned(),
+        request: ask(2, Question::UseTool, tool(), EffectClass::Write),
+        expect: Answer::Allow,
+    };
+    // A test table the new version fails stops it, and nothing changes.
+    let wrong = PolicyTest {
+        expect: Answer::Deny,
+        ..own_test.clone()
+    };
+    let failed = change(LayerChange::AddGrant(write_grant(2)), vec![wrong])
+        .await
+        .unwrap_err();
+    assert_eq!(failed.code(), &POLICY_TESTS_FAILED);
+    assert_eq!(can(2).await, Answer::Deny);
+
+    let version = change(LayerChange::AddGrant(write_grant(2)), vec![own_test])
+        .await
+        .unwrap();
+    assert_eq!(can(2).await, Answer::Allow);
+    assert_eq!(
+        can(1).await,
+        Answer::Allow,
+        "the other grants are untouched"
+    );
+    // Adding it again makes no second grant, so the layers are the same.
+    let again = change(LayerChange::AddGrant(write_grant(2)), Vec::new())
+        .await
+        .unwrap();
+    assert_ne!(again, version, "only the test table differs");
+
+    // The history lists each version, the newest in force.
+    let policy = stand.policy.clone();
+    let history = stand
+        .store
+        .read(move |tx| policy.versions(tx))
+        .await
+        .unwrap();
+    assert_eq!(history.len(), 4, "{history:?}");
+    assert!(history.last().unwrap().in_force);
+    assert!(history.iter().any(|row| row.version == version));
+    assert_eq!(history.iter().filter(|row| row.in_force).count(), 1);
+    assert_eq!(
+        history[0].published_by, None,
+        "the built-in set has no publisher"
+    );
+
+    // Removing a grant that is there, and one that is not.
+    change(LayerChange::RemoveGrant(write_grant(2)), Vec::new())
+        .await
+        .unwrap();
+    assert_eq!(can(2).await, Answer::Deny);
+    let missing = change(LayerChange::RemoveGrant(write_grant(2)), Vec::new())
+        .await
+        .unwrap_err();
+    assert_eq!(missing.class(), FailureClass::Input);
+}
+
+#[tokio::test]
+async fn the_catalog_is_asked_without_recording() {
+    let stand = stand("catalog", BuiltIn::server()).await;
+    publish(&stand, reporting_layers(), PublishProof::default())
+        .await
+        .unwrap();
+    let Resource::Tool(update) = tool() else {
+        unreachable!()
+    };
+    let Resource::Tool(get) = tool_in("example", "example_order_get") else {
+        unreachable!()
+    };
+    let read_context = Context {
+        effect: EffectClass::Read,
+        ..Context::plain(workspace(), environment())
+    };
+    let write_context = Context {
+        effect: EffectClass::Write,
+        ..read_context.clone()
+    };
+    let catalog = vec![
+        (update.clone(), write_context.clone()),
+        (get.clone(), read_context),
+    ];
+    let raw = stand.folder.raw();
+    let rows = count(&raw, "SELECT COUNT(*) FROM decisions");
+    let policy = stand.policy.clone();
+    let (list, who, selected, absent) = {
+        let (update, get) = (update.clone(), get.clone());
+        stand
+            .store
+            .read(move |tx| {
+                let one = PrincipalRef::person(person(1));
+                let list = policy.tools_allowed(tx, &one, &catalog);
+                let who = policy.who_can(
+                    tx,
+                    &update,
+                    &write_context,
+                    &[
+                        one.clone(),
+                        PrincipalRef::person(person(2)),
+                        PrincipalRef::person(person(4)),
+                    ],
+                );
+                let selected = policy.toolset_tools(
+                    tx,
+                    &ToolsetName::new("reporting").unwrap(),
+                    &[update.clone(), get.clone()],
+                );
+                let absent = policy.toolset_tools(tx, &ToolsetName::new("none").unwrap(), &[]);
+                Ok((list, who, selected, absent))
+            })
+            .await
+            .unwrap()
+    };
+    assert_eq!(list, vec![update, get.clone()]);
+    assert_eq!(who, vec![person(1), person(2)]);
+    assert_eq!(selected, Some(vec![get]));
+    assert_eq!(absent, None);
+    assert_eq!(count(&raw, "SELECT COUNT(*) FROM decisions"), rows);
 }

@@ -1,0 +1,7 @@
+scrubbed: true
+note: >
+  Synthetic data, written by hand for the imaginary target. Every step of
+  the form refers to the screen `line_item`, so `line_item.json` answers
+  them in order: the preview's visit and read, the visit, the three fields
+  set and the save, and the read-back's visit and read. The save takes no
+  arguments, as the fields are set before it, so its request is empty.

@@ -48,6 +48,9 @@ struct Found {
     /// The binding, by its place, mode, and the digest of what it does:
     /// only evidence that names it is taken (audit finding AC-6).
     pin: a2m_engine::BindingPin,
+    /// The binding's place in the operation's file, from 0: what a person
+    /// reads and writes, where the pin's place is the plan's (package 4.6).
+    file_position: usize,
     /// The verified binding a binding in shadow beside it is compared
     /// against: the one that acts (decision 0251).
     against: Option<a2m_engine::BindingPin>,
@@ -130,11 +133,22 @@ fn locate(
         return Err(no_tool());
     };
     let operation = plan.operation(index).ok_or_else(no_tool)?;
+    // A person counts bindings as the file lists them; the plan holds them
+    // in the order the compiler gave them (package 4.6).
+    let plan_modes: Vec<&str> = operation
+        .bindings
+        .iter()
+        .map(|binding| binding.mode.as_str())
+        .collect();
+    let file_modes = crate::places::file_modes(&sources, tool.as_str()).ok_or_else(no_tool)?;
+    let wanted = position.map(|given| crate::places::plan_place(&plan_modes, &file_modes, given));
     let of_mode: Vec<usize> = operation
         .bindings
         .iter()
         .enumerate()
-        .filter(|(at, binding)| binding.mode == *mode && position.is_none_or(|given| given == *at))
+        .filter(|(at, binding)| {
+            binding.mode == *mode && wanted.is_none_or(|plan| plan == Some(*at))
+        })
         .map(|(position, _)| position)
         .collect();
     let position = match of_mode.as_slice() {
@@ -193,8 +207,10 @@ fn locate(
     };
     let path = file.path.clone();
     let in_file = doc.get("bindings").map(Located::items).unwrap_or_default();
+    let file_position =
+        crate::places::file_place(&plan_modes, &file_modes, position).ok_or_else(no_tool)?;
     let at_place: Vec<&Located<Doc>> = in_file
-        .get(position)
+        .get(file_position)
         .filter(|binding| binding.text("mode") == Some(mode.as_str()))
         .into_iter()
         .collect();
@@ -268,6 +284,7 @@ fn locate(
         status,
         compiled,
         pin,
+        file_position,
         against,
         environments,
     })
@@ -355,7 +372,7 @@ async fn offline_evidence(
     let of_this = |test: &&Json| {
         a2m_engine::BindingPin::from_json(tool, &test["binding"]).as_ref() == Some(&found.pin)
     };
-    let shown = format!("{} (`{}`)", found.pin.position + 1, found.pin.mode);
+    let shown = format!("{} (`{}`)", found.file_position + 1, found.pin.mode);
     if !tests.iter().any(|test| of_this(&test)) {
         return Err(codes::input(
             codes::PROMOTION_UNPROVEN,
@@ -365,7 +382,7 @@ async fn offline_evidence(
             format!(
                 "Write a test of that binding, with `binding: {{mode: {}, position: {}}}` where it is not the one a test that names none runs, run `test.run`, and promote again.",
                 found.pin.mode,
-                found.pin.position + 1
+                found.file_position + 1
             ),
         ));
     }
@@ -407,7 +424,7 @@ async fn trial_evidence(
                 codes::PROMOTION_UNPROVEN,
                 format!(
                     "The run named is not a completed trial of the binding {} (`{}`) of `{tool}` of `{target}`, as it is now, made from this project by this caller's person.",
-                    found.pin.position + 1,
+                    found.file_position + 1,
                     found.pin.mode
                 ),
                 "Try that binding with `draft.try` (naming it by `mode` and `position`) and pass its `run_id`, or scout the target again.",
@@ -457,7 +474,7 @@ async fn trial_evidence(
                 codes::PROMOTION_UNPROVEN,
                 format!(
                     "No trial in this project proved the binding {} (`{}`) of the read `{tool}`, as it is now, at `executed`: the newest finished scout did not, and no run was named.",
-                    found.pin.position + 1,
+                    found.file_position + 1,
                     found.pin.mode
                 ),
                 "Scout the target (`scout.run`), or try that binding (`draft.try` with `mode` and `position`) and pass its `run_id`.",
@@ -484,7 +501,7 @@ async fn rewrite(
         kernel.clone(),
         found.pin.operation.clone(),
         found.pin.mode.clone(),
-        found.pin.position,
+        found.file_position,
         found.pin.digest,
     );
     off_thread(move || {
@@ -645,14 +662,15 @@ async fn promote_from_shadow(
         "was": "shadow",
     });
     let detail = format!(
-        "{target} {tool} {}: shadow to verified, on at least {} distinct inputs that matched the verified binding in each of: {}",
+        "{target} {tool} {}: shadow to verified, on at least {} distinct inputs that matched the verified binding in each of: {} {}",
         found.pin.mode,
         row.matches,
         row.evidence
             .iter()
             .map(|held| held.environment.as_str())
             .collect::<Vec<_>>()
-            .join(", ")
+            .join(", "),
+        crate::evidence::promoted_mark(found.pin.digest)
     );
     kernel
         .audit(
@@ -666,7 +684,7 @@ async fn promote_from_shadow(
         "target": target.as_str(),
         "tool": tool.as_str(),
         "mode": found.pin.mode.as_str(),
-        "position": found.pin.position + 1,
+        "position": found.file_position + 1,
         "file": found.file.as_str(),
         "promoted": true,
         "status": "verified",
@@ -708,7 +726,7 @@ handler!(
                 "target": target.as_str(),
                 "tool": tool.as_str(),
                 "mode": mode.as_str(),
-                "position": found.pin.position + 1,
+                "position": found.file_position + 1,
                 "file": found.file.as_str(),
                 "promoted": promoted,
                 "status": status,
@@ -759,7 +777,11 @@ handler!(
             "was": "draft",
         });
         rewrite(kernel, project_folder, &target, &found).await?;
-        let detail = format!("{target} {tool} {mode}: draft to verified, on {}", evidence);
+        let detail = format!(
+            "{target} {tool} {mode}: draft to verified, on {} {}",
+            evidence,
+            crate::evidence::promoted_mark(found.pin.digest)
+        );
         kernel
             .audit(
                 &call.caller.principal.principal.id.to_string(),

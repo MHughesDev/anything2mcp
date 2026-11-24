@@ -1,6 +1,7 @@
 //! The handlers of the actions that are built. An action with no handler
 //! here answers `input`/`action_not_built`.
 
+mod access;
 mod admin;
 pub(crate) mod build;
 mod client;
@@ -9,6 +10,7 @@ mod machine;
 mod meta;
 mod promote;
 mod provider;
+mod reach;
 mod scout;
 pub(crate) mod scout_report;
 pub(crate) mod sessions;
@@ -51,6 +53,10 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "net.listeners" => machine::net_listeners,
         "net.proxy" => machine::net_proxy,
         "net.standing" => machine::net_standing,
+        "net.current" => reach::net_current,
+        "reach.name" => reach::reach_name,
+        "reach.list" => reach::reach_list,
+        "reach.withdraw" => reach::reach_withdraw,
         "provider.list" => provider::provider_list,
         "provider.describe" => provider::provider_describe,
         "tool.search" => tools::tool_search,
@@ -87,6 +93,18 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "version.publish" => build::version_publish,
         "publish.request" => build::publish_request,
         "policy.explain" => admin::policy_explain,
+        "toolset.create" => access::toolset_create,
+        "toolset.update" => access::toolset_update,
+        "toolset.remove" => access::toolset_remove,
+        "toolset.list" => access::toolset_list,
+        "grant.add" => access::grant_add,
+        "grant.remove" => access::grant_remove,
+        "grant.list" => access::grant_list,
+        "policy.test" => access::policy_test,
+        "policy.publish" => access::policy_publish,
+        "policy.versions" => access::policy_versions,
+        "policy.tools_allowed" => access::policy_tools_allowed,
+        "policy.who_can" => access::policy_who_can,
         "audit.query" => admin::audit_query,
         "secret.set" => admin::secret_set,
         "killswitch.set" => admin::killswitch_set,

@@ -1,0 +1,5 @@
+test: example_page_note_save
+kind: offline
+fixture: note_save
+inputs: {text: "Dock 4 at nine"}
+expect: {saying: "Saved note: Dock 4 at nine"}

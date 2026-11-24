@@ -320,6 +320,45 @@ async fn a_folder_lists_its_entries_in_order_and_reads_one_by_its_name() {
         Value::Int(i64::try_from(seed_bytes(seed::INBOX_NOTE_TWO).len()).unwrap())
     );
     assert_eq!(list.get("truncated"), Some(&Value::Bool(false)));
+    // A folder has no size and no digest: those outputs may be absent, and
+    // the list's schema admits the null items (decision 0305); the name
+    // and the kind are always there.
+    assert_eq!(sizes[0], Value::Null);
+    let operation = scene
+        .plan
+        .operations
+        .iter()
+        .find(|found| found.name.as_str() == "example_inbox_list")
+        .unwrap();
+    let flags: Vec<(&str, bool)> = operation
+        .outputs
+        .iter()
+        .map(|output| (output.name.as_str(), output.may_be_absent))
+        .collect();
+    assert_eq!(
+        flags,
+        [
+            ("name", false),
+            ("kind", false),
+            ("size", true),
+            ("digest", true),
+            ("truncated", false)
+        ]
+    );
+    let tool = scene
+        .plan
+        .tools
+        .iter()
+        .find(|found| found.name.as_str() == "example_inbox_list")
+        .unwrap();
+    let schema: serde_json::Value = serde_json::from_slice(tool.output_schema.as_bytes()).unwrap();
+    let item_admits_null = |name: &str| {
+        schema["properties"][name]["anyOf"][0]["items"]["anyOf"]
+            .as_array()
+            .is_some_and(|arms| arms.iter().any(|arm| arm["type"] == "null"))
+    };
+    assert!(item_admits_null("size") && item_admits_null("digest"));
+    assert_eq!(schema["properties"]["name"]["type"], "array");
 
     let get = |name: &str| inputs(&[("name", text(name))]);
     let two = read(&scene, "example_inbox_get", &get("note-2.txt"))

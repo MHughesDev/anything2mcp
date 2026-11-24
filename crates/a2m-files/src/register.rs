@@ -160,6 +160,29 @@ pub enum StepCommits {
     AsDeclared,
 }
 
+/// Whether a step of one kind can change the system, whatever it is marked.
+/// A pack states it once for each kind of step its lowering emits, and the
+/// compiler refuses an operation whose effect is `read` that holds a step of
+/// a kind that can (decision 0307, point 4). A kind the pack does not mark
+/// counts as one that can, so a kind forgotten fails closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepChanges {
+    /// A step of this kind cannot change the system: it reads, waits,
+    /// finds, or builds something in memory. A step of it marked `commits`
+    /// is refused.
+    Never,
+    /// A step of this kind changes the system only where the pack's own
+    /// files declare that what it refers to does, such as a request whose
+    /// endpoint is declared a write, and the pack's driver holds the step to
+    /// that declaration when it runs. A read may hold one; the compiler then
+    /// has the pack's word and the steps' `commits` marks.
+    AsDeclared,
+    /// A step of this kind can change the system whatever its files say,
+    /// such as one that types into a page or presses its buttons. A read
+    /// never holds one. It is what a kind the pack does not mark counts as.
+    Can,
+}
+
 /// Whether an identity strategy can be carried out by a binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Possible {
@@ -212,6 +235,15 @@ pub trait Lowering: Send + Sync {
     fn commits(&self, _kind: &StepKind) -> StepCommits {
         StepCommits::AsDeclared
     }
+    /// Whether a step of `kind` can change the system, stated once for the
+    /// kind. The compiler refuses an operation whose effect is `read` that
+    /// holds a step of a kind that [`StepChanges::Can`], whichever pack
+    /// lowered it. A lowering that does not say leaves every kind `Can`, so
+    /// that a kind it forgot fails closed: every pack's lowering is owed
+    /// this statement for each of its kinds.
+    fn changes(&self, _kind: &StepKind) -> StepChanges {
+        StepChanges::Can
+    }
     /// The least effect class an operation with this binding can have, by
     /// what the binding does: `write` for a verb that changes a record,
     /// `irreversible` for one that deletes, sends, or cannot be undone. The
@@ -234,6 +266,14 @@ pub trait Lowering: Send + Sync {
         } else {
             WriteEvidence::ReadBack
         }
+    }
+    /// The names of the operation's outputs that this binding's steps may
+    /// return as `null` because the system may hold no value for them
+    /// (decision 0305). The pack knows this from what its system declares;
+    /// the kernel does not work it out. A lowering that does not answer
+    /// says none, and every output is then one that may not be absent.
+    fn absent_outputs(&self, _binding: &ResolvedBinding<'_>, _lowered: &Lowered) -> Vec<String> {
+        Vec::new()
     }
     /// The fields this mode adds to a binding: an object schema. The kernel
     /// owns `mode`, `verb`, `status`, and `precondition`; everything else in
@@ -392,6 +432,11 @@ pub struct ProgramField {
     pub digest_key: Option<String>,
 }
 
+/// The rank of a mode whose provider gave none: the manifest's own default
+/// (`a2m-provider`), so that a mode the compiler is not told of sorts as
+/// it would there.
+pub const DEFAULT_MODE_RANK: u32 = 100;
+
 /// One registered thing, and the pack that registered it.
 #[derive(Clone)]
 pub(crate) struct Registered<T> {
@@ -408,6 +453,9 @@ pub struct CompilerSet {
     pub(crate) folders: BTreeMap<String, FileKindName>,
     pub(crate) lowerings: BTreeMap<(Mode, Verb), Registered<Arc<dyn Lowering>>>,
     pub(crate) default_verbs: BTreeMap<Mode, Verb>,
+    /// Each mode's rank in its provider's manifest, where the provider gave
+    /// one (see [`CompilerSet::mode_rank`]).
+    pub(crate) mode_ranks: BTreeMap<Mode, Registered<u32>>,
     pub(crate) lint_rules: BTreeMap<LintCode, Registered<Arc<dyn LintRule>>>,
     pub(crate) drafting_rules:
         BTreeMap<(FindingKind, FileKindName), Registered<Arc<dyn DraftingRule>>>,
@@ -524,6 +572,18 @@ impl CompilerSet {
                 })
             })
             .collect()
+    }
+
+    /// A mode's rank: its default place in the order of an operation's
+    /// bindings, lower first ([section 201](../../docs/spec/2-kernel/201-archetypes-and-modes.md)).
+    /// It is the rank its provider's manifest states, as given to
+    /// [`CompilerSetBuilder::mode_rank`], and [`DEFAULT_MODE_RANK`], the
+    /// manifest's own default, for a mode that was given none.
+    #[must_use]
+    pub fn mode_rank(&self, mode: &Mode) -> u32 {
+        self.mode_ranks
+            .get(mode)
+            .map_or(DEFAULT_MODE_RANK, |given| given.item)
     }
 
     /// The modes that have a lowering, in order of name.
@@ -787,6 +847,32 @@ impl CompilerSetBuilder {
             );
         }
         self.set.folders.insert(folder, name);
+        Ok(self)
+    }
+
+    /// Registers a mode's rank, as its provider's manifest states it. The
+    /// compiler orders an operation's bindings by it where the operation
+    /// does not state `binding_order: listed`.
+    ///
+    /// # Errors
+    ///
+    /// `registration_conflict` when the mode already has a rank, from this
+    /// pack or another.
+    pub fn mode_rank(&mut self, pack: &str, mode: Mode, rank: u32) -> Result<&mut Self, Failure> {
+        check_pack(pack)?;
+        if let Some(first) = self.set.mode_ranks.get(&mode) {
+            return Err(conflict(format!(
+                "The mode `{mode}` has a rank from `{}` and again from `{pack}`.",
+                first.pack
+            )));
+        }
+        self.set.mode_ranks.insert(
+            mode,
+            Registered {
+                pack: pack.to_owned(),
+                item: rank,
+            },
+        );
         Ok(self)
     }
 

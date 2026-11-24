@@ -67,7 +67,9 @@ async fn a_command_line_program_is_read_through_the_command_pack() {
     let held = stand.control().stored_item("SK-1001").unwrap().unwrap();
     let before = stand.control().invocations().unwrap().len();
     let mut signatures = Vec::new();
-    for _ in 0..2 {
+    // Five runs of one read through the engine loop leave one trace
+    // signature (package D3).
+    for _ in 0..5 {
         let ran = world
             .agent(&[
                 "tool",
@@ -87,7 +89,11 @@ async fn a_command_line_program_is_read_through_the_command_pack() {
         assert_eq!(result["result"]["location"], held.location.as_str());
         signatures.push(signature(&world, result["run_id"].as_str().unwrap()).await);
     }
-    assert_eq!(signatures[0], signatures[1]);
+    assert_eq!(signatures.len(), 5);
+    assert!(
+        signatures.iter().all(|one| one == &signatures[0]),
+        "{signatures:?}"
+    );
     // The program was started, and only to read.
     let starts = stand.control().invocations().unwrap();
     assert!(starts.len() > before, "{starts:?}");
@@ -210,6 +216,11 @@ async fn a_file_is_read_through_the_file_pack() {
     // was, byte for byte.
     assert_eq!(read["description"], row[1].as_str(), "{read}");
     assert_eq!(read["on_hand"].to_string(), row[2], "{read}");
+    // The row's note cell is empty: a cell of a document that is neither
+    // a key nor declared `required` may be empty, and reads as null
+    // (decision 0315).
+    assert_eq!(row[3], "", "{row:?}");
+    assert!(read["note"].is_null(), "{read}");
     assert_eq!(stand.sha256("prices/stock.csv").unwrap(), before);
     world.close().await;
 }

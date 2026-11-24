@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use a2m_auth::{ExpirySign, SessionLease};
 use a2m_core::{
-    BindingPlan, BindingStatus, Environment, Failure, FailureClass, Mode, OperationIndex,
-    OperationName, OperationPlan, REDACTED, RecordKey, RunState, SessionState, Step, SurfaceIndex,
-    Value, Values,
+    BindingPlan, BindingStatus, Environment, Failure, FailureClass, FailureCode, Mode,
+    OperationIndex, OperationName, OperationPlan, REDACTED, RecordKey, RunState, SessionState,
+    Step, SurfaceIndex, Value, Values,
 };
 use a2m_ledger::{IntentToken, RecordRef};
 use a2m_provider::{
@@ -174,6 +174,9 @@ pub(crate) struct Run<'a> {
     /// The rate budget's units this job was granted, one per step, on
     /// every surface: what a shadow read's cost is counted from.
     pub granted: std::sync::atomic::AtomicU64,
+    /// The step the last `drift` of this job was seen at, until the pass
+    /// that saw it reports it (decision 0380).
+    pub drift_step: Option<Step>,
 }
 
 /// Whether a binding of this status may be chosen in this posture.
@@ -263,6 +266,7 @@ impl<'a> Run<'a> {
             shadow_compared: Vec::new(),
             shadow_reading: false,
             granted: std::sync::atomic::AtomicU64::new(0),
+            drift_step: None,
             loaded,
         }
     }
@@ -476,13 +480,38 @@ impl<'a> Run<'a> {
         };
         let surface_ref = self.surface_ref(binding.surface)?;
         let surface_name = &surface_ref.surface.name;
-        if let DriverHealth::Degraded(code) | DriverHealth::Unavailable(code) =
-            handle.health(&surface_ref)
-        {
-            return Ok(Err(no_binding(format!(
-                "The driver of the mode `{}` is not ready ({code}).",
-                binding.mode
-            ))));
+        match handle.health(&surface_ref) {
+            DriverHealth::Ready => {}
+            DriverHealth::Unavailable(code) => {
+                // The driver's own word that the surface may not be reached
+                // now, such as an origin it holds off after its edge
+                // refused a visit: the binding does not qualify, with the
+                // driver's code and the class its manifest declares, and
+                // nothing is sent (decision 0377). A code no manifest of
+                // the provider declares says only that it is not ready.
+                let declared = self.declared_class(&handle, &code);
+                return Ok(Err(match declared {
+                    Some(class) => Failure::new(
+                        class,
+                        code.clone(),
+                        format!(
+                            "The driver of the mode `{}` says the surface `{surface_name}` cannot be reached now ({code}), so nothing was sent.",
+                            binding.mode
+                        ),
+                        "Wait for what the driver names to end, then resume the run.",
+                    ),
+                    None => no_binding(format!(
+                        "The driver of the mode `{}` is not ready ({code}).",
+                        binding.mode
+                    )),
+                }));
+            }
+            DriverHealth::Degraded(code) => {
+                return Ok(Err(no_binding(format!(
+                    "The driver of the mode `{}` is not ready ({code}).",
+                    binding.mode
+                ))));
+            }
         }
         if conditions
             .sessions
@@ -502,10 +531,13 @@ impl<'a> Run<'a> {
                 "Wait for the block to end; the engine does not go around it.",
             )));
         }
-        if conditions
-            .drifted
-            .iter()
-            .any(|(name, mode)| name == &operation.name && mode == &binding.mode)
+        // A canary is the check of whether a drifted binding fits again,
+        // and it never writes, so it is the one job drift does not stop.
+        if self.job.kind != JobKind::Canary
+            && conditions
+                .drifted
+                .iter()
+                .any(|(name, mode)| name == &operation.name && mode == &binding.mode)
         {
             return Ok(Err(codes::fail(
                 &codes::row::BINDING_DRIFTED,
@@ -525,6 +557,25 @@ impl<'a> Run<'a> {
             ))));
         }
         Ok(Ok(handle))
+    }
+
+    /// The class the manifest of `handle`'s provider declares for `code`.
+    fn declared_class(&self, handle: &DriverHandle, code: &FailureCode) -> Option<FailureClass> {
+        let provider = &handle.choice().provider;
+        self.engine
+            .deps
+            .registry
+            .listing()
+            .into_iter()
+            .find(|listing| &listing.name == provider)
+            .and_then(|listing| {
+                listing
+                    .manifest
+                    .failure_codes
+                    .iter()
+                    .find(|declared| &declared.code == code)
+                    .map(|declared| declared.class)
+            })
     }
 
     /// The operation's bindings in `shadow`, in the plan's order, each with
@@ -1012,6 +1063,13 @@ impl<'a> Run<'a> {
             }
             let artifacts = self.keep_captures(&cx, &result).await;
             self.traced(&cx, &result, took, artifacts);
+            // The step a drift was seen at names the knowledge that no
+            // longer fits (decision 0380).
+            if let Err(failure) = &result
+                && failure.failure.class() == FailureClass::Drift
+            {
+                self.drift_step = Some(cx.step.clone());
+            }
             match result {
                 Err(failure)
                     if failure.failure.class() == FailureClass::Transient
@@ -1255,6 +1313,93 @@ impl<'a> Run<'a> {
                 "See `anything2mcp engine status`, and call the tool again when it is ready.",
             )),
         }
+    }
+
+    /// The surfaces of the bindings of an operation that choose could pick
+    /// for this job, in the plan's order: the pin, the named binding, and
+    /// the status are held to as choose holds them. Only the surface is
+    /// asked of here; a driver's readiness and a precondition are choose's.
+    fn guarded_surfaces(&self, operation: &OperationPlan) -> Vec<a2m_core::SurfaceName> {
+        let named = self
+            .job
+            .binding
+            .as_ref()
+            .filter(|pin| pin.operation == operation.name);
+        let plan = &self.loaded.plan;
+        operation
+            .bindings
+            .iter()
+            .enumerate()
+            .filter(|(position, binding)| {
+                self.job.pin.as_ref().is_none_or(|pin| pin == &binding.mode)
+                    && named.is_none_or(|pin| pin.position == *position)
+                    && if self.replay.is_some() {
+                        binding.status != BindingStatus::Retired
+                    } else {
+                        status_qualifies(binding.status, self.posture)
+                    }
+            })
+            .filter_map(|(_, binding)| plan.surface(binding.surface).map(|s| s.name.clone()))
+            .collect()
+    }
+
+    fn session_ended_on(&self, surface: &a2m_core::SurfaceName) -> bool {
+        self.job
+            .conditions
+            .sessions
+            .iter()
+            .any(|(name, state)| name == surface && !session_usable(*state))
+    }
+
+    /// Guard's third check: the session's state allows the call. The
+    /// session keeper's answer is the job's `conditions.sessions`, which
+    /// the control plane fills from the keeper when the job is claimed; the
+    /// engine asks it, and never signs in or renews. An operation the call
+    /// is sure to run, all of whose bindings that could be chosen act on a
+    /// surface whose session has ended, stops the call here, before the
+    /// policy engine is asked (decision 0309). An operation with no such
+    /// binding at all is left to choose, which names it `no_binding`.
+    pub fn guard_sessions(&self, operation: &OperationPlan) -> Result<(), Failure> {
+        let surfaces = self.guarded_surfaces(operation);
+        if let Some(first) = surfaces.first()
+            && surfaces
+                .iter()
+                .all(|surface| self.session_ended_on(surface))
+        {
+            return Err(codes::fail(
+                &codes::row::NEEDS_LOGIN,
+                format!(
+                    "The session of the surface `{first}` has ended, and `{}` has no binding elsewhere.",
+                    operation.name
+                ),
+                "Sign in again with `anything2mcp session login`, then resume the run.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Guard's fifth check: the surface has no edge block. An operation the
+    /// call is sure to run, every binding of which that could be chosen and
+    /// that has a usable session acts on a surface blocked at the edge,
+    /// stops the call here, after the policy decision (decision 0309).
+    pub fn guard_edge(&self, operation: &OperationPlan) -> Result<(), Failure> {
+        let surfaces: Vec<_> = self
+            .guarded_surfaces(operation)
+            .into_iter()
+            .filter(|surface| !self.session_ended_on(surface))
+            .collect();
+        if let Some(first) = surfaces.first()
+            && surfaces
+                .iter()
+                .all(|surface| self.job.conditions.edge_blocked.contains(surface))
+        {
+            return Err(codes::fail(
+                &codes::row::EDGE_BLOCKED,
+                format!("The surface `{first}` is blocked at the edge."),
+                "Wait for the block to end; the engine does not go around it.",
+            ));
+        }
+        Ok(())
     }
 }
 

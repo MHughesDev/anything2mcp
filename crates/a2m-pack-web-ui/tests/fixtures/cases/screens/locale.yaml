@@ -1,0 +1,39 @@
+# Case 26: a page that speaks the language the browser has and writes
+# numbers as it does; its choices keep their codes.
+screen: locale
+surface: app
+reach: {url: "/cases/locale"}
+ready: {visible: {role: heading, name: "Packing"}}
+fields:
+  unit:
+    type: text
+    control: select
+    locate:
+      - {label: Unit}
+      - {label: Einheit}
+    fingerprint: {section: {role: main, name: ""}}
+  shown:
+    type: text
+    control: text
+    read: text
+    locate:
+      - {test_id: shown}
+    fingerprint: {section: {role: main, name: ""}}
+  language:
+    type: text
+    control: text
+    read: text
+    locate:
+      - {test_id: language}
+    fingerprint: {section: {role: main, name: ""}}
+actions:
+  save:
+    locate:
+      - {role: button, name: Save}
+      - {role: button, name: Speichern}
+    fingerprint: {section: {role: main, name: ""}}
+    confirm:
+      any:
+        - {text: {locate: {role: status, name: ""}, equals: "Saved."}}
+        - {text: {locate: {role: status, name: ""}, equals: "Gespeichert."}}
+    commits: true

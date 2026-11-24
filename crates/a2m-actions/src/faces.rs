@@ -427,6 +427,23 @@ pub struct ShortcutStep {
     pub argument: Option<&'static str>,
 }
 
+/// A flag a shortcut takes beside its one argument: the field of one of its
+/// steps that the flag's value fills.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShortcutOption {
+    /// The flag, without its dashes.
+    pub flag: &'static str,
+    /// The step's action that takes the value.
+    pub action: &'static str,
+    /// The field of that action.
+    pub field: &'static str,
+    /// When given, the field is a map and the value is put in it under
+    /// this key, as `spec.import` hands its file under `description`.
+    pub key: Option<&'static str>,
+    /// What the flag takes, in a sentence.
+    pub does: &'static str,
+}
+
 /// A single-word command for people: a fixed list of actions, as data. It
 /// adds no behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -438,6 +455,10 @@ pub struct Shortcut {
     /// The actions, in order. Empty for `init`, which has no action beneath
     /// it yet.
     pub steps: &'static [ShortcutStep],
+    /// The flags it takes beside its one argument, each filling one field
+    /// of one step. Without them, a shortcut of several actions takes no
+    /// flag.
+    pub options: &'static [ShortcutOption],
 }
 
 /// What a shortcut does on this engine: the steps to carry out, and where it
@@ -511,15 +532,38 @@ pub const SHORTCUTS: &[Shortcut] = &[
         word: "init",
         does: "Create a project and the guidance file; choose a profile.",
         steps: &[],
+        options: &[],
     },
     Shortcut {
         word: "add",
-        does: "Register a target, scout it, show the report, and ask for a sign-in.",
+        does: "Register a target, scout it, and show the report, which says which read to try next and asks for a sign-in only where a read waits for one.",
         steps: &[
             step("target.add", Some("name")),
             step("scout.run", Some("target")),
             step("scout.report", Some("target")),
-            step("session.login", Some("target")),
+        ],
+        options: &[
+            ShortcutOption {
+                flag: "address",
+                action: "target.add",
+                field: "address",
+                key: None,
+                does: "Where the system is reached; given with `--kind`.",
+            },
+            ShortcutOption {
+                flag: "kind",
+                action: "target.add",
+                field: "kind",
+                key: None,
+                does: "The kind of the surface at `--address`.",
+            },
+            ShortcutOption {
+                flag: "description",
+                action: "scout.run",
+                field: "files",
+                key: Some("description"),
+                does: "A description the system publishes about itself, as a file of the project's `sources` folder, such as `sources/example-openapi.json`; the scout drafts from it as `spec.import` does.",
+            },
         ],
     },
     Shortcut {
@@ -530,76 +574,91 @@ pub const SHORTCUTS: &[Shortcut] = &[
             step("capture.stop", Some("target")),
             step("endpoints.infer", Some("target")),
         ],
+        options: &[],
     },
     Shortcut {
         word: "lint",
         does: "Lint and compile a target's drafts.",
         steps: &[step("draft.lint", Some("target"))],
+        options: &[],
     },
     Shortcut {
         word: "try",
         does: "Run a draft binding in the sandbox.",
         steps: &[step("draft.try", Some("target"))],
+        options: &[],
     },
     Shortcut {
         word: "test",
         does: "Run the publish gates.",
         steps: &[step("test.run", Some("target"))],
+        options: &[],
     },
     Shortcut {
         word: "publish",
         does: "Submit a version for review, then wait for a person.",
         steps: &[step("publish.request", Some("target"))],
+        options: &[],
     },
     Shortcut {
         word: "status",
         does: "The target's build state and the next action.",
         steps: &[step("target.status", Some("target"))],
+        options: &[],
     },
     Shortcut {
         word: "call",
         does: "Call an operation.",
         steps: &[step("tool.call", Some("tool"))],
+        options: &[],
     },
     Shortcut {
         word: "run",
         does: "Run a pipeline.",
         steps: &[step("tool.call", Some("tool"))],
+        options: &[],
     },
     Shortcut {
         word: "diff",
         does: "Compare two versions.",
         steps: &[step("version.diff", Some("target"))],
+        options: &[],
     },
     Shortcut {
         word: "bundle",
         does: "Pack a version into a signed file.",
         steps: &[step("version.bundle", Some("target"))],
+        options: &[],
     },
     Shortcut {
         word: "rollback",
         does: "Make an earlier version current.",
         steps: &[step("version.rollback", Some("target"))],
+        options: &[],
     },
     Shortcut {
         word: "migrate",
         does: "Recompile stored sources for a newer engine.",
         steps: &[step("version.migrate", Some("target"))],
+        options: &[],
     },
     Shortcut {
         word: "connect",
         does: "Write the configuration for an MCP client.",
         steps: &[step("client.connect", Some("client"))],
+        options: &[],
     },
     Shortcut {
         word: "doctor",
         does: "Check this machine and print fixes.",
         steps: &[step("doctor.run", None)],
+        options: &[],
     },
     Shortcut {
         word: "docs",
         does: "A built-in reference page.",
         steps: &[step("docs.get", Some("topic"))],
+        options: &[],
     },
 ];
 

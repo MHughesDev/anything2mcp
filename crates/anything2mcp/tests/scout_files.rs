@@ -153,7 +153,7 @@ async fn a_description_given_as_a_file_is_imported_by_the_scout_through_the_comm
             &files("description", DESCRIPTION_FILE),
         ])
         .await;
-    assert_eq!(read["by_kind"]["described_operation"], 9, "{read}");
+    assert_eq!(read["by_kind"]["described_operation"], 11, "{read}");
 
     // The scout, handed the file, drafts from what it describes.
     let scouted = world
@@ -169,7 +169,13 @@ async fn a_description_given_as_a_file_is_imported_by_the_scout_through_the_comm
     assert!(scouted["report_hash"].is_string(), "{scouted}");
     assert_eq!(
         found_by_kind(&scouted),
-        json!({"described_operation": {"inferred": 9}, "endpoint": {"discovered": 2}}),
+        // The description's two declared signs of a sign-in are found with
+        // its operations (decision 0367).
+        json!({
+            "described_operation": {"inferred": 11},
+            "endpoint": {"discovered": 2},
+            "sign_in_method": {"inferred": 2}
+        }),
         "{scouted}"
     );
     let written = drafted(&scouted);
@@ -255,7 +261,7 @@ async fn spec_import_drafts_from_a_file_as_the_scout_does() {
     );
     assert_eq!(
         found_by_kind(&imported)["described_operation"],
-        json!({"inferred": 9}),
+        json!({"inferred": 11}),
         "{imported}"
     );
     let written = drafted(&imported);
@@ -274,6 +280,10 @@ async fn spec_import_drafts_from_a_file_as_the_scout_does() {
 /// How many operations the large description gains.
 const MANY: usize = 400;
 
+/// How many of the reads added state the shape of their answer, so that
+/// their drafts are sound and stay in place.
+const SOUND: usize = 12;
+
 /// The test application's description with `MANY` more described reads
 /// added, written to the project's `sources` folder over the first.
 fn enlarge_description(project: &Path) {
@@ -286,6 +296,15 @@ fn enlarge_description(project: &Path) {
             "parameters": [{"name": "order_id", "in": "path", "required": true,
                 "schema": {"type": "string"}, "example": "A-100"}],
             "responses": {"200": {"description": format!("Widget number {n} of the order")}},
+        }});
+    }
+    for n in 0..SOUND {
+        described["paths"][format!("/api/gizmos{n}/{{order_id}}")] = json!({"get": {
+            "operationId": format!("get_gizmo_{n}"),
+            "parameters": [{"name": "order_id", "in": "path", "required": true,
+                "schema": {"type": "string"}, "example": "A-100"}],
+            "responses": {"200": {"description": "A gizmo", "content": {"application/json": {
+                "schema": {"type": "object", "properties": {"label": {"type": "string"}}}}}}},
         }});
     }
     std::fs::write(&path, described.to_string()).unwrap();
@@ -360,9 +379,18 @@ async fn a_scout_of_a_large_description_answers_within_the_cap_and_its_lists_are
 
     // The counts are the whole report's.
     let counts = &scouted["counts"];
-    assert_eq!(count(&counts["found"]), MANY + 9 + 2, "{counts}");
+    // The operations, the two endpoints the live look found, and the two
+    // signs of a sign-in the description declares (decision 0367).
+    assert_eq!(
+        count(&counts["found"]),
+        MANY + SOUND + 11 + 2 + 2,
+        "{counts}"
+    );
     assert!(written_in(&scouted).len() <= 20, "{scouted}");
     assert!(count(&counts["drafted.written"]) > 20, "{counts}");
+    // Reads whose answer the description gives no shape of are held with
+    // their endpoints (decision 0298); the held list is long too.
+    assert!(count(&counts["drafted.held_back"]) > 20, "{counts}");
     assert!(
         scouted["cut_lists"]
             .as_array()
@@ -615,15 +643,19 @@ async fn a_powershell_help_file_given_as_a_file_drafts_its_commands_and_starts_n
         json!({"inferred": 2}),
         "{scouted}"
     );
-    let written = drafted(&scouted);
+    // Each command's draft holds a question (the script only a person
+    // names), so it waits in the holding folder (decision 0298).
+    let held: Vec<&str> = scouted["content"]["drafted"]["held_back"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Json::as_str)
+        .collect();
     for file in [
-        "commands/get_exampleitem.yaml",
-        "commands/set_exampleitem.yaml",
+        "held/commands/get_exampleitem.yaml",
+        "held/commands/set_exampleitem.yaml",
     ] {
-        assert!(
-            written.iter().any(|one| one == file),
-            "{file} in {written:?}"
-        );
+        assert!(held.contains(&file), "{file} in {held:?}");
         let draft = std::fs::read_to_string(
             machine
                 .project
@@ -649,5 +681,175 @@ async fn a_powershell_help_file_given_as_a_file_drafts_its_commands_and_starts_n
         );
     }
     assert!(stand.control().writes().unwrap().is_empty());
+    world.close().await;
+}
+
+/// Decision 0298: a description gives one sound read and one whose answer
+/// has a value the pack cannot type. The scout leaves the first in place and
+/// holds the second in `held/`, its endpoint staying in place; the target compiles
+/// whole, the sound read is tried with no file deleted by hand, and the held
+/// one is listed by lint and refused by name when tried.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_read_with_an_open_question_is_held_and_the_sound_read_is_tried_with_nothing_deleted() {
+    // This project's reads are not tried by default, so the test asks.
+    let machine = Machine::new("described", &[("try_reads = false", "try_reads = true")]);
+    let app = described_elsewhere(machine.project.path()).await;
+    let path = machine.project.path().join(DESCRIPTION_FILE);
+    let mut described: Json =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    // The answer's one value states no type this pack can follow.
+    described["paths"]["/api/mystery/{order_id}"] = json!({"get": {
+        "operationId": "get_mystery",
+        "parameters": [{"name": "order_id", "in": "path", "required": true,
+            "schema": {"type": "string"}, "example": "A-100"}],
+        "responses": {"200": {"description": "The mystery", "content": {"application/json": {
+            "schema": {"type": "object", "properties": {"riddle": {}}}}}}},
+    }});
+    std::fs::write(&path, described.to_string()).unwrap();
+    let world = with_target(&machine, &app).await;
+    let scouted = world
+        .ok(&[
+            "scout",
+            "run",
+            "example",
+            "--fresh",
+            "--wait-seconds",
+            "60",
+            "--files",
+            &files("description", DESCRIPTION_FILE),
+        ])
+        .await;
+    assert!(scouted["report_hash"].is_string(), "{scouted}");
+    let target = machine.project.path().join("targets").join("example");
+
+    // The sound read is where it always was.
+    let written = drafted(&scouted);
+    for file in DRAFTED {
+        assert!(
+            written.iter().any(|one| one == file),
+            "{file} in {written:?}"
+        );
+        assert!(target.join(file).is_file(), "{file}");
+    }
+    // The other read is held. The endpoint made with it holds no question
+    // and names nothing the read defines (the read names the endpoint, not
+    // the other way), so it stays in place.
+    let held: Vec<String> = scouted["content"]["drafted"]["held_back"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(held.len(), 1, "{scouted}");
+    assert!(held[0].starts_with("held/operations/"), "{held:?}");
+    let endpoint = written
+        .iter()
+        .find(|one| one.starts_with("endpoints/") && one.contains("mystery"))
+        .unwrap_or_else(|| panic!("the mystery endpoint in {written:?}"));
+    assert!(target.join(endpoint).is_file(), "{endpoint}");
+    assert!(!target.join("held").join(endpoint).exists(), "{endpoint}");
+    for file in &held {
+        assert!(target.join(file).is_file(), "{file}");
+        assert!(!written.contains(file), "{file}");
+        let outside = file.strip_prefix("held/").unwrap();
+        assert!(!target.join(outside).exists(), "{outside}");
+    }
+    assert_eq!(
+        scouted["content"]["tried"]["left_out"],
+        json!(held),
+        "{scouted}"
+    );
+
+    // The target compiles whole, and the sound read is tried.
+    assert_eq!(scouted["content"]["checked"]["compiles"], true, "{scouted}");
+    let tools = scouted["content"]["tried"]["tools"].as_array().unwrap();
+    assert!(
+        tools
+            .iter()
+            .any(|tool| tool["file"] == "operations/api_orders_get.yaml"
+                && tool["state"] == "proven"),
+        "{tools:?}"
+    );
+
+    // Lint is ok and lists the held drafts with the question.
+    let linted = world.ok(&["draft", "lint", "example"]).await;
+    assert_eq!(linted["ok"], true, "{linted}");
+    let listed = linted["held"].as_array().unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .map(|file| file["file"].clone())
+            .collect::<Vec<_>>(),
+        held.iter().map(|file| json!(file)).collect::<Vec<_>>(),
+        "{linted}"
+    );
+    let question = &listed[0]["questions"][0]["question"]["untrusted"];
+    assert!(question.as_str().unwrap().contains("riddle"), "{linted}");
+
+    // A trial of the held read is refused, naming the file and the question.
+    let held_text = std::fs::read_to_string(target.join(&held[0])).unwrap();
+    let name = held_text
+        .lines()
+        .find_map(|line| line.strip_prefix("operation: \""))
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap()
+        .to_owned();
+    let refused = world
+        .agent(&["draft", "try", "example", "--tool", &name])
+        .await;
+    assert_eq!(refused.error()["code"], "not_found", "{:?}", refused.json);
+    let message = refused.error()["message"].as_str().unwrap();
+    // The message names the held file; the question is in `said`, not here.
+    assert!(
+        message.contains(&held[0]) && !message.contains("riddle"),
+        "{message}"
+    );
+
+    // The sound read goes on to a publish, with the held drafts beside it:
+    // the other drafts are removed as the gates say, its test is recorded,
+    // its binding promoted, and a person publishes (the stand-in for the
+    // presence prompt is this folder's `Machine`, which `first_hour.rs`
+    // cannot lend: its `Passed` prompt and engine are private to that file).
+    let untested = world.agent(&["test", "example"]).await;
+    assert_eq!(untested.error()["code"], "publish_gates_not_passed");
+    for entry in untested.result()["missing"].as_array().unwrap() {
+        let file = entry["file"].as_str().unwrap();
+        if file == "operations/api_orders_get.yaml" {
+            continue;
+        }
+        world
+            .ok(&["draft", "delete", "example", "--file", file])
+            .await;
+    }
+    let read = "example_api_orders_get";
+    let input = r#"{"order_id": "A-100"}"#;
+    let recorded = world
+        .ok(&[
+            "fixture", "record", "example", "--tool", read, "--input", input,
+        ])
+        .await;
+    assert_eq!(recorded["test_state"], "passed", "{recorded}");
+    let promoted = world
+        .ok(&[
+            "binding", "promote", "example", "--tool", read, "--mode", "http",
+        ])
+        .await;
+    assert_eq!(promoted["promoted"], true, "{promoted}");
+    let linted = world.ok(&["draft", "lint", "example"]).await;
+    assert_eq!(linted["ok"], true, "{linted}");
+    assert_eq!(linted["held"].as_array().unwrap().len(), 1, "{linted}");
+    let published = world.person(&["version", "publish", "example"]).await;
+    assert_eq!(published.finished.code, 0, "{:?}", published.finished);
+    assert_eq!(
+        published.result()["tools"],
+        json!([read]),
+        "{}",
+        published.json
+    );
+    let called = world.ok(&["call", read, "--input", input]).await;
+    assert_eq!(called["status"], "completed", "{called}");
+    assert!(app.writes().await.unwrap().is_empty());
+    // The held drafts were not published and are still held.
+    assert!(target.join(&held[0]).is_file());
     world.close().await;
 }

@@ -6,8 +6,18 @@
 //!   `127.0.0.1` otherwise. To a client it is another host.
 //! - `/edge/blocked` answers 403 with a page, as a protective edge would.
 //! - `/edge/limited` answers 429 with `Retry-After: 30`.
+//! - `/edge/challenge` answers 403 with a page that asks the visitor to prove
+//!   it is not a program, and the header `cf-mitigated: challenge`, as a
+//!   protective edge does.
+//! - `/edge/maintenance` answers 503 with `Retry-After: 120` and a page that
+//!   says the site is being worked on.
+//! - `/edge/ok` answers 200, so a test has a page that is not blocked.
+//!
+//! Each tells the application's cases list (`GET /__control/cases`) that it
+//! was asked, as `edge: <name>`.
 
 use axum::Router;
+use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
@@ -23,6 +33,46 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/edge/elsewhere", get(elsewhere))
         .route("/edge/blocked", get(blocked))
         .route("/edge/limited", get(limited))
+        .route("/edge/challenge", get(challenge))
+        .route("/edge/maintenance", get(maintenance))
+        .route("/edge/ok", get(ok))
+}
+
+/// Records that an edge page was asked for.
+async fn asked(state: &AppState, name: &str) {
+    state.lock().await.case_events.push(format!("edge: {name}"));
+}
+
+fn edge_page(title: &str, text: &str) -> Html<String> {
+    Html(format!(
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
+         <title>{title}</title>\n</head>\n<body>\n<main>\n<h1>{title}</h1>\n<p>{text}</p>\n</main>\n</body>\n</html>\n"
+    ))
+}
+
+async fn challenge(State(state): State<AppState>) -> Response {
+    asked(&state, "challenge").await;
+    (
+        StatusCode::FORBIDDEN,
+        [("cf-mitigated", "challenge")],
+        edge_page("Just a moment", "Prove that you are a person to go on."),
+    )
+        .into_response()
+}
+
+async fn maintenance(State(state): State<AppState>) -> Response {
+    asked(&state, "maintenance").await;
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, "120")],
+        edge_page("Back soon", "The site is being worked on."),
+    )
+        .into_response()
+}
+
+async fn ok(State(state): State<AppState>) -> Response {
+    asked(&state, "ok").await;
+    edge_page("Edge ok", "Nothing is in the way.").into_response()
 }
 
 async fn elsewhere(headers: HeaderMap) -> Response {
@@ -43,7 +93,8 @@ async fn elsewhere(headers: HeaderMap) -> Response {
     (StatusCode::FOUND, [(header::LOCATION, to)]).into_response()
 }
 
-async fn blocked() -> Response {
+async fn blocked(State(state): State<AppState>) -> Response {
+    asked(&state, "blocked").await;
     (
         StatusCode::FORBIDDEN,
         [("x-example-edge", "blocked")],
@@ -56,7 +107,8 @@ async fn blocked() -> Response {
         .into_response()
 }
 
-async fn limited() -> Response {
+async fn limited(State(state): State<AppState>) -> Response {
+    asked(&state, "limited").await;
     (
         StatusCode::TOO_MANY_REQUESTS,
         [(header::RETRY_AFTER, RETRY_AFTER_SECONDS.to_string())],

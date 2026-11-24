@@ -109,6 +109,35 @@ fn created_tables(sql: &str) -> Vec<String> {
     tables
 }
 
+/// The names after each `CREATE TABLE`, `CREATE INDEX`, `CREATE UNIQUE
+/// INDEX`, `CREATE TRIGGER`, and `CREATE VIEW` of a migration: every object
+/// of the database it makes.
+fn created_objects(sql: &str) -> Vec<String> {
+    let mut objects = Vec::new();
+    for line in sql.lines() {
+        let line = line.trim_start();
+        let rest = [
+            "CREATE TABLE ",
+            "CREATE INDEX ",
+            "CREATE UNIQUE INDEX ",
+            "CREATE TRIGGER ",
+            "CREATE VIEW ",
+        ]
+        .iter()
+        .find_map(|start| line.strip_prefix(start));
+        let Some(rest) = rest else { continue };
+        let rest = rest.strip_prefix("IF NOT EXISTS ").unwrap_or(rest);
+        let name: String = rest
+            .chars()
+            .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+            .collect();
+        if !name.is_empty() {
+            objects.push(name);
+        }
+    }
+    objects
+}
+
 /// Every migration this engine carries, in order.
 ///
 /// # Errors
@@ -168,6 +197,40 @@ pub(crate) fn migrate(db: &Db, now: Timestamp) -> Result<(), Failure> {
             return Err(failure::version_unsupported(
                 "a migration it applied is not the one this engine carries",
             ));
+        }
+    }
+    // Section 224: the engine refuses a half-migrated store. Migrations are
+    // applied in order, each in one transaction with the row that records
+    // it, so a store this engine migrated holds the first of them and no
+    // other, and nothing that a migration it has not recorded makes.
+    let in_order = known
+        .iter()
+        .take(applied.len())
+        .all(|migration| applied.contains_key(&i64::from(migration.number)));
+    if !in_order {
+        return Err(failure::version_unsupported(
+            "it holds a later migration without an earlier one",
+        ));
+    }
+    if applied.len() < known.len() {
+        let mut made: Vec<String> = known
+            .iter()
+            .take(applied.len())
+            .flat_map(|migration| created_objects(migration.sql))
+            .collect();
+        made.push(OWN_TABLE.to_owned());
+        for row in db.query(
+            Scope::Internal,
+            "SELECT name FROM sqlite_master
+             WHERE type IN ('table', 'index', 'trigger', 'view') AND name NOT LIKE 'sqlite_%'",
+            &[],
+        )? {
+            let name = row.text(0)?;
+            if !made.iter().any(|made| made == name) {
+                return Err(failure::version_unsupported(
+                    "it holds what a migration makes without the record of that migration, so it was half migrated or changed outside this engine",
+                ));
+            }
         }
     }
     for migration in known {

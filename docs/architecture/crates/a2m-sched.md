@@ -124,7 +124,7 @@ pub struct JobRequirements {
 
 pub struct RunnerOffer { pub runner: RunnerId, pub workspace: WorkspaceId, pub targets: Vec<TargetName>, pub modes: Vec<Mode>, pub os: Option<OsName>, pub owner: Option<PrincipalId>, pub protocol: u32 }
 pub struct RunnerTerms { pub heartbeat: Duration, pub lease: Duration, pub protocol: u32 }
-pub struct Slots { pub total: u32, pub per_mode: BTreeMap<Mode, u32> }
+pub struct Slots { pub total: u32, pub per_mode: BTreeMap<Mode, u32>, pub keeper: u32 } // keeper: slots only a session_keepalive job takes, before an ordinary one (decision 0353)
 
 pub struct JobLease {
     pub job: JobId, pub run: Option<RunId>, pub epoch: Epoch,    // only ever increases, per run
@@ -154,7 +154,7 @@ Contracts the signatures do not show:
 - **Every call from a runner carries its lease number,** and a call whose number is not the job's current one, or whose lease has run out on the scheduler's count, is refused with `policy`, `lease_superseded`. This is the scheduler's half of ledger rule 4; the ledger's own check of the run's lease number is the other half.
 - **`submit` is one transaction:** the health check, the holds, the run row with its duplicate check, the queue bound, the caller's cap, the runner check, the budgets, and the job row. A refusal takes all of it back. Two identical calls get one run (ledger rule 6, held by the ledger's `open_run` and the store's unique index on `dedupe_key` among unfinished runs).
 - **`claim` is one transaction, and waits on a named condition.** Granting the lease, raising the run's lease number through the ledger's `new_epoch`, and taking the job's exclusive resources commit together. A claim that finds nothing waits for work to arrive, woken by an in-process signal, up to `wait` on the store's clock. Nothing in the crate sleeps: a wait for a moment ends when `sweep` finds that the moment has come.
-- **Time is the store's clock.** Every deadline the scheduler keeps is a moment of that clock, written to the store, so a restart finds it again. A lease is still handed to the runner as a duration.
+- **Time is the store's clock, except a lease's.** Every deadline the scheduler keeps is a moment of that clock, written to the store, so a restart finds it again, except the end of a lease, which is a moment of the scheduler's count of lease time: the time of day when the scheduler was made, carried forward by the steady clock alone, so that a jump of the machine's clock neither loses a lease nor keeps one [decision 0360](../../decisions/0360-a-lease-is-measured-on-the-steady-clock-and-another-persons-run-is-not-found.md). A wait that ends with a lease, and the moment the sweeping task is told, are turned into the store's clock when they are set. After a restart the count starts again from the time of day, so a lease written after a jump forward may be declared lost early, and is reconciled. A lease is still handed to the runner as a duration.
 - **Mode names are data.** The scheduler matches a job's modes against a runner's by string equality and holds no list of modes. Limits that differ by mode, such as one write at a time on an interface binding, reach it as numbers in `JobRequirements`, filled by `a2m-actions` from the registry's mode defaults and the settings.
 - **The run's state is the ledger's.** The engine writes it under the lease's fence. The scheduler writes it in three cases only, each when no runner holds the run: a lost lease (`stopped`, under a new lease number), a queue limit that ran out (`stopped`), and a cancel of a run nobody holds (`cancelled`).
 
@@ -188,7 +188,7 @@ The loop that runs work in the same process says `hello` like any runner, so che
 
 | Setting | Default | Held how |
 | --- | --- | --- |
-| Lease length | 30 s | Granted as a duration; the runner measures it on its steady clock from when it sent the request. The scheduler keeps the moment it runs out, on the store's clock |
+| Lease length | 30 s | Granted as a duration; the runner measures it on its steady clock from when it sent the request. The scheduler keeps the moment it runs out, on its count of lease time |
 | Heartbeat | Every 10 s | Each renews the lease and returns a directive: `continue`, `cancel`, `pause` when a hold covers the job, or `drain` |
 | Declared lost | 5 s after the scheduler's own count runs out | By `sweep`. In those five seconds the heartbeat is refused, a result is still taken, and nobody else is given the job |
 | Quarantine | 60 s, or the job's `max_step` if greater | Before anyone touches the run's records again |
@@ -204,7 +204,7 @@ On loss, `sweep` does section 223's steps in one transaction:
 3. The run stops as `possible_commit`, `runner_lost`, when it is in a state a run can stop from.
 4. A `reconcile` job is queued when the job could write or a record is in doubt, with `available_at` at the end of the quarantine. What the lost job held alone passes to it, so no other job takes those resources in between.
 
-When the reconcile job is leased it gets the next lease number, and confirms the quarantined locks under it. A late result from the lost runner is refused. Storing its journal as late evidence is the ledger's `late_evidence`, called by the runner link, which is not built. The `verify_after_loss` job that follows later is not built.
+When the reconcile job is leased it gets the next lease number, and confirms the quarantined locks under it. A late result from the lost runner is refused. Storing its journal as late evidence is the ledger's `late_evidence`, called by the runner link, which is not built. The check after a loss is not a job of its own: the reconcile queued after a lost lease carries `verify_after_loss`, as does each reconcile queued after it, and when it settles the runner reads every verified record once more in the same lease ([decision 0347](../../decisions/0347-the-check-after-a-lost-runner-is-the-last-part-of-its-reconcile.md)).
 
 ## Exclusive resources during a run
 
@@ -298,6 +298,7 @@ A claim is one writing transaction of the store, which has one writer. Postgres 
 | A full queue answers at once and never grows | Submissions past the queue's length and the caller's cap; the store is asked what it holds |
 | An interactive job is dispatched before a batch job queued earlier, and one caller cannot starve another | A batch job, a flood from one caller, and one job from another |
 | Budgets refill by the clock only, and a restart does not refill them | Sweeps and calls with the clock standing still; a restart |
+| A jump of the machine's clock, forward or back, moves no lease | `a_jump_in_the_machines_clock_does_not_move_leases`: a day forward, then two back, with no time passing |
 | A clock that went back refills no budget twice | A bucket counted to an hour from now, as a clock set back leaves it: the moment stays, and nothing refills before it |
 | A stopped job is reconciled when the ledger holds a record in doubt, whatever its runner reported | A job that stored an intent and reports `in_doubt: false`; the store is asked for the reconcile job |
 | A run that rests is not read without end: a person's stop is never queued again on its own, and a reconcile queued again waits longer each time | For each failure class, a minute and two hours of a paused clock with a reconcile that never settles; a resume, a settle time, and a quarantine; a resume whose transaction the store's one writer runs while the reconcile it found is leased, before that reconcile's end, forced by a transaction of the test's own that holds the writer (`a_resume_that_races_the_end_of_the_reconcile_it_finds_is_never_lost`) |
@@ -312,7 +313,7 @@ A claim is one writing transaction of the store, which has one writer. Postgres 
 
 1. Done: `submit` with health, dedupe, the queue bound, and the caller's cap; the queue; `claim`, `heartbeat`, `finish`. With slice 3.7.
 2. Done: waiting for locks, behind the ledger's lock calls. With slice 3.7.
-3. Done: lost leases, quarantine, and reconcile jobs, on a controlled clock. With slice 3.7, as its fault test. Not built: the `verify_after_loss` job that follows a reconcile.
+3. Done: lost leases, quarantine, and reconcile jobs, on a controlled clock. With slice 3.7, as its fault test. The check after a loss is the last part of that reconcile, in its lease ([decision 0347](../../decisions/0347-the-check-after-a-lost-runner-is-the-last-part-of-its-reconcile.md)).
 4. Done: per-session parallelism, exclusive resources, priority, and round robin between callers. Not built: a weighted share for a caller.
 5. Done: rate budgets, kept in the store.
 6. Done in part: `hello`, matching by capability and home runner, `drain`, `bye`, `cancel`, holds. Not built: enrollment and revoking a runner, which belong to the runner link of slices 7.1 and 7.2; marking a runner offline when it falls silent.

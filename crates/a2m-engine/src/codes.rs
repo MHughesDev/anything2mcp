@@ -59,7 +59,7 @@ a2m_core::failure_codes! {
         passes not_by_itself;
     NEEDS_LOGIN = SessionExpired, "needs_login",
         meaning "The session ended and could not be had again.",
-        next "Sign in with `anything2mcp session login`, then run the tool again or resume the run.";
+        next "Sign in with `anything2mcp session login`, then resume the run, which reconciles any write it began before it writes again.";
     EDGE_BLOCKED = EdgeBlocked, "edge_blocked",
         meaning "The surface is blocked at the edge.",
         next "Wait for the block to end; the engine does not go around it.";
@@ -171,12 +171,15 @@ mod tests {
     /// a step's plan says it fails as. `tool.rs` remakes a recorded
     /// failure, or one it adds to, in the class it already has, in two
     /// places: a failed record that settles the run, and a failure that
-    /// shows what was recorded. A third place fails this test.
+    /// shows what was recorded. `run.rs` makes one in one place, from the
+    /// table of a provider: a driver's code that its health gives, in the
+    /// class the provider's manifest declares for it (decision 0377). A
+    /// place more fails this test.
     #[test]
     fn every_failure_takes_its_class_from_a_table() {
         let found = a2m_core::testing::classes_of_their_own(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-            &[("tool.rs", 2)],
+            &[("tool.rs", 2), ("run.rs", 1)],
         )
         .unwrap();
         assert!(

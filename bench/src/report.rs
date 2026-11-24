@@ -177,6 +177,16 @@ impl RunReport {
             "scenario", "count", "min us", "median us", "p95 us", "p99 us", "max us"
         );
         for scenario in &self.scenarios {
+            if let Some(bytes) = scenario.size_bytes {
+                let _ = writeln!(
+                    out,
+                    "{:<28} {:>7} {} KB file",
+                    scenario.name,
+                    "",
+                    micros(i128::from(bytes))
+                );
+                continue;
+            }
             stats_row(&mut out, &scenario.name, &scenario.operation);
             if let Some(baseline) = &scenario.baseline {
                 stats_row(&mut out, "  directly to the stand", baseline);
@@ -192,6 +202,15 @@ impl RunReport {
                     micros(overhead.p95_ns),
                     micros(overhead.p99_ns),
                     ""
+                );
+            }
+            if let Some(bytes) = scenario.resident_bytes {
+                let _ = writeln!(
+                    out,
+                    "{:<28} {:>7} {} KB resident",
+                    "  idle memory",
+                    "",
+                    micros(i128::from(bytes))
                 );
             }
         }
@@ -260,10 +279,14 @@ mod tests {
                     operation: baseline,
                     baseline: None,
                     overhead: None,
+                    resident_bytes: None,
+                    size_bytes: None,
                 },
                 ScenarioResult {
                     name: "http_operation".to_owned(),
                     overhead: Some(Overhead::between(&operation, &baseline)),
+                    resident_bytes: None,
+                    size_bytes: None,
                     operation,
                     baseline: Some(baseline),
                 },

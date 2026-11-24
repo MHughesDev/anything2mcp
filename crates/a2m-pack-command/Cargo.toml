@@ -19,6 +19,8 @@ miniz_oxide.workspace = true
 # Reads a PowerShell XML help file; already in the workspace for
 # a2m-pack-http (decision 0290).
 quick-xml.workspace = true
+# Reads the plain facts of a binary from its bytes (X5); never runs it.
+object.workspace = true
 regex.workspace = true
 serde.workspace = true
 sha2.workspace = true

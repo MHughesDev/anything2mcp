@@ -351,7 +351,16 @@ impl Engine {
         // job that names one the plan does not hold ends `rejected`, which
         // a run that is still `queued` cannot.
         let mut claimed = claimed;
-        if job.snapshot.is_none() {
+        // So is a run stopped before anything was planned, such as a write
+        // a drift or an edge block stopped at its preview: resumed, it is
+        // validated again, and its preview stores its records (decision
+        // 0381, the state rule).
+        let unplanned = job.snapshot.as_ref().is_some_and(|snapshot| {
+            snapshot.state == RunState::Stopped
+                && snapshot.diff.is_none()
+                && snapshot.records.is_empty()
+        });
+        if job.snapshot.is_none() || unplanned {
             if let Err(failure) = control.send(EngineEvent::Moved(RunState::Validating)).await {
                 return give_up(claimed, failure);
             }

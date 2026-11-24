@@ -185,3 +185,125 @@ fn a_locator_is_a_known_role_and_a_name_and_nothing_else() {
         );
     }
 }
+
+#[test]
+fn a_property_of_a_service_lowers_into_one_step_that_only_reads() {
+    let folder = Folder::new("property");
+    let registry = registry(folder.path(), None);
+    let plan = compile_at(&registry, &fixture())
+        .unwrap_or_else(|p| panic!("{}", shown(&p)))
+        .plan;
+    let binding = common::binding_of(&plan, "example_orders_total_get");
+    let kinds: Vec<&str> = binding.act.iter().map(|step| step.kind.as_str()).collect();
+    assert_eq!(kinds, ["property"]);
+    assert!(
+        binding
+            .act
+            .iter()
+            .all(|step| !step.commits && step.idempotent)
+    );
+    assert!(binding.confirm.is_empty() && binding.read_back.is_empty());
+}
+
+#[test]
+fn a_property_is_only_ever_read_and_each_refusal_is_by_name() {
+    let folder = Folder::new("property-refused");
+    let registry = registry(folder.path(), None);
+    let file = "operations/service.yaml";
+    for (case, (from, to, code)) in [
+        // Setting a property is not built: no verb but `read` names one.
+        (
+            "    verb: read\n    property:",
+            "    verb: update\n    property:",
+            "desktop.property_reads_only",
+        ),
+        // An operation that changes something is not a read of a property.
+        (
+            "effect: read\ninputs: {}\noutputs:\n  total:",
+            "effect: write\ninputs: {}\noutputs:\n  total:",
+            "desktop.read_acts",
+        ),
+        // A binding that names a property names nothing a window holds.
+        (
+            "      name: Total\n",
+            "      name: Total\n    action: save\n",
+            "desktop.read_acts",
+        ),
+        // The path, interface, and name are ones a bus accepts.
+        (
+            "path: /org/example/Desk\n      interface: org.example.Desk.Orders\n      name: Total",
+            "path: /org/example/Desk/../x\n      interface: org.example.Desk.Orders\n      name: Total",
+            "desktop.property_invalid",
+        ),
+        (
+            "interface: org.example.Desk.Orders\n      name: Total",
+            "interface: org.example.Desk.Orders\n      name: \"Total; x\"",
+            "desktop.property_invalid",
+        ),
+        // One output: the property's value as text.
+        (
+            "  total: {type: untrusted_text}\n",
+            "  total: {type: untrusted_text}\n  other: {type: untrusted_text}\n",
+            "desktop.property_output",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let root = folder.path().join(format!("case-{case}"));
+        let _ = std::fs::remove_dir_all(&root);
+        fixture_copy(&root, file, |text| {
+            assert!(text.contains(from), "{file} has no `{from}`");
+            text.replacen(from, to, 1)
+        });
+        let problems = compile_at(&registry, &root)
+            .err()
+            .unwrap_or_else(|| panic!("case {case} compiled"));
+        assert!(
+            shown(&problems).contains(code),
+            "case {case}, {code}: {}",
+            shown(&problems)
+        );
+    }
+}
+
+#[test]
+fn every_tool_states_that_it_starts_nothing_and_sends_to_no_address() {
+    use a2m_files::{BindingStates, Reach};
+    let folder = Folder::new("states");
+    let registry = registry(folder.path(), None);
+    let compiled = compile_at(&registry, &fixture()).unwrap_or_else(|p| panic!("{}", shown(&p)));
+    assert!(!compiled.review.items.is_empty());
+    for item in &compiled.review.items {
+        let Reach::Stated { groups, .. } = &item.reach else {
+            panic!("`{}` does not state where it sends", item.tool);
+        };
+        assert!(groups.is_empty(), "{}", item.tool);
+        assert!(!item.bindings.is_empty());
+        for binding in &item.bindings {
+            let BindingStates::Stated { runs, environment } = &binding.states else {
+                panic!("`{}` is not stated", item.tool);
+            };
+            assert!(runs.is_empty() && environment.is_empty(), "{}", item.tool);
+        }
+    }
+}
+
+#[test]
+fn a_management_namespace_on_another_machine_is_not_stated() {
+    use a2m_files::Reach;
+    let folder = Folder::new("remote-namespace");
+    let registry = registry(folder.path(), None);
+    let root = folder.path().join("remote");
+    fixture_copy(&root, "target.yaml", |text| {
+        text.replace(
+            "    service: org.example.Desk\n",
+            "    service: org.example.Desk\n    management_namespace: '//other/root'\n",
+        )
+    });
+    let compiled = compile_at(&registry, &root).unwrap_or_else(|p| panic!("{}", shown(&p)));
+    assert!(!compiled.review.items.is_empty());
+    for item in &compiled.review.items {
+        assert!(matches!(item.reach, Reach::Partly { .. }), "{}", item.tool);
+    }
+}

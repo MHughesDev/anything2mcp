@@ -181,6 +181,9 @@ pub(super) struct World {
     pub(super) hooks: Arc<engine::Hooks>,
     /// The test pack's discoverer, and what each discovery handed it.
     pub(super) discoverer: Arc<engine::WritingDiscoverer>,
+    /// How many times the test provider `example_login` signed in, when
+    /// the options registered it.
+    pub(super) logins: Arc<AtomicU32>,
 }
 
 pub(super) struct Options {
@@ -194,6 +197,11 @@ pub(super) struct Options {
     /// The test application's pack also registers its surface kind with
     /// the compiler, with a notice for `profile: open`.
     pub(super) notices: bool,
+    /// The auth provider `example_login`, which the hand-built plan names,
+    /// is registered: a provider that needs the person (`super::probe`).
+    pub(super) login: bool,
+    /// One more pack a test brings, registered beside the others.
+    pub(super) extra_pack: Option<Arc<dyn a2m_provider::Pack>>,
 }
 
 impl Options {
@@ -235,6 +243,8 @@ impl Default for Options {
             settings: Settings::defaults(),
             before_open: None,
             notices: false,
+            login: false,
+            extra_pack: None,
         }
     }
 }
@@ -302,6 +312,14 @@ pub(super) async fn world(options: Options) -> World {
         builder.add_pack(&app_pack);
     }
     builder.add_pack(&ProjectPack);
+    let logins = Arc::new(AtomicU32::new(0));
+    let login_pack = super::probe::LoginPack(Arc::clone(&logins));
+    if options.login {
+        builder.add_pack(&login_pack);
+    }
+    if let Some(extra) = &options.extra_pack {
+        builder.add_pack(extra.as_ref());
+    }
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
     let surface = Arc::new(Surface {
@@ -340,6 +358,7 @@ pub(super) async fn world(options: Options) -> World {
         folder,
         hooks,
         discoverer,
+        logins,
     }
 }
 
@@ -601,6 +620,44 @@ async fn a_write_rests_until_a_person_approves_at_the_desk_and_is_written_exactl
     assert_eq!(again.result.as_ref().unwrap()["status"], "completed");
     assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 1);
 
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_call_with_no_environment_runs_in_the_targets_default_and_the_help_says_so() {
+    let world = World::ready().await;
+    let described = world
+        .ok("action.describe", json!({"action": "tool.call"}))
+        .await;
+    let help = described["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|field| field["name"] == "environment")
+        .unwrap()["help"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        help.contains("no environment runs in the target's default environment"),
+        "{help}"
+    );
+    // The same key with the default named is the same call: a call with no
+    // environment ran in the example target's default, `test`.
+    let input = json!({"order_id": "A-100"});
+    let first = world
+        .ok(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": input, "idempotency_key": "default-env-1"}),
+        )
+        .await;
+    let again = world
+        .ok(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": input, "environment": "test", "idempotency_key": "default-env-1"}),
+        )
+        .await;
+    assert_eq!(first["run_id"], again["run_id"]);
     world.kernel.close(CloseReason::Asked).await;
 }
 

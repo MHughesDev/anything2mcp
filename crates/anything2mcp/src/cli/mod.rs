@@ -68,6 +68,10 @@ pub struct Host {
     /// the engine inside itself: a host that embeds the command line, and a
     /// test, are no program to start (decision 0165).
     pub program: Option<PathBuf>,
+    /// The presence prompt `serve` asks a person's presence with. `None` is
+    /// this machine's own, which the operating system gives. The shipped
+    /// program never sets it; only the field harness does (decision 0310).
+    pub prompt: Option<Arc<dyn a2m_local::PresencePrompt>>,
 }
 
 impl std::fmt::Debug for Host {
@@ -93,6 +97,7 @@ impl Host {
             person: None,
             key_store: None,
             program: std::env::current_exe().ok(),
+            prompt: None,
         }
     }
 }
@@ -493,16 +498,13 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
                 crate::engine::settings_warning(link.start_variables_differing(
                     &crate::engine::settings_variables(&host.environment),
                 ));
-            let finished = client::run_steps(
-                &link,
-                &tree,
-                &globals,
-                steps,
-                json,
-                project.as_deref(),
-                warning.as_deref(),
-            )
-            .await;
+            let asking = client::Asking {
+                globals: &globals,
+                project: project.as_deref(),
+                paths: &paths,
+            };
+            let finished =
+                client::run_steps(&link, &tree, &asking, steps, json, warning.as_deref()).await;
             return after_steps(finished, stop.as_ref(), &tree, json);
         }
         // No engine runs and none was started: `engine.in_process` is on,
@@ -787,9 +789,25 @@ fn report_panics_by_place_alone() {
     reason = "the program's main changes the environment before any thread starts"
 )]
 pub unsafe fn run(args: impl IntoIterator<Item = String>) -> ExitCode {
+    // SAFETY: the caller holds this function's contract, which is the
+    // same.
+    unsafe { run_in(args, Host::of_process()) }
+}
+
+/// [`run`], in the surroundings `host` gives: a program that sets what the
+/// shipped one never does, such as the field harness's presence prompt,
+/// builds its own host from [`Host::of_process`] and starts here.
+///
+/// # Safety
+///
+/// As [`run`]: called before any other thread starts.
+#[allow(
+    unsafe_code,
+    reason = "it changes the environment before any thread starts, as `run` does"
+)]
+pub unsafe fn run_in(args: impl IntoIterator<Item = String>, host: Host) -> ExitCode {
     report_panics_by_place_alone();
     let args: Vec<String> = args.into_iter().collect();
-    let host = Host::of_process();
     // SAFETY: the caller holds this function's contract, which is the
     // same: no other thread runs yet.
     unsafe { forget_passphrase() };

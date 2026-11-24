@@ -1,0 +1,18 @@
+operation: example_line_item_get
+title: Get a line item
+effect: read
+key: [order_id, item_code]
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+  item_code: {type: identifier, description: "Item code, such as L-101"}
+outputs:
+  description: {type: text}
+  quantity: {type: integer}
+  length_in: {type: length_inches}
+bindings:
+  - mode: ui
+    verb: read
+    status: verified
+    screen: line_item
+description: >
+  Reads one line item of an order from its form.

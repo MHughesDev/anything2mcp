@@ -209,6 +209,9 @@ impl Lowering for Stating {
     fn commits(&self, kind: &StepKind) -> StepCommits {
         self.inner.commits(kind)
     }
+    fn changes(&self, kind: &StepKind) -> crate::StepChanges {
+        self.inner.changes(kind)
+    }
     fn least_effect(&self, binding: &ResolvedBinding<'_>) -> EffectClass {
         self.inner.least_effect(binding)
     }

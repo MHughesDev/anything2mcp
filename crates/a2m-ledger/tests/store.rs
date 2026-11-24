@@ -16,9 +16,9 @@ use a2m_core::{
     RecordState, RunState, Source, Subject, Timestamp, UnknownReason, Version,
 };
 use a2m_ledger::{
-    Acted, AuditEntry, BlobKind, BlobRef, ChainCheck, Durability, NewBlob, NewUnknown, Owner,
-    PublishedVersion, ReadBack, RetentionClass, Settlement, Store, StoreConfig, UnknownStatus,
-    codes, migrations, replay, table_owner,
+    Acted, AuditEntry, BlobKind, BlobRef, ChainCheck, Durability, Fence, NewBlob, NewUnknown,
+    Opened, Owner, PublishedVersion, ReadBack, RetentionClass, Settlement, Store, StoreConfig,
+    UnknownStatus, codes, migrations, replay, table_owner,
 };
 use a2m_vault::{Generation, KeyId, KeyRecord, KeyRecords, KeyRef, Layer, OwnerRef, Wrapped};
 use common::*;
@@ -122,6 +122,109 @@ async fn a_migration_applied_twice_is_a_no_op_and_a_store_from_the_future_is_ref
     assert_eq!(newer.code(), &codes::STORE_VERSION_UNSUPPORTED);
     // It was left as it was.
     assert_eq!(applied(&folder).len(), first.len() + 1);
+}
+
+/// Every table, index, and trigger the database holds, by kind and name.
+fn schema(raw: &rusqlite::Connection) -> Vec<(String, String)> {
+    let mut statement = raw
+        .prepare("SELECT type, name FROM sqlite_master ORDER BY type, name")
+        .unwrap();
+    let rows = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap();
+    rows.map(Result::unwrap).collect()
+}
+
+fn recorded(raw: &rusqlite::Connection) -> i64 {
+    raw.query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
+        row.get(0)
+    })
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_half_migrated_store_is_refused_and_left_as_it_was() {
+    // Section 224: the engine refuses to start on a half-migrated store. A
+    // migration runs in one transaction with the row that records it, so
+    // an interruption leaves neither, and the next start applies it.
+    let carried = migrations().unwrap();
+    let middle = i64::from(carried[carried.len() / 2].number);
+
+    // A store that holds what the later migrations made, without the rows
+    // that record them: it was half migrated outside this engine's order,
+    // or changed by another program.
+    let folder = Folder::new("half");
+    drop(open_with(Some(folder.path()), key_store()).await);
+    let raw = folder.raw();
+    raw.execute("DELETE FROM schema_migrations WHERE number >= ?1", [middle])
+        .unwrap();
+    let (before, rows) = (schema(&raw), recorded(&raw));
+    let refused = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.class(), FailureClass::Busy, "{refused:?}");
+    assert_eq!(
+        refused.code(),
+        &codes::STORE_VERSION_UNSUPPORTED,
+        "{refused:?}"
+    );
+    assert!(refused.message().contains("half migrated"), "{refused:?}");
+    // Nothing was applied: the store is as it was.
+    assert_eq!(schema(&raw), before);
+    assert_eq!(recorded(&raw), rows);
+
+    // A store that holds a later migration without an earlier one.
+    let folder = Folder::new("gap");
+    drop(open_with(Some(folder.path()), key_store()).await);
+    let raw = folder.raw();
+    raw.execute("DELETE FROM schema_migrations WHERE number = ?1", [middle])
+        .unwrap();
+    let (before, rows) = (schema(&raw), recorded(&raw));
+    let refused = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refused.code(),
+        &codes::STORE_VERSION_UNSUPPORTED,
+        "{refused:?}"
+    );
+    assert!(
+        refused.message().contains("without an earlier"),
+        "{refused:?}"
+    );
+    assert_eq!(schema(&raw), before);
+    assert_eq!(recorded(&raw), rows);
+}
+
+#[tokio::test]
+async fn a_damaged_database_file_fails_the_integrity_check_at_start() {
+    let folder = Folder::new("damaged");
+    drop(open_with(Some(folder.path()), key_store()).await);
+    // Everything the store wrote is moved from its log into the file, so
+    // that the file holds the whole database whenever the store's own
+    // threads finish closing.
+    let raw = folder.raw();
+    raw.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+        .unwrap();
+    drop(raw);
+    let file = folder.path().join(a2m_ledger::DATABASE_FILE_NAME);
+    let mut bytes = std::fs::read(&file).unwrap();
+    // The first page, the file's header, is left whole; every byte of the
+    // pages after it is overwritten, as a failing disk would leave them.
+    let page = usize::from(u16::from_be_bytes([bytes[16], bytes[17]]));
+    assert!(bytes.len() > 3 * page, "{} bytes", bytes.len());
+    for byte in &mut bytes[page..] {
+        *byte = 0x5a;
+    }
+    std::fs::write(&file, &bytes).unwrap();
+
+    let refused = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.class(), FailureClass::Busy, "{refused:?}");
+    assert_eq!(refused.code(), &codes::STORE_CORRUPT, "{refused:?}");
+    // The file is kept as it is, for its restore.
+    assert_eq!(std::fs::read(&file).unwrap(), bytes);
 }
 
 #[tokio::test]
@@ -288,6 +391,83 @@ fn no_crate_but_the_policy_engine_names_the_policy_key() {
 
 // ---- a restart ----
 
+/// A value sealed by one engine opens for the next engine over the same
+/// store and the same root key, and for no engine once the root is gone
+/// (spec 216; the key-store rows of 224). The sealed bytes are kept in a
+/// file, as a caller keeps them, and the key records are in the store.
+#[tokio::test]
+async fn a_sealed_value_survives_a_restart_over_the_store_and_opens_nothing_without_the_root() {
+    use a2m_vault::{OwnerRef, SealContext, Sealed, codes as vault_codes};
+
+    const VALUE: &str = "example-sealed-value-4c1e9";
+    let cx = SealContext::credential(
+        workspace(),
+        OwnerRef::person("ana").unwrap(),
+        &target(),
+        "token",
+    )
+    .unwrap();
+    let folder = Folder::new("sealed-restart");
+    let keys = key_store();
+    let kept = folder.path().join("sealed.bin");
+
+    let (store, vault) = open_with(Some(folder.path()), Arc::clone(&keys)).await;
+    let sealed = vault.seal(&cx, VALUE.as_bytes()).await.unwrap();
+    std::fs::write(&kept, sealed.to_bytes()).unwrap();
+    // The envelope holds nothing readable.
+    assert!(!String::from_utf8_lossy(&sealed.to_bytes()).contains(VALUE));
+    drop(vault);
+    drop(store);
+
+    // The next engine reads the envelope back and opens it.
+    let (store, vault) = open_with(Some(folder.path()), Arc::clone(&keys)).await;
+    let sealed = Sealed::from_bytes(&std::fs::read(&kept).unwrap()).unwrap();
+    let opened = vault.open(&cx, &sealed).await.unwrap();
+    assert_eq!(opened.expose(), VALUE.as_bytes());
+    drop(vault);
+    drop(store);
+
+    // The root is deleted from the key store: nothing opens, by name, and
+    // the store's files do not hold the value either.
+    keys.remove_root();
+    let store = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap();
+    let vault = Arc::new(a2m_vault::Vault::new(
+        Arc::clone(&keys) as Arc<dyn a2m_vault::KeyStore>,
+        Arc::new(store.key_records()),
+    ));
+    let refused = vault.open(&cx, &sealed).await.unwrap_err();
+    assert_eq!(refused.code(), &vault_codes::KEY_STORE_ENTRY_MISSING);
+    // Nor does the engine start over it: attaching asks for the digest key.
+    let unattached = store.attach(Arc::clone(&vault)).await.unwrap_err();
+    assert_eq!(unattached.code(), &vault_codes::KEY_STORE_ENTRY_MISSING);
+    // The store is closed before its files are searched: on Windows its
+    // folder lock is a lock on the file's bytes, which no other reader may
+    // read while it is held. Every file is searched, the lock file among them.
+    drop(vault);
+    store.release_folder();
+    drop(store);
+    let mut files = Vec::new();
+    let mut folders = vec![folder.path().to_path_buf()];
+    while let Some(next) = folders.pop() {
+        for entry in std::fs::read_dir(next).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                folders.push(path);
+            } else {
+                files.push(std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    for bytes in files {
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains(VALUE),
+            "the value is in a file"
+        );
+    }
+}
+
 #[tokio::test]
 async fn after_a_restart_everything_is_there_and_a_run_stopped_mid_write_is_found() {
     let folder = Folder::new("restart");
@@ -295,9 +475,11 @@ async fn after_a_restart_everything_is_there_and_a_run_stopped_mid_write_is_foun
     let (store, vault) = open_with(Some(folder.path()), Arc::clone(&keys)).await;
     let fence = running(&store, 1, &["done", "mid", "todo"]).await;
     let proof = evidence(&store, "the values read back").await;
+    let given = evidence(&store, "the outputs the read-back showed").await;
 
     // One record is written and verified; the second has its intent stored
-    // when the process ends.
+    // when the process ends. The verified record's outputs are those its
+    // read-back showed, in place of those stored with its `acted` mark.
     lock(&store, fence, 0).await.unwrap();
     let token = intent(&store, fence, 0, "done").await.unwrap();
     store
@@ -306,13 +488,14 @@ async fn after_a_restart_everything_is_there_and_a_run_stopped_mid_write_is_foun
                 token,
                 Acted {
                     assigned_key: Some("SO-1001".to_owned()),
-                    outputs: None,
+                    outputs: Some(proof),
                 },
             )?;
             let read = ReadBack {
                 digest: intended("done"),
                 after: Some(proof),
                 evidence: proof,
+                outputs: Some(given),
             };
             tx.ledger().mark_verified(&acted, read)
         })
@@ -343,6 +526,12 @@ async fn after_a_restart_everything_is_there_and_a_run_stopped_mid_write_is_foun
         .await
         .unwrap();
     assert_eq!(events, events_before);
+    let records = store
+        .read(move |tx| tx.ledger().records(fence.run))
+        .await
+        .unwrap();
+    assert_eq!(records[0].state, RecordState::Verified);
+    assert_eq!(records[0].outputs, Some(given));
 
     let records = store
         .read(move |tx| tx.ledger().records(fence.run))
@@ -413,6 +602,7 @@ async fn the_state_rebuilt_from_events_is_the_current_state() {
                 digest: intended("a"),
                 after: None,
                 evidence: proof,
+                outputs: None,
             };
             tx.ledger().mark_verified(&acted, read)?;
             tx.ledger().append_event(
@@ -550,6 +740,36 @@ async fn a_read_runs_without_records_and_a_run_completes_only_when_every_record_
             .unwrap_err();
         assert_eq!(refused.code(), &codes::LEDGER_STATE_UNEXPECTED, "{to}");
     }
+
+    // A stopped run stopped again by a later lease takes the new failure,
+    // so that it never shows the one before.
+    let fence = running(&store, 1, &["b"]).await;
+    let first = a2m_core::Failure::new(
+        FailureClass::PossibleCommit,
+        codes::RUNNER_LOST,
+        "The lease ended.",
+        "Reconcile.",
+    );
+    let second = a2m_core::Failure::new(
+        FailureClass::Busy,
+        codes::STORE_UNAVAILABLE,
+        "The store is closed.",
+        "Try again.",
+    );
+    let run = store
+        .write(Durability::Synced, move |tx| {
+            let mut ledger = tx.ledger();
+            ledger.set_state(&fence, RunState::Stopped, Some(&first))?;
+            ledger.set_state(&fence, RunState::Stopped, Some(&second))?;
+            ledger.run(fence.run)
+        })
+        .await
+        .unwrap();
+    assert_eq!(run.state, RunState::Stopped);
+    assert_eq!(
+        run.failure,
+        Some((FailureClass::Busy, codes::STORE_UNAVAILABLE))
+    );
 }
 
 // ---- blobs ----
@@ -1076,4 +1296,196 @@ async fn a_broken_audit_chain_is_detected() {
         .await,
         ChainCheck::Broken { at: 2 }
     );
+}
+
+/// The store fails closed on its own: a second open of one data folder
+/// is refused by name while the first is open, even when no engine lock
+/// stands in the way, and is let in when the first has closed.
+#[tokio::test]
+async fn a_second_open_of_one_data_folder_is_refused_while_the_first_is_open() {
+    let folder = Folder::new("twice");
+    let first = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap();
+
+    let second = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap_err();
+    assert_eq!(second.class(), FailureClass::Busy);
+    assert_eq!(second.code(), &codes::STORE_UNAVAILABLE);
+
+    // A clone is the same store: the folder is still held.
+    let clone = first.clone();
+    drop(first);
+    let still = Store::open(StoreConfig::in_dir(folder.path()))
+        .await
+        .unwrap_err();
+    assert_eq!(still.code(), &codes::STORE_UNAVAILABLE);
+
+    // Let go on purpose, the folder opens though a clone is still held.
+    clone.release_folder();
+    let released = Store::open(StoreConfig::in_dir(folder.path())).await;
+    assert!(released.is_ok(), "{:?}", released.err());
+    drop(released);
+
+    drop(clone);
+    let again = Store::open(StoreConfig::in_dir(folder.path())).await;
+    assert!(again.is_ok(), "{:?}", again.err());
+}
+
+// ---- the idempotency token ----
+
+/// A write run with one record of the key `line` planned with these
+/// intended values, at `needs_approval`.
+async fn planned_line(store: &Store, input: &'static str, values: &'static str) -> Fence {
+    store
+        .write(Durability::Synced, move |tx| {
+            let mut ledger = tx.ledger();
+            let Opened::New(opened) = ledger.open_run(new_run(EffectClass::Write, 1, input))?
+            else {
+                panic!("the run exists already");
+            };
+            let fence = ledger.new_epoch(opened.run)?;
+            ledger.set_state(&fence, RunState::Validating, None)?;
+            let mut record = planned(0, "line");
+            record.intended = intended(values);
+            ledger.plan_records(&fence, &[record])?;
+            ledger.store_diff(&fence, diff_hash(), None)?;
+            ledger.set_state(&fence, RunState::NeedsApproval, None)?;
+            Ok(fence)
+        })
+        .await
+        .unwrap()
+}
+
+/// Decision 0324, point 6: a token is never reused for changed intended
+/// values. Within a run the intended values of a commit point are fixed:
+/// planning it again with others is refused, and so is an intent for
+/// others, which is given no token. Changed values are a new run, whose
+/// token for the same record is another.
+#[tokio::test]
+async fn a_token_is_never_reused_for_changed_intended_values() {
+    let store = memory().await;
+    let fence = planned_line(&store, "first", "first").await;
+
+    // The commit point cannot be planned again with changed values.
+    let replanned = store
+        .write(Durability::Synced, move |tx| {
+            let mut record = planned(0, "line");
+            record.intended = intended("second");
+            tx.ledger().plan_records(&fence, &[record])
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(replanned.code(), &codes::LEDGER_STATE_UNEXPECTED);
+
+    store
+        .write(Durability::Synced, move |tx| {
+            let approval = record_approval(tx, fence.run, &diff_hash())?;
+            let clearance = consume(tx, approval)?;
+            tx.ledger().begin_writes(&fence, clearance)
+        })
+        .await
+        .unwrap();
+    lock(&store, fence, 0).await.unwrap();
+
+    // An intent for changed values is refused, and no token is given.
+    let changed = intent(&store, fence, 0, "second").await.unwrap_err();
+    assert_eq!(changed.code(), &codes::LEDGER_STATE_UNEXPECTED);
+    assert_eq!(state_of(&store, fence, 0).await, RecordState::Planned);
+
+    // The planned values are given the record's one token.
+    let token = intent(&store, fence, 0, "first").await.unwrap();
+    let first = token.idempotency_token().to_owned();
+    let records = store
+        .read(move |tx| tx.ledger().records(fence.run))
+        .await
+        .unwrap();
+    assert_eq!(records[0].idempotency_token, first);
+    assert_eq!(records[0].intended, intended("first"));
+    drop(token);
+
+    // The same record with changed values is a new run, with a new token.
+    let again = planned_line(&store, "second", "second").await;
+    assert_ne!(again.run, fence.run);
+    let records = store
+        .read(move |tx| tx.ledger().records(again.run))
+        .await
+        .unwrap();
+    assert_eq!(records[0].key, key("line"));
+    assert_eq!(records[0].intended, intended("second"));
+    assert_ne!(records[0].idempotency_token, first);
+}
+
+/// A write run stopped at `validating`, before anything was planned: the
+/// moment a drift or an edge block stops a write at its preview.
+async fn stopped_before_planning(store: &Store) -> Fence {
+    store
+        .write(Durability::Synced, move |tx| {
+            let mut ledger = tx.ledger();
+            let Opened::New(opened) =
+                ledger.open_run(new_run(EffectClass::Write, 1, "unplanned"))?
+            else {
+                panic!("the run exists already");
+            };
+            let fence = ledger.new_epoch(opened.run)?;
+            ledger.set_state(&fence, RunState::Validating, None)?;
+            let why = stopped_by(FailureClass::Drift, "binding_drifted");
+            ledger.set_state(&fence, RunState::Stopped, Some(&why))?;
+            Ok(fence)
+        })
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_stopped_run_with_nothing_planned_is_validated_again_and_plans_its_records() {
+    let store = memory().await;
+    let fence = stopped_before_planning(&store).await;
+    // Resumed under a new lease, it goes back to `validating`, plans its
+    // records, and stores its diff.
+    store
+        .write(Durability::Synced, move |tx| {
+            let mut ledger = tx.ledger();
+            let fence = ledger.new_epoch(fence.run)?;
+            ledger.set_state(&fence, RunState::Validating, None)?;
+            ledger.plan_records(&fence, &[planned(0, "a")])?;
+            ledger.store_diff(&fence, diff_hash(), None)?;
+            ledger.set_state(&fence, RunState::NeedsApproval, None)
+        })
+        .await
+        .unwrap();
+    let run = store
+        .read(move |tx| tx.ledger().run(fence.run))
+        .await
+        .unwrap();
+    assert_eq!(run.state, RunState::NeedsApproval);
+    assert_eq!(run.diff_hash, Some(diff_hash()));
+}
+
+#[tokio::test]
+async fn a_stopped_run_with_a_planned_record_is_never_validated_again() {
+    let store = memory().await;
+    let fence = running(&store, 1, &["a"]).await;
+    store
+        .write(Durability::Synced, move |tx| {
+            let why = stopped_by(FailureClass::Transient, "timeout");
+            tx.ledger().set_state(&fence, RunState::Stopped, Some(&why))
+        })
+        .await
+        .unwrap();
+    let refused = store
+        .write(Durability::Synced, move |tx| {
+            let mut ledger = tx.ledger();
+            let fence = ledger.new_epoch(fence.run)?;
+            ledger.set_state(&fence, RunState::Validating, None)
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), &codes::LEDGER_STATE_UNEXPECTED);
+    let run = store
+        .read(move |tx| tx.ledger().run(fence.run))
+        .await
+        .unwrap();
+    assert_eq!(run.state, RunState::Stopped);
 }

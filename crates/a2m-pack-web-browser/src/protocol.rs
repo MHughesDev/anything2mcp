@@ -128,7 +128,7 @@ pub(crate) enum EventKind {
     ContextCreated(ContextCreated),
     ContextDestroyed(ContextDestroyed),
     ContextsCleared,
-    DialogOpening,
+    DialogOpening(DialogOpened),
     DialogClosed,
     TargetCrashed,
     Attached(Attached),
@@ -142,10 +142,29 @@ pub(crate) enum EventKind {
     MoveStarted(MoveStarted),
     /// A download is about to begin.
     DownloadBegins(DownloadBegins),
+    /// The page registered tools (research note 25).
+    ToolsAdded(Value),
+    /// The page took tools away.
+    ToolsRemoved(Value),
+    /// A call of a page's tool ended.
+    ToolResponded(Value),
+    /// How a download stands.
+    DownloadProgress(Value),
     /// A request's answer has arrived whole.
     LoadingFinished(Loading),
     /// A request failed, or was ended.
     LoadingFailed(Loading),
+}
+
+/// What the browser says of a dialog that opened.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct DialogOpened {
+    /// What the dialog says.
+    #[serde(default)]
+    pub message: String,
+    /// `alert`, `confirm`, `prompt`, or `beforeunload`.
+    #[serde(default, rename = "type")]
+    pub kind: String,
 }
 
 impl EventKind {
@@ -161,7 +180,7 @@ impl EventKind {
             "Runtime.executionContextCreated" => Self::ContextCreated(of(params)?),
             "Runtime.executionContextDestroyed" => Self::ContextDestroyed(of(params)?),
             "Runtime.executionContextsCleared" => Self::ContextsCleared,
-            "Page.javascriptDialogOpening" => Self::DialogOpening,
+            "Page.javascriptDialogOpening" => Self::DialogOpening(of(params)?),
             "Page.javascriptDialogClosed" => Self::DialogClosed,
             "Inspector.targetCrashed" => Self::TargetCrashed,
             "Target.attachedToTarget" => Self::Attached(of(params)?),
@@ -172,6 +191,10 @@ impl EventKind {
             "Page.frameRequestedNavigation" => Self::MoveAsked(of(params)?),
             "Page.frameStartedNavigating" => Self::MoveStarted(of(params)?),
             "Page.downloadWillBegin" => Self::DownloadBegins(of(params)?),
+            "Page.downloadProgress" => Self::DownloadProgress(params),
+            "WebMCP.toolsAdded" => Self::ToolsAdded(params),
+            "WebMCP.toolsRemoved" => Self::ToolsRemoved(params),
+            "WebMCP.toolResponded" => Self::ToolResponded(params),
             "Network.loadingFinished" => Self::LoadingFinished(of(params)?),
             "Network.loadingFailed" => Self::LoadingFailed(of(params)?),
             _ => return None,
@@ -289,6 +312,22 @@ pub(crate) struct ResponseDescription {
     pub status: u16,
     #[serde(default)]
     pub mime_type: String,
+    /// The response's headers. Only the one that names a challenge is
+    /// looked at, and none is kept.
+    #[serde(default)]
+    pub headers: serde_json::Map<String, Value>,
+}
+
+impl ResponseDescription {
+    /// Whether the edge says the visitor is held for a challenge.
+    pub(crate) fn challenged(&self) -> bool {
+        self.headers.iter().any(|(name, value)| {
+            name.eq_ignore_ascii_case("cf-mitigated")
+                && value
+                    .as_str()
+                    .is_some_and(|text| text.eq_ignore_ascii_case("challenge"))
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -322,6 +361,10 @@ pub(crate) struct MoveStarted {
 pub(crate) struct DownloadBegins {
     #[serde(default)]
     pub url: String,
+    #[serde(default)]
+    pub guid: String,
+    #[serde(default)]
+    pub suggested_filename: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -366,8 +409,24 @@ pub(crate) struct SetDownloadBehavior<'a> {
     pub behavior: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub browser_context_id: Option<&'a str>,
+    /// Where `allow` and `allowAndName` write.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_path: Option<&'a str>,
+    /// Whether the browser reports how a download stands.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events_enabled: Option<bool>,
 }
 command!(SetDownloadBehavior<'_>, "Browser.setDownloadBehavior" => Nothing);
+
+/// Ends a download that is under way.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CancelDownload<'a> {
+    pub guid: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_context_id: Option<&'a str>,
+}
+command!(CancelDownload<'_>, "Browser.cancelDownload" => Nothing);
 
 /// The permissions the browser grants: those listed, for every origin,
 /// and no other. An empty list refuses every permission a page asks for.
@@ -899,6 +958,17 @@ pub(crate) struct SetLocale<'a> {
 }
 command!(SetLocale<'_>, "Emulation.setLocaleOverride" => Nothing);
 
+/// The language the page is told the visitor reads: the header
+/// `Accept-Language` and `navigator.language`. An empty `user_agent` leaves
+/// the browser's own.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetAcceptLanguage<'a> {
+    pub user_agent: &'a str,
+    pub accept_language: &'a str,
+}
+command!(SetAcceptLanguage<'_>, "Emulation.setUserAgentOverride" => Nothing);
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SetTimezone<'a> {
@@ -1019,7 +1089,43 @@ pub(crate) struct ResponseBody {
     pub base64_encoded: bool,
 }
 
+// ---- WebMCP: the tools a page publishes ----
+
+#[derive(Debug, Serialize)]
+pub(crate) struct WebMcpEnable {}
+command!(WebMcpEnable, "WebMCP.enable" => Nothing);
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WebMcpInvoke<'a> {
+    pub frame_id: &'a str,
+    pub tool_name: &'a str,
+    pub input: &'a Value,
+}
+command!(WebMcpInvoke<'_>, "WebMCP.invokeTool" => WebMcpInvoked);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WebMcpInvoked {
+    pub invocation_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WebMcpCancel<'a> {
+    pub invocation_id: &'a str,
+}
+command!(WebMcpCancel<'_>, "WebMCP.cancelInvocation" => Nothing);
+
 // ---- Input ----
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetFileInputFiles<'a> {
+    pub object_id: &'a str,
+    pub files: &'a [String],
+}
+command!(SetFileInputFiles<'_>, "DOM.setFileInputFiles" => Nothing);
 
 #[derive(Debug, Serialize)]
 pub(crate) struct InsertText<'a> {

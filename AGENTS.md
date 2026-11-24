@@ -68,7 +68,7 @@ These are the product's rules. They are the owner's, and no agent changes them.
 
 ## How to work
 
-- **One slice at a time, inside one phase at a time.** A slice is not started while the one before it is unproven. Each phase in the build plan ends with an exit test; the next phase starts when it passes and the result is in the journal.
+- **One slice at a time, inside one phase at a time.** A slice is not started while the one before it is unproven. Each phase in the Build Order ends with an exit test; the next phase starts when it passes and the result is in the journal.
 - **Start each slice with a plan.** Take a package marked ready in the roadmap, and read the design of each crate it touches in `docs/architecture/crates/`. State the slice, the hypotheses it tests, an alternative you considered, the crates and interfaces involved, which side of the kernel boundary each piece falls on, and the tests that will prove it. Write it down, then build. When the package merges, mark it done in the roadmap in the same pull request.
 - **Run the research first.** Before a phase, check [docs/research/11-open-research.md](docs/research/11-open-research.md) for briefs marked as needed before it. Run them, write each up as a new file in `docs/research/`, and update the spec sections they feed.
 - **Verify before you depend.** Many crate names in the docs are unverified. Before adding a dependency, confirm it exists, is maintained, carries a licence on the closed list in `deny.toml`, and supports Windows, macOS, and Linux. Record the choice.
@@ -102,7 +102,7 @@ Everything else is yours to decide and record.
 - **Numbers.** Decimal arithmetic for any business value. Never floats for comparison.
 - **Public interfaces.** The driver, auth-provider, source-reader, discoverer, and plug-in interfaces, and the provider manifest, are public contracts; changing one needs a decision record.
 - **Naming.** Tool names follow `{target}_{module}_{object}_{verb}`. Built-in tools are prefixed `a2m_`. Commands are subcommands of `anything2mcp`; `a2m` is a short name for the same program, and documents use the full one.
-- **One vocabulary.** Use the terms in [the glossary](docs/reference/glossary.md) in code, files, and messages; do not introduce synonyms.
+- **One vocabulary, and a proper name for every part.** Use the terms in [the glossary](docs/reference/glossary.md) in code, files, and messages; do not introduce synonyms. Every part a document or a drawing shows has one proper name, a noun or a short noun phrase taken from the glossary, or from the code, or coined; a description is not a name ([decision 0301](docs/decisions/0301-every-part-has-a-proper-name.md)).
 - **One registry.** Every authoring and admin action is defined once in `a2m-actions`; its command, MCP tool, REST route, and SDK method are generated. Never hand-write one of those faces.
 - **A user's session is theirs alone.** A session signed in as a person may be used only by that person or an agent acting for them. No role, including administrator, runs as someone else.
 - **One decider, one renewer.** Only the policy engine decides whether something may happen, and only the session keeper signs in or renews. Drivers and front doors ask; they never decide or renew.
@@ -127,7 +127,7 @@ Tests secure the system; they do not advance it. Keep the suite small and make e
 
 ## Definition of done for a phase
 
-- The exit test in the build plan passes on all three operating systems, or the gap is written down in the journal.
+- The exit test in the Build Order passes on all three operating systems, or the gap is written down in the journal.
 - Formatting, lints, unit tests, and benchmarks pass.
 - New public interfaces are documented in the technical reference.
 - Decisions made along the way have records.

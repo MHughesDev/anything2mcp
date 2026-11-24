@@ -359,3 +359,34 @@ fn a_write_never_compiles_as_a_read_and_a_command_never_as_a_plain_write() {
         .unwrap_or_else(|| panic!("{found}"));
     assert!(lower.fix.contains("irreversible"), "{lower}");
 }
+
+#[test]
+fn every_tool_states_that_it_starts_nothing_and_sends_only_over_its_link() {
+    use a2m_files::{BindingStates, Reach};
+    let folder = Folder::new("states");
+    let registry = registry(&folder);
+    let compiled = compiled(registry.compiler_set());
+    assert!(!compiled.review.items.is_empty());
+    for item in &compiled.review.items {
+        let Reach::Stated { groups, .. } = &item.reach else {
+            panic!("`{}` does not state where it sends", item.tool);
+        };
+        let addresses: Vec<&str> = groups
+            .iter()
+            .flat_map(|group| group.addresses.iter().map(String::as_str))
+            .collect();
+        assert_eq!(
+            addresses,
+            ["127.0.0.1:1502", "127.0.0.1:502"],
+            "{}",
+            item.tool
+        );
+        assert!(!item.bindings.is_empty());
+        for binding in &item.bindings {
+            let BindingStates::Stated { runs, environment } = &binding.states else {
+                panic!("`{}` is not stated", item.tool);
+            };
+            assert!(runs.is_empty() && environment.is_empty(), "{}", item.tool);
+        }
+    }
+}

@@ -201,6 +201,12 @@ impl Control {
         self.set(|settings| settings.refuse_unknown_revision = refuse)
     }
 
+    /// Makes the stand serve the earlier handshake revision, 2025-06-18,
+    /// alone, as an earlier release of a server does.
+    pub fn serve_earlier_revision_only(&self, only: bool) -> Result<(), HarnessError> {
+        self.set(|settings| settings.earlier_revision_only = only)
+    }
+
     /// Makes the stand ask for a credential, and accept this made-up token as
     /// the named principal. Call it once for each identity a test needs.
     pub fn accept_token(&self, token: &str, principal: &str) -> Result<(), HarnessError> {

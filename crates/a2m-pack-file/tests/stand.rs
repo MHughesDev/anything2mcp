@@ -1587,11 +1587,22 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
         .collect();
     assert_eq!(
         written,
-        [
-            "documents/example_settings.yaml",
-            "documents/price_list_macro.yaml",
-            "documents/stock.yaml"
-        ]
+        ["documents/price_list_macro.yaml", "documents/stock.yaml"]
+    );
+    // The JSON file's key and types are questions, so its document waits
+    // in the holding folder and is not also in place (decision 0298).
+    let held: Vec<&str> = drafted
+        .held
+        .iter()
+        .map(|path| path.as_str())
+        .filter(|path| path.starts_with("held/documents/"))
+        .collect();
+    assert_eq!(held, ["held/documents/example_settings.yaml"]);
+    assert!(
+        !folder
+            .join("documents")
+            .join("example_settings.yaml")
+            .exists()
     );
     assert!(drafted.refused.is_empty());
     let questions = |file: &str| {
@@ -1603,7 +1614,7 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
     };
     // Delimited text: no question. JSON: the key, and each value's type.
     assert_eq!(questions("documents/stock.yaml"), 0);
-    assert!(questions("documents/example_settings.yaml") > 0);
+    assert!(questions("held/documents/example_settings.yaml") > 0);
     // A question is the pack's own words. No header, table name, or file
     // name reaches it: text in a file may be written as an instruction.
     for question in &drafted.open_questions {
@@ -1706,12 +1717,23 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
         [
             "documents/adjustments.yaml",
             "documents/stock.yaml",
-            "operations/adjustments_get.yaml",
             "operations/adjustments_list.yaml",
-            "operations/stock_get.yaml",
             "operations/stock_list.yaml",
         ]
     );
+    // The reads by key hold the questions, so they wait in the holding
+    // folder, and are not also in place; the documents and the lists name
+    // nothing of them (decision 0298).
+    let held_reads: Vec<&str> = report.held.iter().map(|path| path.as_str()).collect();
+    assert_eq!(
+        held_reads,
+        [
+            "held/operations/adjustments_get.yaml",
+            "held/operations/stock_get.yaml"
+        ]
+    );
+    assert!(!folder.join("operations/stock_get.yaml").exists());
+    assert!(!folder.join("operations/adjustments_get.yaml").exists());
     assert!(report.refused.is_empty(), "{report:?}");
     // The documents and the lists hold no question; the reads by key hold
     // every one: the key, and the type of each key field.
@@ -1724,8 +1746,8 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
     assert_eq!(
         questioned,
         [
-            "operations/adjustments_get.yaml",
-            "operations/stock_get.yaml"
+            "held/operations/adjustments_get.yaml",
+            "held/operations/stock_get.yaml"
         ]
     );
     let stock = std::fs::read_to_string(folder.join("documents").join("stock.yaml")).unwrap();
@@ -1735,15 +1757,10 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
     );
     assert!(!stock.contains("writable"), "{stock}");
 
-    // While a read by key holds its questions, nothing compiles, and the
-    // compiler names the file and the question.
-    let held = common::compile(&folder, scene.registry.compiler_set()).unwrap_err();
-    let question = held.find("kernel.open_question").unwrap();
-    assert!(question.at.file.as_str().ends_with("_get.yaml"), "{held:?}");
-    // Set aside, as the scout sets aside a draft that holds a question,
-    // the documents and the lists compile.
+    // The held reads are not read, so the documents and the lists compile
+    // with them there.
     for file in &questioned {
-        std::fs::remove_file(folder.join(file)).unwrap();
+        assert!(folder.join(file).is_file(), "{file}");
     }
     scene.plan = common::compile(&folder, scene.registry.compiler_set())
         .unwrap_or_else(|problems| panic!("{problems:?}"))
@@ -2968,4 +2985,313 @@ async fn a_drafted_workbook_list_reads_each_cell_as_stored_and_a_formula_as_its_
     );
     assert_eq!(stopped.sent, Sent::NotSent);
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[tokio::test]
+async fn a_column_named_as_a_secret_is_never_drafted_as_a_field_or_an_output() {
+    // Decision 0302: a header that names a secret, as the file writes it or
+    // as the field it becomes, is left out of the document and of every
+    // read, and the description says so. The value is invented.
+    const FILE: &str = "prices/accounts.csv";
+    const VALUE: &str = "example-not-a-secret-0001";
+    let mut scene = Scene::new();
+    std::fs::write(
+        scene.stand.path(FILE).unwrap(),
+        format!(
+            "label,Client-Secret,passwordHint\nfirst,{VALUE},{VALUE}\nsecond,{VALUE},{VALUE}\n"
+        ),
+    )
+    .unwrap();
+    let (folder, report) = drafted_from(&scene, "secret-headers", &[FILE]).await;
+    assert!(report.refused.is_empty(), "{report:?}");
+    let drafted = texts_below(&folder);
+    assert!(
+        drafted
+            .iter()
+            .any(|(path, _)| path.ends_with("accounts.yaml")),
+        "{drafted:?}"
+    );
+    for (path, text) in &drafted {
+        assert!(!text.contains(VALUE), "{path}: {text}");
+        // No field, output, or input has a secret's name; a header the
+        // document lists as the file's own words is not one of them.
+        for line in text.lines() {
+            let key = line.trim().split(':').next().unwrap_or("");
+            assert!(
+                !(a2m_files::names_a_secret(key) && line.trim().ends_with(':')),
+                "{path}: {line}"
+            );
+        }
+    }
+    let list = drafted
+        .iter()
+        .find(|(path, _)| path.ends_with("accounts_list.yaml"))
+        .map(|(_, text)| text.as_str())
+        .unwrap();
+    assert!(
+        list.contains("Left out because their names are a secret's, so that a secret is never an output: `client_secret`, `passwordhint`."),
+        "{list}"
+    );
+    // The drafted target compiles, and its read gives the plain column.
+    for question in &report.open_questions {
+        let _ = std::fs::remove_file(folder.join(question.file.as_str()));
+    }
+    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .plan;
+    let observed = scene
+        .read_operation("example_accounts_list", &Values::new())
+        .await
+        .unwrap();
+    let result = common::outputs_of(&scene.plan, "example_accounts_list", last_values(&observed));
+    assert!(result.get("client_secret").is_none() && result.get("passwordhint").is_none());
+    assert_eq!(
+        result.get("label").and_then(Value::as_list).unwrap().len(),
+        2
+    );
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[tokio::test]
+async fn a_drafted_list_of_delimited_text_ends_at_the_end_of_the_data_not_at_an_empty_cell() {
+    // Finding 24 of field test 4, decision 0342: a cell may be empty, in
+    // any column, in the first column, in the last, and a row of empty
+    // cells but one. The data is invented.
+    const FILE: &str = "prices/gaps.csv";
+    let mut scene = Scene::new();
+    std::fs::write(
+        scene.stand.path(FILE).unwrap(),
+        "name,qty,note,tag\nalpha,1,,x\n,2,second,\ngamma,,,z\ndelta,4,fourth,\n,,only,\nzeta,6,last,end\n",
+    )
+    .unwrap();
+    let (folder, report) = drafted_from(&scene, "gaps", &[FILE]).await;
+    assert!(report.refused.is_empty(), "{report:?}");
+    for question in &report.open_questions {
+        let _ = std::fs::remove_file(folder.join(question.file.as_str()));
+    }
+    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .plan;
+    let list = "example_gaps_list";
+    let observed = scene.read_operation(list, &Values::new()).await.unwrap();
+    let result = common::outputs_of(&scene.plan, list, last_values(&observed));
+    // The data, read by the stand's own reader, row by row.
+    let stored = scene.stand.stored_rows(FILE, ',').unwrap();
+    let (headers, rows) = stored.split_first().unwrap();
+    assert_eq!(rows.len(), 6);
+    for (position, header) in headers.iter().enumerate() {
+        let column = result.get(header).and_then(Value::as_list).unwrap();
+        assert_eq!(column.len(), 6, "{header}: the list ends with the data");
+        for (value, row) in column.iter().zip(rows) {
+            assert_eq!(
+                value.is_null(),
+                row[position].is_empty(),
+                "{header}: {value:?} for {:?}",
+                row[position]
+            );
+        }
+    }
+    assert_eq!(result.get("truncated"), Some(&Value::Bool(false)));
+    let plan = scene
+        .plan
+        .operations
+        .iter()
+        .find(|found| found.name.as_str() == list)
+        .unwrap();
+    for output in &plan.outputs {
+        assert_eq!(
+            output.may_be_absent,
+            output.name != "truncated",
+            "{}",
+            output.name
+        );
+    }
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[tokio::test]
+async fn a_workbook_saved_with_no_table_is_drafted_as_the_rows_under_its_header_row() {
+    // Finding 25 of field test 4: a spreadsheet as an office suite saves
+    // it has rows under a header row on a sheet and no table object. The
+    // package is built byte by byte, in the shape the suite writes, with
+    // invented data.
+    const FILE: &str = "prices/office.xlsx";
+    let mut scene = Scene::new();
+    std::fs::write(
+        scene.stand.path(FILE).unwrap(),
+        common::office_suite_workbook(),
+    )
+    .unwrap();
+    let (folder, report) = drafted_from(&scene, "office", &[FILE]).await;
+    assert!(report.refused.is_empty(), "{report:?}");
+    let document = std::fs::read_to_string(folder.join("documents").join("office.yaml")).unwrap();
+    // The record kind is the sheet's rows; no table is claimed, and the
+    // fingerprint says the workbook defines none.
+    assert!(document.contains("sheet: \"Parts\""), "{document}");
+    assert!(!document.contains("table:"), "{document}");
+    assert!(!document.contains("records: {}"), "{document}");
+    for header in ["part", "stock", "price", "note"] {
+        assert!(
+            document.contains(&format!("header: \"{header}\"")),
+            "{document}"
+        );
+    }
+    assert!(
+        document.contains("header: \"stock\"\n        type: \"decimal\""),
+        "{document}"
+    );
+    assert!(
+        document.contains("header: \"part\"\n        type: \"untrusted_text\""),
+        "{document}"
+    );
+    // The held reads wait for a key; the list is in place and compiles.
+    for question in &report.open_questions {
+        let _ = std::fs::remove_file(folder.join(question.file.as_str()));
+    }
+    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+        .unwrap_or_else(|problems| panic!("{problems:?}"))
+        .plan;
+    let list = "example_office_parts_list";
+    let observed = scene.read_operation(list, &Values::new()).await.unwrap();
+    let result = common::outputs_of(&scene.plan, list, last_values(&observed));
+    let column = |name: &str| result.get(name).and_then(Value::as_list).unwrap().to_vec();
+    // What was written into the package, row by row: an unwritten cell is
+    // no value, and every row up to the last is read.
+    assert_eq!(column("part"), [text("washer"), text("bolt"), text("nut")]);
+    assert_eq!(column("stock"), [decimal("12"), Value::Null, decimal("7")]);
+    assert_eq!(
+        column("price"),
+        [decimal("1.5"), decimal("0.25"), Value::Null]
+    );
+    assert_eq!(
+        column("note"),
+        [Value::Null, text("back order"), Value::Null]
+    );
+    assert_eq!(result.get("truncated"), Some(&Value::Bool(false)));
+    // Reading changed no byte of the workbook.
+    assert_eq!(
+        scene.stand.bytes(FILE).unwrap().unwrap(),
+        common::office_suite_workbook()
+    );
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[tokio::test]
+async fn the_fields_of_a_json_list_are_typed_by_their_json_type_and_only_the_untypable_is_asked() {
+    // Finding 26 of field test 4: the drafter gives a JSON field the type
+    // its values have, as it does a field of delimited text. The data is
+    // invented.
+    const FILE: &str = "config/customers.json";
+    let scene = Scene::new();
+    std::fs::write(
+        scene.stand.path(FILE).unwrap(),
+        r#"{"customers": [
+  {"name": "Ada", "visits": 3, "active": true, "tags": ["a"], "id": 1, "nick": null, "memo": ""},
+  {"name": "Bo", "visits": 4.5, "active": false, "tags": [], "id": "two", "nick": null, "memo": ""},
+  {"name": "Cy", "visits": 0, "api_key": "example-not-a-key-0001"}
+]}"#,
+    )
+    .unwrap();
+    let (folder, report) = drafted_from(&scene, "json-types", &[FILE]).await;
+    assert!(report.refused.is_empty(), "{report:?}");
+    let held = report
+        .held
+        .iter()
+        .map(|path| path.as_str())
+        .find(|path| path.ends_with("customers.yaml") && path.contains("documents"))
+        .unwrap();
+    let document = std::fs::read_to_string(folder.join(held)).unwrap();
+    assert!(!document.contains("example-not-a-key-0001"), "{document}");
+    let after = |name: &str| {
+        let at = document.find(&format!("    {name}:")).unwrap();
+        document[at..]
+            .lines()
+            .take(4)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(
+        after("name").contains("type: \"untrusted_text\""),
+        "{document}"
+    );
+    assert!(after("visits").contains("type: \"decimal\""), "{document}");
+    assert!(after("active").contains("type: \"boolean\""), "{document}");
+    // What no type reads is a question: a list inside, values of two kinds,
+    // a key that holds nothing anywhere. Nothing of the file is in one.
+    for untyped in ["tags", "id", "nick", "memo"] {
+        let said = after(untyped);
+        assert!(
+            !said.contains("type: \"untrusted_text\""),
+            "{untyped}: {said}"
+        );
+        assert!(!said.contains("type: \"decimal\""), "{untyped}: {said}");
+    }
+    // One question for the key and one for each untyped key; none for the
+    // three typed.
+    let questions = report
+        .open_questions
+        .iter()
+        .filter(|question| question.file.as_str() == held)
+        .count();
+    assert_eq!(questions, 1 + 4, "{:?}", report.open_questions);
+    assert!(!document.contains("api_key"), "{document}");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn the_committing_step_carries_the_key_and_the_values_it_writes_for_an_offline_test() {
+    // Finding 22 of field test 4: the arguments of the step that commits
+    // are what an offline test's `<step>.request.json` is compared with. A
+    // `save` that carried none could only be answered by `{}`. The values
+    // are those `set` was given, and the key; a delete has the key alone.
+    let scene = Scene::new();
+    let save_args = |operation: &str, inputs: &Values| {
+        let (binding, _) = scene.binding(operation);
+        let steps: Vec<_> = binding.act.iter().filter(|step| step.commits).collect();
+        assert_eq!(steps.len(), 1, "{operation}");
+        scene.args(steps[0], inputs)
+    };
+    assert_eq!(
+        save_args(
+            "example_stock_set",
+            &inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))])
+        ),
+        Values::new()
+            .with("key.item_code", text("EX-1002"))
+            .with("field.on_hand", Value::Int(38))
+    );
+    assert_eq!(
+        save_args(
+            "example_stock_add",
+            &inputs(&[
+                ("item_code", text("EX-1009")),
+                ("on_hand", Value::Int(5)),
+                ("note", text("new"))
+            ])
+        ),
+        Values::new()
+            .with("key.item_code", text("EX-1009"))
+            .with("field.on_hand", Value::Int(5))
+            .with("field.note", text("new"))
+    );
+    assert_eq!(
+        save_args(
+            "example_stock_remove",
+            &inputs(&[("item_code", text("EX-1002"))])
+        ),
+        Values::new().with("key.item_code", text("EX-1002"))
+    );
+    // A folder's file: the entry's name and what is written.
+    let folder = save_args(
+        "example_inbox_add",
+        &inputs(&[("name", text("note-9.txt")), ("content", text("hello"))]),
+    );
+    assert_eq!(folder.get("key.name"), Some(&text("note-9.txt")));
+    assert_eq!(folder.get("field.content"), Some(&text("hello")));
+    let renamed = save_args(
+        "example_inbox_rename",
+        &inputs(&[("name", text("note-1.txt")), ("new_name", text("b.txt"))]),
+    );
+    assert_eq!(renamed.get("key.name"), Some(&text("note-1.txt")));
+    assert_eq!(renamed.get("field.name"), Some(&text("b.txt")));
 }

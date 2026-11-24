@@ -1,0 +1,6 @@
+# Package 8.2a: the page of a browser that has no place for a page to
+# register tools.
+screen: tools_off
+surface: app
+reach: {url: "/cases/site-tools-off"}
+ready: {visible: {role: heading, name: "Site tools"}}

@@ -32,6 +32,26 @@ fn lines(text: &str) -> Vec<&str> {
     lines
 }
 
+/// The part of a document the records are in, by the keys declared to
+/// reach it. Whatever else the document holds is not read.
+fn within<'a>(document: &'a Json, at: &[String]) -> Result<&'a Json, Unparsed> {
+    let mut here = document;
+    for key in at {
+        let Json::Object(found) = here else {
+            return Err(
+                "the document is not an object where the path to its records goes through a key"
+                    .to_owned(),
+            );
+        };
+        here = found
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value)
+            .ok_or_else(|| "the document lacks a key of the path to its records".to_owned())?;
+    }
+    Ok(here)
+}
+
 fn field_value(name: &str, declared: JsonField, found: &Json) -> Result<Value, Unparsed> {
     let wrong = || format!("the field `{name}` is not of its declared kind");
     Ok(match (declared.kind, found) {
@@ -98,6 +118,7 @@ pub fn parse(text: &str, form: &Output) -> Result<Parsed, Unparsed> {
         Output::Json {
             lines: true,
             fields,
+            ..
         } => lines(text)
             .into_iter()
             .map(|line| {
@@ -109,14 +130,18 @@ pub fn parse(text: &str, form: &Output) -> Result<Parsed, Unparsed> {
         Output::Json {
             lines: false,
             fields,
-        } => match json::parse(text).map_err(|why| format!("the output is {why}"))? {
-            Json::List(items) => items
-                .iter()
-                .map(|item| record(fields, item))
-                .collect::<Result<Vec<_>, _>>()
-                .map(Parsed::Rows),
-            document => record(fields, &document).map(Parsed::Record),
-        },
+            at,
+        } => {
+            let document = json::parse(text).map_err(|why| format!("the output is {why}"))?;
+            match within(&document, at)? {
+                Json::List(items) => items
+                    .iter()
+                    .map(|item| record(fields, item))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(Parsed::Rows),
+                found => record(fields, found).map(Parsed::Record),
+            }
+        }
         Output::Table { header, columns } => {
             let mut rows = lines(text).into_iter();
             if *header {
@@ -203,6 +228,7 @@ mod tests {
     fn a_secret_that_decoding_puts_together_is_in_no_value() {
         let form = Output::Json {
             lines: false,
+            at: Vec::new(),
             fields: BTreeMap::from([(
                 "note".to_owned(),
                 JsonField {
@@ -232,6 +258,7 @@ mod tests {
         let field = |kind, required| JsonField { kind, required };
         Output::Json {
             lines,
+            at: Vec::new(),
             fields: BTreeMap::from([
                 ("sku".to_owned(), field(JsonKind::Text, true)),
                 ("quantity".to_owned(), field(JsonKind::Int, true)),
@@ -278,6 +305,35 @@ mod tests {
         ] {
             assert!(parse(drifted, &json(false)).is_err(), "{drifted}");
         }
+    }
+
+    #[test]
+    fn a_path_reaches_the_records_in_a_document_that_holds_more() {
+        let Output::Json { lines, fields, .. } = json(false) else {
+            panic!("not json");
+        };
+        let nested = Output::Json {
+            lines,
+            fields,
+            at: vec!["body".to_owned(), "items".to_owned()],
+        };
+        let document = r#"{"header":{"count":2,"anything":[1]},"body":{"items":[{"sku":"A","quantity":1},{"sku":"B","quantity":2}]}}"#;
+        assert!(matches!(parse(document, &nested), Ok(Parsed::Rows(rows)) if rows.len() == 2));
+        // One record at the path is one record.
+        let one = r#"{"body":{"items":{"sku":"A","quantity":1}}}"#;
+        assert!(matches!(parse(one, &nested), Ok(Parsed::Record(_))));
+        // A key the path needs that is missing, or that is not in an object,
+        // is a failure; so is a record the fields do not hold.
+        for drifted in [
+            r#"{"body":{"rows":[]}}"#,
+            r#"{"body":[]}"#,
+            "[]",
+            r#"{"body":{"items":[{"sku":"A","qty":1}]}}"#,
+        ] {
+            assert!(parse(drifted, &nested).is_err(), "{drifted}");
+        }
+        // With no path, the same document is not a record of the fields.
+        assert!(parse(document, &json(false)).is_err());
     }
 
     #[test]

@@ -50,9 +50,10 @@ pub use os::{Kept, kept_by};
 pub fn keep_folder_private(dir: &std::path::Path) -> std::io::Result<()> {
     os::prepare_dir(dir)
 }
+pub use presence::field::FieldPrompt;
 pub use presence::{
-    Availability, NoPrompt, PresenceKind, PresencePrompt, PresenceReason, PromptAnswer, PromptName,
-    PromptText, presence_available, system_prompt, system_prompt_for,
+    Availability, NoPrompt, PresenceKind, PresencePrompt, PresenceReason, PromptAnswer, PromptFor,
+    PromptName, PromptText, presence_available, system_prompt, system_prompt_for,
 };
 pub use start::{
     ENGINE_LOG_NAME, Launch, START_LOCK_NAME, STARTED_LINE, STOPPED_LINE, Started, stopped_line,
@@ -67,6 +68,7 @@ pub use surface::{LocalSurface, SurfaceParts};
 )]
 mod tests {
     mod channel;
+    mod field;
     mod local_authentication;
     #[cfg(target_os = "linux")]
     mod polkit;

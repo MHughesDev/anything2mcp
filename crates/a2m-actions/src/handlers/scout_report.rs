@@ -43,16 +43,24 @@ fn not_looked_at(done: &BTreeMap<u8, Json>) -> Vec<Json> {
                 "what": format!("surface `{name}`"),
                 "why": "It needs a sign-in, and the scout cannot make one. A person signs in, and the scout runs again.",
             })),
-            Some(state) => out.push(json!({
-                "what": format!("surface `{name}`"),
-                "why": surface["why"].as_str().map_or_else(
-                    || match surface["failure"]["code"].as_str() {
-                        Some(code) => format!("Its discovery ended as `{state}`, with `{code}`."),
-                        None => format!("Its discovery ended as `{state}`."),
-                    },
-                    str::to_owned,
-                ),
-            })),
+            Some(state) => {
+                let mut entry = json!({
+                    "what": format!("surface `{name}`"),
+                    "why": surface["why"].as_str().map_or_else(
+                        || match surface["failure"]["code"].as_str() {
+                            Some(code) => format!("Its discovery ended as `{state}`, with `{code}`."),
+                            None => format!("Its discovery ended as `{state}`."),
+                        },
+                        str::to_owned,
+                    ),
+                });
+                // The stop's code, which the summary names (field finding
+                // 18): a person reading it can tell why nothing was found.
+                if let Some(code) = surface["failure"]["code"].as_str() {
+                    entry["code"] = json!(code);
+                }
+                out.push(entry);
+            }
             None => {}
         }
         for ended in list(&surface["ended"]) {
@@ -111,6 +119,14 @@ fn not_looked_at(done: &BTreeMap<u8, Json>) -> Vec<Json> {
     }
     out
 }
+
+/// What the report says a person does with its open questions (field
+/// test 6, finding 36). `unknown.settle` is not built, so the way through is
+/// the target's own files, outside the holding folder, and the scout run
+/// again; for an MCP read held because its one string may be a key or a
+/// query, that is the tool's `free_text: false` in the target's mapping
+/// (decision 0365).
+const OPEN_QUESTIONS_WHY: &str = "What the scout could not decide. `unknown.list` names each question, and `draft.lint` each draft in `held/` that waits for one. Answer it in the target's own files, outside `held/`, and run the scout again: for an MCP read held because its one string may be a key or a query, a person who finds that the server does not run the string states `free_text: false` for the tool in the target's mapping, and the read is drafted.";
 
 /// The report of a scout whose stages 0 to 6 are in `done`, with the
 /// target's questions that are not settled.
@@ -185,7 +201,7 @@ pub(crate) fn assemble(
             {
                 "order": 3,
                 "what": "open_questions",
-                "why": "What the scout could not decide; each is settled with evidence (`unknown.settle`).",
+                "why": OPEN_QUESTIONS_WHY,
                 "count": open.len(),
             },
         ],
@@ -234,8 +250,14 @@ fn rendered(report: &Json) -> String {
             .flat_map(|(_, levels)| levels.as_object().into_iter().flatten())
             .filter_map(|(_, count)| count.as_u64())
             .sum();
+        // A surface whose discovery stopped says with which code, so that
+        // the summary tells why nothing was found (field finding 18).
+        let stopped = surface["failure"]["code"]
+            .as_str()
+            .map(|code| format!(" with `{code}`"))
+            .unwrap_or_default();
         lines.push(format!(
-            "Surface `{}` ({}): {}, {found} findings.",
+            "Surface `{}` ({}): {}{stopped}, {found} findings.",
             surface["surface"].as_str().unwrap_or_default(),
             surface["kind"].as_str().unwrap_or_default(),
             surface["state"].as_str().unwrap_or_default()
@@ -282,7 +304,50 @@ fn rendered(report: &Json) -> String {
                 .to_owned(),
         );
     }
+    let held = list(&content["drafted"]["held_back"]).count();
+    if held > 0 {
+        lines.push(format!(
+            "Held: {held} drafts wait in the target's `held/` folder, out of the target, for an answer to an open question; `draft.lint` lists each with its question, and `scout.report` with `part` `drafted.held_back` lists the files."
+        ));
+    }
+    let not_drafted = list(&content["drafted"]["not_drafted"]).count();
+    if not_drafted > 0 {
+        lines.push(format!(
+            "Not drafted: {not_drafted} findings a rule covers drafted nothing, each with the rule's reason; `scout.report` with `part` `drafted.not_drafted` lists them."
+        ));
+    }
+    let secret = content["drafted"]["left_out_as_secret"]
+        .as_u64()
+        .unwrap_or(0);
+    if secret > 0 {
+        lines.push(format!(
+            "Left out as secret: {secret} properties or parameters, named as a secret's, are in no draft."
+        ));
+    }
     let tools: Vec<&Json> = list(&content["tried"]["tools"]).collect();
+    let counts = &content["tried"]["counts"];
+    if counts.is_object() {
+        let count = |name: &str| counts[name].as_u64().unwrap_or(0);
+        lines.push(format!(
+            "Drafted reads: {}: {} proven, {} waiting for a sign-in, {} failed, {} not tried, {} held.",
+            count("drafted"),
+            count("proven"),
+            count("waiting"),
+            count("failed"),
+            count("not_tried"),
+            count("held")
+        ));
+    }
+    for tool in tools
+        .iter()
+        .filter(|tool| tool["state"] == "waiting")
+        .take(1)
+    {
+        lines.push(format!(
+            "Waiting: the reads of surface `{}` wait for a sign-in: `session.login` with this target and that surface signs in, and `draft.try` then tries each again.",
+            tool["surface"].as_str().unwrap_or_default()
+        ));
+    }
     if tools.len() > TEXT_LINES {
         lines.push(format!(
             "Tried: {} reads ({}); the first {TEXT_LINES} follow, and `scout.report` with `part` `tried.tools` lists the rest.",
@@ -359,6 +424,7 @@ pub(crate) const PARTS: &[&str] = &[
     "compared.not_covered",
     "drafted.written",
     "drafted.held_back",
+    "drafted.not_drafted",
     "drafted.conflicts",
     "drafted.refused",
     "checked.problems",
@@ -422,6 +488,19 @@ fn bounded(report: &Json) -> Json {
     shown
 }
 
+/// Whether something the scout found waits for a person's sign-in: a
+/// surface it could only observe under a session, or a drafted read whose
+/// trial stopped for want of one. Where nothing does, `add` asks for none
+/// (decision 0306).
+fn waits_for_sign_in(report: &Json) -> bool {
+    let content = &report["content"];
+    list(&content["sign_in"]).any(|surface| surface["observed"] == "needs_sign_in")
+        || list(&content["tried"]["tools"]).any(|tool| {
+            tool["failure"]["class"] == "session_expired"
+                || tool["failure"]["code"] == "credential_missing"
+        })
+}
+
 /// A stored report as an action's result: the report with each list cut
 /// to its first entries and counted, its rendering, and the next step.
 pub(crate) fn shown(report: &Json) -> Output {
@@ -432,7 +511,13 @@ pub(crate) fn shown(report: &Json) -> Output {
     if let Json::Object(map) = &mut result {
         map.insert("text".to_owned(), json!(text));
     }
-    let next = if open > 0 {
+    let next = if waits_for_sign_in(report) {
+        Next::new(
+            "session.login",
+            json!({"target": target}),
+            "a read waits for a sign-in; the person signs in, then the scout runs again",
+        )
+    } else if open > 0 {
         Next::new(
             "unknown.list",
             json!({"target": target}),
@@ -493,6 +578,40 @@ mod tests {
             .expect("a line for the discoverer");
         assert!(line.contains("`description_unreadable`"), "{line}");
         assert!(line.contains("Hand in a readable description."), "{line}");
+    }
+
+    /// The report sends a person to no action that is not built: an open
+    /// question is answered in the target's files, and for an MCP read
+    /// held over its one string, by `free_text: false` (finding 36).
+    #[test]
+    fn the_open_questions_are_answered_in_the_targets_files_and_not_by_an_unbuilt_action() {
+        assert!(!super::OPEN_QUESTIONS_WHY.contains("unknown.settle"));
+        assert!(super::OPEN_QUESTIONS_WHY.contains("`free_text: false`"));
+        assert!(super::OPEN_QUESTIONS_WHY.contains("run the scout again"));
+    }
+
+    #[test]
+    fn a_refused_surface_is_summed_up_with_the_code_of_its_stop() {
+        let surface = json!({
+            "surface": "store", "kind": "database_server", "state": "refused",
+            "failure": {"class": "policy", "code": "identity_is_administrator"},
+        });
+        let done = BTreeMap::from([(1_u8, json!({"surfaces": [surface.clone()]}))]);
+        let content = json!({"surfaces": [surface], "not_looked_at": not_looked_at(&done)});
+        let text = rendered(&json!({"target": "example", "report_hash": "h", "content": content}));
+        let named: Vec<&str> = text
+            .lines()
+            .filter(|line| line.contains("`identity_is_administrator`"))
+            .collect();
+        assert_eq!(named.len(), 2, "{text}");
+        assert!(
+            named[0].starts_with("Surface `store` (database_server): refused with"),
+            "{text}"
+        );
+        assert!(
+            named[1].starts_with("Not looked at: surface `store`."),
+            "{text}"
+        );
     }
 
     #[test]

@@ -1,0 +1,13 @@
+# A page the server draws whole, with forms that carry their own hidden
+# tokens, and no script that redraws it: the profile a surface has when it
+# names none that fits better.
+profile: plain
+detect:
+  any: []
+locators:
+  priority: [role, label, text, test_id, css]
+  reject_id_patterns: []
+input_commit: blur
+frames: {mode: declared}
+drift_risk: low
+support_tier: full

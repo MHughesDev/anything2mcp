@@ -1,0 +1,6 @@
+test: example_line_item_get
+kind: offline
+fixture: line_item_get
+binding: {mode: ui}
+inputs: {order_id: "A-100", item_code: "L-101"}
+expect: {description: "Left rail", quantity: 2, length_in: "96.5"}

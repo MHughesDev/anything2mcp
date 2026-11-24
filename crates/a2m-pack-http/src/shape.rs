@@ -193,7 +193,7 @@ impl Shape {
     /// certain to be there.
     pub(crate) fn at_path(&self, path: &[String]) -> Option<(&Self, bool)> {
         let mut shape = self;
-        let mut certain = !self.nullable;
+        let mut certain = self.never_null();
         for part in path {
             if part == "*" {
                 shape = shape.items.as_deref()?;
@@ -201,9 +201,17 @@ impl Shape {
                 certain = certain && shape.required.contains(part);
                 shape = shape.properties.get(part)?;
             }
-            certain = certain && !shape.nullable;
+            certain = certain && shape.never_null();
         }
         Some((shape, certain))
+    }
+
+    /// Whether a value of this shape can never be `null`: one that is not
+    /// `nullable` and is of a type other than `any`. A shape of the type
+    /// `any`, as an untyped `{}` is drafted, admits any value,
+    /// `null` among them, as [`Shape::check`] does (decision 0305).
+    fn never_null(&self) -> bool {
+        !self.nullable && self.kind != Kind::Any
     }
 
     /// Checks a value against the shape. The error says where the value
@@ -351,5 +359,28 @@ properties:
         assert!(!shape.at_path(&path("status")).unwrap().1);
         assert!(shape.at_path(&path("lines.*.n")).is_some());
         assert!(shape.at_path(&path("missing")).is_none());
+    }
+
+    /// Decision 0305: a required property of the type `any`, the shape
+    /// of an untyped `{}`, admits `null` as the check does, so it is not
+    /// certain to be there.
+    #[test]
+    fn a_required_property_with_no_type_is_not_certain_because_it_admits_null() {
+        let untyped = shape("type: any\n").unwrap();
+        let shape = shape(
+            "type: object
+required: [any, code]
+properties: {any: {type: any}, code: {type: string}}
+",
+        )
+        .unwrap();
+        let path = |text: &str| -> Vec<String> { vec![text.to_owned()] };
+        assert!(!shape.at_path(&path("any")).unwrap().1);
+        assert!(shape.at_path(&path("code")).unwrap().1);
+        assert_eq!(
+            shape.check(&Json::parse(br#"{"any":null,"code":"L"}"#).unwrap()),
+            Ok(())
+        );
+        assert!(!untyped.at_path(&[]).unwrap().1);
     }
 }

@@ -13,11 +13,15 @@
 //! readable registers with one read each.
 //!
 //! The first protocol is a subset of the Modbus application protocol over
-//! TCP, written here. Not built: serial links, a console on a link, writes
-//! with the hazard `physical` (`confirm_by`, the safe-state operation),
-//! one frame that writes several registers, reads of a register whose
-//! reading changes it, firmware inspection, and the firmware update
-//! operation.
+//! TCP, written here. Firmware is built against the simulated device: an
+//! optional provider, off by default ([`add_firmware_inspection_to`]),
+//! reads an image given as a file and says what it holds as `inferred`, and
+//! an `update` binding with a `firmware` field carries the device's own
+//! update sequence as one operation with one commit point, approved as
+//! irreversible and never sent twice. Not built: serial links, a console on
+//! a link, writes with the hazard `physical` (`confirm_by`, the safe-state
+//! operation), one frame that writes several registers, and reads of a
+//! register whose reading changes it.
 //!
 //! The product crate calls [`add_to`], and nothing else here.
 //!
@@ -28,6 +32,8 @@ mod codec;
 pub mod codes;
 mod discover;
 mod driver;
+mod firmware;
+pub mod inspect;
 mod link;
 mod lower;
 mod map;
@@ -42,6 +48,7 @@ use a2m_core::{Failure, Value};
 use a2m_files::{JsonSchema, SurfaceKindSpec};
 use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar, RegistryBuilder};
 
+pub use inspect::{FIRMWARE_IMAGE_FILE, FirmwareInspectionPack};
 pub use names::PACK;
 pub use published::REGISTER_MAP_FILE;
 
@@ -56,6 +63,13 @@ pub struct DevicePack;
 /// crate makes for this pack.
 pub fn add_to(builder: &mut RegistryBuilder) {
     builder.add_pack(&DevicePack);
+}
+
+/// Hands the optional provider that inspects firmware images to the registry
+/// builder. Off by default: [`add_to`] does not call it, and a product offers
+/// it only after a person switched it on.
+pub fn add_firmware_inspection_to(builder: &mut RegistryBuilder) {
+    builder.add_pack(&FirmwareInspectionPack);
 }
 
 /// A whole number the pack's settings hold, when they hold one.

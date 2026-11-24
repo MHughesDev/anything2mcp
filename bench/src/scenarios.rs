@@ -7,12 +7,30 @@ use example_app::harness::TestApp;
 
 use crate::error::BenchError;
 use crate::harness::{Clock, Plan, Scenario, ScenarioResult, run_scenario};
+use crate::measure::{
+    COLD_BROWSER_START, HTTP_OPERATION, HttpOperation, IDLE_MEMORY, LIST_TOOLS, ListTools,
+    MOST_BROWSER_ITERATIONS, PROGRAM_SIZE, START_TO_READY, START_TO_READY_VAULT_CLOSED, UI_STEP,
+    UiStep, cold_browser_start, idle_memory, program_size, start_to_ready,
+    start_to_ready_vault_closed,
+};
+use crate::promotion::{MOST_ITERATIONS, PROMOTION_SPEEDUP, PromotionSpeedup};
 
 /// The name of the direct read scenario.
 pub const DIRECT_READ: &str = "direct_read";
 
 /// The name of every scenario, in the order they are run.
-pub const NAMES: &[&str] = &[DIRECT_READ];
+pub const NAMES: &[&str] = &[
+    DIRECT_READ,
+    LIST_TOOLS,
+    HTTP_OPERATION,
+    UI_STEP,
+    COLD_BROWSER_START,
+    START_TO_READY,
+    START_TO_READY_VAULT_CLOSED,
+    IDLE_MEMORY,
+    PROGRAM_SIZE,
+    PROMOTION_SPEEDUP,
+];
 
 /// The path of the one record a single read asks for: a seeded line item of
 /// the test application.
@@ -126,11 +144,49 @@ pub async fn run_named(
         // One arm per scenario: each has its own state type.
         let result = match *name {
             DIRECT_READ => run_scenario(&DirectRead, plan, clock).await?,
+            PROMOTION_SPEEDUP => {
+                // A read through a browser is slow: a few dozen make a median.
+                let plan = Plan {
+                    warmup_iterations: plan.warmup_iterations.min(3),
+                    iterations: plan.iterations.min(MOST_ITERATIONS),
+                };
+                run_scenario(&PromotionSpeedup, &plan, clock).await?
+            }
+            LIST_TOOLS => run_scenario(&ListTools, plan, clock).await?,
+            HTTP_OPERATION => run_scenario(&HttpOperation, plan, clock).await?,
+            UI_STEP => run_scenario(&UiStep, &browser_plan(plan), clock).await?,
+            COLD_BROWSER_START => cold_browser_start(&browser_plan(plan), clock).await?,
+            START_TO_READY | START_TO_READY_VAULT_CLOSED | IDLE_MEMORY | PROGRAM_SIZE => {
+                let result = match *name {
+                    PROGRAM_SIZE => program_size()?,
+                    START_TO_READY => start_to_ready(plan, clock).await?,
+                    START_TO_READY_VAULT_CLOSED => start_to_ready_vault_closed(plan, clock).await?,
+                    _ => idle_memory(plan, clock).await?,
+                };
+                match result {
+                    Some(result) => result,
+                    None => {
+                        eprintln!(
+                            "{name}: not measured; the program `anything2mcp` is not beside the harness (build it, or set A2M_BENCH_PROGRAM), the harness is not a release build (the size is of a release program), or the system gives no reading"
+                        );
+                        continue;
+                    }
+                }
+            }
             other => return Err(BenchError::UnknownScenario(other.to_owned())),
         };
         results.push(result);
     }
     Ok(results)
+}
+
+/// A scenario that reads through a browser runs a few dozen times: that is
+/// what a median needs.
+fn browser_plan(plan: &Plan) -> Plan {
+    Plan {
+        warmup_iterations: plan.warmup_iterations.min(3),
+        iterations: plan.iterations.min(MOST_BROWSER_ITERATIONS),
+    }
 }
 
 #[cfg(test)]
@@ -144,7 +200,7 @@ mod tests {
             warmup_iterations: 2,
             iterations: 5,
         };
-        let results = run_named(&[], &plan, &MonotonicClock::start())
+        let results = run_named(&[DIRECT_READ.to_owned()], &plan, &MonotonicClock::start())
             .await
             .unwrap();
         assert_eq!(results.len(), 1);

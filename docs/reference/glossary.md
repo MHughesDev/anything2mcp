@@ -7,6 +7,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Absence steps | The step kinds a mode lists as authoritative lookups. Only a lookup made of them may prove that a write of a record with no key did not land, and only when it answers "absent" twice, a settle time apart ([decision 0185](../decisions/0185-a-record-with-no-key-is-never-proved-absent-by-one-look.md)) |
 | Acknowledged | The weakest proof a write can end on: the system answered the committing step and nothing could be read back. The record is `acted`, never verified, and only an operation declared `irreversible` may offer it ([decision 0172](../decisions/0172-the-ledger-ends-a-record-on-an-acknowledgement-and-keeps-what-the-system-said.md)) |
 | Action | An authoring or administration function defined once in the action registry and exposed as a command, an MCP tool, a REST route, and an SDK method |
+| Network place | Where an address is and how this machine reaches it: `this_machine`, `local_network`, `public_internet`, `via_gateway`, or `unknown`. Derived from the address's scope and the subnets of the machine's own interfaces that are up, never from an input, and never by resolving a name; `unknown` is a stop where a place decides something ([decision 0313](../decisions/0313-the-place-of-an-address-is-derived-from-its-scope-and-the-machines-subnets.md)) |
 | Address scope | What kind of place an address is, read from its literal alone and without asking the machine or a resolver: `this_machine`, `unspecified`, `link_local`, `private_use`, `carrier_grade_nat`, `unique_local`, `multicast`, `documentation`, `reserved`, `public`, `name`, or `unreadable`. It is not the place of [decision 0223](../decisions/0223-a-network-is-a-place-a-recognized-network-and-a-reach.md), which also needs the machine's own network state ([decision 0240](../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)) |
 | Application's verdict | The system's own answer to a write that was sent: it saved, or it refused or found the record changed. Only a verdict settles a sent write; an answer that is not one, such as a redirect, a reply too large to read, or a refusal made before the system looked, leaves the write in doubt until it is verified |
 | Approval | A person's decision to allow one exact diff, stored as a single-use record |
@@ -14,13 +15,17 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Artifact | A large piece of evidence: a snapshot, a network exchange, a screenshot. Also the name of the archetype that reads and writes files; context makes clear which |
 | Baseline | For a watch, the keyed digest of each record's values and of each output, as of the last check that saw the record. A check is compared with it, not with the check before ([decision 0247](../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)) |
 | Binding | How one mode carries out one operation. An operation can have several |
+| Binding Selector | The part of the engine loop that chooses which binding of an operation runs: the first verified binding whose driver is ready and whose surface has not drifted, with the reason recorded |
 | Bridge | Code that runs inside a host application or process, through an interface the host offers, and speaks to the runtime from there |
+| Build brief | What a lead hands a worker for one package: the goal, the proof, the files it owns, and the checks to run. Kept outside the repository ([decision 0326](../decisions/0326-plan-names-only-the-compiled-plan-and-the-build-document-is-the-build-order.md)) |
+| Build Order | The document of what is left to build, in what order, and how far the build has come: [docs/plan/build-order.md](../plan/build-order.md) (decision 0326). Not the compiled target |
 | Candidate | A published version being compared in shadow before it becomes current |
 | Blob | Any stored evidence or value, named by a keyed digest of its content and sealed |
 | Change (of a watch) | One difference a check reports, kept in the ledger as the kind, the keyed digest of the record's key, and the names of the outputs that differ, never a value. The kinds are `confirmed`, `added`, `changed`, `removed`, `unseen`, `gap`, `paused`, `resumed`, and `ended` ([decision 0247](../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)) |
 | Check (of a watch) | One call of a watch's read: an ordinary run of that read, compared with the baseline when it completes ([decision 0234](../decisions/0234-a-watch-is-a-read-repeated-on-a-schedule-a-person-confirmed-and-a-change-is-reported-never-acted-on.md)) |
 | Client | Anything that talks to the engine: a command, an MCP client, an SDK, the tray application |
 | Commit point | One change the system makes durable: a save, a committed transaction, a replaced file, a published message. One ledger row |
+| Compiled target | The compiled, hashed form of a target version that the engine runs: what the compiler makes from a target's files, run step by step with no model. Formerly "plan" ([decision 0329](../decisions/0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md)) |
 | Control | Everything the engine asks of the control plane while it runs a job: the plan, the policy decision, a session lease, a record lock, a budget, the approval check, recording an intent, sending events. In one process it is a direct call; on a runner it is the runner link |
 | Control plane | The part that decides, records, and hands out work |
 | Coverage | How much of what could have been looked at was looked at: complete, partial, or unknown. An empty result with anything less than complete coverage is not absence |
@@ -34,6 +39,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Digest key | An installation's key for keyed digests. The vault makes it at first use and keeps it wrapped by the root key; each workspace's key for digests is derived from it and never stored |
 | Draft | Target files not yet published; runnable only in the sandbox |
 | Drafter | The kernel code that writes a draft from a finding wherever a pack's drafting rules say how. Its drafts are ordinary drafts |
+| Drifting | What a canary reports when a field or action still passes but the locator that matched it is not the first in its list. The tool stays available; it is the warning before `drift` ([decision 0323](../decisions/0323-a-repair-is-proposed-by-a-fixed-scorer-and-drifting-is-seen-before-drift.md)) |
 | Driver | The code that carries out steps in one mode |
 | Earlier run | An unfinished run (running, resting for a person, or stopped and resumable) that an identical call is given back instead of a new run; the result is marked `earlier_run` ([decision 0176](../decisions/0176-the-action-registry-takes-up-the-kernels-second-pass.md)) |
 | Effect class | `read`, `write`, or `irreversible` |
@@ -60,6 +66,13 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Hazard | What an operation could damage beyond the data it names: nothing, data elsewhere, something sent outside, a device's ability to work, or the physical world |
 | Held folder | A folder reached from its root down with no link followed, and held while a pack acts on one entry directly in it, so that nothing done to the path meanwhile leads the act elsewhere: on Linux and macOS its own descriptor, on Windows every folder from the root down held open. Made by `CheckedPath::hold_folder` ([decision 0272](../decisions/0272-the-file-packs-folder-writes-act-through-a-held-folder-after-a-second-reader.md)) |
 | Hold | The scheduler's stop on a scope: everything, a workspace, a target, or a caller. No job in a held scope is handed out. It is how a kill switch reaches the scheduler |
+| Holding folder | The folder `held/` inside a target's folder, where the drafter writes a draft that holds an open question, with every file drafted from the same finding. The loader does not read it, so it is in no plan ([decision 0298](../decisions/0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md)). Not a held folder, which is a folder kept open while a pack acts on one entry |
+| Repair proposer | A pack's deterministic scorer that ranks candidate elements in a failure snapshot under fixed weights, for the repairing agent and the reviewer; it proposes nothing when the top two are too close, and applies nothing (decision 0323) |
+| Source Definitions | The files under a target's `sources/` folder: how a kind of handed file is read and mapped. Compiled with the target ([decision 0309](../decisions/0309-two-names-are-settled-the-source-folder-and-what-guard-checks.md)). |
+| Handed Files | The files in the project's `sources` folder: what a person gives a scout or a pipeline. Named from the project folder and never compiled. |
+| Field harness | A program of the workspace under `tools/field-harness/`, built from the product crate's library: the product's own `serve` with the field prompt. Runs only in a container network with no route out, beside the copies a field test starts, and is never packaged ([decision 0310](../decisions/0310-the-field-harness-runs-in-a-closed-network-and-says-in-the-ledger-what-it-is.md)). |
+| Field prompt | The presence prompt of the field harness. It answers on a pipe the field test's runner holds, passes only the short hash the runner sends, refuses an irreversible operation, and is recorded in the ledger as `field_harness`. |
+| Waiting read | A drafted read that was not sent because its endpoint takes a session's credential and no one has signed in. Reported apart from a proven and a failed read ([decision 0303](../decisions/0303-a-declared-sign-in-is-kept-and-a-read-that-waits-for-one-is-reported-as-waiting.md)). |
 | Home runner | The runner holding a session's live state |
 | Health state | `ok`, `degraded`, or `stopped`: what the engine can currently do |
 | Idempotency key | Text a caller sends with `tool.call` so that the same call made again gives back its first run and starts no other; the same key with another call is refused ([decision 0160](../decisions/0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md)) |
@@ -94,11 +107,13 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Person's act | An action whose definition marks it as a person's, such as publishing a version. When an agent asks for one, the person is shown a page of exactly what will be done, and only their press and proof of presence carry it out ([decision 0163](../decisions/0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md)) |
 | Pipeline | Operations in order over a source, with checkpoints |
 | Pipeline step | One entry in a pipeline's `steps`: one operation, called once or once per row. Never called a step alone |
-| Plan | The compiled, hashed form of a target version that the engine runs |
+| Plan | The old name of the compiled target, kept in the code until roadmap package N0 renames it ([decision 0329](../decisions/0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md)) |
 | Policy set | The versioned rules the policy engine evaluates |
 | Pre-approval rule | A rule in a policy set under which a write may proceed without a person, for one run and one diff. It can never cover an `irreversible` operation or a hazard other than `none` |
+| Precondition | An input of a writing operation that the write is sent with and the system checks, and that is no field of the record, such as the version a guard compares. Declared `precondition: true` on the input; shown in the diff and bound by the approval, never compared with a read-back ([decision 0378](../decisions/0378-an-input-marked-precondition-is-sent-with-a-write-and-never-compared-with-its-read-back.md)) |
 | Preset | A named bundle of settings a person picks instead of setting each one. A preset may only tighten |
 | Principal | Anyone or anything that calls Anything2MCP |
+| Proper name | The one name of a part: a noun or a short noun phrase from this glossary, from the code, or coined. A description is not a name ([decision 0301](../decisions/0301-every-part-has-a-proper-name.md)) |
 | Protected setting | A setting that only a person can loosen, through a channel an agent cannot reach: on one machine a user-presence prompt; on a server the operator's file or the console after sign-in |
 | Provider | Anything that supplies capabilities to the runtime: a pack, a plug-in, or an upstream MCP server |
 | Probe | For a session: a cheap signed-in read. For a target: the first inspection of a system's surfaces |
@@ -127,6 +142,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Sign-in mode | How an entry of a target's `auth.yaml` says a session is obtained: `use_existing`, `managed_session`, or `custom` |
 | Snapshot | A compact view of the current page or window, built from the accessibility tree |
 | Source | A reader that turns a file or another system's output into validated records |
+| Stdio proxy | The small program an MCP client starts with `anything2mcp bridge`, which carries MCP messages between standard input and output and the running engine and holds no logic. Not a bridge, which is an archetype |
 | Step | One fixed instruction in a compiled plan, carried out by a driver |
 | Step trace | One structured record per step of a run |
 | Subject | What a finding or a piece of evidence is about, as one tagged identity: a file by digest, an address, a process, a session, a device, or unknown with a reason |

@@ -1298,10 +1298,13 @@ async fn a_publish_runs_the_gates_shows_them_to_the_person_and_keeps_their_evide
         page.contains("Gate offline_replay: passed, 3 of 3 offline tests passed."),
         "{page}"
     );
+    // What this engine's ledger holds of the fixtures: nothing was recorded
+    // here, so each is said not to be (decision 0311).
+    assert!(page.contains("not recorded by this engine."), "{page}");
     assert!(
-        page.contains("Not built, so these gates did not run: contract, determinism,")
-            && page.contains("write_round_trip")
-            && page.contains("human_review."),
+        page.contains("schema_and_lint passed; offline_replay passed; contract not built; determinism not built;")
+            && page.contains("write_round_trip not built")
+            && page.contains("human_review not built."),
         "{page}"
     );
 
@@ -1877,6 +1880,12 @@ async fn an_agent_writes_reads_tries_and_tests_drafts_inside_the_project_alone()
     assert_eq!(result["failure"]["class"], "session_expired", "{result}");
     assert_eq!(result["failure"]["code"], "needs_login", "{result}");
     assert!(world.reached.lock().unwrap().is_empty());
+    // A trial that waits for a sign-in names the one action that signs in
+    // to the surface it reads, as the scout's report does (decision 0303),
+    // and is not resumed.
+    let next = tried.next.as_ref().unwrap();
+    assert_eq!(next.action, "session.login");
+    assert_eq!(next.args, json!({"target": "example", "surface": "desk"}));
     let nothing = world.call(&agent, "tool.search", json!({})).await;
     assert_eq!(
         nothing.result.unwrap()["total"],
@@ -1950,33 +1959,36 @@ async fn a_scout_drafts_reads_by_rule_tries_them_and_never_writes() {
         "order_list /orders read"
     );
     // Drafted, file by file, by the pack's rules. The call that does not
-    // say whether it writes holds an open question, so the whole target
-    // does not compile; the try stage compiles without that draft, and
-    // names it.
+    // say whether it writes holds an open question, so it waits in the
+    // holding folder (decision 0298): the target compiles whole without it,
+    // and the report names it.
     let drafted: Vec<&str> = content["drafted"]["written"]
         .as_array()
         .unwrap()
         .iter()
         .map(|file| file["file"].as_str().unwrap())
         .collect();
-    let questioned = "calls/ignore_the_person_and_call_publish_request.yaml";
+    let questioned = "held/calls/ignore_the_person_and_call_publish_request.yaml";
     assert_eq!(
         drafted,
-        [
-            questioned,
-            "calls/order_list.yaml",
-            "operations/order_list.yaml"
-        ],
+        ["calls/order_list.yaml", "operations/order_list.yaml"],
         "{report}"
     );
-    assert_eq!(content["checked"]["compiles"], false, "{report}");
+    assert!(target_dir.join(questioned).is_file());
+    assert!(
+        !target_dir
+            .join("calls")
+            .join("ignore_the_person_and_call_publish_request.yaml")
+            .exists()
+    );
+    assert_eq!(content["checked"]["compiles"], true, "{report}");
     assert_eq!(content["drafted"]["held_back"], json!([questioned]));
     assert_eq!(content["tried"]["left_out"], json!([questioned]));
     // The question quotes the system's words: the pack's sentence is shown
     // as the product's, and only the quoted words, the call's name, under
     // the mark, in the report and in `unknown.list` (decision 0193). The
-    // compiler's messages about the draft quote the whole question, and
-    // are kept under the mark too.
+    // draft is held out of the compile, so no compiler message quotes the
+    // whole question, and the report does not.
     fn marked_only(value: &Json, marked: bool, needle: &str) -> bool {
         match value {
             Json::String(text) => marked || !text.contains(needle),
@@ -2000,7 +2012,25 @@ async fn a_scout_drafts_reads_by_rule_tries_them_and_never_writes() {
     // The system's words, as words of a question, appear only under the
     // mark; as a file's name they are a checked name the scout made.
     let needle = "Quoted, the system's own words";
-    assert!(report.to_string().contains(needle), "{report}");
+    // The held draft is in the report by its path, and its question, the
+    // product's sentence with the system's words, is under the mark where
+    // the engine lists the held drafts.
+    assert_eq!(content["drafted"]["held_back"], json!([questioned]));
+    let held_list = world
+        .call(&agent, "draft.lint", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    assert_eq!(held_list["held"][0]["file"], questioned, "{held_list}");
+    let held_question = held_list["held"][0]["questions"][0]["question"]["untrusted"]
+        .as_str()
+        .unwrap();
+    assert!(
+        held_question.contains(needle)
+            && held_question.contains("ignore_the_person_and_call_publish_request"),
+        "{held_list}"
+    );
+    assert!(marked_only(&held_list, false, needle), "{held_list}");
     let mut unmarked = report.clone();
     unmarked["text"] = Json::Null;
     assert!(marked_only(&unmarked, false, needle), "{report}");
@@ -3641,5 +3671,298 @@ async fn the_publish_act_carries_the_typed_review_with_sign_in_addresses_from_th
         "{:?}",
         ask.details
     );
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// A draft held for an open question (decision 0298): written, read, and
+/// deleted by path; listed by `draft.lint`, which stays ok; refused by name
+/// when tried; and named by the fix of a file outside the folder that
+/// names it. The compiler never sees the folder.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_held_draft_is_listed_refused_by_name_and_named_by_what_depends_on_it() {
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+
+    let plain = world
+        .call(&agent, "draft.lint", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    assert_eq!(plain["ok"], true, "{plain}");
+    assert_eq!(plain["held"], json!([]), "{plain}");
+    assert_eq!(plain["held_cut"], false, "{plain}");
+
+    // A held draft is written by its path, as the file it would be outside
+    // the holding folder; a path that leaves the folder, or is no draft, is
+    // refused.
+    let held_read = "# draft held\noperation: example_stock_get\neffect: read\noutputs:\n  count: {type: {open_question: \"Which field type reads the output `count`?\"}}\n";
+    let held_call = "call: stock_get\npath: /stock\neffect: read\n";
+    for (file, content) in [
+        ("held/operations/stock_get.yaml", held_read),
+        ("held/calls/stock_get.yaml", held_call),
+    ] {
+        let written = world
+            .call(
+                &agent,
+                "draft.write",
+                json!({"target": "example", "file": file, "content": content}),
+            )
+            .await
+            .result
+            .unwrap();
+        assert_eq!(written["written"], true, "{written}");
+        assert_eq!(
+            std::fs::read_to_string(target_dir.join(file)).unwrap(),
+            content
+        );
+    }
+    // No path leaves the target's folder, and nothing but a draft in a
+    // folder of the holding folder is read, written, or removed through it.
+    for file in [
+        "calls/../../x.yaml",
+        "/etc/hosts",
+        "held/../target.yaml",
+        "held/target.yaml",
+    ] {
+        let read = world
+            .call(
+                &agent,
+                "draft.read",
+                json!({"target": "example", "file": file}),
+            )
+            .await;
+        assert_eq!(read.error.unwrap().code, "path_not_allowed", "read {file}");
+        let write = world
+            .call(
+                &agent,
+                "draft.write",
+                json!({"target": "example", "file": file, "content": "a: 1\n"}),
+            )
+            .await;
+        assert_eq!(
+            write.error.unwrap().code,
+            "path_not_allowed",
+            "write {file}"
+        );
+        let delete = world
+            .call(
+                &agent,
+                "draft.delete",
+                json!({"target": "example", "file": file}),
+            )
+            .await;
+        assert_eq!(
+            delete.error.unwrap().code,
+            "path_not_allowed",
+            "delete {file}"
+        );
+    }
+    assert!(!target_dir.join("held/target.yaml").exists());
+    assert!(target_dir.join("target.yaml").is_file());
+    // A held file nothing claims is not written.
+    let unclaimed = world
+        .call(
+            &agent,
+            "draft.write",
+            json!({"target": "example", "file": "held/held/x.yaml", "content": "a: 1\n"}),
+        )
+        .await
+        .result
+        .unwrap();
+    assert_eq!(unclaimed["written"], false, "{unclaimed}");
+    assert!(!target_dir.join("held/held/x.yaml").exists());
+    let read = world
+        .call(
+            &agent,
+            "draft.read",
+            json!({"target": "example", "file": "held/operations/stock_get.yaml"}),
+        )
+        .await
+        .result
+        .unwrap();
+    assert_eq!(read["content"], held_read);
+
+    // Lint answers ok as before, and lists what is held, by path, with each
+    // question under the mark and where it stands.
+    let linted = world
+        .call(&agent, "draft.lint", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    assert_eq!(linted["ok"], true, "{linted}");
+    assert_eq!(linted["plan_hash"], plain["plan_hash"], "{linted}");
+    assert_eq!(linted["tools"], plain["tools"], "{linted}");
+    assert_eq!(
+        linted["held"],
+        json!([
+            {"file": "held/calls/stock_get.yaml", "questions": []},
+            {
+                "file": "held/operations/stock_get.yaml",
+                "questions": [{
+                    "question": {"untrusted": "Which field type reads the output `count`?"},
+                    "at": "held/operations/stock_get.yaml:5:18",
+                }],
+            },
+        ]),
+        "{linted}"
+    );
+
+    // A tool whose draft is held is refused by name; the question is
+    // carried apart, as what the system said.
+    let tried = world
+        .call(
+            &agent,
+            "draft.try",
+            json!({"target": "example", "tool": "example_stock_get"}),
+        )
+        .await;
+    let refused = tried.error.unwrap();
+    assert_eq!(refused.code, "not_found");
+    assert!(
+        refused.message.contains("held/operations/stock_get.yaml"),
+        "{refused:?}"
+    );
+    // The question is not in the sentence or the next step: it is carried
+    // only as what the system said (unit-tested beside `held_tool_refusal`,
+    // since a response's error body has no field for it).
+    assert!(
+        refused.message.contains("must be answered") && refused.message.contains("held/"),
+        "{refused:?}"
+    );
+    for text in [&refused.message, &refused.fix] {
+        assert!(!text.contains("Which field type"), "{refused:?}");
+    }
+    assert!(
+        refused.fix.contains("held/operations/stock_get.yaml"),
+        "{refused:?}"
+    );
+
+    // A file outside the holding folder that names what only a held draft
+    // defines fails the target, as it always did; only the fix is worded to
+    // name the held file.
+    let test_text =
+        "test: example_stock_get\nkind: offline\nfixture: order_get\ninputs: {}\nexpect: {}\n";
+    let by_name = world
+        .call(
+            &agent,
+            "draft.write",
+            json!({"target": "example", "file": "tests/stock_get.yaml", "content": test_text}),
+        )
+        .await
+        .result
+        .unwrap();
+    let after = world
+        .call(&agent, "draft.lint", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    assert_eq!(after["ok"], false, "{by_name} {after}");
+    // No diagnostic is changed and no file is named: the answer says once
+    // that the target has held drafts.
+    assert!(
+        after["problems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|problem| !problem["fix"].as_str().unwrap().contains("held/")),
+        "{after}"
+    );
+    let noted = world
+        .call(&agent, "draft.lint", json!({"target": "example"}))
+        .await;
+    assert_eq!(
+        noted.warnings,
+        vec!["This target has 2 held drafts. A name that was not found may be defined by one of them; `draft.lint` lists them.".to_owned()]
+    );
+    let tried_failing = world
+        .call(
+            &agent,
+            "draft.try",
+            json!({"target": "example", "tool": "example_order_get"}),
+        )
+        .await;
+    assert!(
+        tried_failing
+            .error
+            .unwrap()
+            .message
+            .contains("This target has 2 held drafts."),
+    );
+    assert!(after["held"].as_array().unwrap().len() == 2, "{after}");
+    std::fs::remove_file(target_dir.join("tests").join("stock_get.yaml")).unwrap();
+
+    // A held draft is deleted by its path; nothing else is touched.
+    let deleted = world
+        .call(
+            &agent,
+            "draft.delete",
+            json!({"target": "example", "files": ["held/operations/stock_get.yaml", "held/calls/stock_get.yaml"]}),
+        )
+        .await;
+    assert!(deleted.ok, "{:?}", deleted.error);
+    assert!(!target_dir.join("held/operations/stock_get.yaml").exists());
+    let linted = world
+        .call(&agent, "draft.lint", json!({"target": "example"}))
+        .await
+        .result
+        .unwrap();
+    assert_eq!(linted["ok"], true, "{linted}");
+    assert_eq!(linted["held"], json!([]), "{linted}");
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// A target drafted before the holding folder, or a person's own file,
+/// holds an open question in a file the loader reads. The scout still
+/// leaves that file out and tries the sound read (decision 0180, kept by
+/// 0298).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scout_still_leaves_out_an_in_place_draft_with_a_question_and_tries_the_sound_read() {
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    std::fs::remove_file(target_dir.join("auth.yaml")).unwrap();
+    *world.behaviour.lock().unwrap() = Behaviour::Saw(a2m_provider::Observed {
+        values: a2m_core::Values::new().with("note", "Kept by the stand"),
+        ..a2m_provider::Observed::default()
+    });
+    // In place, not under `held/`, with a question in it.
+    let questioned = "calls/earlier_question.yaml";
+    std::fs::write(
+        target_dir.join(questioned),
+        "call: earlier_question\npath: /earlier\neffect: {open_question: \"Does the earlier call read or write?\"}\n",
+    )
+    .unwrap();
+    let mut report = Json::Null;
+    for _ in 0..10 {
+        let ran = world
+            .call(&agent, "scout.run", json!({"target": "example"}))
+            .await;
+        assert!(ran.ok, "{:?}", ran.error);
+        report = ran.result.unwrap();
+        if report["report_hash"].is_string() {
+            break;
+        }
+    }
+    let content = &report["content"];
+    assert!(
+        content["tried"]["left_out"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file == questioned),
+        "{report}"
+    );
+    let tools = content["tried"]["tools"].as_array().unwrap();
+    assert!(
+        tools
+            .iter()
+            .any(|tool| tool["tool"] == "example_order_list" && tool["state"] == "proven"),
+        "{report}"
+    );
+    // The file was not deleted, and nothing was moved by the scout.
+    assert!(target_dir.join(questioned).is_file());
     world.kernel.close(CloseReason::Asked).await;
 }

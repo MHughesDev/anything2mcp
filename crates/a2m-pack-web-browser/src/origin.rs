@@ -14,6 +14,10 @@
 
 use std::collections::BTreeSet;
 
+use a2m_core::ScopedHost;
+use a2m_netstate::NetworkFingerprint;
+use a2m_provider::{MachineState, NetworkPlace, PlacedInReach, Reach};
+
 use crate::browsers::Address;
 
 /// What stands for a page that has no origin of its own, such as a page
@@ -92,6 +96,9 @@ pub(crate) fn path_of(address: &str) -> &str {
 pub struct Origins {
     allowed: BTreeSet<String>,
     requests_only: BTreeSet<String>,
+    /// Origins whose requests are failed in the browser and not reported:
+    /// refused by the tool's own declaration, and the run goes on.
+    quiet: BTreeSet<String>,
 }
 
 impl Origins {
@@ -101,6 +108,7 @@ impl Origins {
         Self {
             allowed: addresses.into_iter().map(Address::origin).collect(),
             requests_only: BTreeSet::new(),
+            quiet: BTreeSet::new(),
         }
     }
 
@@ -110,6 +118,7 @@ impl Origins {
         self.allowed.extend(more.allowed.iter().cloned());
         self.requests_only
             .extend(more.requests_only.iter().cloned());
+        self.quiet.extend(more.quiet.iter().cloned());
         self
     }
 
@@ -125,10 +134,64 @@ impl Origins {
         self
     }
 
+    /// The same, and the origins of these addresses as places the tab's
+    /// page is refused without a stop: a request to one is failed in the
+    /// browser before it leaves, as one to any origin outside the tab's
+    /// reach is, and is not reported, so the run goes on. A quiet origin
+    /// is never reached, whatever else declares it, and the tab is never
+    /// on it (package P3b).
+    #[must_use]
+    pub fn and_refused_quietly<'a>(
+        mut self,
+        addresses: impl IntoIterator<Item = &'a Address>,
+    ) -> Self {
+        self.quiet
+            .extend(addresses.into_iter().map(Address::origin));
+        self
+    }
+
     /// Whether the address is on one of the origins.
     #[must_use]
     pub fn allows(&self, address: &Address) -> bool {
         self.allowed.contains(&address.origin())
+    }
+
+    /// The network place of each origin a request may go to (the tab's own
+    /// and those its page may send requests to), in order, each with the
+    /// reason. A place is derived from the origin's host as written and from
+    /// what the machine says of itself, never taken from an input, and a name
+    /// is never resolved: an origin on a name is `unknown`
+    /// (decisions 0223 and 0143). The guard itself still compares origins,
+    /// which tell apart what one place does not: two origins can be on one
+    /// place, and a tab refuses the other (package N2b).
+    ///
+    /// `reaches` are the reaches the person has saved and `current` is the
+    /// fingerprint of the network the machine is on now, as
+    /// `Kernel::reaches_and_network` gives them: an origin a reach in force
+    /// sends through a named gateway is placed `via_gateway`, and one a
+    /// reach not in force names is placed as it would be without it
+    /// (decision 0327, package N3).
+    #[must_use]
+    pub fn places(
+        &self,
+        state: &MachineState,
+        reaches: &[Reach],
+        current: &NetworkFingerprint,
+    ) -> Vec<(&str, PlacedInReach)> {
+        self.reach()
+            .into_iter()
+            .map(|origin| {
+                (
+                    origin,
+                    NetworkPlace::of_in_reach(
+                        &ScopedHost::of_destination(origin),
+                        state,
+                        reaches,
+                        current,
+                    ),
+                )
+            })
+            .collect()
     }
 
     /// The origins, in order, each as the browser writes it.
@@ -150,14 +213,28 @@ impl Origins {
     /// Whether a request the browser reported may go to its address: on
     /// one of the tab's origins, or on one its page may send requests to.
     pub(crate) fn reaches_reported(&self, address: &str) -> bool {
-        key_of(address)
-            .is_some_and(|key| self.allowed.contains(&key) || self.requests_only.contains(&key))
+        key_of(address).is_some_and(|key| {
+            !self.quiet.contains(&key)
+                && (self.allowed.contains(&key) || self.requests_only.contains(&key))
+        })
+    }
+
+    /// Whether a request the browser reported is to an origin the tab's
+    /// page is refused without a stop.
+    pub(crate) fn refused_quietly_reported(&self, address: &str) -> bool {
+        key_of(address).is_some_and(|key| self.quiet.contains(&key))
+    }
+
+    /// The origins the tab's page is refused without a stop, in order.
+    pub fn refused_quietly(&self) -> impl Iterator<Item = &str> {
+        self.quiet.iter().map(String::as_str)
     }
 
     /// Every origin a request may go to, each as the browser writes it.
     pub(crate) fn reach(&self) -> Vec<&str> {
         self.allowed
             .union(&self.requests_only)
+            .filter(|origin| !self.quiet.contains(*origin))
             .map(String::as_str)
             .collect()
     }
@@ -289,5 +366,24 @@ mod tests {
             ["https://api.example.com:8443", "https://app.example.com"]
         );
         assert_eq!(wider.reach().len(), 3);
+        // A place refused quietly is never reached, declared or not, and is
+        // told from one that is outside.
+        let quiet = wider.and_refused_quietly([
+            &address("https://assets.example.com/"),
+            &address("https://stats.example.com/"),
+        ]);
+        assert!(!quiet.reaches_reported("https://assets.example.com/a.woff2"));
+        assert!(quiet.refused_quietly_reported("https://assets.example.com/a.woff2"));
+        assert!(quiet.refused_quietly_reported("https://stats.example.com/p?x=1"));
+        assert!(!quiet.refused_quietly_reported("https://other.example/x"));
+        assert!(quiet.reaches_reported("https://app.example.com/orders"));
+        assert_eq!(
+            quiet.reach(),
+            ["https://api.example.com:8443", "https://app.example.com"]
+        );
+        assert_eq!(
+            quiet.refused_quietly().collect::<Vec<_>>(),
+            ["https://assets.example.com", "https://stats.example.com"]
+        );
     }
 }

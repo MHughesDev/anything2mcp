@@ -23,10 +23,10 @@ use std::time::Duration;
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
 use a2m_core::{AccountName, Digest, EffectClass, Failure, Identity, Secret, Step, Value};
 use a2m_pack_web_browser::{
-    ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, Dispatch, Element, Input,
-    Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey, Query, RawValue,
-    ReadWhat, Reason, RequestShape, SafeRequests, Snapshot, SnapshotLimits, Visibility,
-    looks_like_an_action, path_by_structure, plain_segment,
+    ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, DialogAnswer, Dispatch,
+    Element, Input, Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey,
+    Query, RawValue, ReadWhat, Reason, RequestShape, SafeRequests, Snapshot, SnapshotLimits,
+    Visibility, looks_like_an_action, path_by_structure, plain_segment,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -35,12 +35,16 @@ use a2m_provider::{
 use a2m_telemetry::{Acting, Detail};
 
 use crate::codes::{self, shown};
-use crate::lower::{GOTO, INVOKE, REACH_ARG, READ, SET, VALUE_ARG, WAIT};
+use crate::lower::{CALL_TOOL, GOTO, INVOKE, REACH_ARG, READ, ROW_ARG, SET, VALUE_ARG, WAIT};
+
+mod site_tools;
+mod widgets;
 use crate::model::{
-    Cond, Fingerprint, GotoStep, Handling, InvokeStep, Locator, PAYLOAD_FORMAT, ReadStep, Rows,
-    Screen, ScreenSection, Segment, SetStep, SurfaceFields, TabKind, WaitStep,
+    Action, Cond, Field, Fingerprint, GotoStep, Handling, InvokeStep, Locator, PAYLOAD_FORMAT,
+    ReadStep, Rows, Screen, ScreenSection, Segment, SetStep, SurfaceFields, TabKind, WaitStep,
 };
 use crate::screens::{PACK, SCREEN_KIND};
+use widgets::Chosen;
 
 /// What the browser engine reports a move of the tab that it ended
 /// under. A window it closed, and a download it denied, have words of
@@ -68,17 +72,68 @@ pub(crate) struct UiDriver {
     /// Whether a browser program was found when the pack registered.
     /// `health` answers from this, without looking at the machine again.
     installed: bool,
+    /// The surfaces the edge refused lately.
+    held: Held,
 }
 
 impl UiDriver {
     pub(crate) fn new(browsers: Browsers, max_snapshot_elements: usize) -> Self {
         Self {
             installed: browsers.availability() == a2m_core::Availability::Ready,
+            held: Held::default(),
             browsers,
             snapshots: SnapshotLimits {
                 max_elements: max_snapshot_elements,
             },
         }
+    }
+}
+
+/// How long a surface whose edge refused a visit is left alone: no run
+/// asks it again in that time, so a block or a limit is never a retry storm.
+const EDGE_HOLD: Duration = Duration::from_secs(60);
+
+/// The surfaces the edge refused, by origin, with the refusal and when: the
+/// pack's own memory, shared by every run of its driver, and gone when the
+/// engine stops.
+#[derive(Clone, Default)]
+pub(crate) struct Held(
+    std::sync::Arc<
+        std::sync::Mutex<BTreeMap<String, (&'static a2m_core::CodeEntry, std::time::Instant)>>,
+    >,
+);
+
+impl Held {
+    /// The refusal that still holds a surface off, if there is one.
+    fn of(&self, origin: &str) -> Option<&'static a2m_core::CodeEntry> {
+        let mut held = self.0.lock().ok()?;
+        match held.get(origin) {
+            Some((row, at)) if at.elapsed() < EDGE_HOLD => Some(row),
+            Some(_) => {
+                held.remove(origin);
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn hold(&self, origin: &str, row: &'static a2m_core::CodeEntry) {
+        if let Ok(mut held) = self.0.lock() {
+            held.insert(origin.to_owned(), (row, std::time::Instant::now()));
+        }
+    }
+}
+
+/// What the edge's answer to a page was, when it was a refusal.
+pub(crate) fn edge_refusal(loaded: &Loaded) -> Option<&'static a2m_core::CodeEntry> {
+    if loaded.challenged {
+        return Some(&codes::row::CHALLENGE_PAGE);
+    }
+    match loaded.status {
+        Some(429) => Some(&codes::row::RATE_LIMITED_BY_EDGE),
+        Some(403) => Some(&codes::row::FORBIDDEN_BY_EDGE),
+        Some(503) => Some(&codes::row::SURFACE_IN_MAINTENANCE),
+        _ => None,
     }
 }
 
@@ -200,6 +255,12 @@ struct Session {
     /// ended, each with its `ready` (decision 0245).
     expiry: Vec<(String, Cond)>,
     snapshots: SnapshotLimits,
+    /// The surfaces the edge refused lately, shared with the driver.
+    held: Held,
+    /// Where a declared download is written, or why that is not known.
+    downloads: Result<a2m_provider::CheckedPath, Failure>,
+    /// Where files for a file input are staged, or why that is not known.
+    staging: Result<a2m_provider::CheckedPath, Failure>,
     /// What the run may do. Only a live run sets a field or clicks an
     /// action that does not save; a run against a declared test record
     /// sets fields and performs the one action marked as the commit point
@@ -719,6 +780,87 @@ pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
 }
 
 impl Session {
+    /// Answers a declared variant of a screen with the action it names:
+    /// one click, not a commit point. Nothing is retried.
+    async fn answer_variant(
+        &self,
+        screen_name: &str,
+        screen: &Screen,
+        variant: &str,
+        deadline: Deadline,
+    ) -> Result<(), StepFailure> {
+        let with = screen
+            .variants
+            .get(variant)
+            .and_then(|declared| declared.with.as_deref())
+            .and_then(|action| screen.actions.get(action).map(|found| (action, found)));
+        let Some((action_name, action)) = with else {
+            return Err(codes::not_usable(
+                "a variant it must answer names no action of its screen",
+            ));
+        };
+        let what = format!(
+            "the action `{action_name}` that answers the variant `{variant}` of the screen `{screen_name}`"
+        );
+        let (element, _) = self
+            .find(&what, &action.locate, action.fingerprint.as_ref(), deadline)
+            .await?;
+        self.tab()
+            .input(&element, &Input::Click, deadline, &what)
+            .await?;
+        Ok(())
+    }
+
+    /// The radio button of one choice of a group the field's locator found:
+    /// the one of that label inside the group.
+    async fn radio(
+        &self,
+        what: &str,
+        field: &Field,
+        position: usize,
+        label: &str,
+        deadline: Deadline,
+    ) -> Result<Element, StepFailure> {
+        let frame = field
+            .fingerprint
+            .as_ref()
+            .and_then(|print| print.frame.as_ref());
+        let group = field.locate[position].query_in(frame);
+        self.tab()
+            .locate(&Query::role("radio", label).within(group), deadline)
+            .await
+            .map_err(|error| browser_failure(&error, what))
+    }
+
+    /// Answers the dialog of the browser that the action declares, if the
+    /// page has one open and it says what the action says it will. One that
+    /// says anything else is not answered.
+    async fn answer_declared_dialog(
+        &self,
+        action: &Action,
+        deadline: Deadline,
+        what: &str,
+    ) -> Result<bool, StepFailure> {
+        let (Tab::Act(tab), Some(declared)) = (self.tab(), action.dialog.as_ref()) else {
+            return Ok(false);
+        };
+        if tab
+            .open_dialog()
+            .is_none_or(|open| open.message != declared.says)
+        {
+            return Ok(false);
+        }
+        let how = if declared.accept {
+            DialogAnswer::Accept
+        } else {
+            DialogAnswer::Dismiss
+        };
+        tab.answer_dialog(&how, deadline)
+            .await
+            .map_err(|error| browser_failure(&error, what))?;
+        Ok(true)
+    }
+
     /// The variants of the screen the page shows now, by name.
     async fn variants_now(
         &self,
@@ -796,7 +938,8 @@ impl Session {
                     "a locator with a scope of its own also has a fingerprint",
                 ));
             }
-            let element = match self.tab().locate(&locator.query(), deadline).await {
+            let frame = fingerprint.and_then(|print| print.frame.as_ref());
+            let element = match self.tab().locate(&locator.query_in(frame), deadline).await {
                 Ok(element) => element,
                 Err(BrowserError::NotFound) => continue,
                 Err(error) => return Err(browser_failure(&error, what)),
@@ -926,11 +1069,38 @@ impl Session {
         }
         let address = Address::new(&made).map_err(StepFailure::not_sent)?;
         let what = format!("the screen `{name}`");
+        // A surface the edge refused lately is not asked again.
+        if let Some(row) = self.held.of(&self.origin) {
+            return Err(StepFailure::not_sent(fail(
+                row,
+                format!(
+                    "The edge of {} refused a visit a moment ago, and the surface is left alone for a while; nothing was sent.",
+                    self.origin
+                ),
+                row.next,
+            )));
+        }
         let loaded = self
             .tab()
             .goto(&address, until(step, input))
             .await
             .map_err(|error| browser_failure(&error, &what))?;
+        // An answer of the edge is a stop that keeps what it was: the
+        // status, and no more. It is never retried and a challenge is never
+        // answered (rule 5); the surface is held off for a while.
+        if let Some(row) = edge_refusal(&loaded) {
+            self.held.hold(&self.origin, row);
+            return Err(StepFailure::answered(fail(
+                row,
+                format!(
+                    "{what} was answered by the edge of the site with status {}, and not by the application.",
+                    loaded
+                        .status
+                        .map_or_else(|| "none".to_owned(), |s| s.to_string())
+                ),
+                row.next,
+            )));
+        }
         // Where the page ended is checked: a move to another origin is not
         // followed by anything.
         let inside = loaded
@@ -1005,11 +1175,23 @@ impl Session {
                 }
             }
         }
-        let variant = self
+        let mut variant = self
             .variant(screen, deadline)
             .await
             .map_err(|error| browser_failure(&error, &what))?;
         let mut means = vec![Detail::new("step", "wait"), Detail::new("screen", name)];
+        // A notice over the screen that the screen declares as one to
+        // dismiss is closed by the action it names, once; a notice that is
+        // still there after that stops the run.
+        if let Some((shown_name, Handling::Dismiss)) = variant {
+            self.answer_variant(name, screen, shown_name, deadline)
+                .await?;
+            means.push(Detail::new("dismissed", shown_name));
+            variant = self
+                .variant(screen, deadline)
+                .await
+                .map_err(|error| browser_failure(&error, &what))?;
+        }
         match variant {
             Some((variant, Handling::Absent)) => {
                 means.push(Detail::new("variant", variant));
@@ -1023,6 +1205,15 @@ impl Session {
                 format!("The page shows the variant `{variant}` of {what}, which stops a run."),
                 "Look at the page; the application refused.",
             ))),
+            Some((variant, Handling::Confirm | Handling::Dismiss)) => {
+                Err(StepFailure::not_sent(fail(
+                    &codes::row::UNEXPECTED_PAGE,
+                    format!(
+                        "The page shows the variant `{variant}` of {what}, which is not one that can be answered at this point, or which the answer did not close."
+                    ),
+                    "Look at the page; the screen declares a state it cannot leave by its own action.",
+                )))
+            }
             None => {
                 let mut captures = Vec::new();
                 let mut measured = Vec::new();
@@ -1055,11 +1246,63 @@ impl Session {
                 .fields
                 .get(&item.from)
                 .ok_or_else(|| codes::not_usable("a field it reads is not on its screen"))?;
-            known_control(&field.control)?;
+            let rule = known_control(&field.control)?;
             let what = format!("the field `{}` of the screen `{name}`", item.from);
             let (element, locator) = self
                 .find(&what, &field.locate, field.fingerprint.as_ref(), deadline)
                 .await?;
+            if rule == Rule::Radio {
+                // The choice whose radio button is on, by the code it stores.
+                let mut chosen = None;
+                for (code, label) in &field.options {
+                    let radio = self.radio(&what, field, locator, label, deadline).await?;
+                    match self.tab().read(&radio, &ReadWhat::Checked, deadline).await {
+                        Ok(RawValue::Flag(true)) => {
+                            chosen = Some(code.clone());
+                            break;
+                        }
+                        Ok(_) => {}
+                        Err(error) => return Err(browser_failure(&error, &what)),
+                    }
+                }
+                let Some(code) = chosen else {
+                    return Err(StepFailure::answered(fail(
+                        &codes::row::UNEXPECTED_CONTROL,
+                        format!("No choice of {what} is on."),
+                        "Look at the page; the group shows no choice, or one the field's `options` do not list.",
+                    )));
+                };
+                means.push(Detail::new(
+                    format!("locator.{}", item.from),
+                    locator.to_string(),
+                ));
+                observed
+                    .values
+                    .insert(item.output.clone(), Value::Text(code));
+                continue;
+            }
+            if !matches!(rule, Rule::Text | Rule::Select | Rule::Check) {
+                let row = input.args.get(&format!("{ROW_ARG}{}", item.from));
+                let value = self
+                    .read_widget(
+                        rule,
+                        &Chosen {
+                            field,
+                            element: &element,
+                            locator,
+                            row,
+                            what: &what,
+                        },
+                        deadline,
+                    )
+                    .await?;
+                means.push(Detail::new(
+                    format!("locator.{}", item.from),
+                    locator.to_string(),
+                ));
+                observed.values.insert(item.output.clone(), value);
+                continue;
+            }
             let value = match self
                 .tab()
                 .read(&element, &field.read.what(), deadline)
@@ -1164,6 +1407,15 @@ impl Session {
                     .await?;
                 "check"
             }
+            Rule::Radio => {
+                let code = widget_text(value).ok_or_else(wrong_value)?;
+                let label = field.options.get(&code).ok_or_else(wrong_value)?;
+                let radio = self.radio(&what, field, locator, label, deadline).await?;
+                self.tab()
+                    .input(&radio, &Input::Check(true), deadline, &what)
+                    .await?;
+                "check"
+            }
             Rule::Select => {
                 let code = widget_text(value).ok_or_else(wrong_value)?;
                 self.tab()
@@ -1174,6 +1426,24 @@ impl Session {
             Rule::Text => {
                 let text = widget_text(value).ok_or_else(wrong_value)?;
                 self.set_text(&element, &text, &what, deadline).await?
+            }
+            rule => {
+                let text = widget_text(value).ok_or_else(wrong_value)?;
+                let row = input.args.get(&format!("{ROW_ARG}{}", payload.field));
+                self.set_widget(
+                    rule,
+                    &Chosen {
+                        field,
+                        element: &element,
+                        locator,
+                        row,
+                        what: &what,
+                    },
+                    &text,
+                    &wrong_value,
+                    deadline,
+                )
+                .await?
             }
         };
         Ok(StepOutcome::Done(Observed {
@@ -1229,7 +1499,112 @@ impl Session {
         )))
     }
 
+    /// An action, and the download it declares, if it does: the refusal of
+    /// downloads is lifted for this step alone, for one file of at most the
+    /// size declared, into the folder of the profile; and put back, whatever
+    /// the step came to (decision 0362, the download record).
     async fn invoke(&self, step: &Step, input: &StepInput<'_>) -> Result<StepOutcome, StepFailure> {
+        let declared = {
+            let (_, screen) = self.screen(step)?;
+            let payload: InvokeStep = step
+                .payload
+                .decode()
+                .map_err(|_| codes::not_usable("its payload does not decode"))?;
+            screen
+                .actions
+                .get(&payload.action)
+                .and_then(|action| action.download.clone())
+        };
+        let Some(download) = declared else {
+            return self.invoke_action(step, input).await;
+        };
+        self.may_act(step)?;
+        let acting_tab = self
+            .acting
+            .as_ref()
+            .filter(|_| self.on == TabKind::Act)
+            .ok_or_else(|| {
+                codes::not_usable("a download is declared for an action of a tab that may act")
+            })?;
+        let deadline = until(step, input);
+        let folder = self
+            .downloads
+            .as_ref()
+            .map_err(|failure| StepFailure::not_sent(failure.clone()))?;
+        let what = "the download of the action".to_owned();
+        acting_tab
+            .allow_download(folder.as_path(), download.most_bytes, deadline)
+            .await
+            .map_err(|error| browser_failure(&error, &what))?;
+        let performed = self.invoke_action(step, input).await;
+        let got = match &performed {
+            Ok(_) => Some(acting_tab.downloaded(deadline).await),
+            Err(_) => None,
+        };
+        // The refusal goes back before anything else is decided.
+        let back = acting_tab
+            .forbid_downloads(Deadline::after(Duration::from_secs(5)))
+            .await;
+        let mut outcome = performed?;
+        back.map_err(|error| StepFailure::unknown(browser_failure(&error, &what).failure))?;
+        let Some(got) = got else {
+            return Err(codes::not_usable("the download was not waited for"));
+        };
+        let file = match got {
+            Ok(file) => file,
+            Err(error) => {
+                let (row, why) = match error {
+                    a2m_pack_web_browser::DownloadError::NoneBegan => (
+                        &codes::row::DOWNLOAD_NOT_OFFERED,
+                        "The page offered no file.".to_owned(),
+                    ),
+                    a2m_pack_web_browser::DownloadError::TooLarge { limit } => (
+                        &codes::row::DOWNLOAD_TOO_LARGE,
+                        format!("The file is larger than the {limit} bytes the action allows."),
+                    ),
+                    a2m_pack_web_browser::DownloadError::Cancelled => (
+                        &codes::row::DOWNLOAD_INCOMPLETE,
+                        "The download did not end whole.".to_owned(),
+                    ),
+                    a2m_pack_web_browser::DownloadError::Browser(error) => {
+                        return Err(StepFailure::unknown(browser_failure(&error, &what).failure));
+                    }
+                };
+                // The page answered the click; what it offered is not what
+                // the action declares.
+                return Err(StepFailure::answered(fail(row, why, row.next)));
+            }
+        };
+        let StepOutcome::Done(observed) = &mut outcome else {
+            return Ok(outcome);
+        };
+        let name = file
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if let Some(into) = &download.into {
+            observed
+                .values
+                .insert(into.clone(), Value::Text(name.clone()));
+        }
+        observed.captures.push(acting(
+            vec![
+                Detail::new("step", "download"),
+                Detail::new("file", name),
+                Detail::new("bytes", file.bytes.to_string()),
+                Detail::new("suggested", shown(&file.suggested)),
+            ],
+            Vec::new(),
+        ));
+        Ok(outcome)
+    }
+
+    async fn invoke_action(
+        &self,
+        step: &Step,
+        input: &StepInput<'_>,
+    ) -> Result<StepOutcome, StepFailure> {
         self.may_act(step)?;
         let (name, screen) = self.screen(step)?;
         let payload: InvokeStep = step
@@ -1254,10 +1629,31 @@ impl Session {
         // not there before. A page that already shows a state the screen
         // declares, or the action's confirmation, could not tell its answer
         // from what it showed: the action is not performed (decision 0144).
-        let before = self
+        let mut before = self
             .variants_now(screen, deadline)
             .await
             .map_err(|error| browser_failure(&error, &what))?;
+        // A notice the screen declares as one to dismiss is in the way of
+        // the click, and is closed first; the click has not been made.
+        let dismissable: Vec<String> = before
+            .iter()
+            .filter(|shown| {
+                screen
+                    .variants
+                    .get(*shown)
+                    .is_some_and(|variant| variant.handling == Handling::Dismiss)
+            })
+            .cloned()
+            .collect();
+        if !dismissable.is_empty() {
+            for shown in &dismissable {
+                self.answer_variant(name, screen, shown, deadline).await?;
+            }
+            before = self
+                .variants_now(screen, deadline)
+                .await
+                .map_err(|error| browser_failure(&error, &what))?;
+        }
         if let Some(shown_before) = before.iter().next() {
             let handling = screen
                 .variants
@@ -1272,6 +1668,10 @@ impl Session {
                     &codes::row::UNEXPECTED_PAGE,
                     "Look at the page; the record is not where the action would act on it.",
                 ),
+                Handling::Confirm | Handling::Dismiss => (
+                    &codes::row::UNEXPECTED_PAGE,
+                    "Look at the page; a state the screen declares as one to answer was shown before the action, or was not closed by its answer.",
+                ),
             };
             let refused = StepFailure::not_sent(fail(
                 row,
@@ -1285,7 +1685,7 @@ impl Session {
                     Some(said) => refused.with_said(said),
                     None => refused,
                 },
-                Handling::Absent => refused,
+                Handling::Absent | Handling::Confirm | Handling::Dismiss => refused,
             });
         }
         if self
@@ -1300,9 +1700,27 @@ impl Session {
                 "Correct the action's `confirm` in the screen so that it names what the page shows only once the action is done.",
             )));
         }
-        self.tab()
-            .input(&element, &Input::Click, deadline, &what)
-            .await?;
+        // A click of an action that declares a dialog may be answered by
+        // the dialog at once, the page being held in its handler.
+        let mut dialog_answered = false;
+        match self.tab() {
+            Tab::Act(tab) => match tab.input(&element, &Input::Click, deadline).await {
+                Ok(()) => {}
+                Err(BrowserError::UnexpectedDialog { .. })
+                    if self.answer_declared_dialog(action, deadline, &what).await? =>
+                {
+                    dialog_answered = true;
+                }
+                Err(error) => return Err(browser_failure(&error, &what)),
+            },
+            Tab::Observe(_) => {
+                return Err(StepFailure::not_sent(fail(
+                    &a2m_provider::codes::row::READ_ONLY_POSTURE,
+                    "This run may only look at the page, and its tab cannot act.".to_owned(),
+                    "Run the operation where it may act.",
+                )));
+            }
+        }
 
         // From here the click has reached the page. What the application
         // made of it is known only when the page shows the action's
@@ -1333,47 +1751,84 @@ impl Session {
                 StepFailure::unknown(failure)
             }
         };
-        let mut any = vec![action.confirm.primitive()];
-        any.extend(
-            screen
-                .variants
-                .values()
-                .map(|variant| Primitive::Visible(variant.when.query())),
-        );
-        match self
-            .wait_hearing(&Primitive::Any(any), deadline, &what)
-            .await
-        {
-            Ok(None) => {}
-            Ok(Some(refused)) => return Err(after_click(refused)),
-            Err(BrowserError::Timeout { .. }) => {
-                return Err(no_confirmation(
-                    "the page did not show its confirmation in the time the step allows".to_owned(),
-                ));
+        let mut answered = false;
+        let now = loop {
+            let mut any = vec![action.confirm.primitive()];
+            any.extend(
+                screen
+                    .variants
+                    .values()
+                    .map(|variant| Primitive::Visible(variant.when.query())),
+            );
+            match self
+                .wait_hearing(&Primitive::Any(any), deadline, &what)
+                .await
+            {
+                Ok(None) => {}
+                Ok(Some(refused)) => return Err(after_click(refused)),
+                Err(BrowserError::Timeout { .. }) => {
+                    return Err(no_confirmation(
+                        "the page did not show its confirmation in the time the step allows"
+                            .to_owned(),
+                    ));
+                }
+                Err(BrowserError::UnexpectedDialog { .. })
+                    if !dialog_answered
+                        && self.answer_declared_dialog(action, deadline, &what).await? =>
+                {
+                    dialog_answered = true;
+                    continue;
+                }
+                Err(BrowserError::UnexpectedDialog { .. }) => {
+                    return Err(StepFailure::unknown(
+                        browser_failure(
+                            &BrowserError::UnexpectedDialog {
+                                dispatch: Dispatch::Sent,
+                            },
+                            &what,
+                        )
+                        .failure,
+                    ));
+                }
+                Err(error @ BrowserError::ForeignOrigin(_)) => {
+                    return Err(after_click(browser_failure(&error, &what).failure));
+                }
+                Err(_) => {
+                    return Err(no_confirmation(
+                        "the browser was lost before the page showed its confirmation".to_owned(),
+                    ));
+                }
             }
-            Err(BrowserError::UnexpectedDialog { .. }) => {
-                return Err(StepFailure::unknown(
-                    browser_failure(
-                        &BrowserError::UnexpectedDialog {
-                            dispatch: Dispatch::Sent,
-                        },
-                        &what,
-                    )
-                    .failure,
-                ));
+            let now = self.variants_now(screen, deadline).await.map_err(|_| {
+                no_confirmation("the page could not be asked which state it is in".to_owned())
+            })?;
+            // A question the screen declares for this action is answered once,
+            // by the action it names, and the page's answer is waited for
+            // again. A second question stops the run below.
+            let question = now
+                .iter()
+                .find(|shown| {
+                    screen.variants.get(*shown).is_some_and(|variant| {
+                        matches!(variant.handling, Handling::Confirm | Handling::Dismiss)
+                    })
+                })
+                .cloned();
+            if let (false, Some(question)) = (answered, question) {
+                answered = true;
+                if let Err(failure) = self.answer_variant(name, screen, &question, deadline).await {
+                    return Err(if step.commits {
+                        no_confirmation(format!(
+                            "then the page asked `{question}`, which could not be answered: {}",
+                            failure.failure.message()
+                        ))
+                    } else {
+                        failure
+                    });
+                }
+                continue;
             }
-            Err(error @ BrowserError::ForeignOrigin(_)) => {
-                return Err(after_click(browser_failure(&error, &what).failure));
-            }
-            Err(_) => {
-                return Err(no_confirmation(
-                    "the browser was lost before the page showed its confirmation".to_owned(),
-                ));
-            }
-        }
-        let now = self.variants_now(screen, deadline).await.map_err(|_| {
-            no_confirmation("the page could not be asked which state it is in".to_owned())
-        })?;
+            break now;
+        };
         if let Some(variant) = now.iter().next() {
             let handling = screen
                 .variants
@@ -1407,6 +1862,16 @@ impl Session {
                 // of whether the save landed.
                 (Handling::Absent, true) => no_confirmation(format!(
                     "then the page showed the variant `{variant}`, which does not say whether the save landed"
+                )),
+                (Handling::Confirm | Handling::Dismiss, true) => no_confirmation(format!(
+                    "then the page showed the variant `{variant}` again after it was answered"
+                )),
+                (Handling::Confirm | Handling::Dismiss, false) => StepFailure::answered(fail(
+                    &codes::row::UNEXPECTED_PAGE,
+                    format!(
+                        "After {what}, the page shows the variant `{variant}` again after it was answered."
+                    ),
+                    "Look at the page; the screen declares a question the answer does not close.",
                 )),
                 (Handling::Absent, false) => StepFailure::answered(fail(
                     &codes::row::UNEXPECTED_PAGE,
@@ -1464,6 +1929,14 @@ enum Rule {
     Text,
     Select,
     Check,
+    Radio,
+    Combo,
+    Slider,
+    File,
+    Grid,
+    Tree,
+    Tabs,
+    Accordion,
 }
 
 /// The rule for a control's name. A name with no rule stops the step: the
@@ -1472,7 +1945,20 @@ fn known_control(control: &str) -> Result<Rule, StepFailure> {
     match control {
         "text" | "textarea" | "number" | "currency" | "measurement" => Ok(Rule::Text),
         "select" => Ok(Rule::Select),
-        "checkbox" => Ok(Rule::Check),
+        "checkbox" | "toggle" => Ok(Rule::Check),
+        "radio" => Ok(Rule::Radio),
+        // A date, a date and time, and a time are typed, or set through the
+        // field's own setter, in the form the browser's field takes:
+        // `2026-12-01`, `2026-12-01T09:30`, `09:30`. A rich-text editor is
+        // an editable element whose text is set as any text is.
+        "date" | "datetime" | "time" | "rich_text" => Ok(Rule::Text),
+        "combobox" | "autocomplete" => Ok(Rule::Combo),
+        "slider" => Ok(Rule::Slider),
+        "file" => Ok(Rule::File),
+        "grid" => Ok(Rule::Grid),
+        "tree" => Ok(Rule::Tree),
+        "tabs" => Ok(Rule::Tabs),
+        "accordion" => Ok(Rule::Accordion),
         other => Err(StepFailure::not_sent(fail(
             &codes::row::UNKNOWN_CONTROL,
             format!(
@@ -1534,6 +2020,30 @@ fn surface_addresses(plan: &a2m_core::Plan) -> BTreeSet<&str> {
                 .map(|address| address.address.as_str()),
         )
         .collect()
+}
+
+/// The origins a surface declares as refused without a stop, as addresses.
+fn quiet_origins(fields: &SurfaceFields, own: &Address) -> Result<Vec<Address>, StepFailure> {
+    let mut origins = Vec::new();
+    for text in &fields.refuse_quietly {
+        let address = Address::new(text).map_err(|_| {
+            codes::not_usable(
+                "an origin the surface refuses quietly is not an address with a scheme",
+            )
+        })?;
+        if address.origin() != *text {
+            return Err(codes::not_usable(
+                "an origin the surface refuses quietly is written with more than an origin: a scheme, a host, and a port at most",
+            ));
+        }
+        if address.origin() == own.origin() {
+            return Err(codes::not_usable(
+                "the surface refuses quietly its own origin",
+            ));
+        }
+        origins.push(address);
+    }
+    Ok(origins)
 }
 
 /// The tab's setup, from the run's context and its session.
@@ -1661,7 +2171,13 @@ pub(crate) fn tab_setup(
         .filter(|address| address.starts_with("https://") || address.starts_with("http://"))
         .filter_map(|address| Address::new(address).ok())
         .collect();
-    let origins = Origins::of([&own]).and_requests_to(declared.iter());
+    // The origins the surface declares as refused without a stop. Each is
+    // one origin with its scheme, and none is the surface's own: anything
+    // else is a stop by name, never a guess (rule 7).
+    let quiet = quiet_origins(&fields, &own)?;
+    let origins = Origins::of([&own])
+        .and_requests_to(declared.iter())
+        .and_refused_quietly(quiet.iter());
     Ok(TabSetup {
         origin,
         profile,
@@ -1772,6 +2288,9 @@ impl UiDriver {
             origin,
             sections,
             snapshots: self.snapshots.clone(),
+            held: self.held.clone(),
+            downloads: self.browsers.downloads_folder(),
+            staging: self.browsers.staging_folder(),
             posture: cx.posture,
         })
     }
@@ -1813,6 +2332,8 @@ impl Driver for UiDriver {
                 session.set(step, input).await
             } else if step.kind == INVOKE {
                 session.invoke(step, input).await
+            } else if step.kind == CALL_TOOL {
+                session.call_tool(step, input).await
             } else {
                 return Err(codes::not_usable(format!(
                     "the interface driver has no step of the kind `{}`",
@@ -1843,11 +2364,18 @@ impl Driver for UiDriver {
         })
     }
 
-    fn health(&self, _surface: &SurfaceRef) -> DriverHealth {
-        if self.installed {
-            DriverHealth::Ready
-        } else {
-            DriverHealth::Unavailable(codes::BROWSER_UNAVAILABLE)
+    fn health(&self, surface: &SurfaceRef) -> DriverHealth {
+        if !self.installed {
+            return DriverHealth::Unavailable(codes::BROWSER_UNAVAILABLE);
+        }
+        // A surface whose edge refused a visit lately is not ready: it is
+        // named by the refusal until the hold ends.
+        match origin_of(&surface.surface.address)
+            .ok()
+            .and_then(|origin| self.held.of(&origin))
+        {
+            Some(row) => DriverHealth::Unavailable(row.failure_code()),
+            None => DriverHealth::Ready,
         }
     }
 
@@ -1864,6 +2392,19 @@ impl Driver for UiDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every control the pack registers has a rule, and a control it did
+    /// not register is a stop with its own code, never a guess at a text
+    /// box (rule 7).
+    #[test]
+    fn every_registered_control_has_a_rule_and_any_other_is_a_stop() {
+        for control in crate::screens::CONTROLS {
+            assert!(known_control(control).is_ok(), "{control}");
+        }
+        let stopped = known_control("signature_pad").unwrap_err();
+        assert_eq!(stopped.failure.code().as_str(), "unknown_control");
+        assert_eq!(stopped.sent, a2m_provider::Sent::NotSent);
+    }
 
     #[test]
     fn an_origin_is_a_scheme_a_host_and_a_port() {

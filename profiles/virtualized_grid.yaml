@@ -1,0 +1,15 @@
+# Pages built around a grid component that draws only the rows in view. Its
+# rows have no identifiers worth locating by, and the component has not been
+# checked against its own documentation, so its tier is read only: a write
+# binding on a surface with this profile does not compile.
+profile: virtualized_grid
+detect:
+  any:
+    - {dom: "[role='grid'][aria-rowcount]"}
+locators:
+  priority: [role, label, text, css]
+  reject_id_patterns: ["^row-[0-9a-z]{6,}$"]
+input_commit: enter
+frames: {mode: found}
+drift_risk: high
+support_tier: read_only

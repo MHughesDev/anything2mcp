@@ -61,6 +61,7 @@ dependencies = [
  "a2m-vault",
  "axum",
  "reqwest",
+ "rusqlite",
  "rustls",
  "rustls-platform-verifier",
  "serde",
@@ -77,6 +78,13 @@ dependencies = [
 name = "a2m-bench"
 version = "0.0.1"
 dependencies = [
+ "a2m-actions",
+ "a2m-auth",
+ "a2m-core",
+ "a2m-policy",
+ "a2m-telemetry",
+ "a2m-vault",
+ "anything2mcp",
  "example-app",
  "reqwest",
  "serde",
@@ -108,6 +116,7 @@ dependencies = [
  "a2m-telemetry",
  "a2m-vault",
  "example-app",
+ "example-decompiler",
  "reqwest",
  "serde",
  "serde_json",
@@ -120,6 +129,15 @@ version = "0.0.1"
 dependencies = [
  "a2m-core",
  "unicode-normalization",
+]
+
+[[package]]
+name = "a2m-field-harness"
+version = "0.0.1"
+dependencies = [
+ "a2m-local",
+ "anything2mcp",
+ "tokio",
 ]
 
 [[package]]
@@ -230,6 +248,7 @@ dependencies = [
  "a2m-vault",
  "example-cli",
  "miniz_oxide",
+ "object",
  "quick-xml",
  "regex",
  "rustix",
@@ -276,8 +295,10 @@ dependencies = [
  "example-desk",
  "futures-core",
  "libc",
+ "msft-typelib",
  "objc2-application-services",
  "objc2-core-foundation",
+ "quick-xml",
  "serde",
  "serde_json",
  "sha2",
@@ -387,6 +408,7 @@ name = "a2m-pack-web-browser"
 version = "0.0.1"
 dependencies = [
  "a2m-core",
+ "a2m-netstate",
  "a2m-provider",
  "a2m-telemetry",
  "example-app",
@@ -424,6 +446,7 @@ dependencies = [
  "a2m-telemetry",
  "a2m-vault",
  "example-app",
+ "regex",
  "serde",
  "serde_json",
  "tokio",
@@ -452,11 +475,13 @@ dependencies = [
  "a2m-core",
  "a2m-files",
  "a2m-ledger",
+ "a2m-netstate",
  "a2m-sources",
  "a2m-telemetry",
  "a2m-vault",
  "command-fds",
  "example-cli",
+ "example-decompiler",
  "getrandom 0.4.3",
  "rustix",
  "serde",
@@ -1069,6 +1094,13 @@ name = "example-db"
 version = "0.0.1"
 dependencies = [
  "rusqlite",
+]
+
+[[package]]
+name = "example-decompiler"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -1707,6 +1739,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "msft-typelib"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e512f180d2ef529bfc4bb9354857f3cd2f9e8da320d74d8fc177c8cd0ce48aa1"
+
+[[package]]
 name = "nix"
 version = "0.31.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1840,6 +1878,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7216bd11cbda54ccabcab84d523dc93b858ec75ecfb3a7d89513fa22464da396"
 dependencies = [
  "objc2-core-foundation",
+]
+
+[[package]]
+name = "object"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11dbdb66876026054e4ffc8d757d862bdf5df5aebd5c0b95a41f17832a94f7d2"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]

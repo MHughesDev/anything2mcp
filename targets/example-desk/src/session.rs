@@ -48,6 +48,32 @@ fn programs() -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+/// The bus name of the service that has a `.service` file and is not running.
+pub(crate) const IDLE_NAME: &str = "org.example.Desk.Idle";
+
+/// A service the session's bus knows by a `.service` file and that is not
+/// running: asking the bus for it with no flag starts a program of the
+/// stand's own, which leaves a marker; asking with the flag that forbids it
+/// leaves none. The one way a test sees whether anything was started.
+#[derive(Debug, Clone)]
+pub struct IdleService {
+    /// The bus name the file is for.
+    pub name: String,
+    /// The `.service` file, which a test may hand a scout.
+    pub service_file: PathBuf,
+    /// The file the started program makes. It is there only once the bus
+    /// has started the program.
+    pub marker: PathBuf,
+}
+
+impl IdleService {
+    /// Whether the bus started the program.
+    #[must_use]
+    pub fn started(&self) -> bool {
+        self.marker.exists()
+    }
+}
+
 fn config(folder: &Path) -> String {
     format!(
         r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
@@ -57,6 +83,7 @@ fn config(folder: &Path) -> String {
   <listen>unix:dir={}</listen>
   <auth>EXTERNAL</auth>
   <standard_session_servicedirs/>
+  <servicedir>{services}</servicedir>
   <policy context="default">
     <allow send_destination="*" eavesdrop="true"/>
     <allow eavesdrop="true"/>
@@ -64,7 +91,8 @@ fn config(folder: &Path) -> String {
   </policy>
 </busconfig>
 "#,
-        folder.display()
+        folder.display(),
+        services = folder.join("services").display()
     )
 }
 
@@ -104,6 +132,31 @@ impl Session {
             std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o700))
                 .map_err(made("closing the runtime folder"))?;
         }
+        let services = folder.join("services");
+        std::fs::create_dir_all(&services).map_err(made("making the services folder"))?;
+        let marker = folder.join("idle-started");
+        let program = folder.join("idle-start");
+        std::fs::write(
+            &program,
+            format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        )
+        .map_err(made("writing the idle service's program"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755))
+                .map_err(made("making the idle service's program runnable"))?;
+        }
+        let service_file = services.join(format!("{}.service", IDLE_NAME));
+        std::fs::write(
+            &service_file,
+            format!(
+                "[D-BUS Service]\nName={}\nExec={}\n",
+                IDLE_NAME,
+                program.display()
+            ),
+        )
+        .map_err(made("writing the idle service's file"))?;
         let conf = folder.join("session.conf");
         std::fs::write(&conf, config(&folder)).map_err(made("writing the bus's configuration"))?;
         let mut child = Command::new(daemon)
@@ -143,6 +196,19 @@ impl Session {
             address,
             folder,
         }))
+    }
+
+    /// The service that has a `.service` file and is not running.
+    #[must_use]
+    pub fn idle_service(&self) -> IdleService {
+        IdleService {
+            name: IDLE_NAME.to_owned(),
+            service_file: self
+                .folder
+                .join("services")
+                .join(format!("{}.service", IDLE_NAME)),
+            marker: self.folder.join("idle-started"),
+        }
     }
 
     /// The bus's address, for a client of this session only.

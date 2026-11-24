@@ -145,6 +145,10 @@ async fn two_identities_never_share_a_process_or_a_data_directory() {
     // The same profile again is the same browser, not a second one.
     let again = stand.open(&clerk).await;
     assert_eq!(first.subsystem(), again.subsystem());
+    // Two programs were started under this stand's profile root, and the
+    // count of launches a test reads says so.
+    let home = a2m_provider::resolved_path(&stand.folder.0).unwrap();
+    assert_eq!(test_support::launches_under(&home), 2);
 
     let running = stand.supervisor.list();
     assert_eq!(running.len(), 2);

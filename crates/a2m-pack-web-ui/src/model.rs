@@ -61,6 +61,43 @@ impl Screen {
         out
     }
 
+    /// Puts every locator of the screen inside the frame the screen is in
+    /// (spec section 301): the screen's own words stay the page's, and the
+    /// browser is asked for the frame's document.
+    pub(crate) fn inside(&mut self, frame: &Locator) {
+        self.ready.inside(frame);
+        let fingerprint = |print: &mut Option<Fingerprint>| {
+            if let Some(print) = print {
+                print.section.inside(frame);
+                print.frame = Some(frame.clone());
+            }
+        };
+        // An element held to a fingerprint is looked for inside the
+        // fingerprint's section, which is in the frame; its own locators
+        // keep no scope of their own, which the driver would refuse.
+        let locators = |locate: &mut [Locator], print: &Option<Fingerprint>| {
+            if print.is_none() {
+                locate.iter_mut().for_each(|locator| locator.inside(frame));
+            }
+        };
+        for field in self.fields.values_mut() {
+            locators(&mut field.locate, &field.fingerprint);
+            fingerprint(&mut field.fingerprint);
+        }
+        for action in self.actions.values_mut() {
+            locators(&mut action.locate, &action.fingerprint);
+            fingerprint(&mut action.fingerprint);
+            action.confirm.inside(frame);
+        }
+        if let Some(rows) = &mut self.rows {
+            locators(&mut rows.locate, &rows.fingerprint);
+            fingerprint(&mut rows.fingerprint);
+        }
+        for variant in self.variants.values_mut() {
+            variant.when.inside(frame);
+        }
+    }
+
     /// Whether a variant says the record the screen shows does not exist.
     pub(crate) fn can_be_absent(&self) -> bool {
         self.variants
@@ -138,6 +175,27 @@ impl Locator {
         }
     }
 
+    /// Puts the locator inside a frame: the end of its chain of scopes is
+    /// inside it, so that the whole match is made in the frame's document.
+    pub(crate) fn inside(&mut self, frame: &Locator) {
+        match &mut self.within {
+            Some(scope) => scope.inside(frame),
+            None => self.within = Some(Box::new(frame.clone())),
+        }
+    }
+
+    /// The base's query for this locator, in the frame when there is one.
+    pub(crate) fn query_in(&self, frame: Option<&Locator>) -> Query {
+        match frame {
+            Some(frame) => {
+                let mut framed = self.clone();
+                framed.inside(frame);
+                framed.query()
+            }
+            None => self.query(),
+        }
+    }
+
     /// The same match, inside the one element `section` matches. Used only
     /// for a locator with no `within` of its own.
     pub(crate) fn query_inside(&self, section: &Locator) -> Query {
@@ -152,6 +210,10 @@ pub(crate) struct Fingerprint {
     pub section: Locator,
     /// Text that must be shown inside that section.
     pub near_text: Option<String>,
+    /// The frame the screen is in, when it is in one: the element is first
+    /// looked for there, and then held to the section, which is there too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<Locator>,
 }
 
 /// A condition of a screen. Each is one the base waits on by an observer.
@@ -177,6 +239,17 @@ pub(crate) enum Cond {
 }
 
 impl Cond {
+    /// Puts every locator of the condition inside a frame.
+    pub(crate) fn inside(&mut self, frame: &Locator) {
+        match self {
+            Self::Visible(locator) | Self::Hidden(locator) | Self::Enabled(locator) => {
+                locator.inside(frame);
+            }
+            Self::Text { locate, .. } => locate.inside(frame),
+            Self::All(of) | Self::Any(of) => of.iter_mut().for_each(|cond| cond.inside(frame)),
+        }
+    }
+
     /// The base's condition.
     pub(crate) fn primitive(&self) -> Primitive {
         match self {
@@ -234,6 +307,16 @@ pub(crate) struct Field {
     pub fingerprint: Option<Fingerprint>,
     /// What is read of it.
     pub read: ReadHow,
+    /// For a `radio`: the label of each choice, by the code it stores. The
+    /// field's locators find the group; each choice is the radio button of
+    /// that label inside it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: BTreeMap<String, String>,
+    /// For a `grid`: the place of the field's cell among the cells of a
+    /// row, counted from zero. The field's locators find the grid; the row
+    /// is the one whose first cell shows the key the binding gives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
 }
 
 /// One action of a screen.
@@ -247,6 +330,33 @@ pub(crate) struct Action {
     pub confirm: Cond,
     /// Whether it saves in the application.
     pub commits: bool,
+    /// The dialog of the browser the action's click is expected to open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialog: Option<NativeDialog>,
+    /// The download the action's click is expected to start: the one file
+    /// the page may offer, and at most this many bytes of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download: Option<DownloadDecl>,
+}
+
+/// A download an action declares (decision 0362, the download record).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct DownloadDecl {
+    /// The most bytes the file may hold.
+    pub most_bytes: u64,
+    /// The output that takes the name of the file the engine made.
+    pub into: Option<String>,
+}
+
+/// A dialog of the browser, such as a confirmation before saving, that an
+/// action declares as expected: what it says, and how it is answered. A
+/// dialog that says anything else is not answered (rule 7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NativeDialog {
+    /// What the dialog must say, exactly.
+    pub says: String,
+    /// Whether it is accepted; otherwise it is dismissed.
+    pub accept: bool,
 }
 
 /// What a variant means for the step that meets it.
@@ -257,6 +367,12 @@ pub(crate) enum Handling {
     Absent,
     /// The application refused; the run stops.
     Stop,
+    /// A question the page asks of the action just performed, which the
+    /// variant's `with` action answers by agreeing (decision 0350).
+    Confirm,
+    /// A state in the way, such as a notice over the form, which the
+    /// variant's `with` action closes.
+    Dismiss,
 }
 
 /// A state a screen may be in instead of the one its fields describe.
@@ -266,6 +382,9 @@ pub(crate) struct Variant {
     pub when: Locator,
     /// What it means.
     pub handling: Handling,
+    /// For `confirm` and `dismiss`: the action of the screen that answers it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub with: Option<String>,
 }
 
 /// The table of a screen.
@@ -336,6 +455,22 @@ pub(crate) struct SetStep {
     pub field: String,
 }
 
+/// The payload of a `call_tool` step: the tool a page registered, called
+/// by its name, once the page shows the digest the binding holds. Each
+/// argument arrives as the step's argument `arg.<name>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CallToolStep {
+    /// The tool's name.
+    pub tool: String,
+    /// The digest of the tool's name, description, and input schema, as 64
+    /// lowercase hexadecimal characters.
+    pub digest: String,
+    /// The names of the arguments, in the order the binding wrote them.
+    pub args: Vec<String>,
+    /// The output that takes the tool's text, when the operation has one.
+    pub result: Option<String>,
+}
+
 /// The payload of an `invoke` step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct InvokeStep {
@@ -353,6 +488,12 @@ pub(crate) struct SurfaceFields {
     pub color_scheme: Option<String>,
     /// Whether the page is told the person prefers reduced motion.
     pub reduced_motion: Option<bool>,
+    /// Origins the surface's pages are refused without a stop: a request
+    /// of the page to one is failed in the browser, nothing is reported,
+    /// and the run goes on (package P3b). Each is an origin with its
+    /// scheme.
+    #[serde(default)]
+    pub refuse_quietly: Vec<String>,
 }
 
 /// A viewport.

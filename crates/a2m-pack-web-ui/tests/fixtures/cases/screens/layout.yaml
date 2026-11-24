@@ -1,0 +1,21 @@
+# Case 25: one form in one of two layouts, chosen by a flag the page reads.
+# The locators are in order; a third layout nobody declared is a stop.
+screen: layout
+surface: app
+reach: {url: "/cases/layout/{flag}"}
+ready: {visible: {role: heading, name: "Order quantity"}}
+fields:
+  quantity:
+    type: text
+    control: text
+    locate:
+      - {label: Quantity}
+      - {placeholder: Qty}
+    fingerprint: {section: {role: main, name: ""}}
+actions:
+  save:
+    locate:
+      - {role: button, name: "Save quantity"}
+    fingerprint: {section: {role: main, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, equals: "Saved."}}
+    commits: true

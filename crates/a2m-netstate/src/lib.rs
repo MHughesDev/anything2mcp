@@ -39,7 +39,9 @@
 
 pub mod bound;
 pub mod codes;
+mod dhcp;
 mod error;
+mod fingerprint;
 mod model;
 mod sys;
 pub mod text;
@@ -49,7 +51,11 @@ use std::collections::BTreeMap;
 use a2m_core::ScopedHost;
 
 pub use bound::Cut;
+pub use dhcp::{DhcpServer, DhcpServers};
 pub use error::{Fact, NetError};
+pub use fingerprint::{
+    FingerprintFact, FingerprintReading, NetworkFingerprint, Readings, Recognition, fingerprint,
+};
 pub use model::{
     Absent, AbsentReason, AddressStanding, Family, HardwareAddress, Interface, InterfaceAddress,
     InterfaceKind, InterfaceStanding, Interfaces, LinkState, Listener, Listeners, Neighbour,
@@ -231,6 +237,17 @@ pub fn proxy() -> Result<Proxy, NetError> {
         &mut read.cut,
     );
     Ok(read)
+}
+
+/// The DHCP server each interface was leased its address by, read from the
+/// lease files of the system's own client. Built for Linux; elsewhere
+/// [`NetError::NotBuilt`].
+///
+/// # Errors
+///
+/// [`NetError`] when the system refuses, or has no reader here.
+pub fn dhcp_servers() -> Result<DhcpServers, NetError> {
+    dhcp::read()
 }
 
 /// Where the machine stands, from two readings already made: for each

@@ -22,7 +22,7 @@ use a2m_telemetry::Phase;
 use crate::codes;
 use crate::compare::{self, Field};
 use crate::control::{Clearance, EngineEvent, Evidence, GuardQuestion, Preview};
-use crate::diff::{Diff, DiffAction, DiffBinding, DiffField, DiffRecord};
+use crate::diff::{Diff, DiffAction, DiffBinding, DiffField, DiffPrecondition, DiffRecord};
 use crate::job::{JobKind, RecordSnapshot};
 use crate::loaded::{Loaded, Scope};
 use crate::run::{Candidate, RecordCx, Run, StepCx, Stop, masked, merge, operation};
@@ -248,12 +248,15 @@ fn commit_failure(failure: StepFailure) -> Failure {
 }
 
 /// What the failure of a provider's step becomes once the record's write
-/// was sent: the write is in doubt. Two classes stand, because each keeps
-/// the record in doubt and says more: `possible_commit` itself, and
-/// `session_expired`, which rests the run until a person signs in.
+/// was sent: the write is in doubt. Only `possible_commit` itself stands.
+/// A session that ended after the write was sent is in doubt too, never
+/// `session_expired` (decision 0375): the write may have landed, so the run
+/// says so, `retry_safe` false, and the keeper has been told of the end
+/// already. A resume needs a session like any other, so it waits for the
+/// sign-in, and then reconciles before anything is written again.
 fn after_send(failure: Failure, what: &str) -> Failure {
     match failure.class() {
-        FailureClass::PossibleCommit | FailureClass::SessionExpired => failure,
+        FailureClass::PossibleCommit => failure,
         _ => in_doubt(what, &failure),
     }
 }
@@ -372,28 +375,28 @@ fn parse_key(text: &str) -> Option<RecordKey> {
 }
 
 /// The outputs an operation declares, from what its steps observed, each
-/// normalized by its field type.
+/// normalized by its field type. Every declared output is in what this
+/// returns, on every path (decision 0315): one that was not observed and
+/// may be absent is `null`; one that was not observed and may not be
+/// absent stops the run, as a `null` in it does.
 fn outputs_of(
     loaded: &Loaded,
     operation: &OperationPlan,
     observed: &Values,
-    all_required: bool,
 ) -> Result<Values, Failure> {
     let mut out = Values::new();
     for output in &operation.outputs {
-        let Some(raw) = observed.get(&output.name) else {
-            if all_required {
+        let value = match observed.get(&output.name) {
+            Some(raw) => output_value(loaded, operation, output, raw)?,
+            None if output.may_be_absent => Value::Null,
+            None => {
                 return Err(output_unexpected(format!(
-                    "The operation `{}` returned no value for its output `{}`.",
+                    "The operation `{}` returned no value for its output `{}`, which is not declared `may_be_absent`.",
                     operation.name, output.name
                 )));
             }
-            continue;
         };
-        out.insert(
-            output.name.clone(),
-            output_value(loaded, operation, output, raw)?,
-        );
+        out.insert(output.name.clone(), value);
     }
     Ok(out)
 }
@@ -436,6 +439,18 @@ pub(crate) fn output_value(
             let mut normalized = Vec::with_capacity(items.len());
             for (at, item) in items.iter().enumerate() {
                 if item.is_null() {
+                    // A `null` item is the system's "no value here", and
+                    // only an output that may be absent is given one; in
+                    // any other, it is a value the schema does not admit
+                    // (decision 0305).
+                    if !output.may_be_absent {
+                        return Err(unexpected(format!(
+                            "The item {} of the output `{}` of `{}` has no value, and the output is not declared `may_be_absent`.",
+                            at + 1,
+                            output.name,
+                            operation.name
+                        )));
+                    }
                     normalized.push(Value::Null);
                     continue;
                 }
@@ -462,6 +477,15 @@ pub(crate) fn output_value(
                 ))
             })?,
     };
+    // A `null` stops the run unless the output may be absent: the output
+    // schema of one that may not does not admit `null`, whichever pack
+    // gave it (decision 0305).
+    if value.is_null() && !output.may_be_absent {
+        return Err(unexpected(format!(
+            "The output `{}` of `{}` has no value, and it is not declared `may_be_absent`.",
+            output.name, operation.name
+        )));
+    }
     if !value.is_null() && !value.has_type(&output.ty) {
         return Err(unexpected(format!(
             "The output `{}` of `{}` is not a {}.",
@@ -754,6 +778,17 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
         // Guard: a write needs a kernel that is `ok`.
         run.may_write()?;
     }
+    // Guard: the session's state allows the call. The steps the call is
+    // sure to run are the ones asked about: a step under a condition or run
+    // for each row may not run at all, and is left to choose.
+    let sure: Vec<&OperationPlan> = steps
+        .iter()
+        .filter(|step| step.when.is_none() && step.for_each.is_none())
+        .map(|step| operation(&loaded, step.operation))
+        .collect::<Result<_, _>>()?;
+    for found in &sure {
+        run.guard_sessions(found)?;
+    }
     if run.job.snapshot.is_none() {
         run.moved(RunState::Validating).await?;
     }
@@ -778,6 +813,10 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
             records: writing.then_some(rows.max(1)),
         })
         .await?;
+    // Guard: the surface has no edge block.
+    for found in &sure {
+        run.guard_edge(found)?;
+    }
     if let Some(longest) = limits.max_duration_ms {
         run.time_limit = Some(run.engine.deps.clock.elapsed() + Duration::from_millis(longest));
     }
@@ -865,6 +904,14 @@ async fn read_steps_of(
     Ok(())
 }
 
+/// The name of the surface `binding` acts on.
+fn surface_name(run: &Run<'_>, loaded: &Loaded, binding: &BindingPlan) -> a2m_core::SurfaceName {
+    loaded
+        .plan
+        .surface(binding.surface)
+        .map_or_else(|| run.surface_of(0), |surface| surface.name.clone())
+}
+
 /// One read through the loop: choose, prepare, act, confirm, and record the
 /// result. Falls to the next qualifying binding after `drift` or a
 /// `transient` failure that outlasted its retries.
@@ -883,6 +930,7 @@ async fn read_operation(
         run.chosen(&found.name, candidate, &passed_over).await;
         let binding = &found.bindings[candidate.binding];
         let mut asked_again = false;
+        run.drift_step = None;
         let failure = loop {
             match read_pass(
                 run,
@@ -897,6 +945,18 @@ async fn read_operation(
             .await
             {
                 Ok(values) => {
+                    // A canary's pass vouches again for everything the
+                    // binding relied on (decision 0380).
+                    if run.job.kind == JobKind::Canary {
+                        run.tell(EngineEvent::BindingHealth {
+                            operation: found.name.clone(),
+                            mode: binding.mode.clone(),
+                            surface: surface_name(run, loaded, binding),
+                            failure: None,
+                            knowledge: crate::drift::knowledge_of(&loaded.plan, binding),
+                        })
+                        .await;
+                    }
                     // A binding in shadow runs beside it, within its bound,
                     // and changes nothing the caller is given.
                     crate::shadow::beside(
@@ -934,14 +994,16 @@ async fn read_operation(
             FailureClass::Drift | FailureClass::Transient
         );
         if failure.class() == FailureClass::Drift {
+            let step = run.drift_step.take();
+            let knowledge = crate::drift::drifted_knowledge(&loaded.plan, binding, step.as_ref())
+                .into_iter()
+                .collect();
             run.tell(EngineEvent::BindingHealth {
                 operation: found.name.clone(),
                 mode: binding.mode.clone(),
-                surface: loaded
-                    .plan
-                    .surface(binding.surface)
-                    .map_or_else(|| run.surface_of(0), |surface| surface.name.clone()),
+                surface: surface_name(run, loaded, binding),
                 failure: Some((failure.class(), failure.code().clone())),
+                knowledge,
             })
             .await;
         }
@@ -981,7 +1043,7 @@ async fn read_pass(
         .map_err(|failure| (failure, None))?;
     let failed = |failure: Failure| (failure, Some(held));
     match observe(run, held, binding, scope, fields).await {
-        Ok(Some(seen)) => outputs_of(loaded, found, &seen, true).map_err(failed),
+        Ok(Some(seen)) => outputs_of(loaded, found, &seen).map_err(failed),
         Ok(None) => Err(failed(codes::fail(
             &codes::row::OUTPUT_UNEXPECTED,
             format!("The operation `{}` found nothing to read.", found.name),
@@ -1163,7 +1225,7 @@ async fn write_tool(run: &mut Run<'_>, loaded: &Loaded, tool: &mut Tool<'_>) -> 
                         run.checkpoint(Duration::ZERO)?;
                         let held = hold_for(run, found, record, None, false).await?;
                         if let Some(raw) = read_record(run, found, record, held, false).await? {
-                            record.outputs = outputs_of(loaded, found, &raw, false)?;
+                            record.outputs = outputs_of(loaded, found, &raw)?;
                         }
                     }
                 }
@@ -1324,8 +1386,16 @@ fn derive_step(
             0
         } else {
             let scope = run.base.with_input(&call.inputs);
-            let (candidates, _) = run.candidates(found, &scope)?;
-            candidates.first().map_or(0, |candidate| candidate.binding)
+            match run.candidates(found, &scope) {
+                Ok((candidates, _)) => candidates.first().map_or(0, |candidate| candidate.binding),
+                // On a resume the binding is the one the approved diff
+                // names. Whether it may act now is asked when the record is
+                // read, after the records in doubt are reconciled, so that a
+                // run with a write in doubt never says less than that
+                // (decision 0377).
+                Err(_) if run.job.snapshot.is_some() => 0,
+                Err(failure) => return Err(Stop::Fail(failure)),
+            }
         };
         one_save(found, found.bindings.get(binding))?;
         if run.posture != Posture::Live {
@@ -1487,6 +1557,7 @@ fn adopt(
         // is never sent back to the system as an argument or a key, and the
         // record is marked.
         let mut known = Values::new();
+        let mut masked_names = Vec::new();
         let stored = held
             .before_commit
             .iter()
@@ -1495,6 +1566,7 @@ fn adopt(
         for (name, value) in stored {
             if masked(value) {
                 record.masked = true;
+                masked_names.push(name.to_owned());
             } else {
                 known.insert(name.to_owned(), value.clone());
             }
@@ -1520,7 +1592,24 @@ fn adopt(
         // outputs with its save, and they were stored with it: the steps
         // after it take them, as they take a verified record's.
         if held.state == RecordState::Verified || held.acknowledged {
-            record.outputs = outputs_of(loaded, found, &record.known, false)?;
+            // An output the ledger holds masked is not handed back: not as
+            // the mask, which is not the system's value, and not as `null`,
+            // which would say the system holds none (decision 0315).
+            if let Some(output) = found
+                .outputs
+                .iter()
+                .find(|output| masked_names.contains(&output.name))
+            {
+                return Err(Stop::Fail(codes::fail(
+                    &codes::row::OUTPUT_UNEXPECTED,
+                    format!(
+                        "The ledger holds the output `{}` of `{}` masked by the redactor, so the resumed run cannot hand it back.",
+                        output.name, found.name
+                    ),
+                    "The system showed a registered secret in an output; look at the record in the system, and change the operation so that it does not return that value.",
+                )));
+            }
+            record.outputs = outputs_of(loaded, found, &record.known)?;
         }
     }
     Ok(())
@@ -1881,7 +1970,7 @@ async fn preview_record(
     if action == DiffAction::Unchanged {
         record.state = RecordState::Unchanged;
         if let Some(raw) = &record.current {
-            record.outputs = outputs_of(loaded, found, raw, false)?;
+            record.outputs = outputs_of(loaded, found, raw)?;
         }
     }
     Ok((
@@ -1895,6 +1984,16 @@ async fn preview_record(
             evidence,
             binding,
             could_take,
+            preconditions: compare::precondition_fields(loaded, found)
+                .iter()
+                .filter_map(|field| {
+                    let value = record.inputs.get(&field.name)?;
+                    Some(DiffPrecondition {
+                        name: field.name.clone(),
+                        value: kept_value(run, &compare::guarded(field, value.clone())),
+                    })
+                })
+                .collect(),
         },
         PlannedRecord {
             step_seq: record.record.step_seq,
@@ -1989,9 +2088,16 @@ async fn reconcile(
             reconcile_keyless(run, loaded, found, record, held).await?;
             continue;
         }
-        // A failure of a class that would end the run for good says only
-        // that the record could not be read: it is still in doubt, and the
-        // run stops for a resume or a person.
+        // The record could not be read: it is still in doubt, whatever the
+        // read failed with, and the run says so (decision 0377), by the
+        // rule a failure after the save follows (`after_send`): a surface
+        // blocked at the edge or held off by its driver, a connection lost,
+        // is the write in doubt, naming the cause, and the scheduler
+        // reconciles again after a wait that grows. A failure of a class
+        // that would end the run for good says that a person must settle
+        // it. A session that ended stands and rests the run until a person
+        // signs in: a reconcile queued again would only spend the sign-in's
+        // attempts against a credential the system refuses.
         let (raw, seen, evidence, context) = match read_in_doubt(
             run,
             loaded,
@@ -2011,6 +2117,12 @@ async fn reconcile(
                         failure.code()
                     ),
                     "Look at the system, then resume the run, cancel it, or settle the record by hand.",
+                )));
+            }
+            Err(Stop::Fail(failure)) if failure.class() != FailureClass::SessionExpired => {
+                return Err(Stop::Fail(after_send(
+                    failure,
+                    "reading the record in doubt",
                 )));
             }
             read => read?,
@@ -2047,6 +2159,7 @@ async fn reconcile(
                         digest: seen.digest(),
                         after: Some(after),
                         evidence,
+                        outputs: None,
                     },
                     acted: Acted {
                         assigned_key,
@@ -2060,7 +2173,7 @@ async fn reconcile(
         match run.control.settle(record.record, reconciled).await? {
             Settled::Verified => {
                 record.state = RecordState::Verified;
-                record.outputs = outputs_of(loaded, found, &observed, false)?;
+                record.outputs = outputs_of(loaded, found, &observed)?;
             }
             Settled::Planned => {
                 // Nothing landed, so what was recorded for the lost write
@@ -2361,6 +2474,7 @@ async fn keyless_found(
             digest: seen.digest(),
             after: Some(after),
             evidence,
+            outputs: None,
         },
         acted: Acted {
             assigned_key: record
@@ -2373,7 +2487,7 @@ async fn keyless_found(
     match run.control.settle(record.record, reconciled).await? {
         Settled::Verified => {
             record.state = RecordState::Verified;
-            record.outputs = outputs_of(loaded, found, &observed, false)?;
+            record.outputs = outputs_of(loaded, found, &observed)?;
             Ok(())
         }
         Settled::Planned | Settled::Stale => Err(keyless_in_doubt(
@@ -2590,7 +2704,20 @@ async fn commit_point(
         && record
             .seen_in
             .is_none_or(|context| context == run.serial_of(held));
-    if !fresh && found.identity.strategy != IdentityStrategy::None && !cannot_read(binding) {
+    // A record found by its stamp that is still `planned` was never sent:
+    // its intent comes next, and nothing is sent before an intent. No record
+    // of the system can carry its stamp, so the preview did not look for it
+    // and this check does not either (decision 0376). A look for it could
+    // say nothing more, and where the system cannot prove an absence by
+    // itself, such as a log that has lost its front, it would stop the
+    // write for nothing.
+    let never_sent = found.identity.strategy == IdentityStrategy::Stamped
+        && record.state == RecordState::Planned;
+    if !fresh
+        && !never_sent
+        && found.identity.strategy != IdentityStrategy::None
+        && !cannot_read(binding)
+    {
         let raw = read_record(run, found, record, held, false).await?;
         let seen = raw
             .as_ref()
@@ -2951,17 +3078,9 @@ async fn commit_point(
     let evidence = read_evidence(run, record, raw.as_ref(), seen.as_ref()).await?;
     let seen = seen.unwrap_or_default();
     let after = store(run, BlobKind::Values, encode_values(&kept(run, &seen))?).await?;
-    run.control
-        .verified(
-            &acted,
-            ReadBack {
-                digest: seen.digest(),
-                after: Some(after),
-                evidence,
-            },
-        )
-        .await?;
-    record.state = RecordState::Verified;
+    // What the record gives the steps after it: what its steps observed and
+    // what the read-back showed. It is stored with `verified`, so that a
+    // resume hands back the same outputs as this run (package 3.7).
     let mut observed = record.known.clone();
     for (name, value) in all.values {
         observed.insert(name, value);
@@ -2971,7 +3090,24 @@ async fn commit_point(
             observed.insert(name, value);
         }
     }
-    record.outputs = outputs_of(loaded, found, &observed, false)?;
+    let outputs = if observed.is_empty() {
+        None
+    } else {
+        Some(store(run, BlobKind::Values, encode_values(&kept(run, &observed))?).await?)
+    };
+    run.control
+        .verified(
+            &acted,
+            ReadBack {
+                digest: seen.digest(),
+                after: Some(after),
+                evidence,
+                outputs,
+            },
+        )
+        .await?;
+    record.state = RecordState::Verified;
+    record.outputs = outputs_of(loaded, found, &observed)?;
     Ok(())
 }
 
@@ -3000,7 +3136,7 @@ async fn acknowledge(
     // Its outputs are what its steps gave up to and with the save, which
     // the ledger stored with its `acted` mark: the same a resume hands back.
     // A confirm step's values are evidence, not outputs.
-    record.outputs = outputs_of(loaded, found, &record.known, false)?;
+    record.outputs = outputs_of(loaded, found, &record.known)?;
     Ok(())
 }
 

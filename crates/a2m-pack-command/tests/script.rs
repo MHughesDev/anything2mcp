@@ -49,6 +49,8 @@ struct Pair {
     /// Whether the argument list starts with `--`, so that a value with a
     /// leading dash may follow. Not every interpreter hands a script `--`.
     dashes: bool,
+    /// The variables passed from the engine's environment.
+    pass: &'static [&'static str],
 }
 
 /// A project with the target `example` in it, whose one surface is the
@@ -98,9 +100,14 @@ fn files(
     };
     args.extend((1..=count).map(|n| format!("{{param: p{n}}}")));
     let commands = format!(
-        "surface: shell\nprogram:\n  digests: {{{}: [\"sha256:{digest}\"]}}\n  interpreter: {{args: [{}]}}\n  env: {{set: {{EXAMPLE_OUT: {}}}}}\n  limits: {{timeout: 60s}}\n  exits: {{0: ok}}\ncommands:\n  echo_script:\n    effect: read\n    script: {{path: {}, digest: \"sha256:{script_digest}\"}}\n    params: {{{}}}\n    args: [{}]\n    output: none\n",
+        "surface: shell\nprogram:\n  digests: {{{}: [\"sha256:{digest}\"]}}\n  interpreter: {{args: [{}]}}\n  env: {{{}set: {{EXAMPLE_OUT: {}}}}}\n  limits: {{timeout: 60s}}\n  exits: {{0: ok}}\ncommands:\n  echo_script:\n    effect: read\n    script: {{path: {}, digest: \"sha256:{script_digest}\"}}\n    params: {{{}}}\n    args: [{}]\n    output: none\n",
         current_platform(),
         fixed.join(", "),
+        if pair.pass.is_empty() {
+            String::new()
+        } else {
+            format!("pass: [{}], ", pair.pass.join(", "))
+        },
         quoted(&out.display().to_string()),
         quoted(script_path),
         params.join(", "),
@@ -242,6 +249,7 @@ fn shell_pair() -> Pair {
         name: "echo.sh",
         text: "for a in \"$@\"; do printf '%s\\000' \"$a\"; done > \"$EXAMPLE_OUT\"\n".to_owned(),
         dashes: true,
+        pass: &[],
     }
 }
 
@@ -259,6 +267,7 @@ fn python_pair() -> Option<Pair> {
         name: "echo.py",
         text: "import os, sys\nwith open(os.environ['EXAMPLE_OUT'], 'wb') as out:\n    for a in sys.argv[1:]:\n        out.write(os.fsencode(a) + b'\\0')\n".to_owned(),
         dashes: true,
+        pass: &[],
     })
 }
 
@@ -395,6 +404,7 @@ fn powershell_pair() -> Option<Pair> {
         text: "$bytes = New-Object System.Collections.Generic.List[byte]\r\nforeach ($a in $args) { $bytes.AddRange([System.Text.Encoding]::UTF8.GetBytes([string]$a)); $bytes.Add(0) }\r\n[System.IO.File]::WriteAllBytes($env:EXAMPLE_OUT, $bytes.ToArray())\r\n".to_owned(),
         // PowerShell takes `--` as its own end of parameters.
         dashes: false,
+        pass: &[],
     })
 }
 
@@ -404,6 +414,122 @@ async fn powershell_receives_each_value_as_literal_text() {
     if let Some(pair) = powershell_pair() {
         each_value_arrives_as_it_was(&pair).await;
     }
+}
+
+/// A program found on the search path, as the file it leads to, or why the
+/// test cannot go on: on a CI machine a `required` launcher is always
+/// there, so there it is a failure; elsewhere the test is skipped.
+fn on_path(name: &str, required: bool) -> Option<PathBuf> {
+    let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    let found = std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|folder| folder.join(&file))
+            .find(|path| path.is_file())
+            .and_then(|path| std::fs::canonicalize(path).ok())
+    });
+    if found.is_none() {
+        assert!(
+            !required || std::env::var_os("CI").is_none(),
+            "no `{file}` on the search path of this CI machine"
+        );
+        println!("skipped: no `{file}` on the search path of this machine");
+    }
+    found
+}
+
+/// The JavaScript runtime as the launcher of a fixed pair (decision 0299,
+/// step two). Where its own folder is not closed to other users, as the
+/// check requires, the test runs a copy of it in a folder of the test's own:
+/// the runtime is one file.
+fn node_pair() -> Option<(Pair, Option<Folder>)> {
+    let found = on_path("node", true)?;
+    let trust = a2m_provider::ProgramTrust::default();
+    let role = a2m_provider::ProgramRole::Interpreter;
+    let (interpreter, copy) = if a2m_provider::check_program(&found, &trust, role).is_ok() {
+        (found, None)
+    } else {
+        let folder = Folder::new("node");
+        let copy = folder
+            .path()
+            .join(format!("node{}", std::env::consts::EXE_SUFFIX));
+        std::fs::copy(&found, &copy).unwrap();
+        // The copy keeps the mode of the runner's file, which may be open
+        // to a group: make it the user's own and closed to others.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        (copy, Some(folder))
+    };
+    let pair = Pair {
+        interpreter,
+        fixed: &[],
+        name: "echo.js",
+        text: "const fs = require('fs');\nconst parts = [];\nfor (const a of process.argv.slice(2)) {\n  parts.push(Buffer.from(a, 'utf8'), Buffer.from([0]));\n}\nfs.writeFileSync(process.env.EXAMPLE_OUT, Buffer.concat(parts));\n".to_owned(),
+        dashes: true,
+        // Windows programs commonly expect the system's folder named.
+        pass: if cfg!(windows) { &["SYSTEMROOT"] } else { &[] },
+    };
+    Some((pair, copy))
+}
+
+/// The proof of package L2 for the JavaScript runtime, on every system:
+/// given the pinned file, it hands the file each value as the same bytes.
+#[tokio::test]
+async fn the_javascript_runtime_receives_each_value_as_literal_text() {
+    if let Some((pair, _copy)) = node_pair() {
+        each_value_arrives_as_it_was(&pair).await;
+    }
+}
+
+/// The other half of the proof of package L2: the launcher's file, changed
+/// after its declaration, is refused at start, and nothing starts.
+#[tokio::test]
+async fn a_launchers_file_changed_after_its_declaration_is_refused_at_start() {
+    let Some((pair, _copy)) = node_pair() else {
+        return;
+    };
+    let scene = Scene::new(&pair);
+    scene.run(&pair).await.unwrap();
+    std::fs::remove_file(&scene.out).unwrap();
+    std::fs::write(&scene.script, format!("{}process.exit(0);\n", pair.text)).unwrap();
+    let failure = scene.run(&pair).await.unwrap_err();
+    assert_eq!(
+        (failure.failure.class(), failure.failure.code()),
+        (FailureClass::Drift, &codes::PROGRAM_DIGEST_CHANGED)
+    );
+    assert!(!scene.out.exists(), "nothing started");
+}
+
+/// Python on Windows, the row's third system. Python is no single file, so
+/// it is run where it is installed, and only where that folder is closed
+/// to other users; elsewhere the test says so and stops. It needs the
+/// system's folder to start.
+#[cfg(windows)]
+#[tokio::test]
+async fn python_on_windows_receives_each_value_as_literal_text() {
+    let Some(interpreter) = on_path("python", false) else {
+        return;
+    };
+    let trust = a2m_provider::ProgramTrust::default();
+    let role = a2m_provider::ProgramRole::Interpreter;
+    if let Err(why) = a2m_provider::check_program(&interpreter, &trust, role) {
+        println!(
+            "skipped: Python at {} is in a folder the check refuses: {why:?}",
+            interpreter.display()
+        );
+        return;
+    }
+    let pair = Pair {
+        interpreter,
+        fixed: &["-I"],
+        name: "echo.py",
+        text: "import os, sys\nwith open(os.environ['EXAMPLE_OUT'], 'wb') as out:\n    for a in sys.argv[1:]:\n        out.write(a.encode('utf-8', 'surrogatepass') + b'\\0')\n".to_owned(),
+        dashes: true,
+        pass: &["SYSTEMROOT"],
+    };
+    each_value_arrives_as_it_was(&pair).await;
 }
 
 /// The pair every system has: the shell on Unix, PowerShell on Windows.
@@ -432,6 +558,7 @@ async fn osascript_receives_each_value_as_literal_text() {
         name: "echo.applescript",
         text: "on run argv\n\tset f to open for access (POSIX file (system attribute \"EXAMPLE_OUT\")) with write permission\n\tset eof f to 0\n\trepeat with a in argv\n\t\twrite (contents of a) to f as \u{ab}class utf8\u{bb}\n\t\twrite (ASCII character 0) to f\n\tend repeat\n\tclose access f\nend run\n".to_owned(),
         dashes: false,
+        pass: &[],
     };
     each_value_arrives_as_it_was(&pair).await;
 }

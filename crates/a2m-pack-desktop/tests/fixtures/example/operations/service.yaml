@@ -1,0 +1,34 @@
+operation: example_orders_total_get
+title: Get how many orders the application's service says it holds
+effect: read
+inputs: {}
+outputs:
+  total: {type: untrusted_text}
+bindings:
+  - mode: desktop
+    verb: read
+    property:
+      surface: desk
+      path: /org/example/Desk
+      interface: org.example.Desk.Orders
+      name: Total
+description: >
+  Reads one property of the application's service on the session bus. The
+  service's own introspection says the property can only be read.
+---
+operation: example_orders_level_get
+title: Get the level the application's service reports
+effect: read
+inputs: {}
+outputs:
+  level: {type: untrusted_text}
+bindings:
+  - mode: desktop
+    verb: read
+    property:
+      surface: desk
+      path: /org/example/Desk
+      interface: org.example.Desk.Orders
+      name: Level
+description: >
+  Reads a property that holds a list, which the driver stops on by name.

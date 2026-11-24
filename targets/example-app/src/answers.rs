@@ -15,6 +15,14 @@
 //!   `carrier` object the control interface makes the application answer as
 //!   an object, as `null`, as missing, or as a text. Its description lists
 //!   the property as not required and does not mark it nullable.
+//! - `GET /api/orders/{order_id}/handoff` (case 36): an answer with a
+//!   property named `client_secret`, whose invented value is
+//!   [`HANDOFF_SECRET`], beside ordinary values; it takes an optional
+//!   `access_token` query value. `GET /api/orders/{order_id}/pickup` requires
+//!   an `api_key` query value.
+//! - Case 37: the same switch answers the hand-off's optional `packages`
+//!   as `null` (`null`) or leaves it out (`missing`), and its required
+//!   `carrier_code` as `null` (`required_null`).
 //! - `POST /views/search/orders?status=draft`: the orders of one status,
 //!   as JSON. It reads only, and stores nothing; it is the search a service
 //!   puts behind `POST`.
@@ -39,6 +47,72 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/views/hostile/{name}", get(hostile))
         .route("/views/search/orders", post(search))
         .route("/api/orders/{order_id}/shipment", get(shipment))
+        .route("/api/orders/{order_id}/handoff", get(handoff))
+        .route("/api/orders/{order_id}/pickup", get(pickup))
+}
+
+/// The invented value of the `client_secret` property of case 36. It is
+/// plainly not a credential, and no part of a tool's result may hold it.
+pub const HANDOFF_SECRET: &str = "example-not-a-secret-0001";
+
+/// Case 36: an answer that holds a property named as a secret beside
+/// ordinary values. An optional `access_token` query value is accepted and
+/// ignored.
+async fn handoff(State(state): State<AppState>, Path(order_id): Path<String>) -> Response {
+    let inner = state.lock().await;
+    if inner.store.order(&order_id).is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            axum::Json(json!({"error": "not_found", "message": "No such order."})),
+        )
+            .into_response();
+    }
+    let mut answer = json!({
+        "order_id": order_id,
+        "carrier_code": "EXF",
+        "packages": 2,
+        "client_secret": HANDOFF_SECRET,
+    });
+    // Case 37: the same switch answers the optional `packages` as `null`
+    // or leaves it out, and the required `carrier_code` as `null`.
+    match inner.carrier {
+        CarrierAnswer::Null => answer["packages"] = json!(null),
+        CarrierAnswer::Missing => {
+            answer
+                .as_object_mut()
+                .map(|object| object.remove("packages"));
+        }
+        CarrierAnswer::RequiredNull => answer["carrier_code"] = json!(null),
+        CarrierAnswer::Object | CarrierAnswer::Text => {}
+    }
+    axum::Json(answer).into_response()
+}
+
+/// Case 36: a read that needs an `api_key` query value, any value.
+async fn pickup(
+    State(state): State<AppState>,
+    Path(order_id): Path<String>,
+    RawQuery(query): RawQuery,
+) -> Response {
+    let inner = state.lock().await;
+    if inner.store.order(&order_id).is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            axum::Json(json!({"error": "not_found", "message": "No such order."})),
+        )
+            .into_response();
+    }
+    let keyed = query
+        .as_deref()
+        .is_some_and(|query| query.split('&').any(|pair| pair.starts_with("api_key=")));
+    if !keyed {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "no_key", "message": "An api key is required."})),
+        )
+            .into_response();
+    }
+    axum::Json(json!({"order_id": order_id, "window": "09:00-12:00"})).into_response()
 }
 
 /// How the shipment's `carrier` is answered; set through
@@ -56,6 +130,10 @@ pub enum CarrierAnswer {
     Missing,
     /// The property is a text, which is not what the description says.
     Text,
+    /// Case 37: the shipment answers as `object`; the hand-off answers its
+    /// required `carrier_code` as `null`, which the description does not
+    /// allow.
+    RequiredNull,
 }
 
 async fn shipment(State(state): State<AppState>, Path(order_id): Path<String>) -> Response {
@@ -69,7 +147,7 @@ async fn shipment(State(state): State<AppState>, Path(order_id): Path<String>) -
     }
     let mut answer = json!({"order_id": order_id});
     match inner.carrier {
-        CarrierAnswer::Object => {
+        CarrierAnswer::Object | CarrierAnswer::RequiredNull => {
             answer["carrier"] = json!({"name": "Example Freight", "tracking": "T-100"});
         }
         CarrierAnswer::Null => answer["carrier"] = json!(null),

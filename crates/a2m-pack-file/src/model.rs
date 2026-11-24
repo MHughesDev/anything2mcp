@@ -222,6 +222,11 @@ pub struct FieldSpec {
     /// Whether text written here may begin with a character that makes a
     /// spreadsheet program run the text as a formula. Delimited text only.
     pub may_begin_formula: bool,
+    /// Whether the file's declaration says the place always holds a value
+    /// (`required: true`). A key field always does. Any other field may be
+    /// empty, and its output may be absent (decision 0315).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
 }
 
 /// One kind of record in a file.
@@ -237,6 +242,17 @@ pub struct RecordSpec {
 }
 
 impl RecordSpec {
+    /// The fields whose place may hold no value: every field that is not
+    /// part of the key and is not declared `required` (decision 0315).
+    #[must_use]
+    pub fn may_be_empty(&self) -> Vec<String> {
+        self.fields
+            .iter()
+            .filter(|field| !field.required && !self.key.contains(&field.name))
+            .map(|field| field.name.clone())
+            .collect()
+    }
+
     /// The field of that name.
     #[must_use]
     pub fn field(&self, name: &str) -> Option<&FieldSpec> {
@@ -332,6 +348,10 @@ pub enum StepSpec {
     One {
         /// The record kind.
         record: String,
+        /// The fields read whose place may be empty, so whose outputs may
+        /// be absent: what [`RecordSpec::may_be_empty`] gave at lowering.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        may_be_empty: Vec<String>,
     },
     /// Reads the records of a kind, up to a limit.
     List {
@@ -339,6 +359,9 @@ pub enum StepSpec {
         record: String,
         /// The most rows returned.
         limit: u32,
+        /// As for `One`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        may_be_empty: Vec<String>,
     },
     /// Sees that the file at the path is the one saved.
     Confirm,

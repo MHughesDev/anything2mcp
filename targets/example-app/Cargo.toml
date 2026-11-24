@@ -9,12 +9,11 @@ publish.workspace = true
 
 [features]
 # The application served over TLS as well, with certificates a test-only
-# authority makes when a test runs (decision 0157). A crate whose tests use
-# this stand in a build with TLS on turns this on, so that the harness's own
-# clients state their TLS provider too.
+# authority makes when a test runs (decision 0157). The harness's own
+# clients state their TLS provider wherever `reqwest` has TLS, whether this
+# feature or another crate of the same build switched it on.
 tls = [
     "dep:rcgen",
-    "dep:rustls",
     "dep:tokio-rustls",
     "reqwest/rustls-no-provider",
     "tokio/io-util",
@@ -24,7 +23,9 @@ tls = [
 axum.workspace = true
 rcgen = { workspace = true, optional = true }
 reqwest.workspace = true
-rustls = { workspace = true, optional = true }
+# The configuration the harness's plain clients state, ring and no roots,
+# for a `reqwest` that has TLS; it adds no TLS to `reqwest` by itself.
+rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

@@ -175,6 +175,12 @@ pub const FIXED_ARGUMENTS: &[&str] = &[
     // store, which holds the person's own browser's key, is never asked.
     "--password-store=basic",
     "--use-mock-keychain",
+    // The tools a page registers for agents (decision 0359, the `site_tools`
+    // record): the page's own place to register them, and the domain they
+    // are called through. A browser that has either on already is not
+    // changed; one that holds it back for a trial is given it. An unknown
+    // name is ignored by a browser that has not got the feature.
+    "--enable-features=WebMCP,DevToolsWebMCPSupport",
 ];
 
 /// The argument that keeps the browser without a window.

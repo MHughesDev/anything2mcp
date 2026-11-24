@@ -119,6 +119,11 @@ impl Drop for HttpStand {
 
 static FOLDERS: AtomicU32 = AtomicU32::new(0);
 
+/// The entry file of the stand as a package the JavaScript runtime runs,
+/// and the file it loads beside it.
+const LAUNCHER_ENTRY: &str = include_str!("../launcher/server.js");
+const LAUNCHER_RELAY: &str = include_str!("../launcher/relay.js");
+
 /// One stdio stand: a state folder, and the program that serves it.
 ///
 /// The harness does not start the program. Whatever is under test starts it,
@@ -208,6 +213,24 @@ impl StdioStand {
     #[must_use]
     pub fn program(&self) -> &Path {
         &self.program
+    }
+
+    /// The stand's server as the entry file of an installed package, which
+    /// the JavaScript runtime runs: `server.js`, written with the file it
+    /// loads beside it into the stand's own folder, whose path this gives.
+    /// Its first argument is the stand's program, which the file beside it
+    /// starts on the same standard streams; the rest go to that program.
+    /// Each call writes both files afresh, so a test may change one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a file could not be written.
+    pub fn launcher_entry(&self) -> Result<PathBuf, HarnessError> {
+        let entry = self.program_folder.join("server.js");
+        std::fs::write(&entry, LAUNCHER_ENTRY).map_err(HarnessError::State)?;
+        std::fs::write(self.program_folder.join("relay.js"), LAUNCHER_RELAY)
+            .map_err(HarnessError::State)?;
+        Ok(entry)
     }
 
     /// The state folder.

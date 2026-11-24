@@ -16,7 +16,7 @@ use a2m_core::{
 };
 use a2m_files::{
     BindingStatement, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering,
-    Place, Possible, ResolvedBinding, Sends, Stage, Statement, StepCommits,
+    Place, Possible, ResolvedBinding, Sends, Stage, Statement, StepChanges, StepCommits,
 };
 
 use crate::codes;
@@ -27,6 +27,10 @@ use crate::template::{
     VersionSink,
 };
 
+/// The step that fetches the page which gives a write's anti-forgery
+/// token, and keeps the token for the `request` step that follows
+/// (decision 0357).
+pub const TOKEN: StepKind = StepKind::fixed("token");
 /// The step that sends one request built from an endpoint's template.
 pub const REQUEST: StepKind = StepKind::fixed("request");
 /// The step that checks the answer's status and shape.
@@ -82,7 +86,7 @@ impl HttpLowering {
                 .chain(WRITE_VERBS)
                 .map(|verb| Verb::fixed(verb))
                 .collect(),
-            step_kinds: vec![REQUEST, VALIDATE, EXTRACT],
+            step_kinds: vec![TOKEN, REQUEST, VALIDATE, EXTRACT],
         }
     }
 }
@@ -134,7 +138,7 @@ impl<'a> Lower<'a, '_> {
     }
 
     fn step(&self, kind: StepKind, found: &Found<'_>, fails_as: FailsAs) -> Step {
-        let timeout_ms = if kind == REQUEST {
+        let timeout_ms = if kind == REQUEST || kind == TOKEN {
             self.timeout_ms
         } else {
             HELD_ANSWER_TIMEOUT_MS
@@ -511,11 +515,10 @@ impl<'a> Lower<'a, '_> {
                 }
             };
             let stars = path.iter().filter(|part| *part == "*").count();
-            let shape = found
-                .template
-                .response
-                .at_path(&path)
-                .map(|(shape, _)| shape);
+            let (shape, certain) = match found.template.response.at_path(&path) {
+                Some((shape, certain)) => (Some(shape), certain),
+                None => (None, false),
+            };
             let fits = shape.is_some_and(|shape| match take {
                 Take::Text => matches!(shape.kind, Kind::String | Kind::Any),
                 Take::Int => matches!(shape.kind, Kind::Integer | Kind::Any),
@@ -543,10 +546,28 @@ impl<'a> Lower<'a, '_> {
                 );
                 continue;
             }
+            // A value that is certain to be there cannot be declared absent:
+            // the declaration would hide a required value (decision 0305).
+            if certain && output.may_be_absent {
+                self.refuse(
+                    "absent_untrue",
+                    Stage::TypeCheck,
+                    at,
+                    format!(
+                        "The output `{}` is declared `may_be_absent`, and the endpoint `{}` declares `{}` as always there.",
+                        output.name,
+                        found.name,
+                        codes::shown(&path.join("."))
+                    ),
+                    "Remove `may_be_absent` from the output, or correct the endpoint's `response_schema` if the system may leave it out.",
+                );
+                continue;
+            }
             payload.values.push(Extracted {
                 name: output.name.clone(),
                 path,
                 take,
+                may_be_absent: !certain,
             });
         }
         for extra in renamed.map(Located::entries).unwrap_or_default() {
@@ -596,6 +617,31 @@ impl Lowering for HttpLowering {
         &self.step_kinds
     }
 
+    /// The outputs the endpoint's shape does not make certain to be there,
+    /// read from the `extract` steps the lowering made (decision 0305).
+    fn absent_outputs(&self, _binding: &ResolvedBinding<'_>, lowered: &Lowered) -> Vec<String> {
+        let mut names = Vec::new();
+        for step in lowered
+            .act
+            .iter()
+            .chain(&lowered.confirm)
+            .chain(&lowered.read_back)
+            .chain(&lowered.lookup)
+            .filter(|step| step.kind == EXTRACT)
+        {
+            if let Ok(payload) = step.payload.decode::<ExtractStep>() {
+                names.extend(
+                    payload
+                        .values
+                        .into_iter()
+                        .filter(|value| value.may_be_absent)
+                        .map(|value| value.name),
+                );
+            }
+        }
+        names
+    }
+
     /// A `request` sends a read and a write alike, and which it is is the
     /// `effect` of the endpoint it names: the lowering marks it as the
     /// commit point exactly for a verb that writes, which it binds only to
@@ -608,6 +654,18 @@ impl Lowering for HttpLowering {
             StepCommits::AsDeclared
         } else {
             StepCommits::Never
+        }
+    }
+
+    /// A `request` changes the system exactly when its endpoint is marked
+    /// `write`, and the driver refuses such an endpoint from a `request` not
+    /// marked as a save. `validate` and `extract` read an answer already
+    /// held.
+    fn changes(&self, kind: &StepKind) -> StepChanges {
+        if *kind == REQUEST {
+            StepChanges::AsDeclared
+        } else {
+            StepChanges::Never
         }
     }
 
@@ -775,6 +833,22 @@ impl Lowering for HttpLowering {
             act.commits = true;
             act.idempotent = found.template.idempotency_header.is_some();
             lowered.act = vec![act];
+            if found.template.anti_forgery.is_some() {
+                // The page is fetched in the same pass, before the write,
+                // with the values the write's own path holds.
+                let mut token = lower.step(
+                    TOKEN,
+                    &found,
+                    FailsAs::from(&codes::row::ANTI_FORGERY_NOT_FOUND),
+                );
+                token.args = lowered.act[0]
+                    .args
+                    .iter()
+                    .filter(|arg| arg.name.starts_with("path."))
+                    .cloned()
+                    .collect();
+                lowered.act.insert(0, token);
+            }
             lowered.confirm = vec![lower.validate(&found)];
             if let Some(read_back) = read_back {
                 lowered.prefer_response = read_back.text("prefer") == Some("response");

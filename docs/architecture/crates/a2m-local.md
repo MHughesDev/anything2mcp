@@ -154,9 +154,13 @@ pub trait PresencePrompt: Send + Sync {
     /// The surface never calls it while an earlier ask of its own has not answered.
     fn ask(&self, text: PromptText, deadline: tokio::time::Instant) -> BoxFuture<'_, PromptAnswer>;
 }
-pub struct PromptText { pub title: String, pub detail: String }
+pub struct PromptText { pub title: String, pub detail: String, pub purpose: PromptFor }
+pub enum PromptFor { Act, Approval(Option<EffectClass>) }              // what the ask is for; None = effect not known
+// `FieldPrompt<R, W>` (decision 0310) answers on a reader and a writer a test runner holds; only the field
+// harness builds it. It passes Act and Approval(Some(not irreversible)) when the line read is the short
+// hash shown, and refuses Approval(Some(Irreversible)) and Approval(None) without asking.
 pub enum PresenceKind { OsPrompt, DialogOnly, NotAvailable }            // os_prompt, dialog_only, not_available
-pub enum PromptName { Polkit, LocalAuthentication, WindowsHello }       // polkit, local_authentication, windows_hello
+pub enum PromptName { Polkit, LocalAuthentication, WindowsHello, FieldHarness }  // polkit, local_authentication, windows_hello, field_harness
 pub enum PresenceReason {                                               // one word, for a report
     Ready, NotBuilt, NoSystemBus, NoPolkit, PolicyNotInstalled, SessionNotActive,
     NoAgent, GrantedWithoutAsking, NoWindowStation, SessionRemote, SessionLocked,
@@ -219,7 +223,7 @@ A socket queues a connection the engine has not yet taken. An engine that stops 
 | Version | A newer client asks an older engine to drain and restart. If runs are active, the client reports that and leaves the engine alone | An older client reaching a newer engine is served while the local API version matches; otherwise it is told to upgrade |
 | Idle stop | After `engine.idle_stop_minutes` with no connections and `IdleHolds::busy` false, the engine saves sessions to the vault, closes the kernel, and exits | A waiting page and a run in hand are idle holds: the product's hold asks `Kernel::runs_in_hand`. The keeper's keep-alive window is to be one |
 | Stop | `Channel::serve` returns the engine lock, still held; the product closes the kernel and then drops it | No second engine opens the store while the first still writes to it |
-| Requests at a stop | Once `ChannelControl::stop` is called, by `engine.stop` or by a signal, the channel takes no new connection. A request it is already answering, the one that asked for the stop included, is answered before `serve` returns. A connection with no request in hand is closed at once, so a request still on its way to the engine when the stop lands is closed unread | Its client reports `possible_commit`/`answer_lost`: it cannot tell a request the engine never read from one whose answer was lost. `serve` waits for a request in hand with no bound (not built: a bound and a named outcome when it passes) |
+| Requests at a stop | Once `ChannelControl::stop` is called, by `engine.stop` or by a signal, the channel takes no new connection. A request it is already answering, the one that asked for the stop included, is answered before `serve` returns. A connection with no request in hand is closed at once, so a request still on its way to the engine when the stop lands is closed unread | Its client reports `possible_commit`/`answer_lost`: it cannot tell a request the engine never read from one whose answer was lost. The product's `engine.stop` asks for the stop only once its own answer is handed over, so the request that stops the channel is never the one closed unread. `serve` waits for a request in hand with no bound (not built: a bound and a named outcome when it passes) |
 | Crash | The engine lock is an operating-system lock, so it is released when the process dies | The next start sets orphaned runs to `stopped`, as `Kernel::open` describes |
 | Data directory gone | The lock of the data directory remembers which file it is (`LockPlace`). The product asks it before each request and at each idle look; when the file is gone or another, the request is refused `busy`/`data_directory_gone` and the channel stops with `StopReason::DataGone` | Spec section 224: fail closed. The next client starts a new engine ([decision 0181](../../decisions/0181-the-product-and-the-local-engine-take-up-what-the-kernel-now-offers.md)) |
 | In process | A command that finds no engine takes the engine lock in the same step and holds it until its kernel has closed; `--in-process` is refused while an engine answers | The product crate opens the kernel inside the command, with no channel. A second command waits a bounded time for the lock; `serve` is refused at its bind |

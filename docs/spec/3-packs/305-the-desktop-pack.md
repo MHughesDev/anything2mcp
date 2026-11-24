@@ -31,7 +31,22 @@ The pack is one crate, `a2m-pack-desktop`. It has no base crate and depends on n
 | Reading a password field's value | Rule four |
 | Attaching to a process a person did not name | Consent ([section 213](../2-kernel/213-effects-hazards-and-consent.md)) |
 | Acting while a person is using the same desktop session, unless the target says it may | A run and a person typing into one desktop cannot be told apart. It is `busy`, `session_in_use` |
+| Starting an application by sending it a message addressed by name | The system starts a closed application when sent a message by name, in several of its scripting routes ([research note 33](../../research/33-what-a-program-can-reach-in-another.md), partly from memory). The pack attaches to a running process it has proved, and starts a program only through the supervisor, by path and digest |
 | An application built on a browser runtime | It is a web surface, served by `ui` ([section 301](301-the-web-pack.md)). The browser engine is the web pack's, and this pack cannot depend on it |
+
+## What the person must grant, by system
+
+What each system asks of the person before the pack may read a window, from [research note 33](../../research/33-what-a-program-can-reach-in-another.md). Only what the note read in a source is stated as fact; the rest is marked.
+
+| System | The person grants | A missing grant ends as |
+| --- | --- | --- |
+| Windows | Nothing, for a window at the same integrity level as the engine. A window at a higher level is refused; the pack does not use the route the system reserves for signed assistive programs installed in a protected place, which would get past the system's protection (rule 5) | `target_elevated` |
+| macOS | A listing under Accessibility in System Settings, Privacy and Security, for the program the system judges, which is the program that started the engine when it was started by another (note 26). The pack asks the system for the answer without raising its prompt, and never raises the prompt during a run | `accessibility_off`, whose message says where in System Settings to allow it (decision 0244) |
+| Linux | Nothing. Some toolkits publish only when the session's accessibility switch is on; the switch is the person's, and the pack never changes it | `accessibility_off` |
+
+A scripting route is not part of this pack. Where the system asks the person for one, it asks per pair of programs on macOS (kept, and a refusal kept), and not at all on Windows or on the Linux session bus; a failure code, `automation_not_granted`, is reserved in the pack's design for a missing grant on such a route, and is not in the table of codes until something produces it.
+
+Open points of this section, which note 33 marks as not read: the text and behaviour of macOS's Automation prompt; the entitlement a hardened program needs to send Apple events; that an Apple event sent by name starts a closed application; whether `AXUIElementIsAttributeSettable` exists as described; the wording of the D-Bus specification on access values and bus policy; the current state of the agent features Microsoft is adding to Windows.
 
 ## The mode
 
@@ -77,6 +92,8 @@ Each verb lowers into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle
 - **Waits are events or nothing.** Each condition is ended by an accessibility event. Where an operating system cannot signal a condition, the condition is refused for that system by a lint rule, not polled. Whether enough conditions remain is a question for the spike.
 - **Every failure says whether the act was sent.** An `invoke` of a committing action that was sent, and whose confirmation did not arrive, or after which the application exited, is `possible_commit`.
 - A control that exposes no value cannot be written except as `irreversible`.
+- **Before every set, the driver reads whether the control is enabled and whether it is settable** (offers editable text and is not read-only), and stops before sending anything, as `field_read_only`, if it is not. Built on Linux and proven against the stand with a disabled field ([decision 0336](../../decisions/0336-the-desktop-pack-states-that-it-sends-to-no-address-and-checks-that-a-field-is-enabled-before-it-sets-it.md)). On Windows the read is of the value pattern's enabled and read-only properties. On macOS the driver first asks the interface whether the attribute is settable; that function is from memory, and is to be checked against Apple's page when the write slice is built.
+- **What the review says.** A binding states that it starts no program, sets no variable, and sends to no address; the pack attaches to a program that is already running, and what the program does after an action is its own (decision 0336).
 
 The backend is private: one implementation per operating system, or one over a library that covers all three. It finds exactly one element or fails, reads, sets, invokes, reports events (focus, structure, value, window opened), and builds the tree for snapshots.
 
@@ -102,10 +119,22 @@ A desktop application's own sign-in lives inside the application, in the runner'
 | --- | --- | --- |
 | `desktop_probe` | The program, its version and digest, and how many controls have no name | A surface, with a support tier |
 | `desktop_snapshot` | The window's accessibility tree | Screens, fields, actions |
+| `desktop_bundle` | The files of a macOS application's bundle a person hands the scout under `bundle`: `Contents/Info.plist` (XML or binary) and the scripting dictionary it names | The application's identity, URL schemes, document types, services, and its dictionary's suites, commands, events, classes, and each class property with the access the dictionary states |
+| `desktop_management` | On Windows, the definition of the management class the surface's `management_class` names, asked of the system's management service | The class's properties, each with its type and whether the definition marks it writable, its methods, and whether it is a singleton |
+| `desktop_com` | A COM type library a person hands the scout under `type_library`, read as bytes on every system | The library's interfaces and each member, with how the library declares it to be invoked |
+| `desktop_service` | On Linux, the introspection of the service the surface's `service` names on the session bus, a `.service` file, and an interface description | The service's interfaces: methods, signals, and each property with the access its document states |
 
 Both read the tree and never invoke, expand, or focus anything. What is hidden behind a collapsed node is a limitation, `not_exercised`. They run as discovery jobs inside the engine's sandbox ([section 218](../2-kernel/218-discovery-and-findings.md)), for `target.probe`, `screen.snapshot`, and `discover.run`.
 
+`desktop_service` asks a running service for its introspection, with the bus's flag that forbids it to start the service on every message, and calls no method of it. A service that no connection owns is reported as not running and is never started. A `.service` file and an interface description a person hands the scout (`service_file`, `interface_file`) are read as text and never run. Its findings are `dbus_service`: the live service's at `discovered`, a file's at `inferred`. From a running service's finding the pack drafts a `read` of each property whose document states `access="read"`, as a binding `property: {surface, path, interface, name}`; a property that states `readwrite` or `write`, a method, and a signal are never drafted ([decision 0331](../../decisions/0331-the-desktop-pack-reads-a-running-services-introspection-and-drafts-reads-of-its-read-only-properties.md)).
+
+`desktop_bundle` reads two files of the bundle as bytes, on every system, and sends nothing to any application. A dictionary that includes a file outside the bundle is refused whole, by the name `dictionary_include_refused`; an include inside the bundle is listed and not followed. Its findings are `application_bundle`, at `inferred`. Nothing is drafted from them: reading a property of a running application is an Apple event, which the pack does not send ([decision 0332](../../decisions/0332-the-desktop-pack-reads-an-application-bundles-property-list-and-the-scripting-dictionary-it-names.md)).
+
+`desktop_management` asks for the definition of one class and never for an instance; on any other system it stops with `system_not_built`. `desktop_com` reads a type library as bytes with a library taken whole and fuzzed, and never loads it through the system; only the MSFT form is read, and any other is the named stop `type_library_format_unknown`. From a singleton class's property the definition does not mark writable, and from a dispatch interface's property get, the pack drafts a `read`, binding `management: {surface, class, name}` or `com: {surface, interface, name}`. The drafts compile and are not run: this version carries out no `management_get` or `com_get` step, and says so by the named stop `step_not_built` ([decision 0333](../../decisions/0333-the-desktop-pack-reads-a-management-classs-definition-and-a-com-type-library-and-drafts-reads-that-it-does-not-yet-run.md)).
+
 The drafting rules are as for the web: from a window's snapshot, a screen model with fields, roles, names, and locators; field types and every action left as open questions.
+
+A column or a control whose name the compiler takes for a secret's is never drafted as an output, as for the web, and the last sentence of the drafted description tells the names left out ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
 
 ## Lint rules
 
@@ -140,6 +169,11 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | `possible_commit` | `no_confirmation` | An `invoke` of a committing action was sent and its confirmation did not arrive, or the application exited. A resume reads the stored value before it writes again |
 | `busy` | `session_in_use` | A person is using the desktop and the target does not allow sharing it; or another write of the engine held the desktop past the step's deadline |
 | `busy` | `runner_unavailable` | No interactive desktop session |
+| `unknown_variant` | `type_library_format_unknown` | A file handed as a COM type library is in a form the reader does not know (decision 0318) |
+| `busy` | `step_not_built` | A drafted read of a management class's property or a COM property get compiles, and this version carries out no such step |
+| `policy` | `dictionary_include_refused` | A scripting dictionary a person handed the scout includes a file outside the application's bundle (decision 0317) |
+| `busy` | `service_not_running` | The service the surface names has no owner on the session bus when a property is read; nothing was started (decision 0316) |
+| `unknown_variant` | `property_not_text` | A service's property holds a value that is not text, a flag, a number, or an object path |
 | `busy` | `application_not_running`, `accessibility_off`, `system_not_built` | The application the surface names is not running; it runs and publishes nothing while the session's accessibility switch is off, or on macOS the person has not allowed the program that started the engine to use the accessibility interface, and the message says where in System Settings to allow it (decision 0244); the pack has no back end for this system (decision 0198) |
 | `busy` | `target_elevated` | On Windows, the application runs at a higher level than the engine, as administrator ([decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md)) |
 | `policy` | `password_read_refused` | A step would read a control that holds a secret |

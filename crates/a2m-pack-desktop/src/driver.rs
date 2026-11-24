@@ -38,8 +38,13 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::backend::{App, AxError, Limits, Look};
 use crate::codes::{self, shown};
-use crate::lower::{GOTO, INVOKE, KEY_ARG, READ, SET, SNAPSHOT, WAIT};
-use crate::model::{Cond, PAYLOAD_FORMAT, ReadStep, Screen, ScreenSection, SurfaceFields};
+use crate::lower::{
+    COM_GET, GOTO, INTROSPECT, INVOKE, KEY_ARG, MANAGEMENT_GET, PROPERTY, READ, SCHEMA, SET,
+    SNAPSHOT, WAIT,
+};
+use crate::model::{
+    Cond, PAYLOAD_FORMAT, PropertyStep, ReadStep, Screen, ScreenSection, SurfaceFields,
+};
 use crate::screens::{PACK, SCREEN_KIND};
 use crate::tree::{El, Miss, Node, Tree};
 
@@ -76,6 +81,16 @@ struct Held {
     look: Look,
     app: App,
     program: String,
+    /// The name the surface says the application's service has on the
+    /// session bus. Linux only: the bus is Linux's.
+    #[cfg(target_os = "linux")]
+    service: Option<String>,
+    /// The management class the surface asks the scout to read, and its
+    /// namespace. Windows only.
+    #[cfg(windows)]
+    management_class: Option<String>,
+    #[cfg(windows)]
+    management_namespace: Option<String>,
     sections: BTreeMap<usize, ScreenSection>,
     /// The window the last `goto` found.
     window: Option<El>,
@@ -595,6 +610,13 @@ impl Held {
                     "Look at the application; the field may be locked for this record.",
                 ));
             }
+            Settable::Disabled => {
+                return Err(refused(
+                    &codes::row::FIELD_READ_ONLY,
+                    "takes no value now: the application shows it disabled".to_owned(),
+                    "Look at the application; the field may be disabled for this record.",
+                ));
+            }
             Settable::NoInterface => {
                 return Err(refused(
                     &codes::row::UNEXPECTED_CONTROL,
@@ -866,6 +888,138 @@ impl Held {
         ))
     }
 
+    /// What the surface's service says of itself: the introspection of each
+    /// of its objects, asked of a service that is running and never of one
+    /// that is not (decision 0316). A service no connection owns is an
+    /// answer, `running: false`, and not a failure.
+    #[cfg(target_os = "linux")]
+    async fn introspect(&self, deadline: Deadline) -> Result<Observed, StepFailure> {
+        let service = self
+            .service
+            .as_deref()
+            .ok_or_else(|| codes::not_usable("the surface names no `service`"))?;
+        let shape = match self.look.introspect(service, deadline).await {
+            Ok(walk) => json!({
+                "format": SNAPSHOT_FORMAT,
+                "running": true,
+                "cut": walk.cut,
+                "objects": walk
+                    .objects
+                    .iter()
+                    .map(|(path, xml)| json!({"path": path, "xml": xml}))
+                    .collect::<Vec<_>>(),
+            }),
+            Err(AxError::ServiceNotRunning) => json!({
+                "format": SNAPSHOT_FORMAT,
+                "running": false,
+                "cut": null,
+                "objects": [],
+            }),
+            Err(error) => return Err(unsent(&error, &self.program)),
+        };
+        Ok(Observed {
+            values: Values::new().with("shape", shape.to_string()),
+            ..Observed::default()
+        })
+    }
+
+    /// One property of one object of the surface's service, as text. A
+    /// service that is not running is a named stop, nothing started.
+    #[cfg(target_os = "linux")]
+    async fn property(&self, step: &Step) -> Result<Observed, StepFailure> {
+        let payload: PropertyStep = step
+            .payload
+            .decode()
+            .map_err(|_| codes::not_usable("its payload does not decode"))?;
+        let service = self
+            .service
+            .as_deref()
+            .ok_or_else(|| codes::not_usable("the surface names no `service`"))?;
+        let text = self
+            .look
+            .property_text(
+                service,
+                &payload.path,
+                &payload.interface,
+                &payload.name,
+                &self.limits,
+            )
+            .await
+            .map_err(|error| unsent(&error, &self.program))?;
+        let mut values = Values::new();
+        values.insert(payload.output, text);
+        Ok(Observed {
+            values,
+            ..Observed::default()
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[allow(
+        clippy::unused_async,
+        reason = "the same call as on Linux, where it asks the bus"
+    )]
+    async fn introspect(&self, _deadline: Deadline) -> Result<Observed, StepFailure> {
+        Err(codes::service_not_built())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[allow(
+        clippy::unused_async,
+        reason = "the same call as on Linux, where it asks the bus"
+    )]
+    async fn property(&self, step: &Step) -> Result<Observed, StepFailure> {
+        let _: PropertyStep = step
+            .payload
+            .decode()
+            .map_err(|_| codes::not_usable("its payload does not decode"))?;
+        Err(codes::service_not_built())
+    }
+
+    /// The definition of the management class the surface names: on Windows
+    /// as the system's management service gives it, elsewhere a named stop
+    /// with nothing sent (decision 0318).
+    #[cfg(windows)]
+    async fn schema(&self) -> Result<Observed, StepFailure> {
+        let class = self
+            .management_class
+            .clone()
+            .ok_or_else(|| codes::not_usable("the surface names no `management_class`"))?;
+        let namespace = self
+            .management_namespace
+            .clone()
+            .unwrap_or_else(|| crate::windows_kinds::DEFAULT_NAMESPACE.to_owned());
+        let read = crate::backend::wmi::read(namespace.clone(), class.clone())
+            .await
+            .map_err(|error| unsent(&error, &self.program))?;
+        let shape = json!({
+            "format": SNAPSHOT_FORMAT,
+            "namespace": namespace,
+            "class": class,
+            "singleton": read.singleton,
+            "cut": read.cut,
+            "properties": read.properties.iter().map(|property| json!({
+                "name": property.name,
+                "cim_type": property.cim_type,
+                "writable": property.writable,
+            })).collect::<Vec<_>>(),
+            "methods": read.methods,
+        });
+        Ok(Observed {
+            values: Values::new().with("shape", shape.to_string()),
+            ..Observed::default()
+        })
+    }
+
+    #[cfg(not(windows))]
+    #[allow(
+        clippy::unused_async,
+        reason = "the same call as on Windows, where it asks the system"
+    )]
+    async fn schema(&self) -> Result<Observed, StepFailure> {
+        Err(codes::management_not_built())
+    }
+
     /// The shape of every window of the application.
     async fn snapshot(&self, deadline: Deadline) -> Result<Observed, StepFailure> {
         let windows = self
@@ -1028,6 +1182,12 @@ impl Driver for DesktopDriver {
                 look,
                 app,
                 program,
+                #[cfg(target_os = "linux")]
+                service: fields.service.clone(),
+                #[cfg(windows)]
+                management_class: fields.management_class.clone(),
+                #[cfg(windows)]
+                management_namespace: fields.management_namespace.clone(),
                 sections,
                 window: None,
                 limits: self.limits,
@@ -1061,6 +1221,14 @@ impl Driver for DesktopDriver {
                 held.read(step, deadline).await?
             } else if step.kind == SNAPSHOT {
                 held.snapshot(deadline).await?
+            } else if step.kind == INTROSPECT {
+                held.introspect(deadline).await?
+            } else if step.kind == PROPERTY {
+                held.property(step).await?
+            } else if step.kind == SCHEMA {
+                held.schema().await?
+            } else if step.kind == MANAGEMENT_GET || step.kind == COM_GET {
+                return Err(codes::step_not_built(step.kind.as_str()));
             } else if step.kind == SET {
                 held.set(step, input).await?
             } else if step.kind == INVOKE {

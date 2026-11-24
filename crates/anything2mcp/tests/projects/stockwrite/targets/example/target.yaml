@@ -1,0 +1,23 @@
+# The imaginary order-entry system `example`, as the files it keeps its
+# stock in, written through the file pack. It describes no real product.
+# Its surfaces are two folders inside the root `files`, which stands for
+# the project folder of each request. The test stand in
+# `targets/example-files` writes the files.
+schema_version: 1
+target: example
+title: Example stock files, written
+surfaces:
+  price_files:
+    kind: file
+    folder: prices
+    stands: alone
+  inbox_files:
+    kind: file
+    folder: inbox
+    stands: alone
+environments:
+  test:
+    kind: test
+default_environment: test
+environment: {locale: en-US, timezone: UTC}
+drift_risk: low

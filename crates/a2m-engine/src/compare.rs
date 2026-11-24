@@ -1,7 +1,10 @@
 //! Normalization and comparison of a record's values.
 //!
 //! The fields of a record are its operation's inputs that are not part of
-//! its key, in declared order. Each is normalized by its field type on both
+//! its key and not a precondition of the write, in declared order. A
+//! precondition, such as the version a guard compares, is sent with the
+//! write and checked by the system; no read gives it back as it was sent,
+//! so it is never compared (decision 0378). Each is normalized by its field type on both
 //! sides, the intended value and the value read, and the two are compared
 //! as values: there is no float anywhere in a comparison.
 
@@ -26,11 +29,27 @@ pub(crate) fn record_fields(loaded: &Loaded, operation: &OperationPlan) -> Vec<F
         .inputs
         .iter()
         .enumerate()
-        .filter(|(position, _)| {
+        .filter(|(position, input)| {
             let index = u32::try_from(*position).map(InputIndex::new);
-            !index.is_ok_and(|index| operation.identity.key.contains(&index))
+            !input.precondition && !index.is_ok_and(|index| operation.identity.key.contains(&index))
         })
         .map(|(_, input)| Field {
+            name: input.name.clone(),
+            field_type: input.field_type,
+            sensitivity: loaded.sensitivity(Some(input.field_type)),
+        })
+        .collect()
+}
+
+/// The inputs of an operation that are preconditions of its write, in
+/// declared order: shown in the diff and bound by the approval, never
+/// compared with what is read (decision 0378).
+pub(crate) fn precondition_fields(loaded: &Loaded, operation: &OperationPlan) -> Vec<Field> {
+    operation
+        .inputs
+        .iter()
+        .filter(|input| input.precondition)
+        .map(|input| Field {
             name: input.name.clone(),
             field_type: input.field_type,
             sensitivity: loaded.sensitivity(Some(input.field_type)),

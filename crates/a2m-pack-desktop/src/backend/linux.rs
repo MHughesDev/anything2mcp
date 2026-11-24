@@ -129,6 +129,9 @@ const SHOWING: u64 = 1 << 25;
 /// The state bits that say an element's text may be changed, and that it
 /// may not.
 const EDITABLE: u64 = 1 << 7;
+/// The state bit that says an element is enabled: a disabled element takes
+/// no value whatever else its state says.
+const ENABLED: u64 = 1 << 8;
 const READ_ONLY: u64 = 1 << 43;
 /// The relation numbers of "labels" and "labelled by".
 const LABEL_FOR: u32 = 1;
@@ -250,6 +253,87 @@ async fn text_property(
     String::try_from(value).map_err(|_| AxError::Lost("a name that is not text".to_owned()))
 }
 
+/// Every member this back end may send to a service the person's session
+/// runs, as interface and member (decision 0316): the introspection a
+/// service answers about itself, and the value of one property. Each one
+/// asks; none calls a method of the service. Only [`service_call`] sends
+/// one, and it sends every one with the flag that forbids the bus to start
+/// the service.
+pub(crate) const SERVICE_MEMBERS: &[(&str, &str)] = &[
+    ("org.freedesktop.DBus.Introspectable", "Introspect"),
+    (PROPERTIES, "Get"),
+];
+
+/// The most bytes of one object's introspection the pack takes.
+const MOST_XML: usize = 262_144;
+/// The most objects one walk of a service reads.
+const MOST_OBJECTS: usize = 200;
+/// The most bytes of introspection one walk keeps.
+const MOST_WALK_BYTES: usize = 1_048_576;
+/// The deepest below the root an object may be, in path parts.
+const DEEPEST_OBJECT: usize = 12;
+
+/// What a walk of a service's objects gave.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct Walk {
+    /// Each object's path and the text its introspection answered.
+    pub objects: Vec<(String, String)>,
+    /// The bound the walk stopped at, by name, when it stopped at one.
+    pub cut: Option<&'static str>,
+}
+
+/// Sends one member of [`SERVICE_MEMBERS`] to the service the session's
+/// bus names, with `NO_AUTO_START` on the message: a service that is not
+/// running is never started, whatever its `.service` file says. Within
+/// [`CALL_LIMIT`].
+async fn service_call<B, R>(
+    conn: &Connection,
+    service: &str,
+    path: &str,
+    interface: &str,
+    member: &str,
+    body: &B,
+) -> Result<R, AxError>
+where
+    B: serde::Serialize + zbus::DynamicType,
+    R: for<'d> zbus::wire::DynamicDeserialize<'d>,
+{
+    if !SERVICE_MEMBERS.contains(&(interface, member)) {
+        return Err(AxError::Lost("a member that is not a read".to_owned()));
+    }
+    let proxy = zbus::proxy::Builder::<zbus::Proxy<'_>>::new(conn)
+        .destination(service)
+        .path(path)
+        .interface(interface)
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()
+        .await
+        .map_err(|error| lost(&error))?;
+    let sent =
+        proxy.call_with_flags::<_, _, R>(member, zbus::proxy::MethodFlags::NO_AUTO_START, body);
+    match tokio::time::timeout(CALL_LIMIT, sent).await {
+        Ok(Ok(Some(answer))) => Ok(answer),
+        Ok(Ok(None)) => Err(AxError::Lost("no answer".to_owned())),
+        Ok(Err(error)) => Err(service_error(&error)),
+        Err(_) => Err(AxError::Timeout),
+    }
+}
+
+/// An error answer of the bus for a service, read: a name no connection
+/// owns is a service that is not running.
+fn service_error(error: &zbus::Error) -> AxError {
+    let name = match error {
+        zbus::Error::MethodError(name, _, _) => name.as_str().to_owned(),
+        zbus::Error::FDO(inner) => format!("{inner:?}"),
+        _ => String::new(),
+    };
+    if name.contains("ServiceUnknown") || name.contains("NameHasNoOwner") {
+        AxError::ServiceNotRunning
+    } else {
+        lost(error)
+    }
+}
+
 /// The look-only handle on one session's accessibility bus.
 pub(crate) struct Look {
     session: Connection,
@@ -336,6 +420,8 @@ pub(crate) enum Settable {
     Yes,
     /// It offers the interface, and its state says it takes no text today.
     ReadOnly,
+    /// It offers the interface, and its state says it is not enabled.
+    Disabled,
     /// It offers no editable text at all.
     NoInterface,
 }
@@ -383,7 +469,7 @@ impl Hands<'_> {
     }
 
     /// Whether the element's text may be set now, from its interfaces and
-    /// its state: two reads.
+    /// its state (enabled, editable, not read-only): two reads.
     pub(crate) async fn settable(&self, node: &Node) -> Result<Settable, AxError> {
         let (bus, path) = (node.el.bus.as_str(), node.el.path.as_str());
         let interfaces: Vec<String> =
@@ -394,7 +480,9 @@ impl Hands<'_> {
         let state: Vec<u32> = call(&self.look.a11y, bus, path, ACCESSIBLE, "GetState", &()).await?;
         let bits = state.first().map_or(0, |low| u64::from(*low))
             | state.get(1).map_or(0, |high| u64::from(*high) << 32);
-        Ok(if bits & EDITABLE != 0 && bits & READ_ONLY == 0 {
+        Ok(if bits & ENABLED == 0 {
+            Settable::Disabled
+        } else if bits & EDITABLE != 0 && bits & READ_ONLY == 0 {
             Settable::Yes
         } else {
             Settable::ReadOnly
@@ -844,6 +932,103 @@ impl Look {
         Hands { look: self, proof }
     }
 
+    /// Walks the objects of the service `service` on the session bus,
+    /// from `/`, asking each for its introspection and nothing else, within
+    /// the bounds. A service no connection owns is
+    /// [`AxError::ServiceNotRunning`]: nothing was started.
+    pub(crate) async fn introspect(
+        &self,
+        service: &str,
+        deadline: Deadline,
+    ) -> Result<Walk, AxError> {
+        let mut walk = Walk::default();
+        let mut queue = std::collections::VecDeque::from([("/".to_owned(), 0_usize)]);
+        let mut bytes = 0_usize;
+        while let Some((path, depth)) = queue.pop_front() {
+            if deadline.passed() {
+                return Err(AxError::Timeout);
+            }
+            if walk.objects.len() == MOST_OBJECTS {
+                walk.cut = Some("objects");
+                break;
+            }
+            let xml: String = service_call(
+                &self.session,
+                service,
+                &path,
+                "org.freedesktop.DBus.Introspectable",
+                "Introspect",
+                &(),
+            )
+            .await?;
+            if xml.len() > MOST_XML || bytes + xml.len() > MOST_WALK_BYTES {
+                walk.cut = Some("bytes");
+                break;
+            }
+            bytes += xml.len();
+            // The children are named by the document; one the reader
+            // refuses ends the walk below it, and the discoverer says so
+            // when it reads the same text.
+            let children = crate::dbus::read_object(&xml)
+                .map(|object| object.children)
+                .unwrap_or_default();
+            for child in children {
+                let below = if path == "/" {
+                    format!("/{child}")
+                } else {
+                    format!("{path}/{child}")
+                };
+                if depth + 1 > DEEPEST_OBJECT {
+                    walk.cut = Some("depth");
+                } else if crate::dbus::is_object_path(&below) {
+                    queue.push_back((below, depth + 1));
+                }
+            }
+            walk.objects.push((path, xml));
+        }
+        Ok(walk)
+    }
+
+    /// The value of one property of one object of a service, as text: a
+    /// string, a path, a flag, or a number. Any other form is
+    /// [`AxError::NotText`].
+    pub(crate) async fn property_text(
+        &self,
+        service: &str,
+        path: &str,
+        interface: &str,
+        name: &str,
+        limits: &Limits,
+    ) -> Result<String, AxError> {
+        use zbus::Variant as Value;
+        let value: OwnedVariant = service_call(
+            &self.session,
+            service,
+            path,
+            PROPERTIES,
+            "Get",
+            &(interface, name),
+        )
+        .await?;
+        let text = match &*value {
+            Value::Str(text) => text.as_str().to_owned(),
+            Value::ObjectPath(path) => path.as_str().to_owned(),
+            Value::Bool(flag) => flag.to_string(),
+            Value::U8(number) => number.to_string(),
+            Value::I16(number) => number.to_string(),
+            Value::U16(number) => number.to_string(),
+            Value::I32(number) => number.to_string(),
+            Value::U32(number) => number.to_string(),
+            Value::I64(number) => number.to_string(),
+            Value::U64(number) => number.to_string(),
+            _ => return Err(AxError::NotText),
+        };
+        if text.chars().count() > limits.chars {
+            return Err(AxError::TooLarge);
+        }
+        Ok(text)
+    }
+
     /// Says the pack no longer listens, and closes both connections.
     pub(crate) async fn close(self) {
         let _ = call::<_, ()>(
@@ -963,6 +1148,29 @@ mod tests {
                 "a call of `act_call` outside the acting half, at byte {at}"
             );
         }
+    }
+
+    #[test]
+    fn the_service_members_ask_and_call_no_method_of_a_service() {
+        assert_eq!(
+            SERVICE_MEMBERS,
+            &[
+                ("org.freedesktop.DBus.Introspectable", "Introspect"),
+                ("org.freedesktop.DBus.Properties", "Get"),
+            ]
+        );
+        for (interface, member) in SERVICE_MEMBERS {
+            assert!(!ACTING.contains(member), "{member}");
+            assert!(!ACT_MEMBERS.contains(&(interface, member)), "{member}");
+        }
+        // The one function that sends one sets the flag that forbids the
+        // bus to start the service, and nothing else in the module sends
+        // to a service.
+        let source = include_str!("linux.rs");
+        let body = source.split("#[cfg(test)]").next().expect("a body");
+        assert!(body.contains("zbus::proxy::MethodFlags::NO_AUTO_START"));
+        assert_eq!(body.matches(".call_with_flags").count(), 1);
+        assert!(!body.contains("StartServiceByName"));
     }
 
     #[test]

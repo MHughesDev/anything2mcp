@@ -201,10 +201,12 @@ async fn discovery_lists_the_servers_tools_and_calls_none() {
     // The settled entries, and apart from them those left with a question.
     // No read is drafted: of the tools still marked read-only, one answers
     // a list of records and the others take one string.
-    assert_eq!(
-        written,
-        ["mappings/orders.yaml", "mappings/orders_undecided.yaml"]
-    );
+    assert_eq!(written, ["mappings/orders.yaml"]);
+    // The file of the entries with a question waits in the holding folder
+    // and is not also in place (decision 0298).
+    let held: Vec<&str> = report.held.iter().map(a2m_files::RelPath::as_str).collect();
+    assert_eq!(held, ["held/mappings/orders_undecided.yaml"]);
+    assert!(!root.join("mappings/orders_undecided.yaml").exists());
     let draft = std::fs::read_to_string(root.join("mappings").join("orders.yaml")).unwrap();
     let digest = tools["orders_list"]["digest"].as_str().unwrap();
     assert!(draft.contains(digest), "{draft}");
@@ -229,19 +231,19 @@ async fn discovery_lists_the_servers_tools_and_calls_none() {
         .filter(|question| question.contains("one string"))
         .count();
     assert_eq!(strings, 4, "{questions:#?}");
-    let undecided =
-        std::fs::read_to_string(root.join("mappings").join("orders_undecided.yaml")).unwrap();
+    let undecided = std::fs::read_to_string(
+        root.join("held")
+            .join("mappings")
+            .join("orders_undecided.yaml"),
+    )
+    .unwrap();
     for text in [&draft, &undecided] {
         assert!(!text.contains("free_text: true") && !text.contains("free_text: false"));
     }
-    // A draft with a question left in it is not a mapping yet: it does not
-    // compile until a person has answered.
-    assert!(
-        report
-            .kept_failing
-            .iter()
-            .any(|(path, _)| path.as_str() == "mappings/orders_undecided.yaml")
-    );
+    // A draft with a question left in it is not a mapping yet: it is held
+    // outside what the loader reads, so what is in place compiles whole and
+    // nothing in place fails.
+    assert!(report.kept_failing.is_empty(), "{:?}", report.kept_failing);
 
     let (handle, prepared) = port.into_parts();
     handle.release(prepared, false).await;
@@ -314,18 +316,30 @@ async fn the_stands_tool_list_drafts_reads_that_read_what_it_stores() {
         written,
         [
             "mappings/orders.yaml",
-            "mappings/orders_undecided.yaml",
             "operations/orders_orders_report.yaml",
         ]
     );
+    let held: Vec<&str> = report.held.iter().map(a2m_files::RelPath::as_str).collect();
+    assert_eq!(held, ["held/mappings/orders_undecided.yaml"]);
+    assert!(!root.join("mappings/orders_undecided.yaml").exists());
     let mut questioned: Vec<&str> = report
         .open_questions
         .iter()
         .map(|open| open.file.as_str())
         .collect();
     questioned.dedup();
-    assert_eq!(questioned, ["mappings/orders_undecided.yaml"]);
-    std::fs::remove_file(root.join("mappings").join("orders_undecided.yaml")).unwrap();
+    assert_eq!(questioned, ["held/mappings/orders_undecided.yaml"]);
+    // The loader does not read the holding folder, so the drafts compile
+    // with the file of questions there.
+    assert!(root.join(questioned[0]).is_file());
+    // No property of the report is named as a secret's, so its description
+    // says nothing was left out for its name (decision 0302).
+    let read = std::fs::read_to_string(root.join("operations/orders_orders_report.yaml")).unwrap();
+    assert!(read.contains("its name is provisional."), "{read}");
+    assert!(
+        !read.contains("Left out because") && !read.contains("never an output"),
+        "{read}"
+    );
     let drafted = common::compile(&registry, &root)
         .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
         .plan;
@@ -371,4 +385,211 @@ async fn the_stands_tool_list_drafts_reads_that_read_what_it_stores() {
     assert!(control.writes().unwrap().is_empty());
     assert_eq!(control.calls_to("orders_report").unwrap(), 1);
     assert_eq!(control.request_count("tools/call").unwrap(), 1);
+
+    // Field test 6, finding 41: every tool the read rule drafts nothing
+    // from is listed with the rule's own reason, never with none.
+    let first = Drafter::new(registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(&kept.0)
+        .unwrap();
+    assert!(!first.not_drafted.is_empty());
+    for left in &first.not_drafted {
+        assert!(!left.reason.is_empty(), "{left:?}");
+    }
+    let reasons: Vec<&str> = first
+        .not_drafted
+        .iter()
+        .map(|left| left.reason.as_str())
+        .collect();
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.contains("not mark the tool read-only")),
+        "{reasons:#?}"
+    );
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.contains("`free_text: false`")),
+        "{reasons:#?}"
+    );
+
+    // Decision 0365: once a person answers in the mapping that the server
+    // does not run `orders_get`'s one string, for the definition listed,
+    // the scout run again drafts its read, and the read reads what the
+    // stand stores.
+    let get = kept
+        .0
+        .iter()
+        .map(found)
+        .find(|tool| tool["tool"] == "orders_get")
+        .unwrap();
+    let digest = get["digest"].as_str().unwrap();
+    let mapping = root.join("mappings").join("orders.yaml");
+    let mut text = std::fs::read_to_string(&mapping).unwrap();
+    text.push_str(&format!(
+        "---\nsurface: orders\ntools:\n  orders_get:\n    digest: \"{digest}\"\n    effect: read\n    absent_error: \"There is no order\"\n    free_text: false\n"
+    ));
+    std::fs::write(&mapping, text).unwrap();
+    let again = Drafter::new(registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(&kept.0)
+        .unwrap();
+    let written: Vec<&str> = again
+        .written
+        .iter()
+        .map(a2m_files::RelPath::as_str)
+        .collect();
+    assert!(
+        written.contains(&"operations/orders_orders_get.yaml"),
+        "{written:?}"
+    );
+    let drafted = common::compile(&registry, &root)
+        .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
+        .plan;
+    let surface = common::surface(&drafted, "orders", Some(&stand.url()));
+    let (handle, mut prepared) = prepare(
+        &registry,
+        &drafted,
+        &surface,
+        fence_of(9),
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap();
+    let get = steps(&drafted, "example_orders_get").act;
+    let args = Values::new().with("order_id", "A-100");
+    let outcome = handle
+        .act(
+            &mut prepared,
+            &get,
+            &input(&args, None, None, None),
+            a2m_provider::Authority::Read,
+        )
+        .await
+        .unwrap();
+    handle.release(prepared, false).await;
+    let a2m_provider::StepOutcome::Done(observed) = outcome else {
+        panic!("A-100 is held");
+    };
+    assert_eq!(
+        observed.values.get("status"),
+        Some(&a2m_core::Value::from("draft"))
+    );
+    assert_eq!(control.calls_to("orders_get").unwrap(), 1);
+}
+
+/// A tool list that names secrets (decision 0302): a tool whose input and
+/// answer have properties named as a secret's, and one that needs a secret
+/// as an input. The first is drafted as a read with neither, and says so;
+/// the second is not drafted. No drafted file holds the invented value,
+/// and the target compiles.
+#[tokio::test]
+async fn a_tool_property_named_as_a_secret_is_never_a_drafted_input_or_output() {
+    const INVENTED: &str = "example-not-a-secret-0002";
+    let folder = Folder::new("drafted-secrets");
+    let registry = registry(&folder);
+    let names = a2m_pack_mcp::Names::new().unwrap();
+    let digest = |digit: &str| format!("sha256:{}", digit.repeat(64));
+    let tool = |name: &str, digit: &str, input: serde_json::Value, output: serde_json::Value| {
+        let found = serde_json::json!({
+            "surface": "orders",
+            "tool": name,
+            "digest": digest(digit),
+            "pin": null,
+            "read_only": true,
+            "free_text": false,
+            "unchecked_keywords": [],
+            "input_schema": input,
+            "output_schema": output,
+            "annotations": {"readOnlyHint": true},
+            "untrusted": {"title": null, "description": null},
+        });
+        Finding::about(
+            a2m_core::Subject::Address(
+                a2m_core::Address::new("http://127.0.0.1:9", "/mcp").unwrap(),
+            ),
+            names.upstream_tool.clone(),
+            found.to_string(),
+            Source::LiveSystem,
+            a2m_core::ProducedBy {
+                provider: "mcp".to_owned(),
+                version: "0".to_owned(),
+                component: None,
+            },
+            a2m_core::Timestamp::from_unix_millis(0),
+        )
+        .level(EvidenceLevel::Discovered)
+        .build()
+        .unwrap()
+    };
+    let findings = vec![
+        tool(
+            "orders_lookup",
+            "a",
+            serde_json::json!({"type": "object", "required": ["order_id"], "properties": {
+                "order_id": {"type": "string", "examples": ["A-100"]},
+                "access_token": {"type": "string", "default": INVENTED},
+            }}),
+            serde_json::json!({"type": "object", "properties": {
+                "reference": {"type": "string"},
+                "client_secret": {"type": "string", "default": INVENTED},
+                "api_key": {"type": "string"},
+            }}),
+        ),
+        tool(
+            "orders_unlock",
+            "b",
+            serde_json::json!({"type": "object", "required": ["password"], "properties": {
+                "password": {"type": "string", "default": INVENTED},
+            }}),
+            serde_json::json!({"type": "object", "properties": {"ok": {"type": "boolean"}}}),
+        ),
+    ];
+    let root = folder.path().join("target");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(fixture_root().join("target.yaml"), root.join("target.yaml")).unwrap();
+    let report = Drafter::new(registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(&findings)
+        .unwrap();
+    assert!(report.conflicts.is_empty() && report.refused.is_empty());
+    let written: Vec<&str> = report
+        .written
+        .iter()
+        .map(a2m_files::RelPath::as_str)
+        .collect();
+    assert_eq!(
+        written,
+        [
+            "mappings/orders.yaml",
+            "operations/orders_orders_lookup.yaml"
+        ]
+    );
+    let read = std::fs::read_to_string(root.join("operations/orders_orders_lookup.yaml")).unwrap();
+    for secret in ["client_secret", "api_key", "access_token", "password"] {
+        let as_key = format!("{secret}:");
+        assert!(!read.contains(&as_key), "{secret} is a key of\n{read}");
+    }
+    assert!(
+        read.contains("order_id") && read.contains("reference"),
+        "{read}"
+    );
+    assert!(
+        read.contains("`client_secret`") && read.contains("`api_key`"),
+        "{read}"
+    );
+    // The sentence ends the description.
+    assert!(
+        read.contains("so that a secret is never an output"),
+        "{read}"
+    );
+    for file in [
+        "mappings/orders.yaml",
+        "operations/orders_orders_lookup.yaml",
+    ] {
+        let text = std::fs::read_to_string(root.join(file)).unwrap();
+        assert!(!text.contains(INVENTED), "{file}");
+    }
+    assert!(!root.join("operations/orders_orders_unlock.yaml").exists());
+    common::compile(&registry, &root)
+        .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)));
 }

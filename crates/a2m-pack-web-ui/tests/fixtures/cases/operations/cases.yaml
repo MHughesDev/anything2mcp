@@ -1,0 +1,147 @@
+operation: example_pallet_archive
+title: Archive the pallet
+effect: irreversible
+commit_points: 1
+inputs: {}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: rerender
+    action: archive_pallet
+description: >
+  Presses the pallet's button on a page that draws its list again after
+  every press.
+---
+operation: example_crate_archive
+title: Archive the crate
+effect: irreversible
+commit_points: 1
+inputs: {}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: rerender
+    action: archive_crate
+description: >
+  Presses the crate's button on a page that draws its list again after
+  every press.
+---
+operation: example_reference_submit
+title: Keep a reference
+effect: irreversible
+commit_points: 1
+inputs:
+  reference: {type: text, description: "The reference to keep"}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: typed_input
+    fields:
+      reference: input.reference
+    action: save
+description: >
+  Types a reference into a field that keeps only what is typed key by key.
+---
+operation: example_customers_open
+title: Go to the customers
+effect: irreversible
+commit_points: 1
+inputs: {}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: in_page
+    action: customers
+description: >
+  Moves a page to another address without loading a document.
+---
+operation: example_order_archive
+title: Archive the order
+effect: irreversible
+commit_points: 1
+inputs: {}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: confirm
+    action: archive
+description: >
+  Presses the button of a page that asks for confirmation on some presses.
+---
+operation: example_dispatch_code_send
+title: Send a dispatch code
+effect: irreversible
+commit_points: 1
+inputs:
+  code: {type: text, description: "The code to send"}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: frame
+    fields:
+      code: input.code
+    action: send
+description: >
+  Sends a code through a form that is inside a frame.
+---
+operation: example_report_send
+title: Send the report
+effect: irreversible
+commit_points: 1
+inputs: {}
+outputs: {}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: notice
+    action: send
+description: >
+  Presses the button of a form that a notice covers until it is closed.
+---
+operation: example_order_delivery_update
+title: Change the delivery details of an order
+effect: write
+key: order_id
+commit_points: 1
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+  shipping: {type: text, description: "How it ships: standard, express, or freight"}
+  gift_wrap: {type: boolean, description: "Whether it is gift wrapped"}
+  priority: {type: text, description: "How urgent: low, normal, or high"}
+  deliver_on: {type: text, description: "The delivery date, as 2026-12-01"}
+  notes: {type: text, description: "Notes for the carrier"}
+outputs:
+  shipping: {type: text}
+  gift_wrap: {type: boolean}
+  priority: {type: text}
+  deliver_on: {type: text}
+  notes: {type: text}
+bindings:
+  - mode: ui
+    verb: update
+    status: shadow
+    screen: delivery
+    fields:
+      shipping: input.shipping
+      gift_wrap: input.gift_wrap
+      priority: input.priority
+      deliver_on: input.deliver_on
+      notes: input.notes
+    action: save
+    read_back: {screen: delivery}
+description: >
+  Sets each native control of the delivery page, saves after the browser's
+  own confirmation, and reads the page back.

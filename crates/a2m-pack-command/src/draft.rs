@@ -11,7 +11,7 @@
 //! never a parameter (decision 0284).
 
 use a2m_core::{FileKindName, Finding, FindingKind};
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath};
+use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, names_a_secret};
 
 use crate::codes::{self, FILE_KIND, FOLDER};
 use crate::discover::CommandFound;
@@ -72,6 +72,12 @@ const TYPED_BY_FILE: &str = "What type is the value that the usage line of the c
 
 /// The drafting rule from `command` findings to `commands/` files.
 pub(crate) struct CommandFromFinding;
+
+/// Whether a flag or a place of a usage line is named as a secret, as the
+/// program writes it or as the parameter it becomes (decision 0302).
+pub(crate) fn named_as_secret(word: &str) -> bool {
+    names_a_secret(word) || names_a_secret(&slug(word))
+}
 
 /// A lowercase name made of a text's letters and digits.
 pub(crate) fn slug(text: &str) -> String {
@@ -241,6 +247,11 @@ impl DraftingRule for CommandFromFinding {
         let mut args: Vec<DraftValue> = listed.split(' ').map(DraftValue::text).collect();
         let mut params: Vec<(String, DraftValue)> = Vec::new();
         let parts = found.usage.as_deref().map(usage_parts);
+        // A value a program takes under a secret's name is never a param: an
+        // optional one is left out of the draft, and a required one makes
+        // the arguments a question (decision 0302). A command has no
+        // description to say so in, and no output is drafted.
+        let mut required_secret = false;
         let args = match parts {
             Some(Some(parts)) => {
                 let option_of =
@@ -269,6 +280,14 @@ impl DraftingRule for CommandFromFinding {
                             params.push((name, DraftValue::map(fields)));
                         }
                     };
+                    let takes_param = part.place.is_some() || part.optional;
+                    let secret = takes_param
+                        && (part.flag.as_deref().is_some_and(named_as_secret)
+                            || part.place.as_deref().is_some_and(named_as_secret));
+                    if secret {
+                        required_secret |= !part.optional;
+                        continue;
+                    }
                     match (part.flag, part.place) {
                         (None, Some(place)) => {
                             let name = slug(&place);
@@ -314,7 +333,14 @@ impl DraftingRule for CommandFromFinding {
                         args.push(cx.open_question_quoting(FILE_ONLY, &[listed, flag]));
                     }
                 }
-                DraftValue::List(args)
+                if required_secret {
+                    cx.open_question_quoting(
+                        "What are the arguments of the quoted command? Its usage line requires a value under a name that is a secret's, and a secret is never an input.",
+                        &[listed],
+                    )
+                } else {
+                    DraftValue::List(args)
+                }
             }
             Some(None) => cx.open_question_quoting(
                 "What are the arguments of the quoted command? Its usage line is in a form the drafter does not read.",

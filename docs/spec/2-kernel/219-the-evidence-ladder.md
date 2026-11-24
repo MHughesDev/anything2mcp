@@ -1,6 +1,6 @@
 # 219. The evidence ladder
 
-Finding out that something might work is not proving that it works. Every finding, every draft, and every tool carries one evidence level, and nothing is shown or used at a higher level than its evidence supports. Decision: [record 0051](../../decisions/0051-findings-and-the-evidence-ladder.md). Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
+Finding out that something might work is not proving that it works. Every finding, every draft, and every tool carries one evidence level, and nothing is shown at a higher level than its evidence supports. The level informs a person at review and decides nothing in a run ([decision 0307](../../decisions/0307-what-the-evidence-level-is-for-and-what-a-review-shows-about-a-tools-evidence.md)). Decision: [record 0051](../../decisions/0051-findings-and-the-evidence-ladder.md). Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 ## The levels
 
@@ -20,7 +20,7 @@ The first two belong to findings ([section 218](218-discovery-and-findings.md)).
 
 1. **A level is earned, never declared.** No file has a field that sets it. The part of the system named in the last column computes it from stored evidence.
 2. **No skipping.** A draft reaches `executed` only after `schema_verified`, and so on up.
-3. **Only `approved` is listed.** A tool at any lower level is refused to ordinary callers, as drafts already are.
+3. **The level gates no listing, call, or publish.** A person publishes a version, and that act, not a level, is what makes a tool callable ([decision 0307](../../decisions/0307-what-the-evidence-level-is-for-and-what-a-review-shows-about-a-tools-evidence.md), point 1). The code compares a level in two places only: a finding may not claim more than its source gives, and a promote accepts a read the scout tried at `executed`.
 4. **A level can fall.** When the evidence under it stops being true, the level drops to what the remaining evidence supports.
 5. **Evidence names its subject.** Each piece of evidence says what it was about: a file by its digest, an address, a process, a session, or a device, with the version of the system where that is known.
 6. **Limitations travel with evidence.** What was not looked at, what was cut short, and what could not be read are recorded beside what was found.
@@ -40,7 +40,7 @@ A device is stricter. A device whose firmware version is outside its map stops e
 
 | Already designed | Relation |
 | --- | --- |
-| Binding status: `draft`, `shadow`, `verified`, `retired` | Unchanged. The compiler refuses `verified` on a binding whose version has not reached `behavior_verified` |
+| Binding status: `draft`, `shadow`, `verified`, `retired` | Unchanged. A binding is made `verified` by `binding.promote` on the evidence below, not by the version's level |
 | Version stages: published, candidate, current ([section 224](224-when-the-engine-itself-fails.md)) | Unchanged. `approved` is a version that is current |
 | The publish gates ([section 403](../4-building-tools/403-testing-and-publish-gates.md)) | They are what moves a version to `behavior_verified` |
 | Shadow comparison | A binding in shadow is at `executed` at most until it has matched the verified binding that acts on the set number of distinct inputs, in each environment the evidence must come from, since its last mismatch, counted for it as it is now, by its digest, and a person at the machine promotes it ([decision 0251](../../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md)) |
@@ -62,7 +62,7 @@ operation example_line_item_upsert  reconstructed  needs: fixtures for schema_ve
 
 ## What a person sees
 
-The review summary shown before publishing ([section 502](../5-security/502-defending-against-a-manipulated-agent.md)) gains one line per tool: its level, and what its `behavior_verified` rests on. A tool whose gates ran only against fixtures, with no test stand and no test record, says so.
+The review summary shown before publishing ([section 502](../5-security/502-defending-against-a-manipulated-agent.md)) gains one line per tool: its level, and what its `behavior_verified` rests on. A tool whose gates ran only against fixtures, with no test stand and no test record, says so. The level informs the person; publishing a tool at any level stays the person's choice ([decision 0307](../../decisions/0307-what-the-evidence-level-is-for-and-what-a-review-shows-about-a-tools-evidence.md)).
 
 ## What this does not do
 

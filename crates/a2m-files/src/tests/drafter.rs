@@ -78,13 +78,67 @@ impl DraftingRule for OperationSeen {
     }
 }
 
+/// A rule that drafts nothing: `quiet` says why and counts two properties
+/// left out for their names; anything else says nothing.
+struct Nothing;
+
+impl DraftingRule for Nothing {
+    fn finding_kind(&self) -> FindingKind {
+        FindingKind::new("nothing_seen").unwrap()
+    }
+    fn file_kind(&self) -> FileKindName {
+        FileKindName::new("operation").unwrap()
+    }
+    fn draft(&self, finding: &Finding, cx: &DraftContext<'_>) -> Result<Vec<DraftDoc>, Failure> {
+        if finding.found() == "quiet" {
+            cx.not_drafted("The read needs a parameter this rule does not draft.");
+            cx.left_out_as_secret(2);
+        }
+        Ok(Vec::new())
+    }
+}
+
 fn set() -> CompilerSet {
     let mut builder = CompilerSet::builder();
     register_stand(&mut builder).unwrap();
     builder
         .drafting_rule("seer", Arc::new(OperationSeen))
         .unwrap();
+    builder.drafting_rule("seer", Arc::new(Nothing)).unwrap();
     builder.build()
+}
+
+#[test]
+fn a_finding_a_rule_drafts_nothing_from_is_reported_with_its_reason_and_the_left_out_are_counted() {
+    let folder = scratch("nothing");
+    let root = TargetRoot::new(&folder);
+    let set = set();
+    let said = finding("nothing_seen", "quiet");
+    let silent = finding("nothing_seen", "silent");
+    let drafted = finding("operation_seen", "read");
+    let report = Drafter::new(&set, &root)
+        .draft(&[said.clone(), silent.clone(), drafted])
+        .unwrap();
+    assert_eq!(report.not_drafted.len(), 2, "{report:?}");
+    assert_eq!(report.not_drafted[0].finding, said.id());
+    assert_eq!(report.not_drafted[0].pack, "seer");
+    assert_eq!(
+        report.not_drafted[0].reason,
+        "The read needs a parameter this rule does not draft."
+    );
+    // A rule that says nothing is listed with no reason, and counts none.
+    assert_eq!(report.not_drafted[1].finding, silent.id());
+    assert_eq!(report.not_drafted[1].reason, "");
+    assert_eq!(report.left_out_as_secret, 2);
+    // A finding no rule reads is not here.
+    assert!(report.not_covered.is_empty());
+    // The same call again reports the same, and counts afresh.
+    let again = Drafter::new(&set, &root)
+        .draft(&[said.clone(), silent])
+        .unwrap();
+    assert_eq!(again.left_out_as_secret, 2);
+    assert_eq!(again.not_drafted.len(), 2);
+    std::fs::remove_dir_all(&folder).unwrap();
 }
 
 #[test]
@@ -131,18 +185,27 @@ fn what_the_finding_does_not_state_is_an_open_question_and_never_a_guess() {
     let report = Drafter::new(&set, &root)
         .draft(std::slice::from_ref(&unstated))
         .unwrap();
-    assert_eq!(report.written.len(), 1);
+    // The draft with the question is held (decision 0298): it is written
+    // under `held/`, nothing is written in place, and the target compiles
+    // as it did.
+    assert!(report.written.is_empty());
+    assert_eq!(
+        report.held.iter().map(RelPath::as_str).collect::<Vec<_>>(),
+        ["held/calls/order_find.yaml"]
+    );
     assert_eq!(report.open_questions.len(), 1);
+    assert_eq!(
+        report.open_questions[0].file.as_str(),
+        "held/calls/order_find.yaml"
+    );
     assert_eq!(
         report.open_questions[0].question,
         "Does the call `order_find` read or write?"
     );
     assert_eq!(report.open_questions[0].findings, [unstated.id()]);
-    // The draft is kept, and it does not compile until the question is answered.
-    let (path, problems) = &report.kept_failing[0];
-    assert_eq!(path.as_str(), "calls/order_find.yaml");
-    assert!(problems.find("kernel.open_question").is_some());
-    let text = std::fs::read_to_string(folder.join("calls").join("order_find.yaml")).unwrap();
+    assert!(report.kept_failing.is_empty());
+    assert!(!folder.join("calls").join("order_find.yaml").exists());
+    let text = std::fs::read_to_string(folder.join("held/calls/order_find.yaml")).unwrap();
     assert!(text.contains("effect: {open_question: "));
     assert!(!text.contains("effect: \"read\"") && !text.contains("effect: \"write\""));
     std::fs::remove_dir_all(&folder).unwrap();
@@ -485,11 +548,9 @@ fn a_question_keeps_the_products_sentence_apart_from_the_systems_words() {
     // answered; the report's whole question is the file's.
     assert!(open.question.starts_with(quoting.sentence()));
     assert!(open.question.contains("\"count\""));
-    let text = std::fs::read_to_string(folder.join("calls").join("order_usage.yaml")).unwrap();
+    let text = std::fs::read_to_string(folder.join("held/calls/order_usage.yaml")).unwrap();
     assert!(text.contains("effect: {open_question: "));
     assert!(!text.contains("example-token-0042"));
-    let (_, problems) = &report.kept_failing[0];
-    assert!(problems.find("kernel.open_question").is_some());
 
     // The ledger's one text reads back apart; a question in one piece, and
     // every question stored before, reads whole.

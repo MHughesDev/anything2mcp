@@ -244,6 +244,18 @@ pub fn compile_changed(
     path: &str,
     change: impl Fn(&str) -> String,
 ) -> Result<Compiled, Diagnostics> {
+    compile_changed_files(registry, name, &[(path, &change)])
+}
+
+/// A change to one file's text.
+pub type Change<'a> = &'a dyn Fn(&str) -> String;
+
+/// The same, with several files changed.
+pub fn compile_changed_files(
+    registry: &Registry,
+    name: &str,
+    changes: &[(&str, Change<'_>)],
+) -> Result<Compiled, Diagnostics> {
     fn walk(root: &Path, folder: &Path, out: &mut Vec<(RelPath, Vec<u8>)>) {
         let mut entries: Vec<_> = std::fs::read_dir(folder)
             .unwrap()
@@ -270,11 +282,13 @@ pub fn compile_changed(
     let root = fixture(name);
     let mut files = Vec::new();
     walk(&root, &root, &mut files);
-    match files.iter_mut().find(|(known, _)| known.as_str() == path) {
-        Some((_, bytes)) => {
-            *bytes = change(std::str::from_utf8(bytes).unwrap()).into_bytes();
+    for (path, change) in changes {
+        match files.iter_mut().find(|(known, _)| known.as_str() == *path) {
+            Some((_, bytes)) => {
+                *bytes = change(std::str::from_utf8(bytes).unwrap()).into_bytes();
+            }
+            None => files.push((RelPath::new(path).unwrap(), change("").into_bytes())),
         }
-        None => files.push((RelPath::new(path).unwrap(), change("").into_bytes())),
     }
     let set = registry.compiler_set();
     let sources = a2m_files::load_files(&TargetRoot::new(root), &files, set)?;
@@ -291,6 +305,10 @@ pub fn shown(problems: &Diagnostics) -> String {
 
 pub fn ui_mode() -> Mode {
     Mode::new("ui").unwrap()
+}
+
+pub fn site_tools_mode() -> Mode {
+    Mode::new("site_tools").unwrap()
 }
 
 pub fn page_http_mode() -> Mode {

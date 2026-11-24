@@ -30,10 +30,20 @@
 //! the type of; an example; a test.
 
 use a2m_core::{Failure, FileKindName, Finding, FindingKind, OperationName, Subject};
-use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT};
+use a2m_files::{
+    DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, left_out_sentence,
+    names_a_secret,
+};
 use serde_json::Value as Json;
 
 use crate::screens::SCREEN_KIND;
+
+/// Whether the compiler takes a column's heading or a value's label for a
+/// secret's, as the page writes it or as the output name it becomes
+/// (decision 0302).
+pub(crate) fn named_as_secret(words: &str, name: &str) -> bool {
+    names_a_secret(words) || names_a_secret(name)
+}
 
 /// Whether `text` is a name a screen, an output, or a column may have.
 pub(crate) fn is_name(text: &str, longest: usize) -> bool {
@@ -45,6 +55,12 @@ const OPERATION: FileKindName = FileKindName::fixed("operation");
 
 /// The finding kind the web pack's discoverers give for a snapshot.
 pub(crate) const SCREEN_FINDING: &str = "screen";
+
+/// The name, in a `screen` finding, of the origins the page tried to send
+/// requests to and the observing tab refused (decision 0292, package P3b).
+/// The web pack's discoverers write it; it is a list of origins, each as
+/// the browser writes it.
+const REFUSED_ORIGINS: &str = "refused_origins";
 
 /// The format of a `screen` finding these rules read.
 const FORMAT: &str = "1";
@@ -141,6 +157,69 @@ fn elements(found: &str) -> Result<Option<Vec<Element>>, Failure> {
         .collect::<Option<Vec<_>>>()
         .map(Some)
         .ok_or_else(unreadable)
+}
+
+/// The origins the finding says the page tried to send requests to, each
+/// once and in order, as destinations a drafted operation may declare. An
+/// entry that is not an origin written with its scheme, with a host and a
+/// port at most, and nothing else, is left out: a destination is an exact
+/// address, and nothing here widens the page's reach beyond what a person
+/// then reviews. The page's own origin is never one of them.
+fn refused_origins(found: &str, own: &str) -> Vec<String> {
+    let Ok(found) = serde_json::from_str::<Json>(found) else {
+        return Vec::new();
+    };
+    let mut origins: Vec<String> = found
+        .get(REFUSED_ORIGINS)
+        .and_then(Json::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Json::as_str)
+        .filter(|one| {
+            // A host of plain characters only: a wildcard is no address.
+            let plain = one.split_once("://").is_some_and(|(_, host)| {
+                host.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '-' | '[' | ']'))
+            });
+            plain
+                && a2m_pack_web_browser::Address::new(one)
+                    .is_ok_and(|address| address.origin() == *one && *one != own)
+        })
+        .map(str::to_owned)
+        .collect();
+    origins.sort();
+    origins.dedup();
+    origins
+}
+
+/// What a drafted operation may declare of the origins its page was seen to
+/// send to: `permissions.destinations`, one open question for each origin.
+/// The page put the origin there, not the person, and declaring it widens
+/// where the tool's browser may send; so the read waits in the holding
+/// folder until a person keeps the origin, by writing it in the question's
+/// place, or removes it (decision 0298). Nothing when there were none.
+fn permissions(
+    doc: &mut Vec<(&'static str, DraftValue)>,
+    origins: &[String],
+    path: &str,
+    cx: &DraftContext<'_>,
+) {
+    if origins.is_empty() {
+        return;
+    }
+    let asked = origins
+        .iter()
+        .map(|one| {
+            cx.open_question_quoting(
+                "While it was scouted, the page quoted first tried to send requests to the origin quoted second, which is not the surface's. Declaring it lets this tool's browser send there. Keep it (write the origin here, with its scheme) or remove this line?",
+                &[path, one],
+            )
+        })
+        .collect();
+    doc.push((
+        "permissions",
+        DraftValue::map(vec![("destinations", DraftValue::List(asked))]),
+    ));
 }
 
 /// Every table of the page that has a name, in the order of the page.
@@ -383,7 +462,7 @@ struct Labelled {
 
 /// The labelled values of the page, and the labels that cannot be told
 /// apart: a name two terms share, or that two definitions have.
-fn labelled(elements: &[Element]) -> (Vec<Labelled>, Vec<String>) {
+fn labelled(elements: &[Element]) -> (Vec<Labelled>, Vec<String>, Vec<String>) {
     let named = |role: &str, name: &str| {
         elements
             .iter()
@@ -392,6 +471,7 @@ fn labelled(elements: &[Element]) -> (Vec<Labelled>, Vec<String>) {
     };
     let mut values: Vec<Labelled> = Vec::new();
     let mut shared: Vec<String> = Vec::new();
+    let mut secrets: Vec<String> = Vec::new();
     for (at, one) in elements.iter().enumerate() {
         let Some(label) = one.name.as_deref().filter(|name| !name.trim().is_empty()) else {
             continue;
@@ -423,13 +503,20 @@ fn labelled(elements: &[Element]) -> (Vec<Labelled>, Vec<String>) {
         if !is_name(&output, LONGEST) || values.iter().any(|known| known.output == output) {
             continue;
         }
+        // A value labelled as a secret is never an output (decision 0302).
+        if named_as_secret(label, &output) {
+            if !secrets.contains(&output) {
+                secrets.push(output);
+            }
+            continue;
+        }
         values.push(Labelled {
             output,
             label: label.to_owned(),
             section,
         });
     }
-    (values, shared)
+    (values, shared, secrets)
 }
 
 fn values_field(locate: DraftValue, section: &(String, String)) -> DraftValue {
@@ -463,7 +550,13 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
     let Some(surface) = surface(cx, origin) else {
         return Ok(out);
     };
+    // A placeholder of the address named as a secret would be an input
+    // that is a secret: nothing is drafted (decision 0302).
+    if holes.iter().any(|hole| named_as_secret(hole, &snake(hole))) {
+        return Ok(out);
+    }
     let reach = || DraftValue::map(vec![("url", DraftValue::text(path))]);
+    let sends_to = refused_origins(finding.found(), origin);
     let seen = if holes.is_empty() {
         format!("the page `{path}`")
     } else {
@@ -498,6 +591,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         // name, cannot say which column is which. A column may not have
         // the name of an input.
         let mut columns = Vec::new();
+        let mut secrets: Vec<String> = Vec::new();
         for heading in &table.headers {
             let column = snake(heading);
             let alone = table
@@ -513,7 +607,13 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
                     .count()
                     == 1;
             if alone && is_name(&column, LONGEST) && !holes.contains(&column) {
-                columns.push((column, heading.clone()));
+                // A column headed as a secret is never an output
+                // (decision 0302).
+                if named_as_secret(heading, &column) {
+                    secrets.push(column);
+                } else {
+                    columns.push((column, heading.clone()));
+                }
             }
         }
         if columns.is_empty() {
@@ -612,10 +712,12 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
             (
                 "description",
                 DraftValue::text(&format!(
-                    "Lists the rows of one table of {seen}, each column as the page shows it. Drafted by rule from a snapshot; its name is provisional."
+                    "Lists the rows of one table of {seen}, each column as the page shows it. Drafted by rule from a snapshot; its name is provisional.{}"
+                    , left_out_sentence(&secrets)
                 )),
             ),
         ]);
+        permissions(&mut doc, &sends_to, path, cx);
         out.operations.push(DraftDoc {
             path: RelPath::new(&format!("operations/{name}_list.yaml"))?,
             body: DraftValue::map(doc),
@@ -624,7 +726,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
 
     // The labelled values, as one screen and one read; a label that cannot
     // be told apart is a question apart, so that the others compile.
-    let (values, shared) = labelled(&elements);
+    let (values, shared, secrets) = labelled(&elements);
     let name = if page.is_empty() {
         "values".to_owned()
     } else {
@@ -695,10 +797,12 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
             (
                 "description",
                 DraftValue::text(&format!(
-                    "Reads the labelled values of {seen}, each as the page shows it beside its label. Drafted by rule from a snapshot; its name is provisional."
+                    "Reads the labelled values of {seen}, each as the page shows it beside its label. Drafted by rule from a snapshot; its name is provisional.{}"
+                    , left_out_sentence(&secrets)
                 )),
             ),
         ]);
+        permissions(&mut doc, &sends_to, path, cx);
         out.operations.push(DraftDoc {
             path: RelPath::new(&format!("operations/{name}_get.yaml"))?,
             body: DraftValue::map(doc),

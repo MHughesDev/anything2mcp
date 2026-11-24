@@ -12,8 +12,8 @@
 //! [`add_to`], or `builder.add_pack(&HttpPack)`.
 //!
 //! Not built yet, and so not declared in the pack's manifest: the `api`
-//! mode, the `token` step and the anti-forgery bootstrap, the edge's
-//! answers, uploads and downloads, pagers, identity by a stamp or a search,
+//! mode, a token taken from another endpoint's answer, a challenge
+//! page, uploads and downloads, pagers, identity by a stamp or a search,
 //! the digest and integrated Windows exchanges, a client certificate,
 //! GraphQL and OData.
 //!
@@ -32,6 +32,7 @@ mod discover;
 mod draft;
 mod driver;
 mod endpoints;
+mod forgery;
 mod forms;
 mod json;
 mod link;
@@ -50,7 +51,7 @@ use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar, Registry
 pub use discover::{DESCRIPTION_FILE, DESCRIPTION_PATH};
 pub use endpoints::{ENDPOINT_KIND, HTTP_SURFACE, PACK, WEB_SURFACE};
 pub use link::{ACCEPTED, UNENCRYPTED_CREDENTIALS};
-pub use lower::{EXTRACT, PROBE, REQUEST, VALIDATE};
+pub use lower::{EXTRACT, PROBE, REQUEST, TOKEN, VALIDATE};
 
 /// The name of the mode this pack drives.
 pub const HTTP_MODE: &str = "http";

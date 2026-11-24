@@ -148,8 +148,29 @@ impl Shape {
                 shape.items = merged.map(Box::new);
             }
             Json::Object(fields) => {
-                shape.types.insert("object");
                 shape.objects = 1;
+                // An object whose keys are all identifiers by form (numbers,
+                // identifiers, dates) is a dictionary, whatever its size: one
+                // entry of type `map`, its keys never named, and the shape
+                // of its values merged (decision 0322 point 6).
+                if !fields.is_empty()
+                    && fields
+                        .keys()
+                        .all(|key| crate::infer::is_identifier_by_form(key))
+                {
+                    shape.types.insert("map");
+                    let mut merged: Option<Self> = None;
+                    for value in fields.values() {
+                        let one = Self::at(value, depth + 1);
+                        merged = Some(match merged {
+                            Some(all) => all.merged(&one),
+                            None => one,
+                        });
+                    }
+                    shape.items = merged.map(Box::new);
+                    return shape;
+                }
+                shape.types.insert("object");
                 // An object with more names than a record has, or with a
                 // name that is not a plain one, is a dictionary: its names
                 // are values, and none is kept.
@@ -321,6 +342,11 @@ impl Shape {
                 };
                 if *seen < self.objects {
                     field.insert("optional".to_owned(), Json::Bool(true));
+                } else if self.objects >= 2 {
+                    // Seen in every answer: a count, never `required`,
+                    // because presence in every sample is no contract
+                    // (decision 0322 point 1).
+                    field.insert("seen_in_all".to_owned(), Json::from(self.objects));
                 }
                 fields.insert(name.clone(), Json::Object(sorted(field)));
             }

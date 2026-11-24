@@ -70,6 +70,18 @@ a2m_core::failure_codes! {
     POWERSHELL_FILE_UNREADABLE = Input, "powershell_file_unreadable",
         meaning "A file handed to the scout as a PowerShell help file or a module manifest cannot be read as one: it is not UTF-8 text, it is not well-formed XML or declares a document type, it passes a bound of the reader, or it is no help file (`helpItems`) or no manifest (one table of data).",
         next "Hand the module's XML help file, `<module>-help.xml`, or its manifest, `<module>.psd1`, as it ships; a help file that declares a document type is never read.";
+    BINARY_KIND_UNKNOWN = UnknownVariant, "binary_kind_unknown",
+        meaning "A file handed to the scout as a binary is of no kind the reader has a rule for: it is not an ELF, a PE, or a Mach-O file, or it is a PE file with no PE signature.",
+        next "Hand a program of one of the three kinds the reader has a rule for: an ELF, a PE, or a Mach-O file.";
+    BINARY_TRUNCATED = Input, "binary_truncated",
+        meaning "A file handed to the scout as a binary is shorter than its own headers say: a header, a table, a segment, a section, or a slice of it is cut by the end of the file.",
+        next "Copy the whole file again; a file the copy cut short cannot be read.";
+    BINARY_CYCLIC = Input, "binary_cyclic",
+        meaning "A file handed to the scout as a binary leads back to a part of itself that is being read: a resource table below itself, a slice of a fat file that is the fat header or another fat file.",
+        next "Do not use this file: a program that is whole never leads back to a part it is being read from.";
+    BINARY_MALFORMED = Input, "binary_malformed",
+        meaning "A file handed to the scout as a binary has a kind the reader knows and is not well formed in a way that is not a cut: a table with an entry out of line, a tree deeper than its format allows, or more entries than the reader takes.",
+        next "Hand the program as it was built; a file a tool has changed by hand may no longer be one.";
     AMBIGUOUS_MATCH = PossibleCommit, "ambiguous_match",
         meaning "A lookup that must match one record matched more than one.",
         next "Find the records by hand, and decide which is the one that was written.";
@@ -102,8 +114,13 @@ pub const FILE_FINDING_KIND: &str = "command_file";
 /// The kind of finding about one command a PowerShell help file handed to
 /// the discoverer describes.
 pub const POWERSHELL_FINDING_KIND: &str = "powershell_command";
+/// The kind of finding about the plain facts of a binary handed to the
+/// binary discoverer.
+pub const BINARY_FINDING_KIND: &str = "binary";
 /// The discoverer's name.
 pub const DISCOVERER: &str = "help";
+/// The name of the discoverer of a binary's plain facts.
+pub const BINARY_DISCOVERER: &str = "binary";
 /// The step that starts a program and waits for it to end.
 pub const SPAWN: StepKind = StepKind::fixed("spawn");
 /// The step that checks how the program ended.
@@ -138,6 +155,13 @@ pub fn file_finding_kind() -> FindingKind {
 pub fn powershell_finding_kind() -> FindingKind {
     FindingKind::new(POWERSHELL_FINDING_KIND)
         .unwrap_or_else(|_| unreachable!("`powershell_command` is a well-formed finding kind"))
+}
+
+/// The kind of finding about a binary's plain facts, as a checked name.
+#[must_use]
+pub fn binary_finding_kind() -> FindingKind {
+    FindingKind::new(BINARY_FINDING_KIND)
+        .unwrap_or_else(|_| unreachable!("`binary` is a well-formed finding kind"))
 }
 
 /// A lint code of the pack. `rule` is one of the fixed rule names of this

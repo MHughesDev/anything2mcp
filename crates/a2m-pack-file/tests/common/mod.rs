@@ -529,3 +529,151 @@ pub async fn granted(store: &Store, caller: u8, name: &str) -> Granted {
         token,
     }
 }
+
+/// The checksum a package keeps of each part.
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xEDB8_8320 & (crc & 1).wrapping_neg());
+        }
+    }
+    !crc
+}
+
+/// A package of parts, each stored as it is, built byte by byte: the
+/// container a workbook is kept in, with no office suite to make it.
+pub fn stored_package(parts: &[(&str, &str)]) -> Vec<u8> {
+    let put16 = |out: &mut Vec<u8>, value: usize| {
+        out.extend_from_slice(&u16::try_from(value).unwrap().to_le_bytes());
+    };
+    let put32 = |out: &mut Vec<u8>, value: usize| {
+        out.extend_from_slice(&u32::try_from(value).unwrap().to_le_bytes());
+    };
+    let mut out = Vec::new();
+    let mut directory = Vec::new();
+    for (name, content) in parts {
+        let content = content.as_bytes();
+        let offset = out.len();
+        let checksum = crc32(content);
+        for (bytes, local) in [(&mut out, true), (&mut directory, false)] {
+            if local {
+                put32(bytes, 0x0403_4b50);
+            } else {
+                put32(bytes, 0x0201_4b50);
+                put16(bytes, 20); // version made by
+            }
+            put16(bytes, 20); // version needed
+            put16(bytes, 0); // flags
+            put16(bytes, 0); // method: stored
+            put16(bytes, 0); // time
+            put16(bytes, 0x0021); // date: 1 January 1980
+            bytes.extend_from_slice(&checksum.to_le_bytes());
+            put32(bytes, content.len());
+            put32(bytes, content.len());
+            put16(bytes, name.len());
+            put16(bytes, 0); // extra field
+            if local {
+                bytes.extend_from_slice(name.as_bytes());
+                bytes.extend_from_slice(content);
+            } else {
+                put16(bytes, 0); // comment
+                put16(bytes, 0); // disk
+                put16(bytes, 0); // internal attributes
+                put32(bytes, 0); // external attributes
+                put32(bytes, offset);
+                bytes.extend_from_slice(name.as_bytes());
+            }
+        }
+    }
+    let directory_offset = out.len();
+    out.extend_from_slice(&directory);
+    put32(&mut out, 0x0605_4b50);
+    put16(&mut out, 0);
+    put16(&mut out, 0);
+    put16(&mut out, parts.len());
+    put16(&mut out, parts.len());
+    put32(&mut out, directory.len());
+    put32(&mut out, directory_offset);
+    put16(&mut out, 0);
+    out
+}
+
+/// A workbook as an open-source office suite saves a spreadsheet a person
+/// keeps: one sheet with its rows under a header row, no table object, no
+/// defined name, strings shared, and the sheet's rows spanning only the
+/// cells that hold something. The parts are those the suite writes, cut
+/// to what a reader needs; the data is invented.
+pub fn office_suite_workbook() -> Vec<u8> {
+    const HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n";
+    let content_types = format!(
+        "{HEAD}<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/><Override PartName=\"/xl/sharedStrings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml\"/></Types>"
+    );
+    let root_rels = format!(
+        "{HEAD}<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>"
+    );
+    let workbook = format!(
+        "{HEAD}<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><fileVersion appName=\"Calc\"/><workbookPr backupFile=\"false\" showObjects=\"all\" dateCompatibility=\"false\"/><workbookProtection/><bookViews><workbookView showHorizontalScroll=\"true\" showVerticalScroll=\"true\" showSheetTabs=\"true\" xWindow=\"0\" yWindow=\"0\" windowWidth=\"16384\" windowHeight=\"8192\" tabRatio=\"500\" firstSheet=\"0\" activeTab=\"0\"/></bookViews><sheets><sheet name=\"Parts\" sheetId=\"1\" state=\"visible\" r:id=\"rId3\"/></sheets><calcPr iterateCount=\"100\" refMode=\"A1\" iterate=\"false\" iterateDelta=\"0.001\"/></workbook>"
+    );
+    let workbook_rels = format!(
+        "{HEAD}<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/><Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/><Relationship Id=\"rId4\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings\" Target=\"sharedStrings.xml\"/></Relationships>"
+    );
+    let styles = format!(
+        "{HEAD}<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><fonts count=\"1\"><font><sz val=\"10\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs></styleSheet>"
+    );
+    // The headers, then the text of the rows, in the order the suite
+    // writes its shared strings: as it meets them.
+    let strings = [
+        "part",
+        "stock",
+        "price",
+        "note",
+        "washer",
+        "bolt",
+        "nut",
+        "back order",
+    ];
+    let shared = strings
+        .iter()
+        .map(|text| format!("<si><t xml:space=\"preserve\">{text}</t></si>"))
+        .collect::<String>();
+    let shared = format!(
+        "{HEAD}<sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" count=\"{n}\" uniqueCount=\"{n}\">{shared}</sst>",
+        n = strings.len()
+    );
+    let row = |number: u32, cells: &str| {
+        format!(
+            "<row r=\"{number}\" customFormat=\"false\" ht=\"12.8\" hidden=\"false\" customHeight=\"false\" outlineLevel=\"0\" collapsed=\"false\">{cells}</row>"
+        )
+    };
+    let text = |at: &str, string: u32| format!("<c r=\"{at}\" s=\"0\" t=\"s\"><v>{string}</v></c>");
+    let number =
+        |at: &str, value: &str| format!("<c r=\"{at}\" s=\"0\" t=\"n\"><v>{value}</v></c>");
+    let rows = [
+        row(
+            1,
+            &(text("A1", 0) + &text("B1", 1) + &text("C1", 2) + &text("D1", 3)),
+        ),
+        // A cell with nothing in it is not written at all.
+        row(
+            2,
+            &(text("A2", 4) + &number("B2", "12") + &number("C2", "1.5")),
+        ),
+        row(3, &(text("A3", 5) + &number("C3", "0.25") + &text("D3", 7))),
+        row(4, &(text("A4", 6) + &number("B4", "7"))),
+    ]
+    .concat();
+    let sheet = format!(
+        "{HEAD}<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheetPr filterMode=\"false\"><pageSetUpPr fitToPage=\"false\"/></sheetPr><dimension ref=\"A1:D4\"/><sheetFormatPr defaultColWidth=\"11.53515625\" defaultRowHeight=\"12.8\" zeroHeight=\"false\" outlineLevelRow=\"0\" outlineLevelCol=\"0\"></sheetFormatPr><sheetData>{rows}</sheetData><pageMargins left=\"0.7875\" right=\"0.7875\" top=\"1.05277777777778\" bottom=\"1.05277777777778\" header=\"0.7875\" footer=\"0.7875\"/></worksheet>"
+    );
+    stored_package(&[
+        ("[Content_Types].xml", &content_types),
+        ("_rels/.rels", &root_rels),
+        ("xl/workbook.xml", &workbook),
+        ("xl/_rels/workbook.xml.rels", &workbook_rels),
+        ("xl/styles.xml", &styles),
+        ("xl/sharedStrings.xml", &shared),
+        ("xl/worksheets/sheet1.xml", &sheet),
+    ])
+}

@@ -42,14 +42,21 @@ mod win;
 
 #[cfg(target_os = "linux")]
 mod app;
+#[cfg(target_os = "linux")]
+mod bus_service;
 
 use std::collections::BTreeMap;
 use std::fmt;
 
+#[cfg(target_os = "linux")]
+pub use bus_service::{
+    ADMIN_PASSWORD, CHILD, Calls, IDLE_NAME, LABEL, NAME as SERVICE_NAME, NUMBER, ORDER, ORDERS,
+    ROOT, Service, TOTAL,
+};
 #[cfg(any(windows, target_os = "macos"))]
 pub use child::{CHILD_TEST, Session};
 #[cfg(not(any(windows, target_os = "macos")))]
-pub use session::Session;
+pub use session::{IdleService, Session};
 
 /// Declares, in a test binary, what serves the stand: on Windows and macOS
 /// the stand's process is this test binary, copied and started again with
@@ -215,6 +222,9 @@ pub enum Fault {
     ConfirmLate(std::time::Duration),
     /// The field with this label takes no value from now on.
     ReadOnly(String),
+    /// The field with this label is disabled from now on: still editable
+    /// by its state, and not enabled, so it takes no value.
+    Disabled(String),
     /// Once the field labelled `Order number` has next been read, the
     /// window shows the order of this number: the application moved to
     /// another record between a reader's look and its act.
@@ -424,7 +434,8 @@ impl Desk {
     ///
     /// # Errors
     ///
-    /// When no field has the label a [`Fault::ReadOnly`] names; on any
+    /// When no field has the label a [`Fault::ReadOnly`] or a
+    /// [`Fault::Disabled`] names; on any
     /// system but Linux, always: the write half of the stand is built for
     /// Linux only.
     pub fn fault(&self, fault: &Fault) -> Result<(), StandError> {

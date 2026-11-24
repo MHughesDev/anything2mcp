@@ -417,7 +417,10 @@ impl Model {
     /// none.
     fn set_field(&mut self, id: usize, text: &str) -> Option<Vec<usize>> {
         let node = &self.nodes[id];
-        if !node.editable || node.states & state::READ_ONLY != 0 {
+        if !node.editable
+            || node.states & state::READ_ONLY != 0
+            || node.states & state::ENABLED == 0
+        {
             return None;
         }
         self.truth.sets.push(FieldSet {
@@ -1133,6 +1136,12 @@ impl App {
                 model.faults.record_after_read = Some(number.clone());
             }
             Fault::DialogAfterRead => model.faults.dialog_after_read = true,
+            Fault::Disabled(label) => {
+                let field = (0..model.nodes.len())
+                    .find(|id| model.nodes[*id].editable && model.label_of(*id) == *label)
+                    .ok_or_else(|| StandError(format!("no field is labelled `{label}`")))?;
+                model.nodes[field].states &= !(state::ENABLED | state::SENSITIVE);
+            }
             Fault::ReadOnly(label) => {
                 let field = (0..model.nodes.len())
                     .find(|id| model.nodes[*id].editable && model.label_of(*id) == *label)

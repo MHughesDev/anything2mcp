@@ -30,10 +30,13 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     let second = stand("registry");
     assert_eq!(first.registry.digest(), second.registry.digest());
     let page_http = common::page_http_mode();
+    let site_tools = common::site_tools_mode();
     assert_eq!(
         first.registry.modes().collect::<Vec<_>>(),
-        vec![&page_http, &ui_mode()]
+        vec![&page_http, &site_tools, &ui_mode()]
     );
+    let handle = first.registry.driver(&site_tools).unwrap();
+    assert_eq!(handle.choice().provider.as_str(), "web");
     let handle = first.registry.driver(&page_http).unwrap();
     assert_eq!(handle.choice().provider.as_str(), "web");
     let handle = first.registry.driver(&ui_mode()).unwrap();
@@ -96,6 +99,21 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         &vec![a2m_pack_web_ui::GOTO, a2m_pack_web_ui::REQUEST]
     );
     assert!(manifest.modes[1].commit_steps.is_empty());
+    // And those of `site_tools`: the call is the one step that saves.
+    let tool_steps = &manifest.modes[2].steps;
+    assert_eq!(manifest.modes[2].name, site_tools);
+    assert_eq!(
+        tool_steps,
+        &vec![
+            a2m_pack_web_ui::GOTO,
+            a2m_pack_web_ui::WAIT,
+            a2m_pack_web_ui::CALL_TOOL
+        ]
+    );
+    assert_eq!(
+        manifest.modes[2].commit_steps,
+        vec![a2m_pack_web_ui::CALL_TOOL]
+    );
     // Every place the browser engine looks for a browser is declared, so
     // that the supervisor will start what is found there.
     let declared: Vec<&str> = manifest.requirements[0]
@@ -113,6 +131,20 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         .map(|root| root.as_str())
         .collect();
     assert_eq!(roots, ["profiles"]);
+}
+
+/// The hash of the plan the `example` pages target compiles to. Held in the
+/// source so that each of the three CI systems compares its own build to the
+/// same value (package 1.3): the plan's bytes carry no line ending of a
+/// system, and no path or time of a machine.
+const PAGES_PLAN_HASH: &str = "b7964c167c02b0501e690dd8083c2d794e4aba382193b9d8c3811416a51caf31";
+
+#[test]
+fn the_pages_target_compiles_to_the_same_plan_bytes_on_every_machine() {
+    let stand = stand("plan_hash");
+    let compiled = compile(&stand.registry, "example");
+    assert!(!compiled.encoded.bytes.contains(&b'\r'));
+    assert_eq!(compiled.encoded.hash.to_string(), PAGES_PLAN_HASH);
 }
 
 #[test]
@@ -206,7 +238,7 @@ fn what_a_screen_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
     // A control no enabled pack registered.
     let control = refused(
         form,
-        |text| text.replacen("control: number", "control: slider", 1),
+        |text| text.replacen("control: number", "control: signature_pad", 1),
         "kernel.unknown_control",
     );
     assert_eq!((control.at.file.as_str(), control.at.line), (form, 16));

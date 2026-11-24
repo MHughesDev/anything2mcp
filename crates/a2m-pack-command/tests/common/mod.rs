@@ -35,6 +35,14 @@ impl Folder {
         ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
+        // The folder is the user's own and closed to others whatever the
+        // umask of the machine is: the program check refuses what another
+        // user could replace.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         Self(path)
     }
 

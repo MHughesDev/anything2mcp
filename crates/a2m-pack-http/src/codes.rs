@@ -34,11 +34,26 @@ a2m_core::failure_codes! {
         meaning "An XML answer that declares a document type. None is read, so no entity it defines is expanded and nothing it names is fetched (decision 0217).",
         next "Ask the system's owner for the answer without a document type, or read it another way.";
     ANSWER_HOLDS_SECRET = UnknownVariant, "answer_holds_secret",
-        meaning "A `bytes` answer whose body holds a registered secret. Neither its length nor its digest is returned (decision 0249).",
+        meaning "A `bytes` answer whose body holds a registered secret, so neither its length nor its digest is returned (decision 0249); or an answer that quotes the anti-forgery token the write carried, so no value that holds it is returned (decision 0357).",
         next "Ask the system's owner why the answer carries the credential, or read it another way.";
     UPSTREAM_UNAVAILABLE = Transient, "upstream_unavailable",
         meaning "An answer the endpoint declares as \"not now\".",
         next "Run the tool again later.";
+    TOKEN_NOT_READ = Stale, "token_not_read",
+        meaning "A write that sends an anti-forgery token, in a pass that fetched none for it, or whose token was already sent. Nothing is sent (decision 0357).",
+        next "Run the tool again, so that the page is fetched and its token read before the write.";
+    ANTI_FORGERY_NOT_FOUND = Drift, "anti_forgery_not_found",
+        meaning "The page that gives a write's anti-forgery token answered without a page, or holds no token where the endpoint's `anti_forgery` says. The write was not sent (decision 0357).",
+        next "Look at where the page holds its token now, and correct the endpoint's `anti_forgery`.";
+    ANTI_FORGERY_UNREADABLE = UnknownVariant, "anti_forgery_unreadable",
+        meaning "The page that gives a write's anti-forgery token holds two different tokens where the endpoint says, or one that cannot be sent. The write was not sent (decision 0357).",
+        next "Look at the page; a token is read from one place that holds one text.";
+    RATE_LIMITED_BY_EDGE = EdgeBlocked, "rate_limited_by_edge",
+        meaning "The surface answered with status 429, which the endpoint does not declare: a limit set by the edge in front of the system (decision 0357).",
+        next "Look at the surface in a browser, and ask its owner before trying again. The answer is never retried.";
+    FORBIDDEN_BY_EDGE = EdgeBlocked, "forbidden_by_edge",
+        meaning "The surface answered with status 403 and a page that is not data, which the endpoint does not declare: a refusal by the edge in front of the system (decision 0357).",
+        next "Look at the surface in a browser, and ask its owner before trying again. The answer is never retried.";
     SURFACE_NOT_DECLARED = Policy, "surface_not_declared",
         meaning "A request, or a redirect, that leaves the declared surfaces.",
         next "Declare the surface in `target.yaml`, or the destination in the operation's `permissions`.";
@@ -145,6 +160,18 @@ pub(crate) fn version_not_read(endpoint: &str) -> Failure {
             "The endpoint `{endpoint}` sends the record's version with a write, and no version of the record was read in this pass; nothing was sent."
         ),
         "Preview the change again, so that the record is read before it is written.",
+    )
+}
+
+/// A write that sends an anti-forgery token, in a pass that fetched none.
+/// Nothing was sent.
+pub(crate) fn token_not_read(endpoint: &str) -> Failure {
+    failure(
+        &row::TOKEN_NOT_READ,
+        format!(
+            "The endpoint `{endpoint}` sends an anti-forgery token with a write, and no token of its page is held in this pass; nothing was sent."
+        ),
+        "Run the tool again, so that the page is fetched and its token read before the write.",
     )
 }
 

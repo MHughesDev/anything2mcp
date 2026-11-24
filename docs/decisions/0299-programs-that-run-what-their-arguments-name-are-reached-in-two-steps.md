@@ -1,10 +1,10 @@
 # 0299. Programs that run what their arguments name are reached in two steps, and a server started through a launcher starts with its file pinned
 
-**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), which hands the lead the questions that were waiting for the owner. It decides the question [decision 0282](0282-whether-the-command-pack-may-start-programs-that-run-what-their-arguments-name.md) put. The owner had not read this record when it was merged, and may reverse it.
+**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), which hands the lead the questions that were waiting for the owner. It decides the question [decision 0282](0282-whether-the-command-pack-may-start-programs-that-run-what-their-arguments-name.md) put. The owner had not read this record when it was merged, and may reverse it. Superseded in part by [decision 0371](0371-the-mcp-pack-starts-a-server-through-a-launcher-with-its-installed-entry-file-pinned-where-it-lies.md): point 6 does not make an operation declare `sends_outside`.
 
 **Date:** 2026-11-23
 
-**Changes:** what [decision 0271](0271-the-check-of-programs-the-product-starts-after-a-second-reader.md), point D2, and [decision 0250](0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md), point 3, refuse; the [roadmap](../plan/roadmap.md) (packages L1 to L3 are new); [the build plan](../plan/build-plan.md). No code changes with this record: 0271 stays in force for each kind of program until the package that widens it merges.
+**Changes:** what [decision 0271](0271-the-check-of-programs-the-product-starts-after-a-second-reader.md), point D2, and [decision 0250](0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md), point 3, refuse; the [roadmap](../plan/roadmap.md) (packages L1 to L3 are new); [the build plan](../plan/build-order.md). No code changes with this record: 0271 stays in force for each kind of program until the package that widens it merges.
 
 ## Context
 

@@ -1,0 +1,19 @@
+operation: example_item_set_quantity
+title: Set an item's quantity
+effect: write
+key: sku
+commit_points: 1
+inputs:
+  sku: {type: identifier, description: "Item code, such as SK-1001"}
+  quantity: {type: integer, description: "How many are in stock, from 0 to 9999"}
+outputs:
+  quantity: {type: integer}
+bindings:
+  - mode: cli
+    verb: update
+    status: verified
+    command: item_set_quantity
+    read_back: {command: item_show}
+description: >
+  Sets how many of one item are in stock, and reads the item back to see it.
+  Prefer example_item_add to create an item that does not exist yet.

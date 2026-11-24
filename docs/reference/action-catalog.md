@@ -93,11 +93,15 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 
 | Action | Purpose | Who | Listed | Phase |
 | --- | --- | --- | --- | --- |
-| `toolset.create`, `toolset.update`, `toolset.list` | Manage toolsets | Admin | No | 6 |
-| `grant.add`, `grant.remove`, `grant.list` | Manage grants | Admin | No | 6 |
-| `policy.publish` | Publish a policy set after its tests pass | Admin | No | 6 |
-| `policy.test` | Run a policy set's decision table | Admin | No | 6 |
-| `policy.explain` | Why a past call was allowed or denied | Auditor | No | 6 |
+| `toolset.create`, `toolset.update`, `toolset.remove` | Create, change, or remove a toolset: who may connect, which tools it selects, the highest effect class and the identity mode of its runs. A toolset only narrows what grants allow. A person's act, published as a new version of the policy set ([decision 0328](../decisions/0328-a-toolset-only-narrows-a-role-is-a-bundle-of-grants-and-a-second-administrator-is-a-named-check.md), [decision 0339](../decisions/0339-the-access-actions-the-built-in-toolsets-and-where-a-reach-is-kept.md)) | Admin | No | 6 |
+| `toolset.list` | The toolsets in force, each with the published tools it selects | Admin | No | 6 |
+| `grant.add`, `grant.remove` | Add or remove a grant of the use of tools up to an effect class. A person's act, published as a new version | Admin | No | 6 |
+| `grant.list` | The grants, the grants of roles, and who holds which role, in the set in force | Admin | No | 6 |
+| `policy.publish` | Publish a policy file after its tests pass; where the set in force asks for a second administrator, the reviewer proves presence of their own. A person's act | Admin | No | 6 |
+| `policy.test` | Run a policy file's decision table against its own layers | Admin | No | 6 |
+| `policy.versions` | The history of published policy versions, and which is in force | Admin | No | 6 |
+| `policy.tools_allowed`, `policy.who_can` | Which published tools a principal may use, and which principals may use one tool, through a toolset where one is named; records no decision | Admin | No | 6 |
+| `policy.explain` | Why a past call was allowed or denied | Auditor or Admin | No | 6 |
 | `session.list` | Sessions in a workspace, without contents | Admin | No | 6 |
 | `session.end` | End someone's session; never use it | Admin | No | 6 |
 | `runner.enroll`, `runner.list`, `runner.drain`, `runner.revoke` | Manage runners | Admin | No | 7 |
@@ -117,6 +121,9 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | `doctor.run` | Check browser, key store, network, sessions, clock; print fixes | Local user | No | 2 |
 | `net.interfaces`, `net.routes`, `net.resolvers`, `net.neighbours`, `net.listeners`, `net.proxy` | What this machine already knows of its own networks, read from the operating system; sends nothing. `net.proxy` reads this engine's own environment on Linux and the user's system setting on Windows, and removes any credentials | Local user | No | 2 |
 | `net.standing` | Where this machine stands: the kind of place each address is, and which interface carries each family's preferred default route; sends nothing | Local user | use | 2 |
+| `net.current` | Which facts of the network this machine is on were read, to recognize it again, and which were left out and why; shows no digest and no address; sends nothing | Local user | No | 2 |
+| `reach.name`, `reach.withdraw` | A person names the network this machine is on now, with the destinations that may be looked at and sent to, or forgets a reach; the network is read from the machine and never taken from an input; an agent cannot do either ([decision 0339](../decisions/0339-the-access-actions-the-built-in-toolsets-and-where-a-reach-is-kept.md)) | The person | No | N3 |
+| `reach.list` | The reaches a person has named: label, the names of the facts each states, whether it is in force here, and the person's own entries; no digest | The person | No | N3 |
 | `browser.install` | Fetch a pinned browser | Local user | No | 1 |
 | `plugin.install`, `plugin.list` | Manage plug-ins | Admin | No | 8 |
 | `client.connect` | Give the configuration an MCP client needs to start the bridge: printed for `generic`, or set in the file a client profile names, shown first, by a local person | Local user | No | 5 |
@@ -138,7 +145,7 @@ Single-word commands for people. Each is a fixed sequence of the actions above a
 | Shortcut | Does |
 | --- | --- |
 | `init` | Create a project and the guidance file; choose a profile |
-| `add <address>` | `target.add`, `scout.run`, `scout.report`, `session.login` |
+| `add <name>` | `target.add`, `scout.run`, `scout.report`; takes `--address` and `--kind` for `target.add` and `--description <file>` for `scout.run` (a description of the system in the project's `sources` folder, handed over as `spec.import` hands it). It ends at the report, whose `next` is `session.login` only where a read waits for a sign-in; each proven read in the report carries the `draft.try` call that reads it ([decision 0306](../decisions/0306-the-short-path-is-add-then-a-trial-and-only-a-built-action-is-listed-up-front.md)) |
 | `learn` | `capture.start`, `capture.stop`, `endpoints.infer`, then drafts |
 | `lint`, `try`, `test` | `draft.lint`, `draft.try`, `test.run` |
 | `publish` | `publish.request`, then waits for a person |
