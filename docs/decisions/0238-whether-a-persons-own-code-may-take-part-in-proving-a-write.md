@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-18
 
-**Asks about:** rules three and six of [AGENTS.md](../../AGENTS.md#rules-that-never-bend); [section 605](../spec/6-running-it/605-packaging-and-release.md), languages and plug-ins; [section 206](../spec/2-kernel/206-the-compiler-and-the-plan.md), field types in the plan; [section 202](../spec/2-kernel/202-kernel-and-packs.md), packs and plug-ins.
+**Asks about:** rules three and six of [AGENTS.md](../../AGENTS.md#rules-that-never-bend); [section 605](../spec/6-running-it/605-packaging-and-release.md), languages and plug-ins; [section 206](../spec/2-kernel/206-the-compiler-and-the-compiled-target.md), field types in the plan; [section 202](../spec/2-kernel/202-kernel-and-packs.md), packs and plug-ins.
 
 ## Context
 

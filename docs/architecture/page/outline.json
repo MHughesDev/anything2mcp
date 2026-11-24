@@ -1,0 +1,75 @@
+{
+  "seam": "contract",
+  "says": "A call travels one line, from whoever asks to the software a person already has. Open a station to see what is in it, and keep opening as far as you want to go.",
+  "stations": [
+    {
+      "id": "callers",
+      "name": "Callers",
+      "short": "Who asks",
+      "text": "An AI agent, a developer, another program, or the person at this machine. No caller is special: nothing past the front doors knows which make of agent is calling.",
+      "passes": "a tool call, a command, or a person's decision",
+      "groups": [{"title": "", "ids": ["ai-agent", "developer", "program", "person"]}]
+    },
+    {
+      "id": "ways-in",
+      "name": "Clients and Front Doors",
+      "short": "How a call gets in",
+      "text": "Thin clients hold no engine logic. They carry a call to the one engine on this machine. The front doors take it in: MCP, the REST interface, and the engine's own pages, where only a person approves, signs in, or publishes.",
+      "passes": "the call, and who is calling",
+      "groups": [
+        {"title": "Thin Clients", "ids": ["bridge", "command-line", "client"]},
+        {"title": "Front Doors", "ids": ["mcp-face", "rest-face", "pages"]}
+      ]
+    },
+    {
+      "id": "kernel",
+      "name": "Kernel",
+      "short": "Decides, runs, and proves",
+      "text": "What is the same for every kind of system. One part decides whether a call may happen, one admits and schedules it, and one runs the compiled target step by step, with no model. A write is recorded before it is made and read back after.",
+      "passes": "one step of the compiled target",
+      "groups": [
+        {"title": "Kernel Control", "ids": ["registry", "policy", "scheduler", "session-keeper"]},
+        {"title": "Kernel Execution", "ids": ["engine-loop", "contract", "scout", "watches"]}
+      ]
+    },
+    {
+      "id": "packs",
+      "name": "Packs",
+      "short": "One for each kind of system",
+      "text": "The only code that touches a system. Each pack knows one kind of system and reaches the kernel through one provider contract.",
+      "passes": "what that kind of system understands: a request, a press, a command",
+      "groups": [{"title": "", "ids": ["pack-web", "pack-http", "pack-mcp", "pack-desktop", "pack-command", "pack-data", "pack-file", "pack-stream", "pack-device"]}]
+    },
+    {
+      "id": "targets",
+      "name": "Target Systems",
+      "short": "Software the person already has",
+      "text": "The systems a person already uses. None is changed to suit the product, and none knows it is being wrapped. Only the pack beside it ever touches it.",
+      "passes": "",
+      "groups": [{"title": "", "ids": ["t-web", "t-http", "t-mcp", "t-desktop", "t-command", "t-data", "t-file", "t-stream", "t-device"]}]
+    }
+  ],
+  "shelves": [
+    {
+      "id": "storage",
+      "name": "Local Storage",
+      "short": "What the engine keeps",
+      "text": "Kept on this machine and nowhere else: the project's files, the compiled target, the ledger of every run, the vault of secrets, and the engine's own browser.",
+      "groups": [{"title": "", "ids": ["project", "compiled-target", "ledger", "vault", "browser"]}]
+    },
+    {
+      "id": "foundation",
+      "name": "Foundation Crates",
+      "short": "What every part builds on",
+      "text": "Types and small services that every other part builds on.",
+      "groups": [{"title": "", "ids": ["core", "expr", "telemetry", "netstate", "sources"]}]
+    },
+    {
+      "id": "later",
+      "name": "Shared Server Additions",
+      "short": "After the first release",
+      "text": "The first release is for one person's machine. These parts make a shared server, and wait until after it.",
+      "groups": [{"title": "", "ids": ["later-http", "later-runners", "later-postgres", "later-grants"]}]
+    }
+  ]
+}

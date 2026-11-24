@@ -126,8 +126,9 @@ fn grants(service: &Shared) -> Vec<String> {
         .collect()
 }
 
-/// `entry`, as a published version's plan gives it, whose target declares
-/// surfaces at `addresses`: where its sign-in may send (decision 0248).
+/// `entry`, as a published version's compiled target gives it, whose target
+/// declares surfaces at `addresses`: where its sign-in may send (decision
+/// 0248).
 fn declared(mut entry: AuthEntry, addresses: &[&str]) -> AuthEntry {
     entry.surfaces.destinations =
         SignInDestinations::new(addresses.iter().map(|address| (*address).to_owned()));

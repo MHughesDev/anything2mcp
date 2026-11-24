@@ -447,7 +447,8 @@ pub struct ActionDef {
     pub faces: Faces,
     /// A resource-shaped route beside the generated one.
     pub rest_alias: Option<RestAlias>,
-    /// The phase or stage of the plan that builds it, as the catalog says.
+    /// The phase or stage of the compiled target that builds it, as the
+    /// catalog says.
     pub phase: &'static str,
     /// How it is carried out.
     pub handler: Handler,

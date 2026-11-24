@@ -61,6 +61,6 @@ The first real pack finds a view too narrow, or a pack needs a hazard without `i
 ## Spec sections
 
 - [205. Target files](../spec/2-kernel/205-target-files.md)
-- [206. The compiler and the plan](../spec/2-kernel/206-the-compiler-and-the-plan.md)
+- [206. The compiler and the plan](../spec/2-kernel/206-the-compiler-and-the-compiled-target.md)
 - [File formats](../reference/file-formats.md)
 - [`a2m-files`](../architecture/crates/a2m-files.md)

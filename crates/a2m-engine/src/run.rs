@@ -1,5 +1,5 @@
-//! One job in hand: the plan it runs, the drivers it has prepared, its
-//! trace, and the parts of the loop every operation call goes through:
+//! One job in hand: the compiled target it runs, the drivers it has prepared,
+//! its trace, and the parts of the loop every operation call goes through:
 //! choose, prepare, and one step at a time through the driver's handle.
 
 use std::sync::Arc;
@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use a2m_auth::{ExpirySign, SessionLease};
 use a2m_core::{
-    BindingPlan, BindingStatus, Environment, Failure, FailureClass, FailureCode, Mode,
-    OperationIndex, OperationName, OperationPlan, REDACTED, RecordKey, RunState, SessionState,
+    BindingStatus, CompiledBinding, CompiledOperation, Environment, Failure, FailureClass,
+    FailureCode, Mode, OperationIndex, OperationName, REDACTED, RecordKey, RunState, SessionState,
     Step, SurfaceIndex, Value, Values,
 };
 use a2m_ledger::{IntentToken, RecordRef};
@@ -80,7 +80,7 @@ pub(crate) struct Aside {
     begins: Option<PassInfo>,
 }
 
-/// A binding that qualifies, in the plan's order.
+/// A binding that qualifies, in the compiled target's order.
 pub(crate) struct Candidate {
     pub binding: usize,
     pub reason: ChoiceReason,
@@ -218,8 +218,8 @@ impl<'a> Run<'a> {
         posture: Posture,
         trace: Option<TraceBuilder>,
     ) -> Self {
-        let plan = &loaded.plan;
-        let environment = &plan.environments[env_position];
+        let compiled_target = &loaded.compiled_target;
+        let environment = &compiled_target.environments[env_position];
         let env_value = Value::Record(
             Values::new()
                 .with("name", environment.name.as_str())
@@ -275,15 +275,15 @@ impl<'a> Run<'a> {
     /// target's surfaces at this environment, and what the operation's own
     /// permission manifest adds. Never another operation's.
     fn destinations_of(&self, operation: &OperationName) -> Destinations {
-        let plan = &self.loaded.plan;
-        let environment = &plan.environments[self.env_position];
-        let mut addresses: Vec<String> = plan
+        let compiled_target = &self.loaded.compiled_target;
+        let environment = &compiled_target.environments[self.env_position];
+        let mut addresses: Vec<String> = compiled_target
             .surfaces
             .iter()
             .enumerate()
             .map(|(position, surface)| address_of(environment, position, &surface.address))
             .collect();
-        if let Some(found) = plan
+        if let Some(found) = compiled_target
             .operations
             .iter()
             .find(|found| &found.name == operation)
@@ -335,25 +335,25 @@ impl<'a> Run<'a> {
     }
 
     fn surface_ref(&self, surface: SurfaceIndex) -> Result<SurfaceRef, Failure> {
-        let plan = &self.loaded.plan;
-        let found = plan.surface(surface).ok_or_else(|| {
-            codes::job_invalid("A binding names a surface the plan does not hold.")
+        let compiled_target = &self.loaded.compiled_target;
+        let found = compiled_target.surface(surface).ok_or_else(|| {
+            codes::job_invalid("A binding names a surface the compiled target does not hold.")
         })?;
-        let environment = &plan.environments[self.env_position];
+        let environment = &compiled_target.environments[self.env_position];
         let mut at_environment = found.clone();
         at_environment.address = address_of(environment, surface.get(), &found.address);
         Ok(SurfaceRef {
-            target: plan.header.target.clone(),
+            target: compiled_target.header.target.clone(),
             environment: environment.name.clone(),
             surface: at_environment,
         })
     }
 
-    /// Choose: the bindings that qualify, in the plan's order, and those
-    /// before the first of them that did not.
+    /// Choose: the bindings that qualify, in the compiled target's order, and
+    /// those before the first of them that did not.
     pub fn candidates(
         &self,
-        operation: &OperationPlan,
+        operation: &CompiledOperation,
         scope: &Scope,
     ) -> Result<(Vec<Candidate>, Vec<PassedOver>), Failure> {
         let mut qualified = Vec::new();
@@ -380,7 +380,7 @@ impl<'a> Run<'a> {
             .as_ref()
             .filter(|pin| pin.operation == operation.name);
         if let Some(pin) = named
-            && !pin.holds_in(&self.loaded.plan, operation)
+            && !pin.holds_in(&self.loaded.compiled_target, operation)
         {
             return Err(crate::binding::changed(pin));
         }
@@ -455,8 +455,8 @@ impl<'a> Run<'a> {
     /// may not; `Err` is a failure of the call itself.
     fn admits(
         &self,
-        operation: &OperationPlan,
-        binding: &BindingPlan,
+        operation: &CompiledOperation,
+        binding: &CompiledBinding,
         scope: &Scope,
     ) -> Result<Result<DriverHandle, Failure>, Failure> {
         let conditions = &self.job.conditions;
@@ -578,13 +578,13 @@ impl<'a> Run<'a> {
             })
     }
 
-    /// The operation's bindings in `shadow`, in the plan's order, each with
-    /// the candidate it runs as or why it may not run now (decision 0207).
-    /// Only a live job that runs against the system has any: never a try,
-    /// a replay, or a job that pins a mode or names a binding.
+    /// The operation's bindings in `shadow`, in the compiled target's order,
+    /// each with the candidate it runs as or why it may not run now (decision
+    /// 0207). Only a live job that runs against the system has any: never a
+    /// try, a replay, or a job that pins a mode or names a binding.
     pub fn shadow_candidates(
         &self,
-        operation: &OperationPlan,
+        operation: &CompiledOperation,
         scope: &Scope,
     ) -> Result<Vec<ShadowCandidate>, Failure> {
         if self.replay.is_some()
@@ -652,7 +652,7 @@ impl<'a> Run<'a> {
     pub async fn hold(
         &mut self,
         operation: &OperationName,
-        binding: &BindingPlan,
+        binding: &CompiledBinding,
         candidate: &Candidate,
         again: bool,
         writes: bool,
@@ -710,16 +710,17 @@ impl<'a> Run<'a> {
         let waited = self.engine.deps.clock.elapsed();
         let surface_ref = self.surface_ref(surface)?;
         // A replay uses no session: nothing reaches the system.
-        let lease = if self.replay.is_none() && self.loaded.plan.auth_of(surface).is_some() {
-            let want = SessionWant {
-                surface: surface_ref.surface.name.clone(),
-                headroom: None,
-                again,
+        let lease =
+            if self.replay.is_none() && self.loaded.compiled_target.auth_of(surface).is_some() {
+                let want = SessionWant {
+                    surface: surface_ref.surface.name.clone(),
+                    headroom: None,
+                    again,
+                };
+                Some(self.control.session_lease(&want).await?)
+            } else {
+                None
             };
-            Some(self.control.session_lease(&want).await?)
-        } else {
-            None
-        };
         let queue = self.engine.deps.clock.elapsed().saturating_sub(waited);
         let preparing = self.engine.deps.clock.elapsed();
         let supervisor = candidate.handle.supervisor(
@@ -735,7 +736,7 @@ impl<'a> Run<'a> {
             run: self.job.run,
             epoch: self.job.epoch,
             surface: &surface_ref,
-            plan: &self.loaded.plan,
+            compiled_target: &self.loaded.compiled_target,
             posture,
             deadline,
             redact: self.engine.deps.redact.as_ref(),
@@ -801,8 +802,8 @@ impl<'a> Run<'a> {
         });
     }
 
-    /// The time limit of a step: its own, or the settings' when the plan
-    /// states none.
+    /// The time limit of a step: its own, or the settings' when the compiled
+    /// target states none.
     pub fn limit_of(&self, step: &Step) -> Duration {
         if step.timeout_ms == 0 {
             self.engine.deps.settings.step_timeout
@@ -1316,16 +1317,17 @@ impl<'a> Run<'a> {
     }
 
     /// The surfaces of the bindings of an operation that choose could pick
-    /// for this job, in the plan's order: the pin, the named binding, and
-    /// the status are held to as choose holds them. Only the surface is
-    /// asked of here; a driver's readiness and a precondition are choose's.
-    fn guarded_surfaces(&self, operation: &OperationPlan) -> Vec<a2m_core::SurfaceName> {
+    /// for this job, in the compiled target's order: the pin, the named
+    /// binding, and the status are held to as choose holds them. Only the
+    /// surface is asked of here; a driver's readiness and a precondition are
+    /// choose's.
+    fn guarded_surfaces(&self, operation: &CompiledOperation) -> Vec<a2m_core::SurfaceName> {
         let named = self
             .job
             .binding
             .as_ref()
             .filter(|pin| pin.operation == operation.name);
-        let plan = &self.loaded.plan;
+        let compiled_target = &self.loaded.compiled_target;
         operation
             .bindings
             .iter()
@@ -1339,7 +1341,11 @@ impl<'a> Run<'a> {
                         status_qualifies(binding.status, self.posture)
                     }
             })
-            .filter_map(|(_, binding)| plan.surface(binding.surface).map(|s| s.name.clone()))
+            .filter_map(|(_, binding)| {
+                compiled_target
+                    .surface(binding.surface)
+                    .map(|s| s.name.clone())
+            })
             .collect()
     }
 
@@ -1359,7 +1365,7 @@ impl<'a> Run<'a> {
     /// surface whose session has ended, stops the call here, before the
     /// policy engine is asked (decision 0309). An operation with no such
     /// binding at all is left to choose, which names it `no_binding`.
-    pub fn guard_sessions(&self, operation: &OperationPlan) -> Result<(), Failure> {
+    pub fn guard_sessions(&self, operation: &CompiledOperation) -> Result<(), Failure> {
         let surfaces = self.guarded_surfaces(operation);
         if let Some(first) = surfaces.first()
             && surfaces
@@ -1382,7 +1388,7 @@ impl<'a> Run<'a> {
     /// call is sure to run, every binding of which that could be chosen and
     /// that has a usable session acts on a surface blocked at the edge,
     /// stops the call here, after the policy decision (decision 0309).
-    pub fn guard_edge(&self, operation: &OperationPlan) -> Result<(), Failure> {
+    pub fn guard_edge(&self, operation: &CompiledOperation) -> Result<(), Failure> {
         let surfaces: Vec<_> = self
             .guarded_surfaces(operation)
             .into_iter()
@@ -1454,7 +1460,11 @@ fn session_usable(state: SessionState) -> bool {
     )
 }
 
-fn address_of(environment: &a2m_core::EnvironmentPlan, surface: usize, default: &str) -> String {
+fn address_of(
+    environment: &a2m_core::CompiledEnvironment,
+    surface: usize,
+    default: &str,
+) -> String {
     environment
         .addresses
         .iter()
@@ -1463,11 +1473,13 @@ fn address_of(environment: &a2m_core::EnvironmentPlan, surface: usize, default: 
 }
 
 /// Finds the operation a pipeline step or a tool names.
-pub(crate) fn operation(loaded: &Loaded, index: OperationIndex) -> Result<&OperationPlan, Failure> {
-    loaded
-        .plan
-        .operation(index)
-        .ok_or_else(|| codes::job_invalid("The tool names an operation the plan does not hold."))
+pub(crate) fn operation(
+    loaded: &Loaded,
+    index: OperationIndex,
+) -> Result<&CompiledOperation, Failure> {
+    loaded.compiled_target.operation(index).ok_or_else(|| {
+        codes::job_invalid("The tool names an operation the compiled target does not hold.")
+    })
 }
 
 /// The answerer of a step that has no record, or whose control plane gives

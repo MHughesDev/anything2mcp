@@ -11,9 +11,9 @@
 //! entry compiles into, so an `api` call is sent, checked, and read as an
 //! `http` request is.
 //!
-//! **Drift is named.** The digest is in the plan, so a published version
-//! holds it. Before the first call of a pass that a description serves,
-//! the driver reads the description again where it was served and
+//! **Drift is named.** The digest is in the compiled target, so a published
+//! version holds it. Before the first call of a pass that a description
+//! serves, the driver reads the description again where it was served and
 //! compares digests; a description that changed, or is no longer served
 //! there, stops the call as `drift`, `description_changed`, with nothing
 //! sent. A description handed in as a file names no place, and is not read
@@ -48,7 +48,8 @@ use crate::template::{EndpointSection, EndpointTemplate, ExtractStep, Segment, p
 pub const API_MODE: &str = "api";
 /// The file kind of a pinned description, in `descriptions/`.
 pub const DESCRIPTION_KIND: FileKindName = FileKindName::fixed("description");
-/// The format of the section of the plan the file kind compiles into.
+/// The format of the section of the compiled target the file kind compiles
+/// into.
 pub(crate) const DESCRIBED_FORMAT: u16 = 1;
 
 /// The places a parameter of a described operation may be in.
@@ -62,12 +63,12 @@ pub(crate) fn digest_of(text: &str) -> String {
     Digest::of(a2m_files::normalize_text(text).as_bytes()).to_string()
 }
 
-/// The name a described operation is known by within the file kind and in
-/// the plan: the description's name, a `/`, and the name an endpoint entry
-/// drafted from the operation would take, made from its `operationId`, or
-/// from its method and path where that makes none. The part after the `/`
-/// is what a fixture's file for the call is named. Two operations whose
-/// names are one are refused by the compiler as a name defined twice.
+/// The name a described operation is known by within the file kind and in the
+/// compiled target: the description's name, a `/`, and the name an endpoint
+/// entry drafted from the operation would take, made from its `operationId`,
+/// or from its method and path where that makes none. The part after the `/`
+/// is what a fixture's file for the call is named. Two operations whose names
+/// are one are refused by the compiler as a name defined twice.
 fn entry_name(description: &str, operation_id: Option<&str>, method: &str, path: &str) -> String {
     let from_id = operation_id.map(openapi::snake).unwrap_or_default();
     let key: String = if from_id.starts_with(|c: char| c.is_ascii_lowercase()) {
@@ -121,7 +122,8 @@ pub(crate) struct Described {
     pub template: EndpointTemplate,
 }
 
-/// The section of the plan the `descriptions/` file kind compiles into.
+/// The section of the compiled target the `descriptions/` file kind compiles
+/// into.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DescribedSection {

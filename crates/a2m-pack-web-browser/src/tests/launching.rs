@@ -377,3 +377,53 @@ async fn the_browser_takes_no_proxy_from_the_environment_around_it() {
     drop(tab);
     stand.end().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_dropped_after_its_program_started_leaves_nothing_behind() {
+    // The engine drops a driver's preparation that passes its own limit,
+    // and a browser's start may be slower than that limit. A launch
+    // dropped after its program started must not keep the profile's place
+    // in the supervisor, or every later start of that profile is refused.
+    let stall = Arc::new(crate::browsers::StallOnce::default());
+    let mut stalling = test_support::settings();
+    stalling.stall_after_start = Some(Arc::clone(&stall));
+    let stand = Stand::new("dropped-launch", stalling, &[]);
+    let clerk = profile("clerk");
+    tokio::select! {
+        opened = stand.browsers.open(&clerk, Visibility::Background) => {
+            must(opened);
+            panic!("a stalled launch finished");
+        }
+        () = stall.started.notified() => {}
+    }
+    // The launch is dropped here, as the engine's timeout drops it.
+
+    // The next run asks the same browsers for the same profile, and the
+    // profile's browser starts afresh: one browser, the one it got.
+    let browser = must(stand.browsers.open(&clerk, Visibility::Background).await);
+    assert_eq!(browser.health(), BrowserHealth::Idle);
+    let running = stand.supervisor.list();
+    assert_eq!(running.len(), 1);
+    assert_eq!(running[0].id, browser.subsystem());
+    drop(browser);
+    stand.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_dropped_after_its_program_started_is_stopped_by_the_shutdown() {
+    let stall = Arc::new(crate::browsers::StallOnce::default());
+    let mut stalling = test_support::settings();
+    stalling.stall_after_start = Some(Arc::clone(&stall));
+    let stand = Stand::new("dropped-then-shutdown", stalling, &[]);
+    let clerk = profile("clerk");
+    tokio::select! {
+        opened = stand.browsers.open(&clerk, Visibility::Background) => {
+            must(opened);
+            panic!("a stalled launch finished");
+        }
+        () = stall.started.notified() => {}
+    }
+    // Nothing opens the profile again: the shutdown finishes the stop, and
+    // no subsystem and no process is left.
+    stand.end().await;
+}

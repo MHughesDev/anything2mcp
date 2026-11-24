@@ -1,8 +1,8 @@
 # 225. Performance
 
-Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should add almost nothing on top of the time the target system itself takes, and should always take the fastest path that has been proven correct. This section sets the budgets and how they are measured. Built today: the benchmark harness runs in CI and measures six of the budgets below (package 1.7, [decision 0363](../../decisions/0363-the-budgets-as-first-measured-two-are-revised-and-four-cannot-yet-be-told-from-the-systems-own-time.md)); the comparison holds the floor of each number and runs in CI when a baseline is stored, and none is yet ([decision 0369](../../decisions/0369-the-comparison-holds-the-floor-of-each-number-and-the-program-has-a-size-budget.md)).
+Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should add almost nothing on top of the time the target system itself takes, and should always take the fastest path that has been proven correct. This section sets the budgets and how they are measured. Built today: the benchmark harness runs in CI and measures eight of the budgets below (package 1.7, [decision 0363](../../decisions/0363-the-budgets-as-first-measured-two-are-revised-and-four-cannot-yet-be-told-from-the-systems-own-time.md)); the comparison holds the floor of each number and runs in CI when a baseline is stored, and none is yet ([decision 0369](../../decisions/0369-the-comparison-holds-the-floor-of-each-number-and-the-program-has-a-size-budget.md)). Package 1.9 added the `api` and `page_http` scenarios ([decision 0408](../../decisions/0408-the-page-http-and-api-budgets-as-first-measured-api-holds-and-page-http-is-an-upper-bound-that-keeps-its-row.md)).
 
-**Budgets.** These are targets, measured once by package 1.7; a budget is confirmed or revised by decision record, and decision 0363 did so for each row. The measured numbers are in the next section.
+**Budgets.** These are targets, measured once by package 1.7; a budget is confirmed or revised by decision record, and decision 0363 did so for each row, and decision 0408 did so for the `page_http` and `api` rows. The measured numbers are in the next sections.
 
 | Path | Budget for Anything2MCP's own overhead |
 | --- | --- |
@@ -29,8 +29,17 @@ Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should
 | Idle memory of the server | `idle_memory`, resident memory of `serve` after one status | 37.3 MB | 40.3 MB | Within 50 MB |
 | Size of the program | `program_size`, the stripped release program, every first-party pack | 24,042,992 bytes (24.0 MB), the gzip of it 11,113,931 | | Within 25 MB, by 0.96 MB; it was 23,688,568 at package 1.7 and 18,546,544 after the release profile, so the margin shrinks as packs deepen |
 | Policy check, scheduling, and ledger write per call | no scenario | | | Not measured: only the whole call is timed, which `http_operation` bounds at 10 ms; the split needs the trace's own division of time (`run trace` is not built) |
-| `page_http` operations | no scenario | | | Not measured: no benchmark project binds `page_http` |
-| `api` operations | no scenario | | | Not measured: the `http` row stands for both |
+| `page_http` operations | see package 1.9 below | | | Measured by package 1.9 |
+| `api` operations | see package 1.9 below | | | Measured by package 1.9 |
+
+**The `page_http` and `api` budgets, first measured (package 1.9, [decision 0408](../../decisions/0408-the-page-http-and-api-budgets-as-first-measured-api-holds-and-page-http-is-an-upper-bound-that-keeps-its-row.md)).** Release build, Linux x86-64, the same kind of shared machine: its load average was 26 at the end of the full run and 7 at the end of the `page_http` run, so every median is an upper bound and the minimum is the better floor. The scenarios are `api_operation` (a line item read through an `api` binding pinned to the test application's published description, set against the same request made directly) and `page_http_operation` (an order's totals read from inside its summary page, set against the totals request made directly, with the application's deliberate delay on that request set to nothing). The stored runs are `bench/results/a2m-bench-linux-x86_64-package-1-9.json` (the full run) and `bench/results/a2m-bench-linux-x86_64-package-1-9-page-http.json` (the `page_http` scenario alone, after the delay was taken out).
+
+| Budget | Limit | Linux: overhead median | Linux: floor of the read | Windows | macOS | Standing |
+| --- | --- | --- | --- | --- | --- | --- |
+| `api` operations (`api_operation`) | 15 ms | 8.96 ms | 6.47 ms (500 reads) | Not yet read | Not yet read | Within; the description's second read is in the number |
+| `page_http` operations (`page_http_operation`) | 20 ms | 245 ms | 118 ms (40 reads) | Not yet read | Not yet read | Over, and not revised: the number holds the page's opening and the browser's own work, so it is an upper bound whose product share is not known |
+
+The same full run gave, for the rows decision 0363 measured: `http_operation` overhead median 8.69 ms (floor of the read 6.11 ms); `ui_step` 411 ms (floor 220 ms); `list_tools` median 1.11 ms; `start_to_ready` median 369 ms on the passphrase route and 116 ms with the vault closed; `cold_browser_start` median 1.21 s; idle memory 38.4 MB; program size 24,434 KB. On Windows and macOS, no number of any budget is in this section yet: they are not yet read from the benchmark results CI stores, and the three operating systems' numbers for all eight budgets are not complete until they are.
 
 **The wheel and its install (package 1.7, the same machine).** A wheel built locally with maturin 1.16.0 is 11.4 MB, with the stripped program in it 23.7 MB, under the 25 MB target of H-28 for both; installing it into an empty environment took 0.6 s, against a 10 s target; `anything2mcp --version` runs in 6 ms from the installed program and 16 ms through the script `a2m` (hypothesis H-39: the script adds about 10 ms). `bindings/python/tools/try_wheel.py` repeats this for any built wheel. Only Linux x86-64 was measured.
 
@@ -39,7 +48,7 @@ Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should
 **How the design gets there.**
 
 - **Rust, one process, async I/O.** No interpreter start-up, no garbage-collection pauses, and, in the web pack, no driver subprocess between the engine and the browser.
-- **Compiled plans.** At publish time, target files are validated and compiled into a binary plan: resolved references, pre-compiled CEL expressions, pre-built request templates, and pre-parsed schemas. Nothing is parsed at call time.
+- **Compiled targets.** At publish time, target files are validated and compiled into a binary compiled target: resolved references, pre-compiled CEL expressions, pre-built request templates, and pre-parsed schemas. Nothing is parsed at call time.
 - **Fastest verified mode first.** When several bindings are verified, the runtime prefers the cheapest. Where an operation states no order, the compiler sets it from each mode's rank in its provider's manifest; for the first packs that gives `api`, `http`, `page_http`, then `ui`. A spreadsheet-entry pipeline that takes minutes through the UI can take seconds over HTTP once that binding is promoted.
 - **Event-driven waits.** Every wait is on a named condition. In the web pack, the browser engine waits with in-page observers and protocol events, never on a polling timer. One Rust engine reports a median of about 1 ms to notice an element this way, against roughly 100 ms for a polling cadence ([ferrous-browser, vendor benchmark](https://github.com/theoxfaber/ferrous-browser)).
 - **Warm pools.** Signed-in sessions, their browsers, and HTTP/2 connections stay warm and are reused across calls and callers.

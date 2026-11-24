@@ -1,0 +1,10 @@
+operation: example_order_length_get
+title: An order's total length
+effect: read
+key: order_id
+inputs: {order_id: {type: text}}
+outputs: {total_length: {type: untrusted_text}}
+bindings:
+  - {mode: page_http, verb: read, endpoint: order_lengths}
+description: >
+  Reads the total length of an order's lines from inside the cases page.

@@ -69,6 +69,16 @@ fn any_map() -> JsonSchema {
     JsonSchema::map_of(JsonSchema::any())
 }
 
+/// Why a listed tool cannot be called now (decision 0396): the reason,
+/// `drift`; the knowledge the mark that stops it names; and when the mark
+/// was made.
+fn unavailable() -> JsonSchema {
+    JsonSchema::object()
+        .required("reason", text())
+        .required("knowledge", text())
+        .optional("marked_at", JsonSchema::int())
+}
+
 /// The shape of a run, as `tool.call`, `run.get`, and `run.resume` return it.
 fn run_output() -> JsonSchema {
     JsonSchema::object()
@@ -95,7 +105,7 @@ fn published() -> JsonSchema {
     JsonSchema::object()
         .required("target", text())
         .required("version", text())
-        .required("plan_hash", text())
+        .required("compiled_target_hash", text())
         .required("tools", list_of(text()))
         .required("current", JsonSchema::bool())
 }
@@ -199,7 +209,7 @@ fn watch_output() -> JsonSchema {
         .required("tool", text())
         .required("target", text())
         .required("environment", text())
-        .required("plan_hash", text())
+        .required("compiled_target_hash", text())
         .required("state", JsonSchema::words(WATCH_STATES))
         .optional("reason", text())
         .optional("failure", any_map())
@@ -269,14 +279,14 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
 
     vec![
         // Using tools.
-        act("tool.search", "Find operations and pipelines of the published targets by words or module. Returns names, one-line descriptions, and effects; call tool.describe for a schema.", VIEWER, Use, "1", List)
+        act("tool.search", "Find operations and pipelines of the published targets by words or module. Returns names, one-line descriptions, effects, and whether each can be called now; call tool.describe for a schema.", VIEWER, Use, "1", List)
             .opt_pos("query", TEXT, "Words to look for in names and descriptions. Leave out to list everything.")
             .opt("target", TEXT, TARGET)
             .opt("module", TEXT, "A module of the target.")
             .opt("kind", FieldType::Word(&["operation", "pipeline"]), "Only operations, or only pipelines. Both when left out.")
             .opt("limit", COUNT, LIMIT)
             .opt("offset", OFFSET, OFFSET_HELP)
-            .opt("full", BOOL, "Return each tool in full, as tool.describe gives it: title, hazard, plan hash, input schema, output schema, and annotations. For listing a toolset in one call.")
+            .opt("full", BOOL, "Return each tool in full, as tool.describe gives it: title, hazard, compiled target hash, input schema, output schema, and annotations. For listing a toolset in one call.")
             .output(JsonSchema::object()
                 .required("tools", list_of(JsonSchema::object()
                     .required("name", text())
@@ -285,7 +295,9 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                     .required("kind", text())
                     .required("effect", text())
                     .required("description", text())
-                    .optional("plan_hash", text())
+                    .required("available", JsonSchema::bool())
+                    .optional("unavailable", unavailable())
+                    .optional("compiled_target_hash", text())
                     .optional("hazard", text())
                     .optional("title", text())
                     .optional("description_by", text())
@@ -306,13 +318,15 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                 .required("kind", text())
                 .required("effect", text())
                 .required("hazard", text())
-                .required("plan_hash", text())
+                .required("compiled_target_hash", text())
                 .required("title", text())
                 .required("description", text())
                 .required("description_by", text())
                 .required("input_schema", any_map())
                 .required("output_schema", any_map())
-                .required("annotations", any_map()))
+                .required("annotations", any_map())
+                .required("available", JsonSchema::bool())
+                .optional("unavailable", unavailable()))
             .example(r#"{"tool": "example_orders_order_get"}"#)
             .done(),
         act("tool.call", "Call one published operation or pipeline by name with its input. Returns the result of a read, or the run's resting state (such as needs_approval) with the next step. A write never proceeds without a person's approval.", Who::ByEffect, Use, "1", Change)
@@ -563,7 +577,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                 .required("problems", list_of(any_map()))
                 .required("held", list_of(any_map()))
                 .required("held_cut", JsonSchema::bool())
-                .optional("plan_hash", text())
+                .optional("compiled_target_hash", text())
                 .optional("tools", list_of(text())))
             .example(r#"{"target": "example"}"#)
             .done(),
@@ -630,7 +644,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                     .optional("promoted", any_map()))))
             .example(r#"{"target": "example", "tool": "example_order_get"}"#)
             .done(),
-        act("plan.show", "Print a compiled plan as text: its tools, steps, surfaces, and permissions.", BUILDER, No, "1", Inspect)
+        act("target.show", "Print a target's compiled target as text: its tools, steps, surfaces, and permissions.", BUILDER, No, "1", Inspect)
             .pos("target", TEXT, TARGET)
             .opt("version", TEXT, "A published version. The current one when left out.")
             .done(),
@@ -728,10 +742,10 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .opt("offset", OFFSET, OFFSET_HELP)
             .done(),
         // Publishing and versions.
-        act("version.publish", "Publish a target's drafts as an immutable version, compiled to a plan. A person's act, never an agent's.", PUBLISHER, No, "5", Change)
+        act("version.publish", "Publish a target's drafts, compiled, as an immutable version. A person's act, never an agent's.", PUBLISHER, No, "5", Change)
             .pos("target", TEXT, TARGET)
             .opt("version", TEXT, "The version's label. The next number when left out.")
-            .opt("plan_hash", TEXT, "The hash of the plan the drafts must compile to. A publish shown to a person on a page carries the one they read.")
+            .opt("compiled_target_hash", TEXT, "The hash of the compiled target the drafts must compile to. A publish shown to a person on a page carries the one they read.")
             .writes()
             .person(PersonNeed::Presence)
             .output(published())

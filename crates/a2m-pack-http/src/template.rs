@@ -17,7 +17,7 @@ use crate::forms::AnswerSpec;
 use crate::json::{Json, is_plain_number};
 use crate::shape::{Kind, Shape};
 
-/// The version of the shape of this pack's payloads in a plan.
+/// The version of the shape of this pack's payloads in a compiled target.
 pub(crate) const PAYLOAD_FORMAT: u16 = 1;
 
 /// The methods an endpoint may use.
@@ -238,7 +238,7 @@ pub(crate) struct AntiForgery {
 }
 
 /// One endpoint, compiled. This is the pack's entry in its section of the
-/// plan, keyed by the endpoint's name.
+/// compiled target, keyed by the endpoint's name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct EndpointTemplate {
@@ -328,8 +328,8 @@ pub(crate) fn path_text_of(path: &[Segment], trailing_slash: bool) -> String {
     text
 }
 
-/// The section of the plan this pack owns: every endpoint of one surface
-/// kind, by name.
+/// The section of the compiled target this pack owns: every endpoint of one
+/// surface kind, by name.
 pub(crate) type EndpointSection = BTreeMap<String, EndpointTemplate>;
 
 /// How one body field is written.
@@ -539,7 +539,9 @@ fn path_of(segments: &[Segment], trailing_slash: bool, args: &Values) -> Result<
     let unusable = |why: String| {
         codes::failure(
             &codes::row::STEP_NOT_USABLE,
-            format!("The HTTP driver cannot carry out this step as the plan wrote it: {why}."),
+            format!(
+                "The HTTP driver cannot carry out this step as the compiled target wrote it: {why}."
+            ),
             "Compile the target again with the version of the HTTP pack that is enabled.",
         )
     };
@@ -591,7 +593,7 @@ pub(crate) fn build_token_page(
     let Some(forgery) = &template.anti_forgery else {
         return Err(codes::failure(
             &codes::row::STEP_NOT_USABLE,
-            "The HTTP driver cannot carry out this step as the plan wrote it: the endpoint declares no anti-forgery bootstrap.",
+            "The HTTP driver cannot carry out this step as the compiled target wrote it: the endpoint declares no anti-forgery bootstrap.",
             "Compile the target again with the version of the HTTP pack that is enabled.",
         ));
     };
@@ -622,7 +624,9 @@ pub(crate) fn build(
     let unusable = |why: String| {
         codes::failure(
             &codes::row::STEP_NOT_USABLE,
-            format!("The HTTP driver cannot carry out this step as the plan wrote it: {why}."),
+            format!(
+                "The HTTP driver cannot carry out this step as the compiled target wrote it: {why}."
+            ),
             "Compile the target again with the version of the HTTP pack that is enabled.",
         )
     };
@@ -736,8 +740,8 @@ pub(crate) fn build(
         headers.push((header.clone(), token.to_owned()));
     }
 
-    // The compiler refuses a header the connection sets; a plan that holds
-    // one all the same is refused here, where it would be sent.
+    // The compiler refuses a header the connection sets; a compiled target
+    // that holds one all the same is refused here, where it would be sent.
     if let Some((name, _)) = headers.iter().find(|(name, _)| is_connection_header(name)) {
         return Err(unusable(format!(
             "the header `{}` is set by the connection, and no endpoint may write it",
@@ -915,8 +919,8 @@ mod tests {
 
     #[test]
     fn a_header_the_connection_sets_is_refused_where_it_would_be_sent() {
-        // The compiler refuses these; a plan that holds one all the same
-        // never reaches the connection with it.
+        // The compiler refuses these; a compiled target that holds one all
+        // the same never reaches the connection with it.
         let args = Values::new();
         let step = RequestStep::default();
         for name in ["host", "content-length", "transfer-encoding", "connection"] {
@@ -938,6 +942,105 @@ mod tests {
                 let failure = build(&template, &step, &args, extras).unwrap_err();
                 assert_eq!(failure.code(), &codes::STEP_NOT_USABLE, "{name}");
             }
+        }
+    }
+
+    #[test]
+    fn a_value_that_cannot_ride_in_a_header_is_refused_unsent() {
+        // The stamp, the version read, and the anti-forgery token fill a
+        // header. Each is refused, and nothing is built, when it holds a
+        // control character or a byte outside printable ASCII, and a
+        // plain value of the same kind is carried.
+        let args = Values::new();
+        let step = RequestStep::default();
+        let version_of = |text: &str| crate::json::Json::Text(text.to_owned());
+        let anti_forgery = || super::AntiForgery {
+            page: Vec::new(),
+            page_trailing_slash: false,
+            from: super::TokenSource::Meta("csrf".to_owned()),
+            to: super::TokenSink::Header("x-csrf-token".to_owned()),
+        };
+        for bad in [
+            "a\r\nHost: other.example.test",
+            "a\nb",
+            "a\rb",
+            "a\0b",
+            "a\u{7f}b",
+            "a\tb",
+            "caf\u{e9}",
+            "a\u{202e}b",
+        ] {
+            let stamped = template("/api/items", Method::Get);
+            let failure = build(
+                &stamped,
+                &step,
+                &args,
+                Extras {
+                    stamp: Some(bad),
+                    ..Extras::default()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(failure.code(), &codes::STEP_NOT_USABLE, "stamp {bad:?}");
+
+            let mut versioned = template("/api/items", Method::Get);
+            versioned.version.send = Some(super::VersionSink::Header("if-match".to_owned()));
+            let version = version_of(bad);
+            let failure = build(
+                &versioned,
+                &step,
+                &args,
+                Extras {
+                    version: Some(&version),
+                    ..Extras::default()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(failure.code(), &codes::STEP_NOT_USABLE, "version {bad:?}");
+
+            let mut guarded = template("/api/items", Method::Post);
+            guarded.anti_forgery = Some(anti_forgery());
+            let failure = build(
+                &guarded,
+                &step,
+                &args,
+                Extras {
+                    token: Some(bad),
+                    ..Extras::default()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(failure.code(), &codes::STEP_NOT_USABLE, "token {bad:?}");
+        }
+
+        // A plain value of each kind is carried, so the refusals above are
+        // about the value and not about the position.
+        let mut all = template("/api/items", Method::Post);
+        all.version.send = Some(super::VersionSink::Header("if-match".to_owned()));
+        all.anti_forgery = Some(anti_forgery());
+        let version = version_of("7");
+        let built = build(
+            &all,
+            &step,
+            &args,
+            Extras {
+                stamp: Some("stamp-1"),
+                version: Some(&version),
+                token: Some("tok-1"),
+            },
+        )
+        .unwrap();
+        for pair in [
+            ("idempotency-key", "stamp-1"),
+            ("if-match", "7"),
+            ("x-csrf-token", "tok-1"),
+        ] {
+            assert!(
+                built
+                    .headers
+                    .contains(&(pair.0.to_owned(), pair.1.to_owned())),
+                "{pair:?}"
+            );
         }
     }
 

@@ -52,5 +52,5 @@ A pack needs a kind of step that both reads and saves in one step; a target need
 ## Spec sections
 
 - [205. Target files](../spec/2-kernel/205-target-files.md)
-- [206. The compiler and the plan](../spec/2-kernel/206-the-compiler-and-the-plan.md)
+- [206. The compiler and the plan](../spec/2-kernel/206-the-compiler-and-the-compiled-target.md)
 - [210. Sources and value normalization](../spec/2-kernel/210-sources-and-value-normalization.md)

@@ -98,7 +98,7 @@ impl Pack for StandPack {
 }
 
 #[test]
-fn the_stand_pack_registers_whole_and_compiles_the_example_to_the_same_plan() {
+fn the_stand_pack_registers_whole_and_compiles_the_example_to_the_same_compiled_target() {
     let folder = Folder::new("stand-pack");
     let mut builder =
         RegistryBuilder::new(ProviderSettings::default(), host(&folder, Roots::none()));
@@ -122,7 +122,7 @@ fn the_stand_pack_registers_whole_and_compiles_the_example_to_the_same_plan() {
 }
 
 #[test]
-fn a_program_a_plan_declares_becomes_one_the_supervisor_takes() {
+fn a_program_a_compiled_target_declares_becomes_one_the_supervisor_takes() {
     let declared = DeclaredProgram {
         path: "/opt/example/bin/example-tool".to_owned(),
         digest: Some(Digest::of(b"example-tool")),

@@ -1,0 +1,37 @@
+{
+  "schema": "a2m-bench-result",
+  "version": 1,
+  "commit": "x",
+  "os": "linux",
+  "arch": "x86_64",
+  "plan": {
+    "warmup_iterations": 50,
+    "iterations": 500
+  },
+  "scenarios": [
+    {
+      "name": "page_http_operation",
+      "operation": {
+        "count": 40,
+        "min_ns": 118481775,
+        "median_ns": 246514665,
+        "p95_ns": 334948253,
+        "p99_ns": 409805835,
+        "max_ns": 409805835
+      },
+      "baseline": {
+        "count": 40,
+        "min_ns": 224095,
+        "median_ns": 1369506,
+        "p95_ns": 6599719,
+        "p99_ns": 34789004,
+        "max_ns": 34789004
+      },
+      "overhead": {
+        "median_ns": 245145159,
+        "p95_ns": 328348534,
+        "p99_ns": 375016831
+      }
+    }
+  ]
+}

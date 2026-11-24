@@ -14,16 +14,16 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use a2m_core::{FailureClass, NoSecrets, Plan, Value, Values};
+use a2m_core::{CompiledTarget, FailureClass, NoSecrets, Value, Values};
 use a2m_provider::{Posture, Sent, StepFailure};
 use common::{Scene, Stand, Write, compile, compile_changed};
 use example_app::harness::TestApp;
 
 const NO_DIGEST: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
-fn plan_with(stand: &Stand, learned: &[(&str, &str)]) -> Plan {
+fn compiled_target_with(stand: &Stand, learned: &[(&str, &str)]) -> CompiledTarget {
     if learned.is_empty() {
-        return compile(&stand.registry, "cases").plan;
+        return compile(&stand.registry, "cases").compiled_target;
     }
     compile_changed(&stand.registry, "cases", "operations/tools.yaml", |text| {
         let mut text = text.to_owned();
@@ -36,7 +36,7 @@ fn plan_with(stand: &Stand, learned: &[(&str, &str)]) -> Plan {
         text
     })
     .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
-    .plan
+    .compiled_target
 }
 
 async fn told(app: &TestApp, count: usize) -> Vec<String> {
@@ -58,8 +58,8 @@ async fn call(
     inputs: &Values,
 ) -> Result<common::Ran, StepFailure> {
     let stand = Stand::new("site-tools", Arc::new(NoSecrets));
-    let plan = plan_with(&stand, learned);
-    let scene = Scene::over(stand, plan, &app.url(""));
+    let compiled_target = compiled_target_with(&stand, learned);
+    let scene = Scene::over(stand, compiled_target, &app.url(""));
     let write = Write::new(&["site-tools"]).await;
     let (handle, mut prepared) = scene
         .try_prepare_in(&common::site_tools_mode(), Some(write.fence), Posture::Live)
@@ -200,12 +200,13 @@ async fn a_tool_that_fails_is_a_write_whose_end_is_not_known_and_one_never_offer
 /// Calls an operation whose tool name is changed in the fixture.
 async fn call_over(app: &TestApp, tool: &str, operation: &str) -> StepFailure {
     let stand = Stand::new("site-tools-over", Arc::new(NoSecrets));
-    let plan = compile_changed(&stand.registry, "cases", "operations/tools.yaml", |text| {
-        text.replace("tool: example_fail", &format!("tool: {tool}"))
-    })
-    .unwrap()
-    .plan;
-    let scene = Scene::over(stand, plan, &app.url(""));
+    let compiled_target =
+        compile_changed(&stand.registry, "cases", "operations/tools.yaml", |text| {
+            text.replace("tool: example_fail", &format!("tool: {tool}"))
+        })
+        .unwrap()
+        .compiled_target;
+    let scene = Scene::over(stand, compiled_target, &app.url(""));
     let write = Write::new(&["site-tools-over"]).await;
     let (handle, mut prepared) = scene
         .try_prepare_in(&common::site_tools_mode(), Some(write.fence), Posture::Live)
@@ -252,8 +253,8 @@ async fn a_tool_the_page_registers_a_moment_after_it_loads_is_waited_for() {
 async fn a_run_that_may_not_act_calls_no_tool() {
     let app = TestApp::start().await.unwrap();
     let stand = Stand::new("site-tools-look", Arc::new(NoSecrets));
-    let plan = plan_with(&stand, &[]);
-    let scene = Scene::over(stand, plan, &app.url(""));
+    let compiled_target = compiled_target_with(&stand, &[]);
+    let scene = Scene::over(stand, compiled_target, &app.url(""));
     let (handle, mut prepared) = scene
         .try_prepare_in(
             &common::site_tools_mode(),

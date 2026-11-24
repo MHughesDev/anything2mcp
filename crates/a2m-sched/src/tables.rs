@@ -1661,6 +1661,76 @@ pub(crate) struct Swept {
     pub(crate) freed: bool,
 }
 
+/// Who held a lease that is declared lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Holder {
+    /// Its lease ran out: the runner may be frozen, and may wake and act.
+    Lapsed,
+    /// Its process ended, as the runner said when it started again: it
+    /// cannot act again, and only a step it sent before it ended can still
+    /// be in flight.
+    Ended,
+}
+
+/// Declares one leased job lost, in the caller's transaction (spec section
+/// 223, "When a lease is lost"): the job is lost; the run is fenced by a new
+/// lease number that nobody holds, which sorts its locks, and stops as
+/// `possible_commit`, `runner_lost`; a reconcile job waits out the
+/// quarantine. A lapsed lease's quarantine is the setting, or the job's
+/// longest step when longer, because its runner may only be frozen; an
+/// ended holder's is the longest step alone, because only a step it sent
+/// before it ended can still be in flight (decision 0416).
+fn lose(
+    tx: &mut Tx<'_>,
+    settings: &SchedSettings,
+    resumed: &BTreeSet<JobId>,
+    job: Job,
+    holder: Holder,
+    swept: &mut Swept,
+) -> Result<(), Failure> {
+    let now = tx.now();
+    let why = failure::runner_lost();
+    end_job(
+        tx,
+        &job,
+        "leased",
+        JobState::Lost,
+        None,
+        Some((why.class(), why.code().clone())),
+    )?;
+    swept.lost.push(job.id);
+    let mut reconcile = false;
+    if let Some(run) = job.run {
+        let state = tx.ledger().run(run)?.state;
+        if state.is_final() {
+            tx.ledger().quarantine_locks(run)?;
+        } else {
+            let fence = tx.ledger().new_epoch(run)?;
+            if can_stop(state) {
+                tx.ledger()
+                    .set_state(&fence, RunState::Stopped, Some(&why))?;
+            }
+            reconcile = job.requirements.writes || !tx.ledger().in_doubt(run)?.is_empty();
+        }
+    }
+    if reconcile {
+        let quarantine = match holder {
+            Holder::Lapsed => settings.quarantine.max(job.requirements.max_step),
+            Holder::Ended => job.requirements.max_step,
+        };
+        let before = match job.run {
+            Some(run) if !resumed.contains(&job.id) => reconciles_in_a_row(tx, run)?,
+            _ => 0,
+        };
+        let wait = quarantine.max(reconcile_wait(settings, before));
+        let id = queue_reconcile(tx, settings, &job, plus(now, wait), true)?;
+        swept.reconcile.push(id);
+    } else {
+        swept.freed |= drop_holds(tx, job.id)?;
+    }
+    Ok(())
+}
+
 /// Declares lost every lease that ended without a result, and ends every
 /// job no runner took within its queue limit. `resumed`: the leased
 /// reconciles a person resumed the run of; the reconcile queued after such
@@ -1688,43 +1758,14 @@ pub(crate) fn sweep(
         &[lost_before.into()],
     )?;
     for row in &rows {
-        let job = job_of(row)?;
-        let why = failure::runner_lost();
-        end_job(
+        lose(
             tx,
-            &job,
-            "leased",
-            JobState::Lost,
-            None,
-            Some((why.class(), why.code().clone())),
+            settings,
+            resumed,
+            job_of(row)?,
+            Holder::Lapsed,
+            &mut swept,
         )?;
-        swept.lost.push(job.id);
-        let mut reconcile = false;
-        if let Some(run) = job.run {
-            let state = tx.ledger().run(run)?.state;
-            if state.is_final() {
-                tx.ledger().quarantine_locks(run)?;
-            } else {
-                let fence = tx.ledger().new_epoch(run)?;
-                if can_stop(state) {
-                    tx.ledger()
-                        .set_state(&fence, RunState::Stopped, Some(&why))?;
-                }
-                reconcile = job.requirements.writes || !tx.ledger().in_doubt(run)?.is_empty();
-            }
-        }
-        if reconcile {
-            let quarantine = settings.quarantine.max(job.requirements.max_step);
-            let before = match job.run {
-                Some(run) if !resumed.contains(&job.id) => reconciles_in_a_row(tx, run)?,
-                _ => 0,
-            };
-            let wait = quarantine.max(reconcile_wait(settings, before));
-            let id = queue_reconcile(tx, settings, &job, plus(now, wait), true)?;
-            swept.reconcile.push(id);
-        } else {
-            swept.freed |= drop_holds(tx, job.id)?;
-        }
     }
 
     // Queue limits. A job on hold is not counted out while it is held.
@@ -1770,6 +1811,34 @@ pub(crate) fn sweep(
                     .set_state(&fence, RunState::Stopped, Some(&why))?;
             }
         }
+    }
+    Ok(swept)
+}
+
+/// Declares lost at once every lease `runner` holds, because the runner
+/// says it holds none: its process ended, and it starts again. Each is lost
+/// as a lapsed lease is, with the quarantine of a holder that ended
+/// (decision 0416).
+pub(crate) fn runner_ended(
+    tx: &mut Tx<'_>,
+    settings: &SchedSettings,
+    resumed: &BTreeSet<JobId>,
+    runner: RunnerId,
+) -> Result<Swept, Failure> {
+    let mut swept = Swept::default();
+    let rows = tx.tables(Owner::Sched).query(
+        select_jobs!("WHERE j.state = 'leased' AND j.runner_id = ?1 ORDER BY j.seq"),
+        &[runner.to_string().into()],
+    )?;
+    for row in &rows {
+        lose(
+            tx,
+            settings,
+            resumed,
+            job_of(row)?,
+            Holder::Ended,
+            &mut swept,
+        )?;
     }
     Ok(swept)
 }

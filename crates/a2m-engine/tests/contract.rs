@@ -1,8 +1,8 @@
-//! The provider contract's second pass and the plan's, as the engine
-//! carries them out (decisions 0161 and 0162): what earlier steps recorded,
-//! how a step was done, captures, what the system said, the project folder,
-//! evidence that is an acknowledgement, keys that are never guessed, each
-//! operation's own destinations, and a masked number.
+//! The provider contract's second pass and the compiled target's, as the
+//! engine carries them out (decisions 0161 and 0162): what earlier steps
+//! recorded, how a step was done, captures, what the system said, the project
+//! folder, evidence that is an acknowledgement, keys that are never guessed,
+//! each operation's own destinations, and a masked number.
 //!
 //! Every write is proven by asking the test application what it stored.
 
@@ -235,8 +235,8 @@ async fn a_driver_is_prepared_with_the_project_folder_of_the_request_and_none_wi
 
 /// The upsert, made irreversible, with the system's acknowledgement as its
 /// only evidence.
-fn acknowledged(plan: &mut a2m_core::Plan) {
-    for operation in &mut plan.operations {
+fn acknowledged(compiled_target: &mut a2m_core::CompiledTarget) {
+    for operation in &mut compiled_target.operations {
         if operation.name.as_str() == ITEM_UPSERT {
             operation.effect = EffectClass::Irreversible;
             for binding in &mut operation.bindings {
@@ -245,10 +245,10 @@ fn acknowledged(plan: &mut a2m_core::Plan) {
             }
         }
     }
-    for pipeline in &mut plan.pipelines {
+    for pipeline in &mut compiled_target.pipelines {
         pipeline.effect = EffectClass::Irreversible;
     }
-    for tool in &mut plan.tools {
+    for tool in &mut compiled_target.tools {
         tool.annotations.read_only = false;
     }
 }
@@ -336,17 +336,17 @@ async fn a_control_plane_that_cannot_end_an_acknowledged_record_leaves_it_in_dou
 #[tokio::test]
 async fn a_keyed_record_its_binding_cannot_read_whose_answer_was_lost_stays_in_doubt_and_is_not_sent_again()
  {
-    let scene = Scene::new(ITEM_UPSERT, |plan| {
+    let scene = Scene::new(ITEM_UPSERT, |compiled_target| {
         // The read-back's steps, kept as a lookup: one that the mode's
         // manifest does not state can prove absence.
-        for operation in &mut plan.operations {
+        for operation in &mut compiled_target.operations {
             if operation.name.as_str() == ITEM_UPSERT {
                 for binding in &mut operation.bindings {
                     binding.lookup = binding.read_back.clone();
                 }
             }
         }
-        acknowledged(plan);
+        acknowledged(compiled_target);
     })
     .await;
     let input = item("A-102", "L-300", "New rail", 3, "150.5");
@@ -369,8 +369,8 @@ async fn a_keyed_record_its_binding_cannot_read_whose_answer_was_lost_stays_in_d
 
 #[tokio::test]
 async fn an_acknowledgement_is_refused_as_evidence_for_an_operation_that_is_not_irreversible() {
-    let scene = Scene::new(ITEM_UPSERT, |plan| {
-        for operation in &mut plan.operations {
+    let scene = Scene::new(ITEM_UPSERT, |compiled_target| {
+        for operation in &mut compiled_target.operations {
             if operation.name.as_str() == ITEM_UPSERT {
                 operation.effect = EffectClass::Irreversible;
                 for binding in &mut operation.bindings {
@@ -379,19 +379,20 @@ async fn an_acknowledgement_is_refused_as_evidence_for_an_operation_that_is_not_
                 }
             }
         }
-        for pipeline in &mut plan.pipelines {
+        for pipeline in &mut compiled_target.pipelines {
             pipeline.effect = EffectClass::Irreversible;
         }
     })
     .await;
-    // The plan's own check holds the rule wherever the plan came from.
-    let mut plan = (*scene.control.plan).clone();
-    for operation in &mut plan.operations {
+    // The compiled target's own check holds the rule wherever the compiled
+    // target came from.
+    let mut compiled_target = (*scene.control.compiled_target).clone();
+    for operation in &mut compiled_target.operations {
         if operation.name.as_str() == ITEM_UPSERT {
             operation.effect = EffectClass::Write;
         }
     }
-    let refused = plan.encode().unwrap_err();
+    let refused = compiled_target.encode().unwrap_err();
     assert!(refused.message().contains("acknowledgement"), "{refused}");
 }
 
@@ -428,8 +429,8 @@ async fn a_step_is_never_given_a_records_place_in_the_run_as_its_key() {
 #[tokio::test]
 async fn a_driver_is_given_the_running_operations_destinations_and_no_others() {
     const ELSEWHERE: &str = "https://elsewhere.example.test";
-    let scene = Scene::new(ORDER_GET, |plan| {
-        for operation in &mut plan.operations {
+    let scene = Scene::new(ORDER_GET, |compiled_target| {
+        for operation in &mut compiled_target.operations {
             if operation.name.as_str() == ITEM_UPSERT {
                 operation.manifest.destinations.push(ELSEWHERE.to_owned());
             }
@@ -462,9 +463,9 @@ async fn a_driver_is_given_the_running_operations_destinations_and_no_others() {
 }
 
 /// No input says where a request goes (section 502): the run's destinations
-/// come from the published plan and the operation's manifest alone, and each
-/// carries the scope its own address gives (decision 0240). An input that
-/// holds an address adds no destination and sets no scope.
+/// come from the published compiled target and the operation's manifest
+/// alone, and each carries the scope its own address gives (decision 0240).
+/// An input that holds an address adds no destination and sets no scope.
 #[tokio::test]
 async fn a_destinations_scope_comes_from_its_address_and_never_from_an_input() {
     const IN_AN_INPUT: &str = "http://127.0.0.1:9/";
@@ -599,28 +600,28 @@ async fn an_offline_write_reaches_no_system_even_where_its_fixture_answers_the_s
 
 /// The order read with one more output, `lengths`: a list of the field
 /// type `inches`, a decimal, whose items may have no value.
-fn with_lengths(plan: &mut a2m_core::Plan) {
-    with_lengths_absent(plan, true);
+fn with_lengths(compiled_target: &mut a2m_core::CompiledTarget) {
+    with_lengths_absent(compiled_target, true);
 }
 
 /// As [`with_lengths`], with `lengths` declared as an output that may not
 /// be absent.
-fn with_certain_lengths(plan: &mut a2m_core::Plan) {
-    with_lengths_absent(plan, false);
+fn with_certain_lengths(compiled_target: &mut a2m_core::CompiledTarget) {
+    with_lengths_absent(compiled_target, false);
 }
 
-fn with_lengths_absent(plan: &mut a2m_core::Plan, may_be_absent: bool) {
-    let inches = plan
+fn with_lengths_absent(compiled_target: &mut a2m_core::CompiledTarget, may_be_absent: bool) {
+    let inches = compiled_target
         .field_types
         .iter()
         .position(|field_type| field_type.name == "inches")
         .unwrap();
-    let operation = plan
+    let operation = compiled_target
         .operations
         .iter_mut()
         .find(|operation| operation.name.as_str() == ORDER_GET)
         .unwrap();
-    operation.outputs.push(a2m_core::OutputPlan {
+    operation.outputs.push(a2m_core::CompiledOutput {
         name: "lengths".to_owned(),
         ty: a2m_core::ValueType::List(Box::new(a2m_core::ValueType::Decimal)),
         field_type: Some(a2m_core::FieldTypeIndex::new(
@@ -696,7 +697,10 @@ async fn a_list_output_is_normalized_item_by_item_and_an_item_that_fails_is_name
 
 // ---- decision 0305, point 4: a `null` in an output that may not be absent ----
 
-async fn read_with(change: fn(&mut a2m_core::Plan), answer: Values) -> a2m_engine::JobOutcome {
+async fn read_with(
+    change: fn(&mut a2m_core::CompiledTarget),
+    answer: Values,
+) -> a2m_engine::JobOutcome {
     let scene = Scene::new(ORDER_GET, change).await;
     let replay = replay_of(vec![("get_order", a2m_provider::Recorded::Done(answer))]);
     let job = scene.job(JobKind::Execute, ORDER_GET, order("A-900")).await;
@@ -733,8 +737,8 @@ async fn a_null_stops_the_run_in_an_output_that_may_not_be_absent_whichever_pack
 
     // The same output declared as one that may be absent is returned as
     // `null`, given so or not given at all.
-    fn customer_may_be_absent(plan: &mut a2m_core::Plan) {
-        for operation in &mut plan.operations {
+    fn customer_may_be_absent(compiled_target: &mut a2m_core::CompiledTarget) {
+        for operation in &mut compiled_target.operations {
             if operation.name.as_str() == ORDER_GET {
                 for output in &mut operation.outputs {
                     output.may_be_absent |= output.name == "customer";
@@ -764,7 +768,8 @@ fn missing_customer() -> Values {
     values
 }
 
-/// An order as the system answers it, with every output the plan declares.
+/// An order as the system answers it, with every output the compiled target
+/// declares.
 fn plain_order() -> Values {
     Values::new()
         .with("order_id", "A-900")

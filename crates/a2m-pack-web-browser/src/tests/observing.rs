@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::{RawValue, ReadWhat, SafeRequest, SafeRequests, codes};
+use a2m_provider::shape::{Kind, Shape};
+
+use crate::{BodyEncoding, RawValue, ReadWhat, SafeBody, SafeRequest, SafeRequests, codes};
 
 use super::*;
 
@@ -139,7 +141,17 @@ async fn an_observing_tab_reads_and_nothing_its_page_does_reaches_the_system() {
     let safe = SafeRequests {
         allowed: vec![SafeRequest {
             method: "PUT".to_owned(),
-            address_prefix: app.url(ITEM),
+            origin: app.url(""),
+            path: ITEM.to_owned(),
+            body: SafeBody::Shaped {
+                encoding: BodyEncoding::Json,
+                shape: closed_object(&[
+                    ("description", Kind::String),
+                    ("quantity", Kind::Integer),
+                    ("length_in", Kind::String),
+                    ("version", Kind::Integer),
+                ]),
+            },
         }],
     };
     let tab = must(
@@ -203,7 +215,7 @@ async fn an_observing_tab_records_its_pages_own_reads_by_structure_and_keeps_no_
         exchanges,
         [crate::PageExchange {
             method: "GET".to_owned(),
-            origin: app.url("").trim_end_matches('/').to_owned(),
+            origin: app.url(""),
             path: "/api/orders/A-100/totals".to_owned(),
             query: vec!["lang".to_owned(), "view".to_owned()],
             query_left_out: false,
@@ -213,6 +225,9 @@ async fn an_observing_tab_records_its_pages_own_reads_by_structure_and_keeps_no_
             content_type: "application/json".to_owned(),
             fields: Some(fields),
             names_withheld: false,
+            body_media_type: String::new(),
+            body_fields: None,
+            body_names_withheld: false,
         }]
     );
     // No value of the query, the header, the cookie, or the answer.
@@ -503,4 +518,371 @@ async fn an_observing_tab_has_no_write_and_its_browser_fails_one_made_beneath_it
     assert!(stored.writes.is_empty());
     drop(tab);
     stand.end().await;
+}
+
+/// A closed object whose every field is required and of a kind.
+fn closed_object(fields: &[(&str, Kind)]) -> Shape {
+    Shape {
+        properties: fields
+            .iter()
+            .map(|(name, kind)| ((*name).to_owned(), Shape::of(*kind)))
+            .collect(),
+        required: fields.iter().map(|(name, _)| (*name).to_owned()).collect(),
+        closed: true,
+        ..Shape::of(Kind::Object)
+    }
+}
+
+const ROWS_PAGE: &str = "/cases/rows-by-post";
+const ROWS_SEARCH: &str = "/api/cases/rows/search";
+
+/// The search of `/cases/rows-by-post` as a person asserts it: `POST`, the
+/// stand's origin, the path, and `{"status": text, "op": "search"}`.
+fn rows_search(app: &TestApp) -> SafeRequest {
+    let mut shape = closed_object(&[("status", Kind::String), ("op", Kind::String)]);
+    if let Some(op) = shape.properties.get_mut("op") {
+        op.one_of = vec!["search".to_owned()];
+    }
+    SafeRequest {
+        method: "POST".to_owned(),
+        origin: app.url(""),
+        path: ROWS_SEARCH.to_owned(),
+        body: SafeBody::Shaped {
+            encoding: BodyEncoding::Json,
+            shape,
+        },
+    }
+}
+
+/// The page's script sends `body` to `path` with `method`, as JSON unless
+/// `kind` says otherwise; `sent:<status>` or `failed`.
+fn sends(app: &TestApp, method: &str, path: &str, kind: &str, body: &str) -> String {
+    format!(
+        "fetch({:?}, {{method: {method:?}, headers: {{'Content-Type': {kind:?}}}, body: {body}}})\
+         .then((r) => 'sent:' + r.status, () => 'failed')",
+        app.url(path)
+    )
+}
+
+fn state_is(text: &str) -> crate::Primitive {
+    crate::Primitive::Text(
+        css("#state"),
+        crate::TextMatch {
+            text: text.to_owned(),
+            contains: false,
+        },
+    )
+}
+
+/// Where a read that carries a method override is sent, one path for each
+/// method: the stand would hear it, had it left.
+const OVERRIDDEN: &str = "/api/cases/rows/overridden";
+
+/// A page's own read of `method`, carrying header `name` that says it is
+/// `says`.
+fn overridden(app: &TestApp, method: &str, name: &str, says: &str) -> String {
+    format!(
+        "fetch({:?}, {{method: {method:?}, headers: {{{name:?}: {says:?}}}}})\
+         .then((r) => 'sent:' + r.status, () => 'failed')",
+        app.url(&format!("{OVERRIDDEN}/{method}"))
+    )
+}
+
+/// The `POST` lines the stand heard, in order.
+async fn posts_heard(app: &TestApp) -> Vec<String> {
+    let mut heard = app.seen().await.unwrap();
+    heard.retain(|line| line.starts_with("POST "));
+    heard
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_observing_tab_lets_through_a_safe_request_only_on_method_origin_template_and_body() {
+    let app = TestApp::start().await.unwrap();
+    let stand = Stand::with_browser("safe-requests");
+    let clerk = profile("clerk");
+    let observer = stand.browsers.observer();
+    let page = Address::new(&app.url(ROWS_PAGE)).unwrap();
+    let seeded = app.case_rows().await.unwrap();
+    assert_eq!(
+        seeded
+            .rows
+            .iter()
+            .filter(|row| row.status == "open")
+            .count(),
+        2
+    );
+
+    // With no safe request the page's own search is failed before it leaves
+    // and reported, and the stand hears nothing of it.
+    let tab = must(
+        observer
+            .observing_tab(
+                &clerk,
+                &environment(),
+                &SafeRequests::default(),
+                &origins(&app),
+            )
+            .await,
+    );
+    must(tab.goto(&page, soon()).await);
+    must(tab.wait(&state_is("Failed."), soon()).await);
+    let blocked = tab.blocked();
+    assert!(
+        blocked
+            .iter()
+            .any(|one| one.method == "POST" && one.address == app.url(ROWS_SEARCH)),
+        "{blocked:?}"
+    );
+    assert_eq!(app.case_rows().await.unwrap(), seeded);
+    assert!(posts_heard(&app).await.is_empty());
+    drop(tab);
+
+    // With the search asserted, the page's rows arrive.
+    let safe = SafeRequests {
+        allowed: vec![rows_search(&app)],
+    };
+    let tab = must(
+        observer
+            .observing_tab(&clerk, &environment(), &safe, &origins(&app))
+            .await,
+    );
+    must(tab.goto(&page, soon()).await);
+    must(tab.wait(&state_is("Loaded."), soon()).await);
+    let shown = must(
+        tab.page
+            .as_the_page("document.getElementById('rows').textContent", soon())
+            .await,
+    );
+    assert_eq!(shown, "C-1Leaking valveopenC-2Late deliveryopen");
+    let searched = app.case_rows().await.unwrap();
+    assert_eq!(searched.received, ["search"]);
+    assert_eq!(searched.rows, seeded.rows);
+    assert!(tab.blocked().is_empty());
+
+    // The same search, as the browser hands over a body of other forms: a
+    // `Blob`, an `ArrayBuffer`, and an `XMLHttpRequest`'s text, each whole.
+    let good = "JSON.stringify({status: 'closed', op: 'search'})";
+    for body in [
+        format!("new Blob([{good}])"),
+        format!("new TextEncoder().encode({good}).buffer"),
+    ] {
+        assert_eq!(
+            must(
+                tab.page
+                    .as_the_page(
+                        &sends(&app, "POST", ROWS_SEARCH, "application/json", &body),
+                        soon()
+                    )
+                    .await
+            ),
+            "sent:200",
+            "{body}"
+        );
+    }
+    let xhr = format!(
+        "new Promise((done) => {{ const x = new XMLHttpRequest(); x.open('POST', {:?}); \
+         x.setRequestHeader('Content-Type', 'application/json'); \
+         x.onloadend = () => done('sent:' + x.status); x.send({good}); }})",
+        app.url(ROWS_SEARCH)
+    );
+    assert_eq!(must(tab.page.as_the_page(&xhr, soon()).await), "sent:200");
+    assert_eq!(app.case_rows().await.unwrap().received.len(), 4);
+    let before = posts_heard(&app).await;
+
+    // Each of these is failed before it leaves the browser.
+    let archive = "JSON.stringify({status: 'open', op: 'archive'})";
+    let refused = [
+        (
+            "op: archive against enum: [search]",
+            sends(&app, "POST", ROWS_SEARCH, "application/json", archive),
+        ),
+        (
+            "a field the shape does not name",
+            sends(
+                &app,
+                "POST",
+                ROWS_SEARCH,
+                "application/json",
+                "JSON.stringify({status: 'open', op: 'search', all: true})",
+            ),
+        ),
+        (
+            "a field of another kind",
+            sends(
+                &app,
+                "POST",
+                ROWS_SEARCH,
+                "application/json",
+                "JSON.stringify({status: 7, op: 'search'})",
+            ),
+        ),
+        (
+            "a name given twice",
+            sends(
+                &app,
+                "POST",
+                ROWS_SEARCH,
+                "application/json",
+                "'{\"status\":\"open\",\"op\":\"search\",\"op\":\"archive\"}'",
+            ),
+        ),
+        (
+            "a body that is not JSON",
+            sends(
+                &app,
+                "POST",
+                ROWS_SEARCH,
+                "application/json",
+                "'status=open&op=search'",
+            ),
+        ),
+        (
+            "a body of another media type",
+            sends(
+                &app,
+                "POST",
+                ROWS_SEARCH,
+                "text/plain",
+                "JSON.stringify({status: 'open', op: 'search'})",
+            ),
+        ),
+        (
+            "a body over the bound",
+            sends(
+                &app,
+                "POST",
+                ROWS_SEARCH,
+                "application/json",
+                &format!("' '.repeat(1048576) + {good}"),
+            ),
+        ),
+        (
+            "a body the browser does not give whole",
+            format!(
+                "fetch({:?}, {{method: 'POST', duplex: 'half', headers: {{'Content-Type': 'application/json'}}, \
+                 body: new ReadableStream({{start(c) {{ c.enqueue(new TextEncoder().encode({good})); c.close(); }}}})}})\
+                 .then((r) => 'sent:' + r.status, () => 'failed')",
+                app.url(ROWS_SEARCH)
+            ),
+        ),
+        (
+            "a longer path",
+            sends(
+                &app,
+                "POST",
+                "/api/cases/rows/search/all",
+                "application/json",
+                good,
+            ),
+        ),
+        (
+            "a query",
+            sends(
+                &app,
+                "POST",
+                "/api/cases/rows/search?op=archive",
+                "application/json",
+                good,
+            ),
+        ),
+        (
+            "another method",
+            sends(&app, "PUT", ROWS_SEARCH, "application/json", good),
+        ),
+        (
+            "a method override",
+            format!(
+                "fetch({:?}, {{method: 'POST', headers: {{'Content-Type': 'application/json', 'X-HTTP-Method-Override': 'DELETE'}}, \
+                 body: {good}}}).then((r) => 'sent:' + r.status, () => 'failed')",
+                app.url(ROWS_SEARCH)
+            ),
+        ),
+        (
+            "no listed match",
+            sends(&app, "POST", "/cases/events/rows", "application/json", good),
+        ),
+        // A read that says it is another method is judged by what it says
+        // (decision 0270): a system that honours the header would write.
+        (
+            "a GET that says DELETE",
+            overridden(&app, "GET", "X-HTTP-Method-Override", "DELETE"),
+        ),
+        (
+            "a HEAD that says PUT",
+            overridden(&app, "HEAD", "x-http-method", "PUT"),
+        ),
+        (
+            "an OPTIONS that says POST",
+            overridden(&app, "OPTIONS", "X-Method-Override", "POST"),
+        ),
+        // The same, said in the address's query, whatever method it names.
+        (
+            "a GET whose query says DELETE",
+            format!(
+                "fetch({:?}).then((r) => 'sent:' + r.status, () => 'failed')",
+                app.url(&format!("{OVERRIDDEN}/query?_method=DELETE"))
+            ),
+        ),
+    ];
+    for (why, script) in &refused {
+        assert_eq!(
+            must(tab.page.as_the_page(script, soon()).await),
+            "failed",
+            "{why}"
+        );
+    }
+    // A navigation the tab has waited out came after every refusal.
+    must(tab.goto(&page, soon()).await);
+    must(tab.wait(&state_is("Loaded."), soon()).await);
+    let blocked = tab.blocked();
+    assert_eq!(blocked.len(), refused.len(), "{blocked:?}");
+    for method in ["GET", "HEAD", "OPTIONS"] {
+        assert!(
+            blocked.iter().any(|one| one.method == method
+                && one.address == app.url(&format!("{OVERRIDDEN}/{method}"))),
+            "{method}: {blocked:?}"
+        );
+    }
+    // A refusal is reported cut at the query.
+    assert!(
+        blocked.iter().any(
+            |one| one.method == "GET" && one.address == app.url(&format!("{OVERRIDDEN}/query"))
+        ),
+        "{blocked:?}"
+    );
+    let seen = app.seen().await.unwrap();
+    assert!(
+        !seen.iter().any(|line| line.contains(OVERRIDDEN)),
+        "{seen:?}"
+    );
+
+    // The stand stored nothing and heard nothing of them: the only body it
+    // was sent since is the page's own search, loaded again.
+    let after = app.case_rows().await.unwrap();
+    assert_eq!(
+        after.received,
+        ["search", "search", "search", "search", "search"]
+    );
+    assert_eq!(after.rows, seeded.rows);
+    let mut heard = posts_heard(&app).await;
+    assert_eq!(
+        heard.split_off(before.len()),
+        [format!("POST {ROWS_SEARCH}")]
+    );
+    assert!(app.case_events().await.unwrap().is_empty());
+    drop(tab);
+    stand.end().await;
+
+    // And the stand does archive by the same route, so the refusal above
+    // meant something.
+    let archived = app
+        .http()
+        .post(app.url(ROWS_SEARCH))
+        .json(&serde_json::json!({"status": "open", "op": "archive"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(archived.status().is_success());
+    let changed = app.case_rows().await.unwrap();
+    assert_eq!(changed.rows[0].status, "archived");
 }

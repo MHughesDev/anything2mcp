@@ -1,5 +1,5 @@
-//! The driver against the stdio form of the test stand: the server is a
-//! local program, started through the supervisor from what the plan
+//! The driver against the stdio form of the test stand: the server is a local
+//! program, started through the supervisor from what the compiled target
 //! declares, on Linux, macOS, and Windows alike (decision 0250). Every write
 //! is proven by asking the stand what it stored, and what a program was
 //! given, its arguments and its environment, by asking the program.
@@ -14,7 +14,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use a2m_core::{Digest, FailureClass, Plan, Value, Values};
+use a2m_core::{CompiledTarget, Digest, FailureClass, Value, Values};
 use a2m_pack_mcp::codes;
 use a2m_provider::{Authority, Posture, Registry, Sent, StepOutcome};
 use common::{
@@ -30,7 +30,7 @@ const PLACEHOLDER_DIGEST: &str =
 struct Scene {
     folder: Folder,
     registry: Registry,
-    plan: Plan,
+    compiled_target: CompiledTarget,
     stand: StdioStand,
 }
 
@@ -44,19 +44,24 @@ fn quoted(text: &str) -> String {
 /// stand's program, pinned by `digest`, or by the program's own digest,
 /// and compiled. The local mapping gains the update tool, so that a write
 /// can be proven, and the report tool, a second read.
-fn local_plan(registry: &Registry, root: &Path, stand: &StdioStand, digest: Option<&str>) -> Plan {
-    local_plan_with(registry, root, stand, stand.program(), digest, &[])
+fn local_compiled_target(
+    registry: &Registry,
+    root: &Path,
+    stand: &StdioStand,
+    digest: Option<&str>,
+) -> CompiledTarget {
+    local_compiled_target_with(registry, root, stand, stand.program(), digest, &[])
 }
 
-/// As [`local_plan`], with the program at `program` and these arguments.
-fn local_plan_with(
+/// As [`local_compiled_target`], with the program at `program` and these arguments.
+fn local_compiled_target_with(
     registry: &Registry,
     root: &Path,
     stand: &StdioStand,
     program: &Path,
     digest: Option<&str>,
     args: &[&str],
-) -> Plan {
+) -> CompiledTarget {
     let state = stand.state_folder().to_string_lossy().into_owned();
     let own = format!("sha256:{}", Digest::of(&std::fs::read(program).unwrap()));
     let program = program.to_string_lossy().into_owned();
@@ -85,7 +90,7 @@ fn local_plan_with(
         _ => text,
     });
     match compile(registry, root) {
-        Ok(compiled) => compiled.plan,
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the local target does not compile:\n{}", shown(&problems)),
     }
 }
@@ -94,11 +99,12 @@ fn scene(digest: Option<&str>) -> Scene {
     let folder = Folder::new("stdio");
     let registry = registry(&folder);
     let stand = StdioStand::new().unwrap();
-    let plan = local_plan(&registry, &folder.path().join("target"), &stand, digest);
+    let compiled_target =
+        local_compiled_target(&registry, &folder.path().join("target"), &stand, digest);
     Scene {
         folder,
         registry,
-        plan,
+        compiled_target,
         stand,
     }
 }
@@ -107,12 +113,12 @@ fn scene(digest: Option<&str>) -> Scene {
 async fn a_local_server_program_is_started_by_the_supervisor_and_read_and_written() {
     let scene = scene(None);
     let control = scene.stand.control();
-    let local = surface(&scene.plan, "orders_local", None);
+    let local = surface(&scene.compiled_target, "orders_local", None);
     let (ledger, _vault) = store().await;
     let fence = running(&ledger, 1, &["A-100"]).await;
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &local,
         fence,
         Posture::Live,
@@ -121,7 +127,7 @@ async fn a_local_server_program_is_started_by_the_supervisor_and_read_and_writte
     .await
     .unwrap();
 
-    let get = steps(&scene.plan, "example_order_get").act;
+    let get = steps(&scene.compiled_target, "example_order_get").act;
     let args = Values::new().with("order_id", "A-100");
     let Ok(StepOutcome::Done(read)) = handle
         .act(
@@ -136,7 +142,7 @@ async fn a_local_server_program_is_started_by_the_supervisor_and_read_and_writte
     };
     assert_eq!(read.values.get("status"), Some(&Value::from("draft")));
 
-    let update = steps(&scene.plan, "example_order_note_update");
+    let update = steps(&scene.compiled_target, "example_order_note_update");
     let args = Values::new()
         .with("order_id", "A-100")
         .with("field", "note")
@@ -172,12 +178,12 @@ async fn a_program_that_exits_after_a_commit_is_possible_commit() {
     control
         .set_fault(Fault::once(FaultKind::DropAfterCommit).on_tool("orders_update"))
         .unwrap();
-    let local = surface(&scene.plan, "orders_local", None);
+    let local = surface(&scene.compiled_target, "orders_local", None);
     let (ledger, _vault) = store().await;
     let fence = running(&ledger, 1, &["A-100"]).await;
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &local,
         fence,
         Posture::Live,
@@ -185,7 +191,7 @@ async fn a_program_that_exits_after_a_commit_is_possible_commit() {
     )
     .await
     .unwrap();
-    let update = steps(&scene.plan, "example_order_note_update");
+    let update = steps(&scene.compiled_target, "example_order_note_update");
     let args = Values::new()
         .with("order_id", "A-100")
         .with("field", "note")
@@ -218,10 +224,10 @@ async fn a_program_that_exits_after_a_commit_is_possible_commit() {
 async fn a_program_whose_digest_is_not_the_pinned_one_is_not_started() {
     let other = format!("sha256:{}", Digest::of(b"another program"));
     let scene = scene(Some(&other));
-    let local = surface(&scene.plan, "orders_local", None);
+    let local = surface(&scene.compiled_target, "orders_local", None);
     let refused = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &local,
         fence_of(7),
         Posture::Live,
@@ -231,22 +237,23 @@ async fn a_program_whose_digest_is_not_the_pinned_one_is_not_started() {
     .unwrap_err();
     assert_eq!(refused.sent, Sent::NotSent);
     // The supervisor's refusal: the program on disk is not the one the
-    // plan declares.
+    // compiled target declares.
     assert_eq!(refused.failure.class(), FailureClass::Policy);
     assert!(scene.stand.control().connections().unwrap().is_empty());
 }
 
 #[tokio::test]
-async fn a_plan_published_again_with_another_program_digest_does_not_use_the_running_program() {
+async fn a_compiled_target_published_again_with_another_program_digest_does_not_use_the_running_program()
+ {
     let scene = scene(None);
     let control = scene.stand.control();
-    let local = surface(&scene.plan, "orders_local", None);
-    let get = steps(&scene.plan, "example_order_get").act;
+    let local = surface(&scene.compiled_target, "orders_local", None);
+    let get = steps(&scene.compiled_target, "example_order_get").act;
     let args = Values::new().with("order_id", "A-100");
     // The first run starts the program, and the driver keeps it running.
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &local,
         fence_of(7),
         Posture::Live,
@@ -265,13 +272,13 @@ async fn a_plan_published_again_with_another_program_digest_does_not_use_the_run
     assert!(matches!(read, Ok(StepOutcome::Done(_))), "{read:?}");
     assert!(handle.release(prepared, false).await.complete);
 
-    // A run whose plan does not declare the program is refused, although
-    // the program is running.
+    // A run whose compiled target does not declare the program is refused,
+    // although the program is running.
     let mut undeclared = local.clone();
     undeclared.surface.programs.clear();
     let refused = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &undeclared,
         fence_of(7),
         Posture::Live,
@@ -292,7 +299,7 @@ async fn a_plan_published_again_with_another_program_digest_does_not_use_the_run
     // next run is not given the one that is running; the supervisor is
     // asked, and refuses what is on disk.
     let other = format!("sha256:{}", Digest::of(b"another program"));
-    let republished = local_plan(
+    let republished = local_compiled_target(
         &scene.registry,
         &scene.folder.path().join("republished"),
         &scene.stand,
@@ -321,10 +328,10 @@ async fn a_plan_published_again_with_another_program_digest_does_not_use_the_run
 async fn the_tool_list_is_read_again_on_the_servers_notice_that_it_changed() {
     let scene = scene(None);
     let control = scene.stand.control();
-    let local = surface(&scene.plan, "orders_local", None);
+    let local = surface(&scene.compiled_target, "orders_local", None);
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &local,
         fence_of(7),
         Posture::Live,
@@ -332,8 +339,8 @@ async fn the_tool_list_is_read_again_on_the_servers_notice_that_it_changed() {
     )
     .await
     .unwrap();
-    let get = steps(&scene.plan, "example_order_get").act;
-    let report = steps(&scene.plan, "example_order_report").act;
+    let get = steps(&scene.compiled_target, "example_order_get").act;
+    let report = steps(&scene.compiled_target, "example_order_report").act;
     let args = Values::new().with("order_id", "A-100");
     let none = Values::new();
     let first = handle
@@ -459,7 +466,7 @@ fn a_variable_of_the_engine_or_a_credential_is_never_passed_to_a_local_server() 
 }
 
 #[tokio::test]
-async fn a_plan_that_hands_a_local_server_such_a_variable_starts_nothing() {
+async fn a_compiled_target_that_hands_a_local_server_such_a_variable_starts_nothing() {
     for (list, name) in [
         ("environment", "A2M_HOME"),
         ("pass_environment", "a2m_vault_passphrase"),
@@ -469,9 +476,10 @@ async fn a_plan_that_hands_a_local_server_such_a_variable_starts_nothing() {
         ("pass_environment", "NODE_OPTIONS"),
     ] {
         let scene = scene(None);
-        let mut local = surface(&scene.plan, "orders_local", None);
-        // A plan the compiler would not make: the surface is changed by
-        // hand, as a plan altered after it was compiled would be.
+        let mut local = surface(&scene.compiled_target, "orders_local", None);
+        // A compiled target the compiler would not make: the surface is
+        // changed by hand, as a compiled target altered after it was compiled
+        // would be.
         let mut fields: serde_json::Value = local.surface.payload.decode().unwrap();
         if list == "environment" {
             fields["environment"][name] = serde_json::json!("elsewhere");
@@ -481,7 +489,7 @@ async fn a_plan_that_hands_a_local_server_such_a_variable_starts_nothing() {
         local.surface.payload = a2m_core::PackPayload::encode(&fields).unwrap();
         let refused = prepare(
             &scene.registry,
-            &scene.plan,
+            &scene.compiled_target,
             &local,
             fence_of(7),
             Posture::Live,
@@ -532,7 +540,7 @@ fn placed(stand: &StdioStand, folder: &str, name: &str) -> (Folder, PathBuf, Pat
 fn scene_with(stand: StdioStand, program: &Path, args: &[&str]) -> Scene {
     let folder = Folder::new("stdio");
     let registry = registry(&folder);
-    let plan = local_plan_with(
+    let compiled_target = local_compiled_target_with(
         &registry,
         &folder.path().join("target"),
         &stand,
@@ -543,24 +551,24 @@ fn scene_with(stand: StdioStand, program: &Path, args: &[&str]) -> Scene {
     Scene {
         folder,
         registry,
-        plan,
+        compiled_target,
         stand,
     }
 }
 
 /// Prepares the local surface and reads one order, then lets it go.
 async fn read_once(scene: &Scene) -> Result<Value, a2m_provider::StepFailure> {
-    let local = surface(&scene.plan, "orders_local", None);
+    let local = surface(&scene.compiled_target, "orders_local", None);
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &local,
         fence_of(7),
         Posture::Live,
         None,
     )
     .await?;
-    let get = steps(&scene.plan, "example_order_get").act;
+    let get = steps(&scene.compiled_target, "example_order_get").act;
     let args = Values::new().with("order_id", "A-100");
     let read = handle
         .act(
@@ -610,11 +618,11 @@ async fn a_program_that_never_answers_ends_at_the_deadline_and_leaves_nothing_ru
     let stand = StdioStand::new().unwrap();
     let program = stand.program().to_path_buf();
     let scene = scene_with(stand, &program, &["--silent", "--grandchild"]);
-    let local = surface(&scene.plan, "orders_local", None);
+    let local = surface(&scene.compiled_target, "orders_local", None);
     let started = std::time::Instant::now();
     let refused = common::prepare_within(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &local,
         fence_of(7),
         Posture::Live,
@@ -661,12 +669,12 @@ async fn a_program_killed_in_the_middle_of_a_call_leaves_the_write_in_doubt_and_
     control
         .set_fault(Fault::once(FaultKind::Delay { ms: 10 * 60 * 1000 }).on_tool("orders_update"))
         .unwrap();
-    let local = surface(&scene.plan, "orders_local", None);
+    let local = surface(&scene.compiled_target, "orders_local", None);
     let (ledger, _vault) = store().await;
     let fence = running(&ledger, 1, &["A-100"]).await;
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &local,
         fence,
         Posture::Live,
@@ -675,7 +683,7 @@ async fn a_program_killed_in_the_middle_of_a_call_leaves_the_write_in_doubt_and_
     .await
     .unwrap();
     let process = control.starts().unwrap()[0].process;
-    let update = steps(&scene.plan, "example_order_note_update");
+    let update = steps(&scene.compiled_target, "example_order_note_update");
     let args = Values::new()
         .with("order_id", "A-100")
         .with("field", "note")
@@ -820,10 +828,10 @@ fn open_to_everyone(path: &Path) {
 /// Asserts that preparing the scene's local surface is refused as the
 /// provider's check of a program refuses, and that nothing started.
 async fn refused_before_it_starts(scene: &Scene, why: &str) {
-    let local = surface(&scene.plan, "orders_local", None);
+    let local = surface(&scene.compiled_target, "orders_local", None);
     let refused = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &local,
         fence_of(7),
         Posture::Live,

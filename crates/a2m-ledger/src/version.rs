@@ -1,10 +1,11 @@
-//! Published versions and their plans, stored by hash.
+//! Published versions and their compiled targets, stored by hash.
 //!
-//! A version is the bytes of its plan and nothing else. They are written
-//! once, by publishing, and the hash is checked on every load.
+//! A version is the bytes of its compiled target and nothing else. They are
+//! written once, by publishing, and the hash is checked on every load.
 
 use a2m_core::{
-    Digest, EncodedPlan, Failure, PrincipalId, TargetName, Timestamp, Version, WorkspaceId,
+    Digest, EncodedCompiledTarget, Failure, PrincipalId, TargetName, Timestamp, Version,
+    WorkspaceId,
 };
 
 use crate::codec::{moment, parse};
@@ -20,8 +21,9 @@ pub struct PublishedVersion {
     pub target: TargetName,
     /// The version's number.
     pub version: Version,
-    /// The plan's bytes and their hash, from `Plan::encode`.
-    pub plan: EncodedPlan,
+    /// The compiled target's bytes and their hash, from
+    /// `CompiledTarget::encode`.
+    pub compiled_target: EncodedCompiledTarget,
     /// Who published it.
     pub published_by: PrincipalId,
     /// The evidence of the publish gates it passed, as canonical JSON: what
@@ -30,11 +32,11 @@ pub struct PublishedVersion {
     pub gate_evidence: Option<String>,
 }
 
-/// A stored version, without its plan's bytes.
+/// A stored version, without its compiled target's bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionRow {
-    /// The hash that names the plan.
-    pub plan_hash: Digest,
+    /// The hash that names the compiled target.
+    pub compiled_target_hash: Digest,
     /// The version's number.
     pub version: Version,
     /// Who published it.
@@ -51,24 +53,24 @@ pub struct Versions<'t, 'a> {
 }
 
 impl<'a> Tx<'a> {
-    /// Published versions and their plans.
+    /// Published versions and their compiled targets.
     pub fn versions(&mut self) -> Versions<'_, 'a> {
         Versions { tx: self }
     }
 }
 
 impl Versions<'_, '_> {
-    /// Stores a published version. Storing the same plan again changes
-    /// nothing.
+    /// Stores a published version. Storing the same compiled target again
+    /// changes nothing.
     ///
     /// # Errors
     ///
-    /// `input`/`plan_hash_mismatch` when the hash given is not the digest of
-    /// the bytes given.
+    /// `input`/`compiled_target_hash_mismatch` when the hash given is not the
+    /// digest of the bytes given.
     pub fn put(&mut self, version: &PublishedVersion) -> Result<(), Failure> {
-        if Digest::of(&version.plan.bytes) != version.plan.hash {
-            return Err(a2m_core::codes::row::PLAN_HASH_MISMATCH.failure(
-                "The plan's hash is not the digest of its bytes.",
+        if Digest::of(&version.compiled_target.bytes) != version.compiled_target.hash {
+            return Err(a2m_core::codes::row::COMPILED_TARGET_HASH_MISMATCH.failure(
+                "The compiled target's hash is not the digest of its bytes.",
                 "Compile the target again and publish what the compiler gives.",
             ));
         }
@@ -81,9 +83,9 @@ impl Versions<'_, '_> {
             &[
                 version.workspace.to_string().into(),
                 version.target.as_str().into(),
-                version.plan.hash.to_string().into(),
+                version.compiled_target.hash.to_string().into(),
                 version.version.to_string().into(),
-                version.plan.bytes.clone().into(),
+                version.compiled_target.bytes.clone().into(),
                 version.published_by.to_string().into(),
                 self.tx.now().into(),
                 version.gate_evidence.clone().into(),
@@ -119,8 +121,8 @@ impl Versions<'_, '_> {
         Ok(row.opt_text(0)?.map(str::to_owned))
     }
 
-    /// The plan with this hash. The bytes are hashed again before they are
-    /// returned.
+    /// The compiled target with this hash. The bytes are hashed again before
+    /// they are returned.
     ///
     /// # Errors
     ///
@@ -132,7 +134,7 @@ impl Versions<'_, '_> {
         workspace: &WorkspaceId,
         target: &TargetName,
         hash: &Digest,
-    ) -> Result<EncodedPlan, Failure> {
+    ) -> Result<EncodedCompiledTarget, Failure> {
         let row = self
             .tx
             .row(
@@ -147,9 +149,9 @@ impl Versions<'_, '_> {
             .ok_or_else(|| failure::not_found("published version"))?;
         let bytes = row.bytes(0)?.to_vec();
         if Digest::of(&bytes) != *hash {
-            return Err(failure::corrupt("a stored plan's hash"));
+            return Err(failure::corrupt("a stored compiled target's hash"));
         }
-        Ok(EncodedPlan { bytes, hash: *hash })
+        Ok(EncodedCompiledTarget { bytes, hash: *hash })
     }
 
     /// Makes the version with this hash the one that runs now.
@@ -205,7 +207,7 @@ impl Versions<'_, '_> {
             .iter()
             .map(|row| {
                 Ok(VersionRow {
-                    plan_hash: parse(row.text(0)?)?,
+                    compiled_target_hash: parse(row.text(0)?)?,
                     version: parse(row.text(1)?)?,
                     published_by: parse(row.text(2)?)?,
                     published_at: moment(row.int(3)?),

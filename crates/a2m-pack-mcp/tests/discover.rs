@@ -44,10 +44,10 @@ fn found(finding: &Finding) -> serde_json::Value {
 async fn discovery_lists_the_servers_tools_and_calls_none() {
     let folder = Folder::new("discover");
     let registry = registry(&folder);
-    let plan = compiled_fixture(&registry);
+    let compiled_target = compiled_fixture(&registry);
     let stand = HttpStand::start().await.unwrap();
     let control = stand.control();
-    let surface = common::surface(&plan, "orders", Some(&stand.url()));
+    let surface = common::surface(&compiled_target, "orders", Some(&stand.url()));
     // The server as it is some time after it was mapped: one tool more, one
     // whose marking was turned around, one whose description now holds
     // text aimed at an agent, and another version.
@@ -66,7 +66,7 @@ async fn discovery_lists_the_servers_tools_and_calls_none() {
 
     let (handle, prepared) = prepare(
         &registry,
-        &plan,
+        &compiled_target,
         &surface,
         fence_of(7),
         Posture::Discovery,
@@ -148,7 +148,7 @@ async fn discovery_lists_the_servers_tools_and_calls_none() {
 
     // Nothing that writes passes the port: a call to a tool mapped as a
     // write is refused before the driver sees it.
-    let write = steps(&plan, "example_order_note_update").act;
+    let write = steps(&compiled_target, "example_order_note_update").act;
     let args = Values::new()
         .with("order_id", "A-100")
         .with("field", "note")
@@ -260,13 +260,13 @@ async fn discovery_lists_the_servers_tools_and_calls_none() {
 async fn the_stands_tool_list_drafts_reads_that_read_what_it_stores() {
     let folder = Folder::new("drafted-reads");
     let registry = registry(&folder);
-    let plan = compiled_fixture(&registry);
+    let compiled_target = compiled_fixture(&registry);
     let stand = HttpStand::start().await.unwrap();
     let control = stand.control();
-    let surface = common::surface(&plan, "orders", Some(&stand.url()));
+    let surface = common::surface(&compiled_target, "orders", Some(&stand.url()));
     let (handle, prepared) = prepare(
         &registry,
-        &plan,
+        &compiled_target,
         &surface,
         fence_of(7),
         Posture::Discovery,
@@ -342,7 +342,7 @@ async fn the_stands_tool_list_drafts_reads_that_read_what_it_stores() {
     );
     let drafted = common::compile(&registry, &root)
         .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
-        .plan;
+        .compiled_target;
     for operation in &drafted.operations {
         assert_eq!(operation.effect, a2m_core::EffectClass::Read);
     }
@@ -444,7 +444,7 @@ async fn the_stands_tool_list_drafts_reads_that_read_what_it_stores() {
     );
     let drafted = common::compile(&registry, &root)
         .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
-        .plan;
+        .compiled_target;
     let surface = common::surface(&drafted, "orders", Some(&stand.url()));
     let (handle, mut prepared) = prepare(
         &registry,

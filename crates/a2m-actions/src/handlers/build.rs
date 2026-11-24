@@ -1,11 +1,11 @@
 //! Building a target: its draft files in the project folder, and the
 //! version a person publishes from them.
 //!
-//! This crate is the only caller of the compiler. A plan is produced here
-//! and stored by `version.publish`; the engine receives it through
-//! `Control` and never sees the compiler.
+//! This crate is the only caller of the compiler. A compiled target is
+//! produced here and stored by `version.publish`; the engine receives it
+//! through `Control` and never sees the compiler.
 
-use a2m_core::{Digest, EncodedPlan, Failure, PrincipalId, TargetName, Version};
+use a2m_core::{Digest, EncodedCompiledTarget, Failure, PrincipalId, TargetName, Version};
 use a2m_files::{CompileMode, Compiled, DRAFT_VERSION, Diagnostics, TargetRoot};
 use a2m_ledger::{Durability, PublishedVersion};
 use a2m_provider::{Access, CheckedPath, RootName, Roots};
@@ -58,15 +58,15 @@ fn compile_target(
     a2m_files::compile(&sources, set, mode, version)
 }
 
-/// Compiles what of a target's drafts can compile, for observing and
-/// trying them: every file but those `held_back` names and those that hold
-/// a drafter's open question, which keep their whole kind from compiling
+/// Compiles what of a target's drafts can compile, for observing and trying
+/// them: every file but those `held_back` names and those that hold a
+/// drafter's open question, which keep their whole kind from compiling
 /// (decision 0180). Drafts that hold a question now wait in the holding
 /// folder, which the loader does not read (decision 0298), so they are not
 /// among the files; a file outside it that holds one, written before that
 /// decision or by a person, is still left out here, as it was. Gives the
-/// plan and the files left out, in order. Never used to publish: a publish
-/// compiles every file.
+/// compiled target and the files left out, in order. Never used to publish: a
+/// publish compiles every file.
 pub(crate) fn compile_what_can(
     kernel: &Kernel,
     folder: &std::path::Path,
@@ -409,14 +409,14 @@ pub(crate) async fn chosen_version(
             Version::new(u32::try_from(next).unwrap_or(u32::MAX), 0, 0)
         }
     };
-    // The drafts' own version is never published: a plan that carries it
-    // is a draft's, and a pack tells a draft from a published plan by it
-    // (decisions 0270 and 0273).
+    // The drafts' own version is never published: a compiled target that
+    // carries it is a draft's, and a pack tells a draft from a published
+    // compiled target by it (decisions 0270 and 0273).
     if version == DRAFT_VERSION {
         return Err(codes::input(
             codes::SCHEMA_INVALID,
             format!(
-                "The version {DRAFT_VERSION} is the one every plan compiled from the drafts carries, so no published version takes it."
+                "The version {DRAFT_VERSION} is the one every compiled target compiled from the drafts carries, so no published version takes it."
             ),
             "Publish under a version above it, for example `1.0.0`, or give no version to take the next one.",
         ));
@@ -620,7 +620,7 @@ handler!(
         )?;
         let text = first_target_file(&target, surface.as_ref());
         let declared = surface.is_some();
-        let (kernel, named) = (kernel.clone(), target.clone());
+        let (owned, named) = (kernel.clone(), target.clone());
         // Looking at the folder, compiling, and writing the file wait on
         // the disk or compute.
         off_thread(move || {
@@ -637,7 +637,7 @@ handler!(
                 // The file is compiled as the draft it will be, with the
                 // packs that are enabled: what the compiler refuses for the
                 // surface is refused here, and nothing is written.
-                let set = kernel.providers().compiler_set();
+                let set = owned.providers().compiler_set();
                 let path = a2m_files::RelPath::new("target.yaml")?;
                 let source = a2m_files::SourceFile::read(path, text.as_bytes(), set)
                     .map_err(|problem| first_file_refused(&Diagnostics::from(problem)))?;
@@ -662,6 +662,17 @@ handler!(
             file.write(text.as_bytes())
         })
         .await?;
+        // The address given here is the first a person registers for the
+        // target: a draft that reaches another is published only from the
+        // page that names it (spec section 502, rule 2).
+        if let Some(surface) = &surface {
+            kernel
+                .register_origins(
+                    &target,
+                    std::iter::once(crate::origins::origin_of(&surface.address)).collect(),
+                )
+                .await?;
+        }
         let next = if declared {
             Next::new(
                 "scout.run",
@@ -707,8 +718,8 @@ handler!(
                     "problems": problems_json(&compiled.warnings),
                     "held": held_json(&held),
                     "held_cut": held.cut,
-                    "plan_hash": compiled.encoded.hash.to_string(),
-                    "tools": compiled.plan.tools.iter().map(|tool| tool.name.to_string()).collect::<Vec<_>>(),
+                    "compiled_target_hash": compiled.encoded.hash.to_string(),
+                    "tools": compiled.compiled_target.tools.iter().map(|tool| tool.name.to_string()).collect::<Vec<_>>(),
                 }))
                 .then(publish_next(kernel, &call, &target, ready).await)
             }
@@ -740,11 +751,11 @@ handler!(
 );
 
 impl Kernel {
-    /// Stores a plan as a version of its target, makes it the current one,
-    /// and writes the audit entry, in one transaction.
+    /// Stores a compiled target as a version of its target, makes it the
+    /// current one, and writes the audit entry, in one transaction.
     pub(crate) async fn store_version(
         &self,
-        encoded: EncodedPlan,
+        encoded: EncodedCompiledTarget,
         target: TargetName,
         version: Version,
         by: PrincipalId,
@@ -752,7 +763,7 @@ impl Kernel {
     ) -> Result<Digest, Failure> {
         let workspace = self.installation()?.workspace;
         let hash = encoded.hash;
-        let detail = format!("version {version}, plan {hash}");
+        let detail = format!("version {version}, compiled target {hash}");
         let subject = target.to_string();
         self.store()?
             .write(Durability::Synced, move |tx| {
@@ -760,7 +771,7 @@ impl Kernel {
                     workspace,
                     target: target.clone(),
                     version,
-                    plan: encoded,
+                    compiled_target: encoded,
                     published_by: by,
                     gate_evidence,
                 })?;
@@ -780,22 +791,26 @@ impl Kernel {
         Ok(hash)
     }
 
-    /// Stores a plan built by hand as the current version of its target,
-    /// so that a test of a crate above this one has a published tool to
-    /// call without the compiler. Never part of the product: a plan reaches
-    /// the store of a product only through `version.publish`.
+    /// Stores a compiled target built by hand as the current version of its
+    /// target, so that a test of a crate above this one has a published tool
+    /// to call without the compiler. Never part of the product: a compiled
+    /// target reaches the store of a product only through `version.publish`.
     ///
     /// # Errors
     ///
-    /// The plan's own check and encoding failures; the store's failures.
+    /// The compiled target's own check and encoding failures; the store's
+    /// failures.
     #[cfg(any(test, feature = "testing"))]
-    pub async fn publish_plan(&self, plan: &a2m_core::Plan) -> Result<Digest, Failure> {
-        plan.check()?;
+    pub async fn publish_compiled_target(
+        &self,
+        compiled_target: &a2m_core::CompiledTarget,
+    ) -> Result<Digest, Failure> {
+        compiled_target.check()?;
         let by = self.installation()?.user;
         self.store_version(
-            plan.encode()?,
-            plan.header.target.clone(),
-            plan.header.version,
+            compiled_target.encode()?,
+            compiled_target.header.target.clone(),
+            compiled_target.header.version,
             by,
             None,
         )
@@ -805,8 +820,8 @@ impl Kernel {
 
 handler!(
     /// `version.publish`: compiles the drafts for publishing and stores the
-    /// plan as an immutable version. The dispatcher has asked for proof
-    /// that a person is present before this runs.
+    /// compiled target as an immutable version. The dispatcher has asked for
+    /// proof that a person is present before this runs.
     version_publish,
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
@@ -824,14 +839,40 @@ handler!(
                 }
             };
         // A publish a person was shown on a page carries the hash of the
-        // plan they read: drafts changed since are not published.
-        if let Some(pinned) = call.text("plan_hash")
+        // compiled target they read: drafts changed since are not published.
+        if let Some(pinned) = call.text("compiled_target_hash")
             && pinned != compiled.encoded.hash.to_string()
         {
             return Err(codes::stale(
                 codes::DRAFTS_CHANGED,
-                "The drafts changed after the publish was asked for, so they compile to another plan than the one shown. Nothing was published.",
-                "Ask for the publish again; the person reads the new plan on a new page.",
+                "The drafts changed after the publish was asked for, so they compile to another compiled target than the one shown. Nothing was published.",
+                "Ask for the publish again; the person reads the new compiled target on a new page.",
+            ));
+        }
+        // A draft cannot widen the target's reach by itself (spec section
+        // 502, rule 2): an address no person registered is published only
+        // from the publish page, which names it, and never from a command.
+        let unregistered = kernel
+            .unregistered_origins(&target, &compiled.compiled_target)
+            .await?;
+        let from_page = call
+            .presence
+            .as_ref()
+            .is_some_and(|proof| proof.act().is_some());
+        if !unregistered.is_empty() && !from_page {
+            return Err(codes::policy(
+                codes::ADDRESS_UNREGISTERED,
+                format!(
+                    "The drafts of `{target}` reach {}, which no person registered for the target, so nothing was published.",
+                    unregistered
+                        .iter()
+                        .map(|place| format!("`{place}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                format!(
+                    "Ask for the publish on its page, with `anything2mcp publish request {target}`, read the new address it names, and press there."
+                ),
             ));
         }
         // The publish gates (spec section 403): a version is published only
@@ -862,11 +903,12 @@ handler!(
         )
         .ok();
         let tools: Vec<String> = compiled
-            .plan
+            .compiled_target
             .tools
             .iter()
             .map(|tool| tool.name.to_string())
             .collect();
+        let origins = crate::origins::origins_of(&compiled.compiled_target);
         let hash = kernel
             .store_version(
                 compiled.encoded,
@@ -876,13 +918,15 @@ handler!(
                 stored_evidence,
             )
             .await?;
+        // What a person published, they registered: every place it leads.
+        kernel.register_origins(&target, origins).await?;
         // A watch is tied to the version its person confirmed: every watch
         // of another version pauses or ends now (decision 0262).
         kernel.watches_after_publish(&target, hash).await;
         let mut output = Output::ok(json!({
             "target": target.as_str(),
             "version": version.to_string(),
-            "plan_hash": hash.to_string(),
+            "compiled_target_hash": hash.to_string(),
             "tools": tools,
             "current": true,
             "gates": evidence,
@@ -901,8 +945,8 @@ handler!(
 handler!(
     /// `publish.request`: an agent asks for a target's drafts to be
     /// published. Nothing is published here: the publish is handed to the
-    /// person surface as a person's act, with the plan it will store, and
-    /// the person decides on its page (decision 0163).
+    /// person surface as a person's act, with the compiled target it will
+    /// store, and the person decides on its page (decision 0163).
     publish_request,
     |kernel, call| {
         let def = kernel

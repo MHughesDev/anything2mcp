@@ -16,8 +16,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    Digest, Environment, Failure, FailureClass, Finding, OperationName, Plan, RunId, SurfaceName,
-    TargetName, ToolRuns, Values,
+    CompiledTarget, Digest, Environment, Failure, FailureClass, Finding, OperationName, RunId,
+    SurfaceName, TargetName, ToolRuns, Values,
 };
 use a2m_files::{CompileMode, DRAFT_VERSION, DraftReport, Drafter, TargetRoot};
 use a2m_ledger::{Durability, NewUnknown, Owner, SqlValue, Tx, UnknownStatus};
@@ -27,8 +27,8 @@ use serde_json::{Value as Json, json};
 use super::build::{off_thread, problems_json, target_folder};
 use super::handler;
 use super::tools::{
-    Tell, discovery_files, files_by_surface, plan_to_observe, run_output, submit_discovery,
-    surface_described, wait_of,
+    Tell, compiled_target_to_observe, discovery_files, files_by_surface, run_output,
+    submit_discovery, surface_described, wait_of,
 };
 use crate::codes;
 use crate::dispatch::{Call, ExitClass, Next, Output};
@@ -94,16 +94,16 @@ struct Look {
 }
 
 impl Look {
-    fn of(kernel: &Kernel, plan: &Plan) -> Vec<Self> {
+    fn of(kernel: &Kernel, compiled_target: &CompiledTarget) -> Vec<Self> {
         let registry = kernel.providers();
-        plan.surfaces
+        compiled_target.surfaces
             .iter()
             .enumerate()
             .map(|(position, surface)| {
                 let entry = registry.surface_kind(&surface.kind);
                 // Described with its address in the environment a discovery
                 // runs in.
-                let discoverers = surface_described(kernel, plan, position)
+                let discoverers = surface_described(kernel, compiled_target, position)
                     .map(|described| {
                         registry
                             .discoverers_for(&described)
@@ -135,7 +135,7 @@ impl Look {
                     discoverers,
                     signs_in_with: u32::try_from(position)
                         .ok()
-                        .and_then(|at| plan.auth_of(a2m_core::SurfaceIndex::new(at)))
+                        .and_then(|at| compiled_target.auth_of(a2m_core::SurfaceIndex::new(at)))
                         .map(|auth| auth.provider.to_string()),
                 }
             })
@@ -192,7 +192,7 @@ fn identified_state(
 
 /// What the identify stage came to.
 struct Identified {
-    plan_hash: Digest,
+    compiled_target_hash: Digest,
     /// One entry per surface, with no run identifier in it.
     surfaces: Vec<Json>,
     /// The discovery run of each surface that has one.
@@ -227,8 +227,9 @@ async fn identify(
     to_its_end: bool,
     files: &Handed,
 ) -> Result<Identified, Failure> {
-    let (plan_hash, plan) = plan_to_observe(kernel, call, target).await?;
-    let looks: Vec<Look> = Look::of(kernel, &plan)
+    let (compiled_target_hash, compiled_target) =
+        compiled_target_to_observe(kernel, call, target).await?;
+    let looks: Vec<Look> = Look::of(kernel, &compiled_target)
         .into_iter()
         .filter(|look| only.is_none_or(|wanted| look.name.as_str() == wanted))
         .collect();
@@ -239,7 +240,7 @@ async fn identify(
             "Name a surface the target's files declare, or leave `surface` out.",
         ));
     }
-    let environment: Option<Environment> = plan
+    let environment: Option<Environment> = compiled_target
         .default_environment()
         .map(|environment| environment.name.clone());
     // The files the call hands are split by surface: each discovery is
@@ -250,7 +251,13 @@ async fn identify(
         .filter(|look| look.provider.is_some() && !look.discoverers.is_empty())
         .map(|look| look.name.clone())
         .collect();
-    let handed = files_by_surface(kernel, &plan, &observed, &files.files, files.resumed)?;
+    let handed = files_by_surface(
+        kernel,
+        &compiled_target,
+        &observed,
+        &files.files,
+        files.resumed,
+    )?;
     let handed: BTreeMap<&SurfaceName, &BTreeMap<String, String>> =
         observed.iter().zip(&handed).collect();
     let none = BTreeMap::new();
@@ -265,7 +272,7 @@ async fn identify(
                 kernel,
                 call,
                 target,
-                plan_hash,
+                compiled_target_hash,
                 environment,
                 &look.name,
                 files,
@@ -389,7 +396,7 @@ async fn identify(
         surfaces.push(entry);
     }
     Ok(Identified {
-        plan_hash,
+        compiled_target_hash,
         surfaces,
         runs,
         complete,
@@ -429,7 +436,7 @@ handler!(
         .await?;
         let output = Output::ok(json!({
             "target": target.as_str(),
-            "plan_hash": identified.plan_hash.to_string(),
+            "compiled_target_hash": identified.compiled_target_hash.to_string(),
             "surfaces": identified.surfaces,
             "runs": identified.runs_json(),
             "complete": identified.complete,
@@ -1157,12 +1164,12 @@ enum TryInput {
 }
 
 /// The digest that makes one trial of a scout the run it is: the scout, the
-/// plan tried, the read, which try it is, and the input. A continuation of
-/// the scout finds the same trial by it, ended or not, and submits none
-/// again (ledger rule 6).
+/// compiled target tried, the read, which try it is, and the input. A
+/// continuation of the scout finds the same trial by it, ended or not, and
+/// submits none again (ledger rule 6).
 fn trial_hash(
     scout: RunId,
-    plan: Digest,
+    compiled_target: Digest,
     try_number: usize,
     input: &Values,
     binding: &a2m_engine::BindingPin,
@@ -1170,7 +1177,7 @@ fn trial_hash(
     let mut hasher = a2m_core::FieldHasher::new();
     hasher.field("purpose", b"anything2mcp scout trial 2");
     hasher.field("scout", scout.to_string().as_bytes());
-    hasher.field("plan", plan.to_string().as_bytes());
+    hasher.field("plan", compiled_target.to_string().as_bytes());
     hasher.field("try", try_number.to_string().as_bytes());
     hasher.field("input", input.digest().to_string().as_bytes());
     hasher.field("binding", binding.to_json().to_string().as_bytes());
@@ -1188,7 +1195,13 @@ async fn trial_of(
     input: &Values,
     (try_number, environment, binding): (usize, &Environment, &a2m_engine::BindingPin),
 ) -> Result<(RunId, bool), Failure> {
-    let hash = trial_hash(scout, found.plan_hash, try_number, input, binding);
+    let hash = trial_hash(
+        scout,
+        found.compiled_target_hash,
+        try_number,
+        input,
+        binding,
+    );
     let principal = &call.caller.principal;
     let (workspace, person) = (principal.workspace, principal.principal.id);
     let (tool, at) = (found.tool.name.clone(), environment.clone());
@@ -1249,7 +1262,7 @@ async fn trial_rests(kernel: &Kernel, run: RunId) -> Result<Option<a2m_ledger::R
 /// that output, in the list's own order, is text or a whole number.
 /// Anything else is not tried, with its reason (rule 7: no guessing by
 /// resemblance).
-fn key_from_list(operation: &a2m_core::OperationPlan, proven: &[Proven]) -> TryInput {
+fn key_from_list(operation: &a2m_core::CompiledOperation, proven: &[Proven]) -> TryInput {
     let [key] = operation.identity.key.as_slice() else {
         return TryInput::None(
             "It takes an input it states no example of, and its key is not one input; the scout has no value for it.",
@@ -1384,9 +1397,9 @@ async fn try_reads(
             });
         }
     };
-    let plan = Arc::new(compiled.plan);
-    kernel.keep_draft(target, compiled.encoded.hash, Arc::clone(&plan));
-    let environment = plan
+    let compiled_target = Arc::new(compiled.compiled_target);
+    kernel.keep_draft(target, compiled.encoded.hash, Arc::clone(&compiled_target));
+    let environment = compiled_target
         .default_environment()
         .map(|environment| environment.name.clone());
     let until = tokio::time::Instant::now() + wait_of(call);
@@ -1399,9 +1412,9 @@ async fn try_reads(
     for (name, file) in tools {
         let needs_key = OperationName::new(name)
             .ok()
-            .and_then(|operation| plan.tool(&operation).map(|tool| tool.runs))
+            .and_then(|operation| compiled_target.tool(&operation).map(|tool| tool.runs))
             .and_then(|runs| match runs {
-                ToolRuns::Operation(index) => plan.operations.get(index.get()),
+                ToolRuns::Operation(index) => compiled_target.operations.get(index.get()),
                 ToolRuns::Pipeline(_) => None,
             })
             .is_some_and(|operation| {
@@ -1418,14 +1431,14 @@ async fn try_reads(
         let Ok(operation_name) = OperationName::new(name) else {
             continue;
         };
-        let Some(tool) = plan.tool(&operation_name).cloned() else {
+        let Some(tool) = compiled_target.tool(&operation_name).cloned() else {
             tried.push(json!({"tool": name, "file": file, "state": "not_tried", "why": "The drafts hold no such tool."}));
             continue;
         };
         let found = FoundTool {
             target: target.clone(),
-            plan_hash: compiled.encoded.hash,
-            plan: Arc::clone(&plan),
+            compiled_target_hash: compiled.encoded.hash,
+            compiled_target: Arc::clone(&compiled_target),
             tool,
         };
         if found.effect().0 != a2m_core::EffectClass::Read {
@@ -1436,7 +1449,7 @@ async fn try_reads(
             tried.push(json!({"tool": name, "file": file, "state": "not_tried", "why": "Only an operation is tried; a pipeline is not."}));
             continue;
         };
-        let Some(operation) = plan.operations.get(index.get()) else {
+        let Some(operation) = compiled_target.operations.get(index.get()) else {
             continue;
         };
         let input = match operation.examples.first() {
@@ -1466,7 +1479,7 @@ async fn try_reads(
         // names that binding and the digest of what it does (audit finding
         // AC-6).
         let Some(binding) = a2m_engine::default_binding(operation)
-            .and_then(|at| a2m_engine::BindingPin::of(&plan, operation, at))
+            .and_then(|at| a2m_engine::BindingPin::of(&compiled_target, operation, at))
         else {
             tried.push(json!({"tool": name, "file": file, "state": "not_tried", "why": "Every binding of it is retired."}));
             continue;
@@ -1537,7 +1550,8 @@ async fn try_reads(
             ));
         }
         if waits
-            && let Some(surface) = super::tools::binding_surface(&plan, &found.tool, Some(&binding))
+            && let Some(surface) =
+                super::tools::binding_surface(&compiled_target, &found.tool, Some(&binding))
         {
             let next = super::tools::sign_in_next(target, &surface);
             entry["surface"] = json!(surface.as_str());
@@ -1775,13 +1789,13 @@ handler!(
         // 0263).
         let asked = discovery_files(kernel, &call, call.input.get("files")).await?;
         if !asked.is_empty() {
-            let (_, plan) = plan_to_observe(kernel, &call, &target).await?;
-            let observed: Vec<SurfaceName> = Look::of(kernel, &plan)
+            let (_, compiled_target) = compiled_target_to_observe(kernel, &call, &target).await?;
+            let observed: Vec<SurfaceName> = Look::of(kernel, &compiled_target)
                 .into_iter()
                 .filter(|look| look.provider.is_some() && !look.discoverers.is_empty())
                 .map(|look| look.name)
                 .collect();
-            files_by_surface(kernel, &plan, &observed, &asked, false)?;
+            files_by_surface(kernel, &compiled_target, &observed, &asked, false)?;
         }
         let project = project_key(&call);
         let in_project = project.clone();
@@ -1878,7 +1892,7 @@ handler!(
                 // can observe: the scout reports that and goes on, so that
                 // a target just added gets a report and not an error.
                 Err(failure) if failure.code() == &a2m_files::LINT_FAILED => Identified {
-                    plan_hash: Digest::of(b"no plan"),
+                    compiled_target_hash: Digest::of(b"no plan"),
                     surfaces: Vec::new(),
                     runs: BTreeMap::new(),
                     complete: true,
@@ -1909,7 +1923,7 @@ handler!(
             }
             let declared = declared_sign_ins(kernel, &call, &target).await?;
             let mut result = json!({
-                "plan_hash": identified.plan_hash.to_string(),
+                "compiled_target_hash": identified.compiled_target_hash.to_string(),
                 "surfaces": identified.surfaces,
                 "sign_in": sign_ins(&identified, declared.as_ref()),
                 "runs": identified.runs_json(),
@@ -2012,7 +2026,7 @@ handler!(
                         Ok(compiled) => json!({
                             "compiles": true,
                             "problems": marked_problems(&compiled.warnings),
-                            "tools": compiled.plan.tools.iter().map(|tool| tool.name.to_string()).collect::<Vec<_>>(),
+                            "tools": compiled.compiled_target.tools.iter().map(|tool| tool.name.to_string()).collect::<Vec<_>>(),
                         }),
                         Err(problems) => {
                             json!({"compiles": false, "problems": marked_problems(&problems)})

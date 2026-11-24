@@ -299,14 +299,14 @@ As built by migrations `0009`, `0011`, `0014`, and `0028`, which `a2m-actions` o
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `workspace_id`, `target`, `plan_hash` | id, text, text | Primary key: one published version of a target is its plan, named by the plan's hash |
-| `version` | text | The version the plan's header states |
-| `plan` | bytes | The plan's canonical bytes |
+| `workspace_id`, `target`, `plan_hash` | id, text, text | Primary key: one published version of a target is its compiled target, named by the compiled target's hash. The columns `plan_hash` and `plan` keep the compiled target's old name, so that a store an older build wrote still opens ([decision 0402](../decisions/0402-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md)) |
+| `version` | text | The version the compiled target's header states |
+| `plan` | bytes | The compiled target's canonical bytes |
 | `published_by`, `published_at` | text, ts | Who published it, and when |
 | `is_current` | bool | At most one current version per target, held by a unique partial index |
 | `gate_evidence` | text | The evidence of the publish gates the version passed, canonical JSON written once with the version: each gate that ran with its result, and the gates the documents name that did not run (spec section 403, [decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)). Null for a version stored before migration `0016` |
 
-As built by migrations `0003`, `0016-ledger-versions-keep-their-gate-evidence.sql`, and `0017-ledger-versions-gate-evidence-never-changes.sql`, which `a2m-ledger` owns. A version never changes once stored, and is never removed: triggers refuse an update of its plan, hash, version, target, workspace, or gate evidence, and every delete.
+As built by migrations `0003`, `0016-ledger-versions-keep-their-gate-evidence.sql`, and `0017-ledger-versions-gate-evidence-never-changes.sql`, which `a2m-ledger` owns. A version never changes once stored, and is never removed: triggers refuse an update of its compiled target, hash, version, target, workspace, or gate evidence, and every delete.
 
 ## shadow_comparisons, shadow_promotions
 
@@ -338,8 +338,8 @@ A watch: one published read with a fixed input, repeated on a schedule its perso
 | `effect` | enum | Always `read` (check constraint) |
 | `input_hash`, `input_ref` | hash, blob ref | The fixed input, as a run's are. Never changed (trigger) |
 | `ignore_outputs` | json | Output names left out of the digests; for a list, fields of its records |
-| `surface`, `requests_per_check`, `record_shape` | text, int, json | From the published plan, never from the caller: the surface whose budget the checks share, how many requests one check sends (at least one), and what its records are, as canonical JSON, `{"whole":true}` or `{"key":[<field>, ...],"list":<output>}`. Required of every watch (trigger); never changed (trigger). Migration `0023` |
-| `condition` | json | What ends it early, or null: the plan's form of an expression over a check's result that gives true or false, as canonical JSON (`{"source":<text>,"result":<type>,"library":<n>}`), compiled by the registry against the read's outputs and loaded again by the ledger when the watch is asked. Never changed (trigger). Migration `0026` |
+| `surface`, `requests_per_check`, `record_shape` | text, int, json | From the published compiled target, never from the caller: the surface whose budget the checks share, how many requests one check sends (at least one), and what its records are, as canonical JSON, `{"whole":true}` or `{"key":[<field>, ...],"list":<output>}`. Required of every watch (trigger); never changed (trigger). Migration `0023` |
+| `condition` | json | What ends it early, or null: the compiled target's form of an expression over a check's result that gives true or false, as canonical JSON (`{"source":<text>,"result":<type>,"library":<n>}`), compiled by the registry against the read's outputs and loaded again by the ledger when the watch is asked. Never changed (trigger). Migration `0026` |
 | `interval_seconds`, `ends_at` | int, ts | The schedule and the latest end: at least 60 seconds, and at most 366 days after `asked_at`, whoever sends the statement (trigger, migration `0023`). Never changed (trigger) |
 | `asked_by`, `acts_for`, `client_label`, `asked_at` | id, id, text, ts | Who asked, whose watch it is, which client, when |
 | `confirmed_by`, `confirmed_at`, `phase_ms` | id, ts, int | Set once, while `asked`, by the person it acts for and no one else (check constraint and trigger). Due time `n` is `confirmed_at + phase_ms + n × interval` |

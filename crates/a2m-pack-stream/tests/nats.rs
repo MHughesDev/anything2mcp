@@ -19,7 +19,7 @@ mod common;
 use std::path::Path;
 use std::time::Duration;
 
-use a2m_core::{Environment, Epoch, Plan, RunId, Value, Values};
+use a2m_core::{CompiledTarget, Environment, Epoch, RunId, Value, Values};
 use a2m_files::TargetRoot;
 use a2m_ledger::Fence;
 use a2m_provider::{
@@ -44,7 +44,7 @@ fn nats_root() -> TargetRoot {
 struct Scene {
     _folder: Folder,
     registry: Registry,
-    plan: Plan,
+    compiled_target: CompiledTarget,
     stand: TestNats,
     surface: SurfaceRef,
     destinations: Destinations,
@@ -59,30 +59,30 @@ impl Scene {
     async fn at(stand: TestNats, address: Option<String>) -> Self {
         let folder = Folder::new("nats");
         let registry = common::registry(&folder);
-        let plan = match common::compile(&registry, &nats_root()) {
-            Ok(compiled) => compiled.plan,
+        let compiled_target = match common::compile(&registry, &nats_root()) {
+            Ok(compiled) => compiled.compiled_target,
             Err(problems) => panic!("the example target over nats does not compile:\n{problems}"),
         };
-        let mut surface = plan.surfaces[0].clone();
+        let mut surface = compiled_target.surfaces[0].clone();
         surface.address = address.unwrap_or_else(|| stand.address().to_string());
         let destinations = Destinations::new([surface.address.clone()]);
         Self {
             surface: SurfaceRef {
-                target: plan.header.target.clone(),
+                target: compiled_target.header.target.clone(),
                 environment: Environment::new("test").unwrap(),
                 surface,
             },
             _folder: folder,
             registry,
-            plan,
+            compiled_target,
             stand,
             destinations,
         }
     }
 
-    fn binding(&self, operation: &str) -> &a2m_core::BindingPlan {
+    fn binding(&self, operation: &str) -> &a2m_core::CompiledBinding {
         &self
-            .plan
+            .compiled_target
             .operations
             .iter()
             .find(|found| found.name.as_str() == operation)
@@ -116,7 +116,7 @@ impl Scene {
             run: fence.run,
             epoch: fence.epoch,
             surface: &self.surface,
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             posture,
             deadline: Deadline::after(Duration::from_secs(20)),
             redact: &Planted,
@@ -1076,8 +1076,8 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
         let place = file.strip_prefix("held/").unwrap();
         std::fs::rename(root.join(file), root.join(place)).unwrap();
     }
-    scene.plan = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
-        Ok(compiled) => compiled.plan,
+    scene.compiled_target = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the drafts do not compile:\n{problems}"),
     };
     let held: Vec<(String, usize)> = [SEED_EVENTS, SEED_STATUS, SEED_WORK]
@@ -1100,7 +1100,7 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
                 .await
                 .unwrap(),
         );
-        let result = common::outputs_of(&scene.plan, operation, &observed);
+        let result = common::outputs_of(&scene.compiled_target, operation, &observed);
         assert_eq!(
             result.get("count"),
             Some(&Value::Int(i64::try_from(*count).unwrap())),
@@ -2339,8 +2339,8 @@ async fn a_message_field_named_as_a_secret_is_never_drafted_as_an_output() {
         let place = file.as_str().strip_prefix("held/").unwrap();
         std::fs::rename(root.join(file.as_str()), root.join(place)).unwrap();
     }
-    scene.plan = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
-        Ok(compiled) => compiled.plan,
+    scene.compiled_target = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the drafts do not compile:\n{problems}"),
     };
     let (handle, mut prepared) = scene.reading().await;
@@ -2350,7 +2350,11 @@ async fn a_message_field_named_as_a_secret_is_never_drafted_as_an_output() {
             .await
             .unwrap(),
     );
-    let result = common::outputs_of(&scene.plan, "example_orders_events_list", &observed);
+    let result = common::outputs_of(
+        &scene.compiled_target,
+        "example_orders_events_list",
+        &observed,
+    );
     handle.release(prepared, false).await;
     assert!(result.get("client_secret").is_none());
     assert!(result.get("order_id").is_some());

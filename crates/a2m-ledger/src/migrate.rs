@@ -164,7 +164,12 @@ pub fn table_owner(table: &str) -> Option<Owner> {
 /// is not applied again; a database that holds a migration this engine does
 /// not carry, or carries differently, is refused and left as it was.
 pub(crate) fn migrate(db: &Db, now: Timestamp) -> Result<(), Failure> {
-    let known = migrations()?;
+    migrate_through(db, now, migrations()?)
+}
+
+/// [`migrate`], over the sequence `known`: the engine's own, or one a test
+/// makes.
+fn migrate_through(db: &Db, now: Timestamp, known: &[Migration]) -> Result<(), Failure> {
     db.execute(
         Scope::Internal,
         "CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -263,4 +268,122 @@ pub(crate) fn migrate(db: &Db, now: Timestamp) -> Result<(), Failure> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use a2m_core::{Digest, Timestamp};
+
+    use super::{Migration, created_tables, migrate_through};
+    use crate::sqlite::{Db, Place, Scope};
+    use crate::tx::Owner;
+
+    /// A migration made for a test, with the number and the text given.
+    fn made(number: u32, name: &'static str, sql: &'static str) -> Migration {
+        Migration {
+            number,
+            name,
+            owner: Owner::Ledger,
+            tables: created_tables(sql),
+            checksum: Digest::of(sql.as_bytes()),
+            sql,
+        }
+    }
+
+    /// Every object of the database, and every row of the applied
+    /// migrations, as text.
+    fn held(db: &Db) -> (Vec<String>, Vec<String>) {
+        let objects = db
+            .query(
+                Scope::Internal,
+                "SELECT type || ' ' || name FROM sqlite_master
+                 WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+                &[],
+            )
+            .unwrap()
+            .iter()
+            .map(|row| row.text(0).unwrap().to_owned())
+            .collect();
+        let rows = db
+            .query(
+                Scope::Internal,
+                "SELECT number || ' ' || name || ' ' || checksum FROM schema_migrations
+                 ORDER BY number",
+                &[],
+            )
+            .unwrap()
+            .iter()
+            .map(|row| row.text(0).unwrap().to_owned())
+            .collect();
+        (objects, rows)
+    }
+
+    /// Section 224: a migration interrupted in its middle leaves none half.
+    /// Its first two statements make a table and an index, and its third
+    /// fails, as a statement does on a full disk or a lost connection;
+    /// the store holds what it held before, and no row of it. The next run
+    /// with a good migration of that number applies it once.
+    #[test]
+    fn a_migration_that_fails_in_its_middle_leaves_neither_its_objects_nor_its_row() {
+        let now = Timestamp::from_unix_millis(1_800_000_000_000);
+        let db = Db::open(&Place::Memory, false).unwrap();
+        let first = made(
+            1,
+            "0001-first.sql",
+            "-- owner: a2m-ledger\nCREATE TABLE test_first (x INTEGER NOT NULL) STRICT;\n",
+        );
+        migrate_through(&db, now, std::slice::from_ref(&first)).unwrap();
+        db.execute(
+            Scope::Internal,
+            "INSERT INTO test_first (x) VALUES (7)",
+            &[],
+        )
+        .unwrap();
+        let before = held(&db);
+        assert_eq!(before.1.len(), 1, "{before:?}");
+
+        let broken = made(
+            2,
+            "0002-second.sql",
+            "-- owner: a2m-ledger\n\
+             CREATE TABLE test_second (y INTEGER NOT NULL) STRICT;\n\
+             CREATE INDEX test_second_y ON test_second (y);\n\
+             INSERT INTO test_missing (z) VALUES (1);\n",
+        );
+        let failed = migrate_through(&db, now, &[first.clone(), broken]).unwrap_err();
+        // It failed in the migration, and was not refused before it.
+        assert!(failed.message().contains("test_missing"), "{failed:?}");
+        assert_eq!(held(&db), before);
+        // The row the first migration's table held is there still.
+        let kept = db
+            .query(Scope::Internal, "SELECT x FROM test_first", &[])
+            .unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].int(0).unwrap(), 7);
+
+        // The next open, with a good migration of that number, applies it
+        // once; another open applies nothing.
+        let good = made(
+            2,
+            "0002-second.sql",
+            "-- owner: a2m-ledger\n\
+             CREATE TABLE test_second (y INTEGER NOT NULL) STRICT;\n\
+             CREATE INDEX test_second_y ON test_second (y);\n",
+        );
+        let known = [first, good];
+        migrate_through(&db, now, &known).unwrap();
+        let after = held(&db);
+        assert_eq!(after.1.len(), 2, "{after:?}");
+        assert!(after.1[1].starts_with("2 0002-second.sql "), "{after:?}");
+        assert!(
+            after.0.contains(&"table test_second".to_owned()),
+            "{after:?}"
+        );
+        assert!(
+            after.0.contains(&"index test_second_y".to_owned()),
+            "{after:?}"
+        );
+        migrate_through(&db, now, &known).unwrap();
+        assert_eq!(held(&db), after);
+    }
 }

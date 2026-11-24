@@ -93,7 +93,7 @@ fn scene_of(accepted: bool, address: &str) -> (Scene, a2m_files::Diagnostics) {
     )
     .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)));
     (
-        Scene::over(folder, signed_registry, compiled.plan, address),
+        Scene::over(folder, signed_registry, compiled.compiled_target, address),
         compiled.warnings,
     )
 }
@@ -194,14 +194,14 @@ fn a_surface_that_accepts_an_unencrypted_link_carries_its_notice_and_no_other_do
         let (scene, _) = scene_of(accepted, "http://192.0.2.10:9");
         let set = scene.registry.compiler_set();
         let api = scene
-            .plan
+            .compiled_target
             .surfaces
             .iter()
             .find(|surface| surface.name.as_str() == "api")
             .unwrap();
         assert_eq!(set.surface_notices(api), expected, "accepted: {accepted}");
         for surface in scene
-            .plan
+            .compiled_target
             .surfaces
             .iter()
             .filter(|s| s.name.as_str() != "api")

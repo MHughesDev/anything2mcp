@@ -246,9 +246,9 @@ pub struct ModeDecl {
     #[serde(default)]
     pub steps: Vec<StepKind>,
     /// The kinds of step that always save. The handle refuses one that is
-    /// sent as a step that commits nothing, so that the mark a plan or a
-    /// discoverer puts on a step is not all that stands between a read and
-    /// a write. Empty, the default, checks nothing.
+    /// sent as a step that commits nothing, so that the mark a compiled
+    /// target or a discoverer puts on a step is not all that stands between a
+    /// read and a write. Empty, the default, checks nothing.
     #[serde(default)]
     pub commit_steps: Vec<StepKind>,
     /// The kinds of step whose "absent" the mode's driver states is
@@ -347,6 +347,8 @@ struct RawPoints {
     source_reader: Vec<String>,
     #[serde(default)]
     widget_driver: Vec<String>,
+    #[serde(default)]
+    traffic_capture: Vec<SurfaceKind>,
 }
 
 /// The extension points a provider fills. Nothing else can be registered.
@@ -362,6 +364,10 @@ pub struct Points {
     pub source_reader: BTreeSet<String>,
     /// The widget drivers it brings. No trait exists for these yet.
     pub widget_driver: BTreeSet<String>,
+    /// The surface kinds whose traffic it captures, through the one
+    /// [`crate::CaptureSource`] it registers (decision 0391). Empty: it
+    /// offers no capture and is asked for none.
+    pub traffic_capture: BTreeSet<SurfaceKind>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -378,6 +384,39 @@ struct RawDiscoverer {
     bounds: Bounds,
     #[serde(default)]
     files: Vec<String>,
+    #[serde(default)]
+    driven_by: DrivenBy,
+}
+
+/// Who drives a discoverer: the engine, or a person whose use of a system
+/// it watches (decision 0392, point 2, as decision 0395 builds it). The
+/// manifest says which, and the [`crate::DiscovererHandle`] calls it only
+/// by the method that matches: `discover` for the engine, `watch` for a
+/// person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DrivenBy {
+    /// The engine starts it, for a scout or `discover.run`, and it reaches
+    /// the system through the sandbox's port. The default, when the
+    /// manifest leaves `driven_by` out.
+    #[default]
+    Engine,
+    /// A person drives what it watches: it is started only as a capture
+    /// job, reads a recording of its pack's traffic capture, and returns
+    /// when the capture ends. Only a pack that declares
+    /// `points.traffic_capture` may declare one.
+    Person,
+}
+
+impl DrivenBy {
+    /// The word the manifest uses.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Engine => "engine",
+            Self::Person => "person",
+        }
+    }
 }
 
 /// How far a discoverer may go.
@@ -417,6 +456,10 @@ pub struct DiscovererDecl {
     /// lowercase letters, digits, and underscores. Empty, the default: it
     /// reads no file it is handed.
     pub files: Vec<String>,
+    /// Who drives it: `engine` when the manifest leaves it out. A
+    /// discoverer a person drives belongs to a pack that declares
+    /// `points.traffic_capture`, or the manifest is refused.
+    pub driven_by: DrivenBy,
 }
 
 /// The longest name a discoverer may read a file under.
@@ -516,7 +559,7 @@ struct RawEffects {
     #[serde(default)]
     processes: Vec<RawProgram>,
     #[serde(default)]
-    plan_programs: bool,
+    compiled_target_programs: bool,
     #[serde(default)]
     read_roots: Vec<String>,
     #[serde(default)]
@@ -557,8 +600,8 @@ pub struct ProgramDecl {
 pub struct Effects {
     /// The programs it starts itself.
     pub processes: Vec<ProgramDecl>,
-    /// Whether it may also start programs a published plan names.
-    pub plan_programs: bool,
+    /// Whether it may also start programs a published compiled target names.
+    pub compiled_target_programs: bool,
     /// The roots it reads.
     pub read_roots: Vec<RootName>,
     /// The roots it writes.
@@ -1143,10 +1186,19 @@ impl Manifest {
                 max_level: found.max_level,
                 bounds: found.bounds,
                 files: found.files,
+                driven_by: found.driven_by,
             });
         }
         if !unique(discoverers.iter().map(|d| &d.name)) {
             return Err(invalid("discoverers", "a discoverer is listed twice"));
+        }
+        if raw.points.traffic_capture.is_empty()
+            && let Some(person) = discoverers.iter().find(|d| d.driven_by == DrivenBy::Person)
+        {
+            return Err(undeclared(format!(
+                "The discoverer `{}` of `{}` is driven by a person, and the manifest declares no `points.traffic_capture` for it to watch.",
+                person.name, provider.name
+            )));
         }
         let mut point_discoverers = BTreeSet::new();
         for name in &raw.points.discoverer {
@@ -1165,6 +1217,7 @@ impl Manifest {
             auth_provider: raw.points.auth_provider.into_iter().collect(),
             source_reader: raw.points.source_reader.into_iter().collect(),
             widget_driver: raw.points.widget_driver.into_iter().collect(),
+            traffic_capture: raw.points.traffic_capture.into_iter().collect(),
         };
 
         // Effects.
@@ -1204,7 +1257,7 @@ impl Manifest {
         }
         let effects = Effects {
             processes,
-            plan_programs: raw.effects.plan_programs,
+            compiled_target_programs: raw.effects.compiled_target_programs,
             read_roots: roots("effects.read_roots", &raw.effects.read_roots)?,
             write_roots: roots("effects.write_roots", &raw.effects.write_roots)?,
             network: raw.effects.network,

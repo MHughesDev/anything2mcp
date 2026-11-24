@@ -10,7 +10,7 @@
 //! `target.yaml`, which the lint reports as a warning on every lint. No
 //! setting, variable, or caller's input turns it on.
 
-use a2m_core::{Failure, ScopedHost, SurfacePlan};
+use a2m_core::{CompiledSurface, Failure, ScopedHost};
 use a2m_files::{CompileMode, Diagnostic, Level, LintRule, ResolvedView, Stage};
 use serde::Deserialize;
 
@@ -32,8 +32,8 @@ pub(crate) struct SurfaceFields {
 }
 
 impl SurfaceFields {
-    /// Reads the fields of a surface of the plan.
-    pub(crate) fn of(surface: &SurfacePlan) -> Result<Self, Failure> {
+    /// Reads the fields of a surface of the compiled target.
+    pub(crate) fn of(surface: &CompiledSurface) -> Result<Self, Failure> {
         if surface.payload.is_none() {
             Ok(Self::default())
         } else {

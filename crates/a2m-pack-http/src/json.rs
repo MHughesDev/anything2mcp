@@ -28,19 +28,28 @@ pub(crate) struct JsonError {
     pub what: &'static str,
 }
 
-impl Json {
-    /// The name of the value's kind, for a message.
-    pub(crate) const fn kind(&self) -> &'static str {
+/// A value of this pack's JSON, as the shared shape checks it: a number as
+/// the text it was written with.
+impl a2m_provider::shape::ShapeValue for Json {
+    fn view(&self) -> a2m_provider::shape::ValueView<'_, Self> {
+        use a2m_provider::shape::ValueView;
         match self {
-            Self::Null => "null",
-            Self::Bool(_) => "boolean",
-            Self::Number(_) => "number",
-            Self::Text(_) => "string",
-            Self::List(_) => "array",
-            Self::Object(_) => "object",
+            Self::Null => ValueView::Null,
+            Self::Bool(_) => ValueView::Boolean,
+            Self::Number(text) => ValueView::Number(text.into()),
+            Self::Text(text) => ValueView::Text(text),
+            Self::List(items) => ValueView::List(items),
+            Self::Object(entries) => ValueView::Object(
+                entries
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value))
+                    .collect(),
+            ),
         }
     }
+}
 
+impl Json {
     /// The entry named `name` of an object.
     pub(crate) fn get(&self, name: &str) -> Option<&Self> {
         match self {
@@ -399,6 +408,22 @@ impl Reader<'_> {
 #[cfg(test)]
 mod tests {
     use super::{Json, is_plain_number};
+
+    /// Decision 0404: the shared shape's integer, read from this pack's
+    /// JSON, which keeps a number's text. Where the HTTP pack's own copy
+    /// took any whole number, a number past 64 bits and `-0` are refused,
+    /// as the web pack refused them.
+    #[test]
+    fn an_integer_past_sixty_four_bits_or_negative_zero_does_not_fit_the_shared_shape() {
+        use a2m_provider::shape::{Kind, Shape};
+        let integer = Shape::of(Kind::Integer);
+        let fits = |text: &str| integer.check(&Json::parse(text.as_bytes()).unwrap());
+        assert_eq!(fits("9223372036854775807"), Ok(()));
+        assert_eq!(fits("-12"), Ok(()));
+        for refused in ["9223372036854775808", "-0", "2.0"] {
+            assert!(fits(refused).is_err(), "{refused}");
+        }
+    }
 
     #[test]
     fn a_number_keeps_its_text_and_never_becomes_a_float() {

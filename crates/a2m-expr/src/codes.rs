@@ -21,8 +21,8 @@ a2m_core::failure_codes! {
     EXPRESSION_COST_EXCEEDED = Input, "expression_cost_exceeded",
         meaning "Evaluation passed its cost limit.",
         next "Give the expression less to work over, such as fewer rows, or simplify it.";
-    PLAN_EXPRESSION_UNLOADABLE = Input, "plan_expression_unloadable",
-        meaning "A plan's expression names a library this engine does not have, no longer checks as the type it states, or was run without a name it reads.",
+    COMPILED_EXPRESSION_UNLOADABLE = Input, "compiled_expression_unloadable",
+        meaning "A compiled target's expression names a library this engine does not have, no longer checks as the type it states, or was run without a name it reads.",
         next "Compile the target again with this engine.";
 }
 

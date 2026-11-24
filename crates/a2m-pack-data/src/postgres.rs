@@ -37,7 +37,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
-use a2m_core::{ScopedHost, Secret, SurfacePlan};
+use a2m_core::{CompiledSurface, ScopedHost, Secret};
 use a2m_provider::StepFailure;
 use bytes::BytesMut;
 use tokio::runtime::Handle;
@@ -75,7 +75,7 @@ const REACHING_ROLES: &str = "'pg_read_server_files', 'pg_write_server_files', \
 /// Where a `database_server` surface's store is, with the lease's identity,
 /// and the key its connections are kept under.
 pub(crate) fn server_of(
-    surface: &SurfacePlan,
+    surface: &CompiledSurface,
     fields: &SurfaceFields,
     lease: Option<&SessionLease>,
 ) -> Result<(StoreAt, PoolKey), StepFailure> {

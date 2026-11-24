@@ -1,8 +1,9 @@
 //! The compiled source definition: what `sources/*.yaml` compiles to, beside
-//! the plan's own `SourcePlan`, and what the source readers load.
+//! the compiled target's own `CompiledSource`, and what the source readers
+//! load.
 //!
 //! The compiler writes a [`SourceSpec`] into the payload of
-//! `a2m_core::SourcePlan`; `a2m-sources` reads it back. The types live here,
+//! `a2m_core::CompiledSource`; `a2m-sources` reads it back. The types live here,
 //! with the file formats, so the two crates share one definition and not
 //! only a shape (decision 0087, and decision 0079 for where they live).
 
@@ -188,7 +189,8 @@ pub struct RowField {
     /// True when a row without a value for it is a problem.
     pub required: bool,
     /// The header of the column it is read from. When absent, the value is
-    /// the result of the expression of the same name in the plan's mapping.
+    /// the result of the expression of the same name in the compiled target's
+    /// mapping.
     pub column: Option<String>,
 }
 
@@ -201,8 +203,8 @@ pub struct ReaderOptions {
     pub delimiter: Option<char>,
 }
 
-/// What a source definition says beyond the plan's own fields: the payload
-/// of `a2m_core::SourcePlan`.
+/// What a source definition says beyond the compiled target's own fields: the
+/// payload of `a2m_core::CompiledSource`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceSpec {

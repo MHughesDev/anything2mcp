@@ -973,6 +973,57 @@ impl Scheduler {
         })
     }
 
+    /// Declares lost at once every lease `runner` holds, because the runner
+    /// says it holds none: the process that was this runner ended, and the
+    /// runner starts again. Each lease is lost in one transaction, as
+    /// [`Scheduler::sweep`] loses a lapsed one: the job is lost, the run is
+    /// fenced by a new lease number and stops as `possible_commit`,
+    /// `runner_lost`, and a reconcile is queued. Its quarantine is the job's
+    /// longest step alone, the time a step the ended process sent can still
+    /// be in flight, and not the setting, which is for a runner that may
+    /// only be frozen (decision 0416).
+    ///
+    /// Call it only when no other process can be `runner`: a runner on one
+    /// machine whose process holds the store's lock on its data folder, at
+    /// its start and before it claims anything. A runner that is still
+    /// working would be fenced in the middle of a step.
+    ///
+    /// # Errors
+    ///
+    /// `busy` failures of the store.
+    pub async fn runner_ended(&self, runner: RunnerId) -> Result<SweepReport, Failure> {
+        let settings = self.inner.settings;
+        let resumed = Arc::clone(&self.inner.resumed);
+        let swept = self
+            .inner
+            .store
+            .write(Durability::Synced, move |tx| {
+                let asked = resumed_set(&resumed).clone();
+                tables::runner_ended(tx, &settings, &asked, runner)
+            })
+            .await?;
+        {
+            let mut resumed = resumed_set(&self.inner.resumed);
+            for job in &swept.lost {
+                resumed.remove(job);
+            }
+        }
+        if !swept.lost.is_empty() {
+            self.inner.waits().locks_changed();
+        }
+        if swept.freed {
+            self.grant().await;
+        }
+        self.count(LOST_COUNT, &[], swept.lost.len());
+        self.changed();
+        Ok(SweepReport {
+            lost: swept.lost,
+            reconcile: swept.reconcile,
+            expired: swept.expired,
+            waits_ended: 0,
+        })
+    }
+
     /// The earliest moment at which [`Scheduler::sweep`] has something to
     /// do: a lease to declare lost, a queue limit, a job that becomes ready,
     /// a wait that ends. `None` when the scheduler waits for nothing.

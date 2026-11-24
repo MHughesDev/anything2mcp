@@ -9,7 +9,7 @@ use crate::cipher::{self, BoundTo};
 use crate::digest::VaultDigest;
 use crate::failure;
 use crate::material::{KeyMaterial, Opened, OsRandom, RandomSource};
-use crate::names::{Binding, Generation, KeyId, KeyRef, Layer, SealContext};
+use crate::names::{Binding, Generation, KeyId, KeyRef, Layer, OwnerRef, SealContext};
 use crate::records::{KeyRecord, KeyRecords};
 use crate::redactor::{Redactor, RedactorHealth};
 use crate::sealed::{self, Sealed};
@@ -114,6 +114,27 @@ impl Vault {
             self.random.as_ref(),
         )?;
         Ok(Sealed::new(owner_key, data_key, nonce, ciphertext))
+    }
+
+    /// Opens the newest key of `owner` in `workspace` now, and keeps it, as
+    /// the first seal for that owner would: made and recorded when the
+    /// owner has none, and held in wiped memory for the life of the process,
+    /// as every unwrapped upper key is. A later seal or open for that owner
+    /// then needs no key store. The kernel calls it once at start for the
+    /// person a local machine serves, so that a key store that stops after
+    /// the start leaves that person's reads their sealed evidence (spec
+    /// section 224, decision 0417). It returns nothing of the key.
+    ///
+    /// # Errors
+    ///
+    /// As [`Vault::seal`], less the randomness of a data key and a nonce.
+    pub async fn hold_owner_key(
+        &self,
+        workspace: &WorkspaceId,
+        owner: &OwnerRef,
+    ) -> Result<(), Failure> {
+        let id = KeyId::owner(workspace, owner);
+        self.newest_owner_key(workspace, id).await.map(|_| ())
     }
 
     /// Opens bytes that are not secrets: evidence, ledger values. The caller

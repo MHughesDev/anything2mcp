@@ -89,10 +89,10 @@ async fn scene() -> (TestApp, Scene) {
 fn changed(app: &TestApp, change: impl Fn(&str) -> String) -> Scene {
     let folder = Folder::new("forgery-changed");
     let registry = registry(&folder, Arc::new(NoSecrets));
-    let plan = compile_changed(&registry, FORGERY, NOTES, change)
+    let compiled_target = compile_changed(&registry, FORGERY, NOTES, change)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)))
-        .plan;
-    Scene::over(folder, registry, plan, &app.url(""))
+        .compiled_target;
+    Scene::over(folder, registry, compiled_target, &app.url(""))
 }
 
 fn kinds(steps: &[a2m_core::Step]) -> Vec<String> {
@@ -466,7 +466,7 @@ fn a_bootstrap_that_cannot_work_is_refused_with_a_file_a_line_and_a_fix() {
     })
     .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
     let operation = none
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_note_put")

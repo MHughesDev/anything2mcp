@@ -15,7 +15,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use a2m_core::{Digest, FailureClass, Plan, Values};
+use a2m_core::{CompiledTarget, Digest, FailureClass, Values};
 use a2m_pack_mcp::codes;
 use a2m_provider::{Authority, Posture, Registry, Sent, StepOutcome};
 use common::{
@@ -76,7 +76,7 @@ struct Scene {
     _folder: Folder,
     _launcher: Option<Folder>,
     registry: Registry,
-    plan: Plan,
+    compiled_target: CompiledTarget,
     stand: StdioStand,
     entry: PathBuf,
 }
@@ -133,8 +133,8 @@ fn scene() -> Option<Scene> {
         &root,
         &target_text(&stand, &program, &entry, &digest_of(&entry)),
     );
-    let plan = match compile(&registry, &root) {
-        Ok(compiled) => compiled.plan,
+    let compiled_target = match compile(&registry, &root) {
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!(
             "the launcher target does not compile:\n{}",
             shown(&problems)
@@ -144,7 +144,7 @@ fn scene() -> Option<Scene> {
         _folder: folder,
         _launcher: launcher_folder,
         registry,
-        plan,
+        compiled_target,
         stand,
         entry,
     })
@@ -157,12 +157,12 @@ fn scene() -> Option<Scene> {
 async fn a_server_started_through_a_launcher_is_wrapped_and_a_write_through_it_is_stored() {
     let Some(scene) = scene() else { return };
     let control = scene.stand.control();
-    let local = surface(&scene.plan, "orders_local", None);
+    let local = surface(&scene.compiled_target, "orders_local", None);
     let (ledger, _vault) = store().await;
     let fence = running(&ledger, 1, &["A-100"]).await;
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &local,
         fence,
         Posture::Live,
@@ -170,7 +170,7 @@ async fn a_server_started_through_a_launcher_is_wrapped_and_a_write_through_it_i
     )
     .await
     .unwrap();
-    let update = steps(&scene.plan, "example_order_note_update");
+    let update = steps(&scene.compiled_target, "example_order_note_update");
     let args = Values::new()
         .with("order_id", "A-100")
         .with("field", "note")
@@ -227,10 +227,10 @@ async fn an_entry_file_changed_after_its_pin_is_refused_before_anything_starts()
     let mut text = std::fs::read_to_string(&scene.entry).unwrap();
     text.push_str("\n// changed after it was reviewed\n");
     std::fs::write(&scene.entry, text).unwrap();
-    let local = surface(&scene.plan, "orders_local", None);
+    let local = surface(&scene.compiled_target, "orders_local", None);
     let refused = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &local,
         fence_of(7),
         Posture::Live,
@@ -311,13 +311,20 @@ async fn a_package_runner_behind_a_link_is_refused_at_start_with_what_to_do_inst
         ),
         _ => text,
     });
-    let plan = compile(&registry, &root)
+    let compiled_target = compile(&registry, &root)
         .unwrap_or_else(|problems| panic!("the target does not compile:\n{}", shown(&problems)))
-        .plan;
-    let local = surface(&plan, "orders_local", None);
-    let refused = prepare(&registry, &plan, &local, fence_of(7), Posture::Live, None)
-        .await
-        .unwrap_err();
+        .compiled_target;
+    let local = surface(&compiled_target, "orders_local", None);
+    let refused = prepare(
+        &registry,
+        &compiled_target,
+        &local,
+        fence_of(7),
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap_err();
     assert_eq!(refused.sent, Sent::NotSent);
     assert_eq!(
         (refused.failure.class(), refused.failure.code()),
@@ -329,8 +336,8 @@ async fn a_package_runner_behind_a_link_is_refused_at_start_with_what_to_do_inst
 
 /// The review shows a server a launcher runs as the fixed pair it is: the
 /// launcher with its digest, the arguments of its form, and the entry file
-/// with the digest that pins it, which the plan declares as a program of
-/// the surface.
+/// with the digest that pins it, which the compiled target declares as a
+/// program of the surface.
 #[test]
 fn the_review_shows_the_launcher_and_the_entry_file_it_runs() {
     let folder = Folder::new("launcher-review");
@@ -357,15 +364,16 @@ fn the_review_shows_the_launcher_and_the_entry_file_it_runs() {
     };
     assert_eq!(
         runs[0].run,
-        a2m_files::ProgramRun::Script {
-            interpreter: node.to_string_lossy().into_owned(),
-            interpreter_digests: vec![digest_of(&node)[7..].parse().unwrap()],
+        a2m_files::ProgramRun::Launcher {
+            launcher: node.to_string_lossy().into_owned(),
+            launcher_digests: vec![digest_of(&node)[7..].parse().unwrap()],
             arguments: Vec::new(),
-            script: entry.to_string_lossy().into_owned(),
-            script_digest: digest[7..].parse().unwrap(),
+            entry: entry.to_string_lossy().into_owned(),
+            entry_digest: digest[7..].parse().unwrap(),
         }
     );
-    // Both files are programs the plan declares for the surface.
+    assert_eq!(runs[0].notice, Some(a2m_files::LAUNCHER_NOTICE));
+    // Both files are programs the compiled target declares for the surface.
     let declared = &item.bindings[0].surface_programs;
     assert!(
         declared
@@ -392,13 +400,20 @@ async fn a_launcher_whose_file_is_not_in_the_table_is_refused_at_start() {
         &root,
         &target_text(&stand, &link, &entry, &digest_of(&entry)),
     );
-    let plan = compile(&registry, &root)
+    let compiled_target = compile(&registry, &root)
         .unwrap_or_else(|problems| panic!("the target does not compile:\n{}", shown(&problems)))
-        .plan;
-    let local = surface(&plan, "orders_local", None);
-    let refused = prepare(&registry, &plan, &local, fence_of(7), Posture::Live, None)
-        .await
-        .unwrap_err();
+        .compiled_target;
+    let local = surface(&compiled_target, "orders_local", None);
+    let refused = prepare(
+        &registry,
+        &compiled_target,
+        &local,
+        fence_of(7),
+        Posture::Live,
+        None,
+    )
+    .await
+    .unwrap_err();
     assert_eq!(refused.sent, Sent::NotSent);
     assert_eq!(
         (refused.failure.class(), refused.failure.code()),

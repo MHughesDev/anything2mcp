@@ -135,7 +135,7 @@ my-targets/
 
 ## Drafts and versions
 
-Files in the project are drafts. `version.publish` copies them into the store as an immutable, hashed version, compiled to a plan ([section 206](206-the-compiler-and-the-plan.md)); a person publishes, never an agent. Normal callers run only published versions. `draft.try` and `test.run` run drafts, inside the sandbox, where writes go only to declared test records.
+Files in the project are drafts. `version.publish` copies them into the store as an immutable, hashed version: one compiled target ([section 206](206-the-compiler-and-the-compiled-target.md)); a person publishes, never an agent. Normal callers run only published versions. `draft.try` and `test.run` run drafts, inside the sandbox, where writes go only to declared test records.
 
 ## The build loop as a visible state
 
@@ -273,4 +273,4 @@ Conformance is tested against the protocol with at least two unrelated clients, 
 - Whether the `engine.*` actions keep an MCP tool and a REST route at all, since they act on a process a remote caller cannot see.
 - How a shortcut threads one action's output into the next without the client holding logic. Declared field mappings in the shortcut's data is the proposal.
 - Where large results go when the caller is a remote program: a blob reference and a fetch route, most likely.
-- How an operation's own input, which a plan carries as a JSON Schema document, is checked at the dispatcher. An action's input is checked by the schema type of `a2m-files`; a tool's input is checked by the engine against the plan's inputs.
+- How an operation's own input, which a compiled target carries as a JSON Schema document, is checked at the dispatcher. An action's input is checked by the schema type of `a2m-files`; a tool's input is checked by the engine against the compiled target's inputs.

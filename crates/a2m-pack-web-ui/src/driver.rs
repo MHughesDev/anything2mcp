@@ -1,10 +1,9 @@
-//! The driver of the `ui` mode: the tabs of one run, and one step at a
-//! time on them, as the plan wrote it. Every run has an observing tab, in
-//! which the browser fails every request of the page that could change the
-//! system, and every read runs there, in any posture; a run that may act
-//! also opens an acting tab, in the same profile, for the steps of a write
-//! up to its commit point, which the lowering marks (decisions 0183 and
-//! 0195).
+//! The driver of the `ui` mode: the tabs of one run, and one step at a time
+//! on them, as the compiled target wrote it. Every run has an observing tab,
+//! in which the browser fails every request of the page that could change the
+//! system, and every read runs there, in any posture; a run that may act also
+//! opens an acting tab, in the same profile, for the steps of a write up to
+//! its commit point, which the lowering marks (decisions 0183 and 0195).
 //!
 //! What the driver never does: retry a step, pick the first of several
 //! matches, read a password, send the tab outside the surface, sign in, or
@@ -25,8 +24,8 @@ use a2m_core::{AccountName, Digest, EffectClass, Failure, Identity, Secret, Step
 use a2m_pack_web_browser::{
     ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, DialogAnswer, Dispatch,
     Element, Input, Key, Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey,
-    Query, RawValue, ReadWhat, Reason, RequestShape, SafeRequests, Snapshot, SnapshotLimits,
-    Visibility, looks_like_an_action, path_by_structure, plain_segment,
+    Query, RawValue, ReadWhat, Reason, RequestShape, Snapshot, SnapshotLimits, Visibility,
+    looks_like_an_action, path_by_structure, plain_segment,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -44,6 +43,7 @@ use crate::model::{
     Action, Cond, Field, Fingerprint, GotoStep, Handling, InvokeStep, Locator, PAYLOAD_FORMAT,
     ReadStep, Rows, Screen, ScreenSection, Segment, SetStep, SurfaceFields, TabKind, WaitStep,
 };
+use crate::requests::AssertedReads;
 use crate::screens::{PACK, SCREEN_KIND};
 use widgets::Chosen;
 
@@ -242,7 +242,7 @@ struct ToAct {
     origins: Origins,
 }
 
-/// What one run holds: its tabs, and the screens of its plan.
+/// What one run holds: its tabs, and the screens of its compiled target.
 ///
 /// Every session has an observing tab, opened at prepare, in which the
 /// browser fails every request of the page whose method could change the
@@ -257,9 +257,9 @@ struct Session {
     on: TabKind,
     /// How to open the acting tab; `None` in a posture that may only look.
     to_act: Option<ToAct>,
-    /// For a plan whose `goto` steps do not say which tab: each `goto` of
-    /// this pack's bindings, and whether it is a step of the work of an
-    /// operation that writes.
+    /// For a compiled target whose `goto` steps do not say which tab: each
+    /// `goto` of this pack's bindings, and whether it is a step of the work
+    /// of an operation that writes.
     gotos: Vec<(Step, bool)>,
     /// `scheme://host`, with a port when the surface has one.
     origin: String,
@@ -282,6 +282,9 @@ struct Session {
     /// How a text control is committed, as the surface's platform profile
     /// states it; `None` sets a text control by the rule of no profile.
     commit: Option<InputCommit>,
+    /// The surface's asserted reads, and whether the observing tab was
+    /// handed them.
+    asserted: AssertedReads,
 }
 
 /// The origin of a `web` surface: a scheme, a host, and perhaps a port.
@@ -631,7 +634,7 @@ impl Session {
             .get(&named.section.get())
             .and_then(|section| section.get_key_value(&named.entry))
             .map(|(name, screen)| (name.as_str(), screen))
-            .ok_or_else(|| codes::not_usable("the screen it names is not in the plan"))
+            .ok_or_else(|| codes::not_usable("the screen it names is not in the compiled target"))
     }
 
     /// Whether the step may act on the page in this run's posture. A
@@ -672,7 +675,7 @@ impl Session {
         if let Some(acting) = &self.acting {
             refused.extend(acting.blocked());
         }
-        refusal(&refused, what)
+        refusal(&refused, what, &self.asserted)
     }
 
     /// The tab the steps act in now: the acting tab only after a `goto`
@@ -710,11 +713,11 @@ impl Session {
     }
 }
 
-/// Which tab a `goto` reaches its screen in. Its payload says; a plan
-/// compiled before it did is answered from the plan's `gotos`: an acting
-/// tab only when every binding that holds this very step is the work of an
-/// operation that writes, and otherwise a stop by name, never an acting tab
-/// for what may be a read.
+/// Which tab a `goto` reaches its screen in. Its payload says; a compiled
+/// target compiled before it did is answered from the compiled target's
+/// `gotos`: an acting tab only when every binding that holds this very step
+/// is the work of an operation that writes, and otherwise a stop by name,
+/// never an acting tab for what may be a read.
 fn tab_for(step: &Step, gotos: &[(Step, bool)]) -> Result<TabKind, StepFailure> {
     if !step.payload.is_none() {
         return step
@@ -729,7 +732,7 @@ fn tab_for(step: &Step, gotos: &[(Step, bool)]) -> Result<TabKind, StepFailure> 
         Ok(TabKind::Act)
     } else {
         Err(codes::not_usable(
-            "its `goto` does not say which tab it reaches its screen in, and the plan does not show it to be a step of an operation that writes",
+            "its `goto` does not say which tab it reaches its screen in, and the compiled target does not show it to be a step of an operation that writes",
         ))
     }
 }
@@ -745,8 +748,14 @@ const LEFT_THE_PAGE: &[&str] = &["POPUP", "DOWNLOAD"];
 /// change the system, which an observing tab failed, is `policy`,
 /// `page_write_refused`: what was read is not read where the page may
 /// write, and a read that needs such a request cannot be made (decision
-/// 0195). `None` when it refused nothing.
-pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
+/// 0195). When an asserted read of the surface names the request's method
+/// and path, the next step names that page request (decision 0394, point
+/// 4). `None` when it refused nothing.
+pub(crate) fn refusal(
+    refused: &[RequestShape],
+    what: &str,
+    asserted: &AssertedReads,
+) -> Option<Failure> {
     let first = refused.first()?;
     let address = Address::new(&first.address).ok();
     let place = shown(&address.as_ref().map(Address::origin).unwrap_or_default());
@@ -776,13 +785,16 @@ pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
             "Look at the page; a window or a download a step expects is declared on it, which this version cannot do yet.",
         )
     } else {
-        // The path by structure: a segment that may be a token is not
-        // shown.
-        let path = address
+        let sent = address
             .as_ref()
             .and_then(|address| address.as_str().strip_prefix(&address.origin()))
-            .map(path_by_structure)
             .unwrap_or_default();
+        // The path by structure: a segment that may be a token is not
+        // shown.
+        let path = path_by_structure(sent);
+        let next = asserted.next_step(&first.method, sent).unwrap_or_else(|| {
+            "Look at what the page does when it loads. A read of a page that writes by itself cannot be made by the web pack; if the request only reads, a person may say so with a page request marked `read_asserted: true`, and otherwise read the record another way.".to_owned()
+        });
         fail(
             &codes::row::PAGE_WRITE_REFUSED,
             format!(
@@ -790,7 +802,7 @@ pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
                 shown(&first.method),
                 shown(&format!("{place}{path}")),
             ),
-            "Look at what the page does when it loads. A read of a page that writes by itself cannot be made by the web pack; read the record another way.",
+            &next,
         )
     })
 }
@@ -946,9 +958,9 @@ impl Session {
         deadline: Deadline,
     ) -> Result<(Element, usize), StepFailure> {
         for (position, locator) in locators.iter().enumerate() {
-            // The check below looks for the locator inside the section,
-            // which drops a scope of its own. The compiler refuses the
-            // pair; a plan that holds it all the same is not acted on.
+            // The check below looks for the locator inside the section, which
+            // drops a scope of its own. The compiler refuses the pair; a
+            // compiled target that holds it all the same is not acted on.
             if fingerprint.is_some() && locator.within.is_some() {
                 return Err(codes::not_usable(
                     "a locator with a scope of its own also has a fingerprint",
@@ -1722,6 +1734,16 @@ impl Session {
                 .values
                 .insert(into.clone(), Value::Text(name.clone()));
         }
+        if let Some(size_into) = &download.size_into {
+            // The size is bounded by `most_bytes`, at most 64 MiB, so it
+            // is always a whole number the value holds.
+            let bytes = i64::try_from(file.bytes).map_err(|_| {
+                StepFailure::unknown(
+                    codes::not_usable("the file's size is too large to give").failure,
+                )
+            })?;
+            observed.values.insert(size_into.clone(), Value::Int(bytes));
+        }
         observed.captures.push(acting(
             vec![
                 Detail::new("step", "download"),
@@ -2074,7 +2096,8 @@ enum Rule {
 }
 
 /// The rule for a control's name. A name with no rule stops the step: the
-/// plan was compiled by a pack that knew a control this driver does not.
+/// compiled target was compiled by a pack that knew a control this driver
+/// does not.
 fn known_control(control: &str) -> Result<Rule, StepFailure> {
     match control {
         "text" | "textarea" | "number" | "currency" | "measurement" => Ok(Rule::Text),
@@ -2096,7 +2119,7 @@ fn known_control(control: &str) -> Result<Rule, StepFailure> {
         other => Err(StepFailure::not_sent(fail(
             &codes::row::UNKNOWN_CONTROL,
             format!(
-                "The plan names the control `{}`, and this driver has no rule for it.",
+                "The compiled target names the control `{}`, and this driver has no rule for it.",
                 shown(other)
             ),
             "Compile the target again with the version of the web pack that is enabled.",
@@ -2145,13 +2168,15 @@ impl TabSetup {
     }
 }
 
-/// Every address of a surface of the plan, in every environment.
-fn surface_addresses(plan: &a2m_core::Plan) -> BTreeSet<&str> {
-    plan.surfaces
+/// Every address of a surface of the compiled target, in every environment.
+fn surface_addresses(compiled_target: &a2m_core::CompiledTarget) -> BTreeSet<&str> {
+    compiled_target
+        .surfaces
         .iter()
         .map(|surface| surface.address.as_str())
         .chain(
-            plan.environments
+            compiled_target
+                .environments
                 .iter()
                 .flat_map(|environment| environment.addresses.iter())
                 .map(|address| address.address.as_str()),
@@ -2224,10 +2249,10 @@ pub(crate) fn tab_setup(
     if let Some(reduced) = fields.reduced_motion {
         environment.reduced_motion = reduced;
     }
-    if let Some(locale) = &cx.plan.target.locale {
+    if let Some(locale) = &cx.compiled_target.target.locale {
         environment.locale.clone_from(locale);
     }
-    environment.time_zone = time_zone(cx.plan.target.timezone.as_deref())?;
+    environment.time_zone = time_zone(cx.compiled_target.target.timezone.as_deref())?;
 
     // Whose browser: the session's, or the one of a surface that needs
     // no sign-in. A browser's session lives in its own profile; a
@@ -2304,7 +2329,7 @@ pub(crate) fn tab_setup(
     let declared: Vec<Address> = cx
         .destinations
         .iter()
-        .filter(|address| !surface_addresses(cx.plan).contains(*address))
+        .filter(|address| !surface_addresses(cx.compiled_target).contains(*address))
         .filter(|address| address.starts_with("https://") || address.starts_with("http://"))
         .filter_map(|address| Address::new(address).ok())
         .collect();
@@ -2360,7 +2385,7 @@ impl UiDriver {
         } = setup;
         let surface = &cx.surface.surface;
         let mut sections = BTreeMap::new();
-        for (position, section) in cx.plan.packs.iter().enumerate() {
+        for (position, section) in cx.compiled_target.packs.iter().enumerate() {
             let own = section.pack == PACK
                 && section.kind == SCREEN_KIND
                 && section.surface_kind == surface.kind;
@@ -2384,23 +2409,30 @@ impl UiDriver {
 
         // Every session looks through an observing tab, in which the
         // browser fails every request of its page whose method could change
-        // the system, and none is marked safe. A read never runs anywhere
-        // else, in any posture (decision 0195).
+        // the system, but the asserted reads of a published version, live or
+        // in an environment of kind `test` (decision 0394, point 4). A read
+        // never runs anywhere else, in any posture (decision 0195).
+        let asserted = AssertedReads::of(cx)?;
         let looking = self
             .browsers
             .observer()
-            .observing_tab(&profile, &environment, &SafeRequests::default(), &origins)
+            .observing_tab(
+                &profile,
+                &environment,
+                &asserted.safe_requests(&origin),
+                &origins,
+            )
             .await
             .map_err(|error| browser_failure(&error, "the opening of a tab"))?;
         let may_act = matches!(
             cx.posture,
             Posture::Live | Posture::Sandbox { test_records: true }
         );
-        // For a plan compiled before a `goto` said which tab it is in:
-        // each `goto` of a binding over this pack's screens, and whether it
-        // is the work of an operation that writes.
+        // For a compiled target compiled before a `goto` said which tab it is
+        // in: each `goto` of a binding over this pack's screens, and whether
+        // it is the work of an operation that writes.
         let mut gotos = Vec::new();
-        for operation in &cx.plan.operations {
+        for operation in &cx.compiled_target.operations {
             let writes = operation.effect != EffectClass::Read;
             for binding in &operation.bindings {
                 let own = |step: &Step| {
@@ -2426,9 +2458,10 @@ impl UiDriver {
         }
         // The `ui` driver reads pages: a sign of expiry that is a status of
         // a page request's answer is `page_http`'s.
-        let expiry = crate::sign_in::expiry_signs(cx.plan, surface.name.as_str(), &sections)
-            .map_err(codes::not_usable)?
-            .screens;
+        let expiry =
+            crate::sign_in::expiry_signs(cx.compiled_target, surface.name.as_str(), &sections)
+                .map_err(codes::not_usable)?
+                .screens;
         Ok(Session {
             expiry,
             looking,
@@ -2449,6 +2482,7 @@ impl UiDriver {
             staging: self.browsers.staging_folder(),
             posture: cx.posture,
             commit,
+            asserted,
         })
     }
 }
@@ -2633,7 +2667,7 @@ mod tests {
     }
 
     #[test]
-    fn a_goto_that_does_not_say_its_tab_acts_only_when_the_plan_shows_a_write() {
+    fn a_goto_that_does_not_say_its_tab_acts_only_when_the_compiled_target_shows_a_write() {
         let goto = |entry: &str| Step {
             kind: GOTO,
             refers_to: Some(a2m_core::PackRef {

@@ -9,7 +9,8 @@
 //! through which alone the engine reaches a driver ([`DriverHandle`]), file
 //! access for packs ([`Roots`], [`CheckedPath`]), and the supervisor that
 //! starts and stops every outside process ([`Supervisor`],
-//! [`ScopedSupervisor`]). It knows no kind of system itself.
+//! [`ScopedSupervisor`]), and the closed shape of a body that packs read and
+//! check ([`shape`]). It knows no kind of system itself.
 //!
 //! Every async method of every trait here returns a [`BoxFuture`], so that
 //! each trait can be used as a trait object; an implementation writes
@@ -23,6 +24,7 @@
 //! `docs/reference/technical-reference.md`: layers 1 to 4.
 
 mod action;
+mod capture;
 pub mod codes;
 pub mod decompiler;
 mod discover;
@@ -36,6 +38,7 @@ mod place;
 mod reach;
 mod registry;
 mod replay;
+pub mod shape;
 mod supervisor;
 
 /// The boxed future every async trait method of this crate returns. It is
@@ -43,9 +46,15 @@ mod supervisor;
 pub use a2m_auth::BoxFuture;
 
 pub use action::{ActionContext, ProviderAction};
+pub use capture::{
+    CAPTURE_PLACEHOLDER, CaptureHandle, CaptureSource, CapturedRequest, CapturedTraffic, Capturing,
+    FIELD_KINDS, LONGEST_CAPTURED_WORD, LONGEST_HEX_RUN, MOST_CAPTURED_DIGITS, TrafficCapture,
+    is_captured_word, kept_by_structure, take_capture,
+};
 pub use discover::{
-    DescribeForm, Describer, Description, Discoverer, DiscovererHandle, DiscoveryReport,
-    DiscoveryScope, FindingSink, SandboxPort, SurfaceDescription,
+    CAPTURE_END_GRACE, CaptureEnd, CaptureStop, DescribeForm, Describer, Description, Discoverer,
+    DiscovererHandle, DiscoveryReport, DiscoveryScope, FindingSink, SandboxPort,
+    SurfaceDescription,
 };
 pub use driver::{
     Authority, Capture, ChoiceReason, Deadline, Destinations, Driver, DriverHandle, DriverHealth,
@@ -54,8 +63,8 @@ pub use driver::{
 };
 pub use entry_point::{ENTRY_POINT_GROUP, EntryPointSearch, PythonProvider, find_python_providers};
 pub use manifest::{
-    ActionDecl, Bounds, CONTRACT, DiscovererDecl, DraftingRuleDecl, Effects, EvidenceDecl,
-    Exclusive, FailureCodeDecl, FileKindDecl, FindingKindDecl, KindOf, LintRuleDecl,
+    ActionDecl, Bounds, CONTRACT, DiscovererDecl, DraftingRuleDecl, DrivenBy, Effects,
+    EvidenceDecl, Exclusive, FailureCodeDecl, FileKindDecl, FindingKindDecl, KindOf, LintRuleDecl,
     MANIFEST_FILE_NAME, MANIFEST_FORMAT, Manifest, ModeDecl, ModeDefaults, NetworkEffect, Points,
     ProgramDecl, ProviderKind, ProviderSection, ReadDecl, Requirement, RunSection, SettingDecl,
     SettingScope, SettingType, SurfaceKindDecl,

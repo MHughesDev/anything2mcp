@@ -25,6 +25,7 @@
 //! `docs/reference/technical-reference.md` is the rule, and this crate's
 //! design is `docs/architecture/crates/a2m-pack-web-probe.md`.
 
+mod capture;
 pub mod codes;
 mod describe;
 mod discover;
@@ -116,6 +117,7 @@ impl Pack for WebProbePack {
             .and_then(Value::as_int)
             .and_then(|number| u64::try_from(number).ok())
             .unwrap_or(DEFAULT_MAX_PAGES);
+        to.traffic_capture(Arc::new(capture::ObservingCapture(observer.clone())))?;
         let parts = Arc::new(discover::Parts {
             core: look::Core::new(
                 observer,

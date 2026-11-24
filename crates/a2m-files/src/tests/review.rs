@@ -7,15 +7,15 @@ use super::example::example_files;
 use crate::testing::{self, stand_set};
 use crate::{
     BindingStatement, BindingStates, CompileMode, Compiled, CompilerSet, DRAFT_VERSION,
-    Diagnostics, EnvironmentVariable, FixedPlace, JsonSchema, Lowered, Lowering, NOT_STATED,
-    PROBE_PENDING, PROVIDER_NOT_HELD, PlaceReview, Possible, ProbeReview, ProgramRun,
+    Diagnostics, EnvironmentVariable, FixedPlace, JsonSchema, LAUNCHER_NOTICE, Lowered, Lowering,
+    NOT_STATED, PROBE_PENDING, PROVIDER_NOT_HELD, PlaceReview, Possible, ProbeReview, ProgramRun,
     REACH_NOT_STATED, Reach, ReachGroup, RelPath, ResolvedBinding, SCRIPT_NOTICE,
     SENT_TO_NOT_STATED, Sends, SentAddress, SentTo, Statement, StepCommits, TargetRoot,
     VariableValue, compile, lint_one, load_files,
 };
 use a2m_core::{
-    AddressScope, Digest, EffectClass, Environment, FileKindName, IdentityStrategy, Mode,
-    ProbePlan, StepKind, SurfaceKind, Verb, Version, WriteEvidence,
+    AddressScope, CompiledProbe, Digest, EffectClass, Environment, FileKindName, IdentityStrategy,
+    Mode, StepKind, SurfaceKind, Verb, Version, WriteEvidence,
 };
 
 type Files = Vec<(RelPath, Vec<u8>)>;
@@ -34,7 +34,7 @@ fn add(files: &mut Files, path: &str, text: &str) {
     files.push((RelPath::new(path).unwrap(), text.as_bytes().to_vec()));
 }
 
-fn compiled_with(
+fn compiled_target_with(
     files: &Files,
     set: &CompilerSet,
     mode: CompileMode,
@@ -91,14 +91,14 @@ const FIXED: &str = "identity: {strategy: natural, place: fixed}";
 #[test]
 fn a_write_of_one_fixed_place_compiles_with_no_identity_input() {
     let set = stand_set().unwrap();
-    let compiled = compiled_with(
+    let compiled = compiled_target_with(
         &with_settings(FIXED, "settings_put"),
         &set,
         CompileMode::Draft,
     )
     .unwrap_or_else(|problems| panic!("{problems}"));
     let operation = compiled
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_settings_set")
@@ -121,7 +121,7 @@ fn a_write_of_one_fixed_place_compiles_with_no_identity_input() {
         })
     );
     // The example names no fixed place, and its summary shows none.
-    let example = compiled_with(&example_files(), &set, CompileMode::Draft).unwrap();
+    let example = compiled_target_with(&example_files(), &set, CompileMode::Draft).unwrap();
     assert!(example.review.items.iter().all(|item| item.place.is_none()));
 }
 
@@ -129,7 +129,7 @@ fn a_write_of_one_fixed_place_compiles_with_no_identity_input() {
 fn a_fixed_place_is_only_one_its_file_kind_declares_and_no_input_chooses() {
     let set = stand_set().unwrap();
     let refused = |files: &Files| -> String {
-        let problems = compiled_with(files, &set, CompileMode::Draft).unwrap_err();
+        let problems = compiled_target_with(files, &set, CompileMode::Draft).unwrap_err();
         let found = problems
             .find("kernel.place_not_fixed")
             .unwrap_or_else(|| panic!("{problems}"));
@@ -162,7 +162,7 @@ fn a_fixed_place_is_only_one_its_file_kind_declares_and_no_input_chooses() {
         inner: testing::lowering(),
         names_place: false,
     }));
-    let problems = compiled_with(
+    let problems = compiled_target_with(
         &with_settings(FIXED, "settings_put"),
         &silent,
         CompileMode::Draft,
@@ -261,6 +261,13 @@ impl Lowering for Stating {
                         path: "/opt/example/bin/helper".to_owned(),
                         digests: Vec::new(),
                     },
+                    ProgramRun::Launcher {
+                        launcher: "/usr/bin/example-launcher".to_owned(),
+                        launcher_digests: vec![digest(4)],
+                        arguments: vec!["--fixed".to_owned()],
+                        entry: "/opt/example/lib/server.example".to_owned(),
+                        entry_digest: digest(5),
+                    },
                 ],
                 environment: vec![
                     EnvironmentVariable {
@@ -349,7 +356,7 @@ fn the_summary_shows_what_a_tool_starts_sets_and_reaches_by_the_kind_of_place() 
         inner: testing::lowering(),
         names_place: true,
     }));
-    let compiled = compiled_with(&stating_files(), &set, CompileMode::Draft)
+    let compiled = compiled_target_with(&stating_files(), &set, CompileMode::Draft)
         .unwrap_or_else(|problems| panic!("{problems}"));
     let item = |name: &str| {
         compiled
@@ -365,6 +372,16 @@ fn the_summary_shows_what_a_tool_starts_sets_and_reaches_by_the_kind_of_place() 
     };
     assert_eq!(runs[0].notice, Some(SCRIPT_NOTICE));
     assert_eq!(runs[1].notice, None);
+    // A server started through a launcher is its own kind, with its own
+    // notice, and is never worded as a script the target keeps.
+    assert!(matches!(runs[2].run, ProgramRun::Launcher { .. }));
+    assert_eq!(runs[2].notice, Some(LAUNCHER_NOTICE));
+    assert_ne!(LAUNCHER_NOTICE, SCRIPT_NOTICE);
+    assert!(
+        serde_json::to_string(&runs[2].run)
+            .unwrap()
+            .contains(r#""kind":"launcher""#)
+    );
     assert_eq!(environment.len(), 3);
     assert_eq!(
         upsert.reach,
@@ -436,7 +453,7 @@ fn every_text_of_the_summary_passes_through_the_function_given() {
         inner: testing::lowering(),
         names_place: true,
     }));
-    let mut review = compiled_with(&stating_files(), &set, CompileMode::Draft)
+    let mut review = compiled_target_with(&stating_files(), &set, CompileMode::Draft)
         .unwrap_or_else(|problems| panic!("{problems}"))
         .review;
     let test: Environment = "test".parse().unwrap();
@@ -453,6 +470,8 @@ fn every_text_of_the_summary_passes_through_the_function_given() {
     let after = serde_json::to_string(&mapped).unwrap();
     for text in [
         "/usr/bin/example-interpreter",
+        "/usr/bin/example-launcher",
+        "/opt/example/lib/server.example",
         "\"-I\"",
         "scripts/put.example",
         "/opt/example/bin/helper",
@@ -468,6 +487,7 @@ fn every_text_of_the_summary_passes_through_the_function_given() {
     }
     for kept in [
         SCRIPT_NOTICE,
+        LAUNCHER_NOTICE,
         REACH_NOT_STATED,
         r#""value":{"kind":"secret"}"#,
         "example_line_item_upsert",
@@ -482,7 +502,7 @@ fn every_text_of_the_summary_passes_through_the_function_given() {
 #[test]
 fn a_pack_that_states_nothing_is_shown_as_stating_nothing_and_never_as_nothing() {
     let set = stand_set().unwrap();
-    let compiled = compiled_with(&example_files(), &set, CompileMode::Draft).unwrap();
+    let compiled = compiled_target_with(&example_files(), &set, CompileMode::Draft).unwrap();
     for item in &compiled.review.items {
         assert!(!item.bindings.is_empty(), "{}", item.tool);
         for binding in &item.bindings {
@@ -503,7 +523,7 @@ fn a_pack_that_states_nothing_is_shown_as_stating_nothing_and_never_as_nothing()
 #[test]
 fn a_sign_in_shows_its_provider_its_credentials_by_name_and_where_it_sends() {
     let set = stand_set().unwrap();
-    let mut compiled = compiled_with(&example_files(), &set, CompileMode::Draft).unwrap();
+    let mut compiled = compiled_target_with(&example_files(), &set, CompileMode::Draft).unwrap();
     let sign_in = &compiled.review.sign_ins[0];
     assert_eq!(sign_in.provider.as_str(), "http_basic");
     assert_eq!(sign_in.credentials[0].role, "password");
@@ -569,11 +589,11 @@ fn a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only() {
     let files = with_pending_probe();
     // A draft compiles, with the sign-in marked in the lint result and in
     // the summary.
-    let draft = compiled_with(&files, &set, CompileMode::Draft)
+    let draft = compiled_target_with(&files, &set, CompileMode::Draft)
         .unwrap_or_else(|problems| panic!("{problems}"));
     assert_eq!(
-        draft.plan.auth[0].probe,
-        ProbePlan::Pending {
+        draft.compiled_target.auth[0].probe,
+        CompiledProbe::Pending {
             name: "example_session_check".to_owned()
         }
     );
@@ -601,7 +621,7 @@ fn a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only() {
     );
     // A publish never compiles one: a session nobody can check is a
     // session nobody can trust.
-    let published = compiled_with(&files, &set, CompileMode::Publish).unwrap_err();
+    let published = compiled_target_with(&files, &set, CompileMode::Publish).unwrap_err();
     assert!(
         published.find("kernel.unknown_name").is_some(),
         "{published}"
@@ -622,9 +642,157 @@ fn a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only() {
         "call: order_get",
         "call: order_missing",
     );
-    let problems = compiled_with(&broken, &set, CompileMode::Draft).unwrap_err();
+    let problems = compiled_target_with(&broken, &set, CompileMode::Draft).unwrap_err();
     assert!(
         problems.find("kernel.probe_pending").is_none(),
         "{problems}"
     );
+}
+
+// ---- 3. The summary's order, whole (package 9.3r) ----
+
+/// A tool that reads, harms nothing else, sends only to this machine, and
+/// starts nothing: each case below differs from it in one key.
+fn plain_item(name: &str) -> crate::ReviewItem {
+    crate::ReviewItem {
+        tool: a2m_core::OperationName::new(name).unwrap(),
+        effect: EffectClass::Read,
+        hazard: a2m_core::Hazard::None,
+        commit_points: 0,
+        surfaces: Vec::new(),
+        destinations: Vec::new(),
+        uploads: Vec::new(),
+        downloads: Vec::new(),
+        place: None,
+        bindings: Vec::new(),
+        reach: Reach::Stated {
+            groups: Vec::new(),
+            leaves_this_machine: false,
+        },
+    }
+}
+
+fn starting(name: &str, run: ProgramRun) -> crate::ReviewItem {
+    let mut item = plain_item(name);
+    item.bindings.push(crate::BindingReview {
+        operation: item.tool.clone(),
+        mode: Mode::new("stand").unwrap(),
+        surface: a2m_core::SurfaceName::new("app").unwrap(),
+        surface_programs: Vec::new(),
+        states: BindingStates::Stated {
+            runs: vec![crate::RunReview { run, notice: None }],
+            environment: Vec::new(),
+        },
+    });
+    item
+}
+
+fn sign_in(entry: usize, pending: bool) -> crate::SignInReview {
+    crate::SignInReview {
+        entry,
+        surfaces: Vec::new(),
+        provider: a2m_core::AuthProviderName::new("example_form").unwrap(),
+        mode: a2m_core::SignInMode::ManagedSession,
+        credentials: Vec::new(),
+        probe: if pending {
+            ProbeReview::Pending {
+                name: format!("probe_{entry}"),
+                says: PROBE_PENDING,
+            }
+        } else {
+            ProbeReview::Declared {
+                name: format!("probe_{entry}"),
+            }
+        },
+        sent_to: Vec::new(),
+    }
+}
+
+/// Every key of the order, one at a time, whatever order the tools come
+/// in: hazard, then effect class, then what a tool exposes (an unknown
+/// reach, then a reach off the machine, then what it starts: a script
+/// before a program), then name. Each name sorts against its place, so no
+/// case passes by its name. Sign-ins: one nobody can check yet first, then
+/// the rest, each in the file's order.
+#[test]
+fn the_summary_is_ordered_by_hazard_then_effect_then_exposure_then_name() {
+    // Each name sorts against its place, the riskiest last by name.
+    let mut cases = Vec::new();
+    let mut item = plain_item("example_z9_physical");
+    item.hazard = a2m_core::Hazard::Physical;
+    cases.push(item);
+    let mut item = plain_item("example_z8_sends_outside");
+    item.hazard = a2m_core::Hazard::SendsOutside;
+    cases.push(item);
+    let mut item = plain_item("example_z7_irreversible");
+    item.effect = EffectClass::Irreversible;
+    cases.push(item);
+    let mut item = plain_item("example_z6_write");
+    item.effect = EffectClass::Write;
+    cases.push(item);
+    let mut item = plain_item("example_z5_reach_unknown");
+    item.reach = Reach::Partly {
+        known: Vec::new(),
+        says: REACH_NOT_STATED,
+    };
+    cases.push(item);
+    let mut item = plain_item("example_z4_reach_leaves");
+    item.reach = Reach::Stated {
+        groups: vec![ReachGroup {
+            scope: AddressScope::Name,
+            addresses: vec!["https://app.example.com".to_owned()],
+        }],
+        leaves_this_machine: true,
+    };
+    cases.push(item);
+    cases.push(starting(
+        "example_z3_starts_script",
+        ProgramRun::Script {
+            interpreter: "/usr/bin/example-interpreter".to_owned(),
+            interpreter_digests: vec![digest(1)],
+            arguments: Vec::new(),
+            script: "scripts/put.example".to_owned(),
+            script_digest: digest(2),
+        },
+    ));
+    cases.push(starting(
+        "example_z2_starts_program",
+        ProgramRun::Program {
+            path: "/opt/example/bin/helper".to_owned(),
+            digests: vec![digest(3)],
+        },
+    ));
+    cases.push(plain_item("example_z0_plain"));
+    cases.push(plain_item("example_z1_plain"));
+    let expected: Vec<String> = cases.iter().map(|item| item.tool.to_string()).collect();
+    // Every rotation of the cases, forward and backward, and one scramble.
+    let mut orders: Vec<Vec<crate::ReviewItem>> = Vec::new();
+    for turn in 0..cases.len() {
+        let mut order = cases.clone();
+        order.rotate_left(turn);
+        orders.push(order.clone());
+        order.reverse();
+        orders.push(order);
+    }
+    orders.push(
+        [3, 8, 0, 6, 9, 1, 5, 2, 7, 4]
+            .iter()
+            .map(|index| cases[*index].clone())
+            .collect(),
+    );
+    for mut order in orders {
+        crate::review::in_review_order(&mut order);
+        let got: Vec<String> = order.iter().map(|item| item.tool.to_string()).collect();
+        assert_eq!(got, expected);
+    }
+    // Two pending sign-ins and two declared ones, given out of order.
+    let mut sign_ins = vec![
+        sign_in(2, false),
+        sign_in(3, true),
+        sign_in(0, false),
+        sign_in(1, true),
+    ];
+    crate::review::sign_ins_in_review_order(&mut sign_ins);
+    let entries: Vec<usize> = sign_ins.iter().map(|sign_in| sign_in.entry).collect();
+    assert_eq!(entries, [1, 3, 0, 2]);
 }

@@ -77,7 +77,7 @@ bindings:
 
 ## Verbs and lowering
 
-The steps are those [section 201](../2-kernel/201-archetypes-and-modes.md) lists: `subscribe`, `await`, `publish`, `acknowledge`. The pack adds two, `latest` and `browse`, because a look that takes nothing is not a subscription. Two of the steps save, and always: `publish` and `acknowledge`. The manifest lists them as the mode's commit steps, and the pack's driver carries out neither unless the plan marks the step as the one that commits. In a sandbox that writes a test record, the driver lifts its guard for that step alone, so a `take`, whose `subscribe` and `await` are not marked, runs only live.
+The steps are those [section 201](../2-kernel/201-archetypes-and-modes.md) lists: `subscribe`, `await`, `publish`, `acknowledge`. The pack adds two, `latest` and `browse`, because a look that takes nothing is not a subscription. Two of the steps save, and always: `publish` and `acknowledge`. The manifest lists them as the mode's commit steps, and the pack's driver carries out neither unless the compiled target marks the step as the one that commits. In a sandbox that writes a test record, the driver lifts its guard for that step alone, so a `take`, whose `subscribe` and `await` are not marked, runs only live.
 
 | Verb | Effect class | Lowers to | Returns |
 | --- | --- | --- | --- |

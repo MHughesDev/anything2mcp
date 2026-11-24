@@ -427,3 +427,87 @@ async fn a_surface_an_edge_blocks_writes_nothing_and_a_block_during_the_read_bac
     assert_eq!(writes(&app).await, 1);
     world.close().await;
 }
+
+/// A read of order `A-100` through `tool`, as an agent calls it.
+async fn order_read(world: &World, tool: &str) -> common::Ran {
+    world
+        .agent(&["tool", "call", tool, "--input", r#"{"order_id": "A-100"}"#])
+        .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_compiled_target_that_fails_its_hash_check_makes_its_tools_unavailable_and_no_other() {
+    let app = TestApp::start().await.unwrap();
+    let machine = Machine::new("orders", &[(PLACEHOLDER, &app.url(""))]).on_disk();
+    // A second target in the same project: the same files, named `spare`.
+    let targets = machine.project.path().join("targets");
+    common::copy_changed(
+        &targets.join("example"),
+        &targets.join("spare"),
+        &[("example_", "spare_"), ("target: example", "target: spare")],
+    );
+    let world = machine.open().await;
+    for target in ["example", "spare"] {
+        let published = world.person(&["version", "publish", target]).await;
+        assert_eq!(
+            published.finished.code, 0,
+            "{target}: {:?}",
+            published.finished
+        );
+    }
+    assert_eq!(
+        order_read(&world, "spare_order_get").await.result()["status"],
+        "completed"
+    );
+    world.close().await;
+
+    // The bytes of the published `spare` are changed behind the store, as
+    // a failing disk or another program could.
+    let file = a2m_actions::Paths::under(machine.home.path())
+        .store
+        .join(a2m_ledger::DATABASE_FILE_NAME);
+    let raw = rusqlite::Connection::open(&file).unwrap();
+    raw.execute_batch("DROP TRIGGER target_versions_keep_their_plan")
+        .unwrap();
+    let changed = raw
+        .execute(
+            "UPDATE target_versions SET plan = x'00' WHERE target = 'spare'",
+            [],
+        )
+        .unwrap();
+    assert!(changed >= 1);
+    drop(raw);
+
+    // On the next engine, a call to a tool of `spare` is refused by name
+    // and nothing runs; a call to a tool of `example` reads.
+    let world = machine.open().await;
+    let refused = order_read(&world, "spare_order_get").await;
+    assert_ne!(refused.finished.code, 0, "{:?}", refused.finished);
+    assert_eq!(refused.error()["class"], "busy", "{:?}", refused.finished);
+    assert_eq!(
+        refused.error()["code"],
+        "store_corrupt",
+        "{:?}",
+        refused.finished
+    );
+    let other = order_read(&world, "example_order_get").await;
+    assert_eq!(
+        other.result()["status"],
+        "completed",
+        "{:?}",
+        other.finished
+    );
+    assert_eq!(other.result()["result"]["customer"], "Example Customer One");
+
+    // Published again from its files, `spare` is whole again.
+    let published = world.person(&["version", "publish", "spare"]).await;
+    assert_eq!(published.finished.code, 0, "{:?}", published.finished);
+    let again = order_read(&world, "spare_order_get").await;
+    assert_eq!(
+        again.result()["status"],
+        "completed",
+        "{:?}",
+        again.finished
+    );
+    world.close().await;
+}

@@ -17,7 +17,7 @@ Every crate described here exists, and each is built in part or in full, except 
   │ 6 Engine       a2m-engine     the loop          a2m-sched    queues, leases, locks        │
   │ 5 Contract     a2m-provider   registry, manifests, extension points, supervisor           │
   │ 4 Services     a2m-policy     a2m-auth     a2m-sources                                     │
-  │ 3 Stores       a2m-files      target files to a plan     a2m-ledger   the store            │
+  │ 3 Stores       a2m-files      target files to a compiled target     a2m-ledger   the store            │
   │ 2 Foundations  a2m-expr       a2m-vault    a2m-telemetry                                   │
   │ 1 Types        a2m-core                                                                    │
   └──────────────▲────────────────────────────────────────────────────────────────────────────┘
@@ -37,10 +37,10 @@ The binding table is in the [technical reference](../reference/technical-referen
 | --- | --- | --- |
 | 1. Types | `a2m-core` | The words everyone shares, and nothing that does anything |
 | 2. Foundations | `a2m-expr`, `a2m-vault`, `a2m-telemetry`, `a2m-netstate` | Each stands alone: evaluating an expression, sealing a secret, emitting a span, reading what the machine knows of its own networks |
-| 3. Stores | `a2m-files`, `a2m-ledger` | The two durable forms of knowledge: what a target is (files compiled to a plan) and what happened (the store). The compiler type-checks expressions, so it sits above `a2m-expr`. Everything that persists goes through `a2m-ledger`, so it sits below every service |
+| 3. Stores | `a2m-files`, `a2m-ledger` | The two durable forms of knowledge: what a target is (files compiled into a compiled target) and what happened (the store). The compiler type-checks expressions, so it sits above `a2m-expr`. Everything that persists goes through `a2m-ledger`, so it sits below every service |
 | 4. Services | `a2m-policy`, `a2m-auth`, `a2m-sources` | Each answers one question: may this happen, who is signed in, what records does this input hold |
-| 5. Contract | `a2m-provider` | The one doorway between the kernel and everything that knows a kind of system. It sits above the services because the extension points speak in their terms: a session lease, a source reader, a plan step |
-| 6. Engine | `a2m-engine`, `a2m-sched` | Carrying out a plan, and deciding when and where it may be carried out. Neither depends on the other; a role joins them |
+| 5. Contract | `a2m-provider` | The one doorway between the kernel and everything that knows a kind of system. It sits above the services because the extension points speak in their terms: a session lease, a source reader, a compiled target step |
+| 6. Engine | `a2m-engine`, `a2m-sched` | Carrying out a compiled target, and deciding when and where it may be carried out. Neither depends on the other; a role joins them |
 | 7. Actions | `a2m-actions` | Every way into the kernel, defined once |
 | 8. Roles | `a2m-local`, `a2m-mcp`, `a2m-api`, `a2m-runner` | The shapes a process can take |
 | 9, 10. Packs | `a2m-pack-*` | Knowledge of one kind of system: the web, HTTP, MCP, and desktop packs, and the command, data, file, stream, and device packs, each with its own crates. They implement the contract and are called back |
@@ -54,7 +54,7 @@ A dependency may only point down, so an interface is defined in the lowest crate
 | Interface | Defined in | Implemented by | Called by | Joined by |
 | --- | --- | --- | --- | --- |
 | Vocabulary, `Failure`, `Secret`, identifiers, `Value`, `Finding` and its `Subject` | `a2m-core` | Not applicable | Every crate | Not applicable |
-| The `Plan` and its steps, as data, with the check of a plan's hash | `a2m-core` | Produced only by the compiler in `a2m-files` | `a2m-engine`, `a2m-provider`, packs | Not applicable |
+| The `CompiledTarget` and its steps, as data, with the check of a compiled target's hash | `a2m-core` | Produced only by the compiler in `a2m-files` | `a2m-engine`, `a2m-provider`, packs | Not applicable |
 | `Redact`: text in, text with every registered secret removed; and a keyed digest for naming things without revealing them | `a2m-core` | `a2m-vault` | `a2m-telemetry`, `a2m-ledger`, every front door | `a2m-actions` |
 | Expressions: compile once, evaluate many times; host functions for units, numbers, dates | `a2m-expr` | `a2m-expr` | `a2m-files` to type-check; `a2m-engine`, `a2m-sources`, `a2m-policy` to evaluate | Not applicable |
 | Sealing and opening, as methods of the `Vault` itself, with no trait between; key-store back ends | `a2m-vault` | `a2m-vault`; an outside key service through a back end that a plug-in may supply | `a2m-ledger`, which is handed the vault whole through `Store::attach`; `a2m-auth`, which is handed the same vault | `a2m-actions` |
@@ -69,14 +69,14 @@ A dependency may only point down, so an interface is defined in the lowest crate
 | `KeeperWork`: run a probe, a renewal, or a sign-in on a session's home runner | `a2m-auth` | `a2m-actions`, by submitting a job | The session keeper | `a2m-actions` |
 | `SourceReader`: an input turned into validated records. It takes bytes, never a path | `a2m-sources` | `a2m-sources` for the built-in formats; plug-ins | `a2m-engine` | `a2m-provider` |
 | `Manifest`, the `Registry`, the plug-in host | `a2m-provider` | `a2m-provider` | `a2m-engine`, `a2m-actions` | The product crate fills the registry |
-| The supervisor: the only way anything starts a process | `a2m-provider` | `a2m-provider` | The plug-in host; packs' drivers, each through a supervisor scoped to the programs a published plan declares | `a2m-provider` |
+| The supervisor: the only way anything starts a process | `a2m-provider` | `a2m-provider` | The plug-in host; packs' drivers, each through a supervisor scoped to the programs a published compiled target declares | `a2m-provider` |
 | `Driver`: prepare, act, health, release | `a2m-provider` | Packs; plug-ins through the plug-in host | `a2m-engine` only, and only through a handle that checks the intent token on every step that commits | `a2m-provider` |
 | `Discoverer`, with its describer | `a2m-provider` | Packs; plug-ins | A runner, inside the engine's sandbox, for a discovery job that `a2m-actions` submits for `discover.run` and the scout | `a2m-provider` |
 | `SandboxPort`: what a discoverer may ask the engine for, with writing impossible | `a2m-provider` | `a2m-engine` | Discoverers | `a2m-actions` |
 | File access for packs: a path that can only be made by the check against the allowed roots | `a2m-provider` | `a2m-provider` | Packs, which receive checked paths and never resolve one; `a2m-actions` for the kernel's own reads | `a2m-provider` |
 | An action a provider adds | `a2m-provider` | Packs; plug-ins | The dispatcher in `a2m-actions` | `a2m-provider` |
 | The engine loop: one job in, one outcome out | `a2m-engine` | `a2m-engine` | A runner, in this process or another | A role |
-| `Control`: everything the engine needs from the control plane while it runs a job: the plan by its hash, the policy decision at guard, a session lease, a record lock, a rate budget, the approval check, recording an intent and getting its token, sending events and evidence | `a2m-engine` | `a2m-actions` directly in one process; `a2m-runner` over the runner link | `a2m-engine` | A role |
+| `Control`: everything the engine needs from the control plane while it runs a job: the compiled target by its hash, the policy decision at guard, a session lease, a record lock, a rate budget, the approval check, recording an intent and getting its token, sending events and evidence | `a2m-engine` | `a2m-actions` directly in one process; `a2m-runner` over the runner link | `a2m-engine` | A role |
 | Admission, queues, job leases, waiting for record locks and other exclusive resources, budgets | `a2m-sched` | `a2m-sched` | `a2m-actions` to submit; a runner to claim | `a2m-actions` |
 | The action registry, the dispatcher, the `Kernel` handle, and the check of a caller's credential | `a2m-actions` | `a2m-actions` | Every role | A role builds the `Kernel` |
 | `PersonSurface`: asking a person to approve, to sign in, or to confirm they are present | `a2m-actions` | `a2m-local` on one machine; `a2m-api` on a server | `a2m-actions` | The product crate hands it to `Kernel::open` |
@@ -104,7 +104,7 @@ Each step names the crate that does it. A crate design repeats its own steps in 
 2. `a2m-actions` asks `a2m-policy` to decide. The decision is recorded whether it allows or refuses.
 3. `a2m-actions` submits the run to `a2m-sched`, which admits or refuses it against queues, per-session limits, and budgets, and writes the run row through `a2m-ledger`.
 4. A runner claims the job and calls `a2m-engine` with a `Control`.
-5. The engine fetches the published plan by its hash through `Control`, checks the hash, guards with the policy decision `Control` returns, and chooses a binding by its declared order and health.
+5. The engine fetches the published compiled target by its hash through `Control`, checks the hash, guards with the policy decision `Control` returns, and chooses a binding by its declared order and health.
 6. The engine asks for a `SessionLease` through `Control`; the keeper in `a2m-auth` supplies it or the run stops at `needs_login`.
 7. The engine asks the `a2m-provider` registry for the driver of the binding's mode, and calls prepare and act for each step. The driver is pack code.
 8. The engine normalizes the values with the field types, sends events and the finished trace through `Control`, which in one process writes them through `a2m-ledger`, and returns the outcome.
@@ -128,7 +128,7 @@ Steps 1 to 6 as for a read, then:
 4. The drafter in `a2m-files` writes draft files wherever a pack's drafting rules say how.
 5. `a2m-files` lints and compiles, using the file kinds and lowerings the packs registered.
 6. Drafted reads run in the sandbox five times. The developer or their agent supplies what the report says is missing.
-7. `test.run` runs the publish gates. A person publishes with `version.publish`. The plan is stored with its hash, and becomes current in stages.
+7. `test.run` runs the publish gates. A person publishes with `version.publish`. The compiled target is stored with its hash, and becomes current in stages.
 
 ### Starting a process
 
@@ -149,7 +149,7 @@ Steps 1 to 6 as for a read, then:
 | State | Lives in | Owned by |
 | --- | --- | --- |
 | Target files being written | The developer's project folder | The developer; `a2m-files` reads and the drafter writes |
-| Published versions and their plans | The store | `a2m-ledger`, written only by `version.publish` |
+| Published versions and their compiled targets | The store | `a2m-ledger`, written only by `version.publish` |
 | Runs, the ledger, record locks, events, findings, the audit chain, evidence blobs | The store and the data directory | `a2m-ledger` |
 | Decisions, approvals, grants, consents, delegations, kill switches, quota counters | The store | `a2m-policy` |
 | Sessions' records, their events, and saved session state, sealed | The store | `a2m-auth` |
@@ -178,13 +178,13 @@ A rule that depends on every author remembering it will be broken. Each of these
 
 | Rule | How the arrangement enforces it | Proof |
 | --- | --- | --- |
-| No AI at run time | No crate on the path of a run may depend on a model client; the engine executes only a compiled plan | A ban list in `deny.toml` once a model client could be depended on by accident; engine tests |
+| No AI at run time | No crate on the path of a run may depend on a model client; the engine executes only a compiled target | A ban list in `deny.toml` once a model client could be depended on by accident; engine tests |
 | Every write is recorded first and proven after | Only the engine reaches a driver, through a handle that refuses a committing step without the token the ledger gives for a recorded intent | The nine ledger rules of spec section 208, each a test |
 | Secrets never reach a caller | `Secret` cannot be printed or serialized; credentials reach a driver only through `inject`; everything leaving a front door passes `Redact` | The compile-time test in `a2m-core`; a fault test that plants a secret in a system's answer |
 | The kernel is neutral | The layering table | The audit, with planted mistakes |
 | One decider | Only `a2m-policy` exports `decide`; no other crate holds a grant | Review; a test that every action's dispatch records a decision |
 | Nothing but a person approves | Recording an approval is not an action and has no generated face | A test that the registry holds no action able to approve, on any face |
-| The engine runs only compiled plans | The engine cannot depend on the compiler | The audit, with a planted dependency |
+| The engine runs only compiled targets | The engine cannot depend on the compiler | The audit, with a planted dependency |
 | One renewer | `AuthProvider` is called only by the keeper; a driver receives a lease and reports signs of expiry | The keeper's ten-runs-one-renewal test |
 | Unknown means stop | The compiler refuses a mode, a control, or a file kind nobody registered; a driver returns `unknown_variant` | Compiler tests; conformance tests of each driver |
 | Thin clients | Commands and SDKs are generated from the action registry and contain no branch on a result | Generated code is checked in CI against the registry |

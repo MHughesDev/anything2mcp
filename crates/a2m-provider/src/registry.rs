@@ -21,10 +21,11 @@ use a2m_sources::{ReaderName, SourceReader};
 use a2m_telemetry::Telemetry;
 
 use crate::action::ProviderAction;
+use crate::capture::CaptureHandle;
 use crate::codes;
-use crate::discover::{DiscovererHandle, SurfaceDescription};
+use crate::discover::{CaptureStop, DiscovererHandle, SurfaceDescription};
 use crate::driver::{ChoiceReason, Driver, DriverHandle, HandleFacts, ProviderChoice};
-use crate::manifest::{KindOf, Manifest, ModeDecl, ModeDefaults, ProviderKind};
+use crate::manifest::{DrivenBy, KindOf, Manifest, ModeDecl, ModeDefaults, ProviderKind};
 use crate::name::{ActionName, ProviderName};
 use crate::pack::{Collected, Pack, PackContext, Registrar};
 use crate::path::Roots;
@@ -299,7 +300,7 @@ impl RegistryBuilder {
             self.host.supervisor.clone(),
             name.clone(),
             declared,
-            manifest.effects.plan_programs,
+            manifest.effects.compiled_target_programs,
         );
         let context = PackContext {
             provider: name,
@@ -594,6 +595,7 @@ impl RegistryBuilder {
         let mut auth_providers = Vec::new();
         let mut actions = BTreeMap::new();
         let mut discoverers = Vec::new();
+        let mut captures = Vec::new();
         let mut problems: Vec<RegistryProblem> = unnamed
             .iter()
             .map(|refused| RegistryProblem {
@@ -708,6 +710,24 @@ impl RegistryBuilder {
                     });
                 }
             }
+            if let Some(source) = collected.capture {
+                let kinds: Vec<SurfaceKind> = one
+                    .manifest
+                    .points
+                    .traffic_capture
+                    .iter()
+                    .cloned()
+                    .collect();
+                for kind in &kinds {
+                    names.push(format!("capture:{kind}"));
+                }
+                captures.push(CaptureHandle {
+                    provider: name.clone(),
+                    kinds,
+                    source,
+                    redact: Arc::clone(&host.redact),
+                });
+            }
             for provider in collected.auth_providers {
                 names.push(format!("auth:{}", provider.name().as_str()));
                 auth_providers.push(provider);
@@ -800,6 +820,7 @@ impl RegistryBuilder {
                 auth_providers,
                 actions,
                 discoverers,
+                captures,
                 compiler,
                 choices: settings.mode_providers,
                 host,
@@ -842,6 +863,7 @@ struct Inner {
     auth_providers: Vec<Arc<dyn AuthProvider>>,
     actions: BTreeMap<ActionName, (Arc<dyn ProviderAction>, EffectClass)>,
     discoverers: Vec<DiscovererHandle>,
+    captures: Vec<CaptureHandle>,
     compiler: CompilerSet,
     choices: BTreeMap<Mode, ProviderName>,
     host: HostServices,
@@ -1142,14 +1164,50 @@ impl Registry {
         self.inner.readers.values().cloned().collect()
     }
 
-    /// The discoverers that apply to a surface, in order of provider and
-    /// name.
+    /// The discoverers the engine drives that apply to a surface, in order
+    /// of provider and name: what a scout or `discover.run` may start. A
+    /// discoverer a person drives is never among them (decision 0392,
+    /// point 2).
     #[must_use]
     pub fn discoverers_for(&self, surface: &SurfaceDescription) -> Vec<DiscovererHandle> {
+        self.driven_for(surface, DrivenBy::Engine)
+    }
+
+    /// The discoverers a person drives that apply to a surface, in order of
+    /// provider and name: what a capture job may start, by
+    /// [`DiscovererHandle::watch`] alone (decision 0395).
+    #[must_use]
+    pub fn capture_discoverers_for(&self, surface: &SurfaceDescription) -> Vec<DiscovererHandle> {
+        self.driven_for(surface, DrivenBy::Person)
+    }
+
+    fn driven_for(&self, surface: &SurfaceDescription, by: DrivenBy) -> Vec<DiscovererHandle> {
         self.inner
             .discoverers
             .iter()
-            .filter(|handle| handle.suits(surface))
+            .filter(|handle| handle.decl.driven_by == by && handle.suits(surface))
+            .cloned()
+            .collect()
+    }
+
+    /// A new capture's stop, not yet set, and through it the
+    /// [`crate::CaptureEnd`] a capture job hands to
+    /// [`DiscovererHandle::watch`].
+    #[must_use]
+    pub fn capture_stop(&self) -> CaptureStop {
+        CaptureStop::new()
+    }
+
+    /// The traffic captures offered for a kind of surface, in order of
+    /// provider: only those of packs whose manifest declares the kind under
+    /// `points.traffic_capture` (decision 0391). A pack that declares none
+    /// is never asked.
+    #[must_use]
+    pub fn captures_for(&self, kind: &SurfaceKind) -> Vec<CaptureHandle> {
+        self.inner
+            .captures
+            .iter()
+            .filter(|handle| handle.kinds.contains(kind))
             .cloned()
             .collect()
     }
@@ -1157,14 +1215,13 @@ impl Registry {
     /// The names under which the discoverers that apply to a surface read
     /// files a person hands a discovery, each once: what a discovery of the
     /// surface may be handed, and nothing else (decision 0263). Empty when
-    /// no discoverer of the surface reads a file.
+    /// no discoverer of the surface reads a file. Only the discoverers of
+    /// [`Self::discoverers_for`] count, since only they run in a discovery.
     #[must_use]
     pub fn files_taken(&self, surface: &SurfaceDescription) -> BTreeSet<String> {
-        self.inner
-            .discoverers
-            .iter()
-            .filter(|handle| handle.suits(surface))
-            .flat_map(|handle| handle.decl.files.iter().cloned())
+        self.discoverers_for(surface)
+            .into_iter()
+            .flat_map(|handle| handle.decl.files)
             .collect()
     }
 

@@ -1,6 +1,6 @@
 //! The lowering of the `ui` mode: one binding into `goto`, `wait`, `read`,
 //! `set`, and `invoke` steps, each naming its screen in the pack's section
-//! of the plan and carrying this pack's own payload.
+//! of the compiled target and carrying this pack's own payload.
 //!
 //! | Verb | Act | Confirm | Read back |
 //! | --- | --- | --- | --- |
@@ -229,11 +229,16 @@ impl<'a> Lower<'a, '_> {
 
     /// The `read` step: one value for each output of the operation, from
     /// the screen's field of the same name, or, for a list, from the column
-    /// of that name of the screen's table.
-    fn read(&mut self, found: &Found<'_>, binding: &Located<Doc>) -> Step {
+    /// of that name of the screen's table. An output in `made` is filled by
+    /// the engine itself, as the name and size of a file it downloaded: no
+    /// page holds it, so the step does not read it.
+    fn read(&mut self, found: &Found<'_>, binding: &Located<Doc>, made: &[String]) -> Step {
         let mut payload = ReadStep::default();
         let mut args = Vec::new();
         for output in self.cx.operation().outputs() {
+            if made.contains(&output.name) {
+                continue;
+            }
             let listed = matches!(output.ty, ValueType::List(_));
             let known = if listed {
                 found
@@ -452,6 +457,43 @@ impl<'a> Lower<'a, '_> {
             steps.push(step);
         }
         steps
+    }
+
+    /// The outputs the download of the binding's action fills, each of
+    /// which the operation must declare: a value the engine makes and no
+    /// output takes would be lost (the download record).
+    fn downloaded(&mut self, found: &Found<'_>, binding: &Located<Doc>) -> Vec<String> {
+        let Some(download) = binding
+            .get("action")
+            .and_then(Located::as_text)
+            .and_then(|name| found.screen.actions.get(name))
+            .and_then(|action| action.download.as_ref())
+        else {
+            return Vec::new();
+        };
+        let mut made = Vec::new();
+        for name in download.outputs() {
+            let declared = self
+                .cx
+                .operation()
+                .outputs()
+                .iter()
+                .any(|output| output.name == name);
+            if !declared {
+                self.refuse(
+                    "unknown_field",
+                    Stage::Resolve,
+                    found.at,
+                    format!(
+                        "The download of the screen `{}` gives the output `{name}`, which the operation does not declare.",
+                        found.name
+                    ),
+                    "Declare the output on the operation, or name one it declares in the download's `into:` or `size_into:`.",
+                );
+            }
+            made.push(name.to_owned());
+        }
+        made
     }
 
     fn invoke(&mut self, found: &Found<'_>, binding: &Located<Doc>) -> Option<Step> {
@@ -675,7 +717,7 @@ impl Lowering for UiLowering {
             let mut steps = vec![
                 lower.goto(&found, TabKind::Observe),
                 lower.wait(&found, false),
-                lower.read(&found, binding.doc),
+                lower.read(&found, binding.doc, &[]),
             ];
             for step in &mut steps {
                 step.lookup = lookup;
@@ -687,6 +729,7 @@ impl Lowering for UiLowering {
             act.extend(lower.sets(&found, binding.doc));
             act.extend(lower.invoke(&found, binding.doc));
             lowered.act = act;
+            let made = lower.downloaded(&found, binding.doc);
             if let Some(read_back) = binding.field("read_back")
                 && let Some(reader) = lower.screen(read_back)
             {
@@ -709,7 +752,7 @@ impl Lowering for UiLowering {
                 let mut steps = vec![
                     lower.goto(&reader, TabKind::Observe),
                     lower.wait(&reader, false),
-                    lower.read(&reader, read_back),
+                    lower.read(&reader, read_back, &made),
                 ];
                 for step in &mut steps {
                     step.lookup = true;

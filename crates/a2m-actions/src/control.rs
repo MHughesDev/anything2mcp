@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use a2m_auth::{AuthEntry, ExpirySign, LeaseRequest, Purpose, SessionKey, SessionLease, Wait};
 use a2m_core::{
-    Digest, EffectClass, Failure, FailureClass, Identity, Plan, RunState, SurfaceIndex,
+    CompiledTarget, Digest, EffectClass, Failure, FailureClass, Identity, RunState, SurfaceIndex,
     SurfaceName, ToolRuns, Values,
 };
 use a2m_engine::{
@@ -47,22 +47,22 @@ use crate::runner::CallerFacts;
 const LOCK_WAIT: Duration = Duration::from_secs(60);
 
 /// The keeper's entry for a surface's sign-in, field by field from the
-/// plan (decision 0121), with what the plan says of its surfaces in
-/// `environment`: the surfaces the entry covers and every address the
-/// target declares, where the sign-in may send (decisions 0245 and 0248).
-/// `published` says the plan is a published version's: only the caller
-/// that knows where the plan came from says so, and a drafts' entry is
-/// never used to sign in or renew without the person. `session.login`
-/// builds the same entry from the same plan, so a sign-in a person makes is
-/// the session a run leases.
+/// compiled target (decision 0121), with what the compiled target says of its
+/// surfaces in `environment`: the surfaces the entry covers and every address
+/// the target declares, where the sign-in may send (decisions 0245 and 0248).
+/// `published` says the compiled target is a published version's: only the
+/// caller that knows where the compiled target came from says so, and a
+/// drafts' entry is never used to sign in or renew without the person.
+/// `session.login` builds the same entry from the same compiled target, so a
+/// sign-in a person makes is the session a run leases.
 pub(crate) fn entry_of(
-    plan: &Plan,
-    auth: &a2m_core::AuthPlan,
+    compiled_target: &CompiledTarget,
+    auth: &a2m_core::CompiledAuth,
     environment: &a2m_core::Environment,
     published: bool,
 ) -> AuthEntry {
     let mut entry = AuthEntry::new(auth.provider.clone());
-    let surfaces = a2m_auth::EntrySurfaces::of(plan, auth, environment);
+    let surfaces = a2m_auth::EntrySurfaces::of(compiled_target, auth, environment);
     entry.surfaces = if published {
         surfaces.published()
     } else {
@@ -87,7 +87,7 @@ pub(crate) struct InProcessControl {
     fence: Fence,
     lease: LeaseRef,
     run: RunRow,
-    plan: Arc<Plan>,
+    compiled_target: Arc<CompiledTarget>,
     caller: CallerFacts,
     /// The files a discovery run's stored call hands its discoverers, each
     /// name to its path as the call wrote it (decision 0263). Empty for
@@ -104,7 +104,7 @@ impl InProcessControl {
         fence: Fence,
         lease: LeaseRef,
         run: RunRow,
-        plan: Arc<Plan>,
+        compiled_target: Arc<CompiledTarget>,
         caller: CallerFacts,
     ) -> Self {
         Self {
@@ -112,7 +112,7 @@ impl InProcessControl {
             fence,
             lease,
             run,
-            plan,
+            compiled_target,
             caller,
             discovery_files: std::collections::BTreeMap::new(),
             purpose: Purpose::Run,
@@ -155,9 +155,10 @@ impl InProcessControl {
         }
     }
 
-    /// Whether the run's plan is a draft: a plan a trial or a discovery
-    /// runs from the drafts is kept in memory as a draft; every other plan
-    /// a run holds is a published version's (decision 0248).
+    /// Whether the run's compiled target is a draft: a compiled target a
+    /// trial or a discovery runs from the drafts is kept in memory as a
+    /// draft; every other compiled target a run holds is a published
+    /// version's (decision 0248).
     fn drafted(&self) -> bool {
         self.kernel
             .inner
@@ -177,7 +178,7 @@ impl InProcessControl {
     }
 
     fn surface_index(&self, name: &SurfaceName) -> Option<SurfaceIndex> {
-        self.plan
+        self.compiled_target
             .surfaces
             .iter()
             .position(|surface| &surface.name == name)
@@ -232,10 +233,13 @@ impl Drop for Notice {
 }
 
 impl Control for InProcessControl {
-    fn plan<'a>(&'a self, hash: &'a Digest) -> BoxFuture<'a, Result<Arc<Plan>, Failure>> {
+    fn compiled_target<'a>(
+        &'a self,
+        hash: &'a Digest,
+    ) -> BoxFuture<'a, Result<Arc<CompiledTarget>, Failure>> {
         Box::pin(async move {
             self.kernel
-                .plan_by_hash(&self.run.target, hash)
+                .compiled_target_by_hash(&self.run.target, hash)
                 .await
                 .map_err(|failure| self.redacted(failure))
         })
@@ -251,7 +255,7 @@ impl Control for InProcessControl {
                 )
             })?;
             let module = self
-                .plan
+                .compiled_target
                 .tool(&question.tool)
                 .and_then(|tool| tool.module.clone())
                 .unwrap_or_else(|| "main".to_owned());
@@ -322,7 +326,7 @@ impl Control for InProcessControl {
             let keeper = self.kernel.keeper()?;
             let auth = self
                 .surface_index(&want.surface)
-                .and_then(|index| self.plan.auth_of(index))
+                .and_then(|index| self.compiled_target.auth_of(index))
                 .ok_or_else(|| {
                     codes::input(
                         a2m_auth::codes::AUTH_SETTINGS_INVALID,
@@ -331,7 +335,12 @@ impl Control for InProcessControl {
                     )
                 })?;
             let published = !self.drafted();
-            let entry = entry_of(&self.plan, auth, &self.run.environment, published);
+            let entry = entry_of(
+                &self.compiled_target,
+                auth,
+                &self.run.environment,
+                published,
+            );
 
             let settings = self.kernel.settings();
             let wait = if settings.text("engine.person") == Some("absent") {
@@ -369,7 +378,7 @@ impl Control for InProcessControl {
                     lease.session(),
                     crate::keeper::ProbeSource {
                         target: self.run.target.clone(),
-                        plan: self.run.target_version,
+                        compiled_target: self.run.target_version,
                         probe: auth.probe.clone(),
                     },
                 );
@@ -403,7 +412,7 @@ impl Control for InProcessControl {
             // declares none takes the scheduler's conservative default.
             if let Some(rate) = self
                 .surface_index(surface)
-                .and_then(|index| self.plan.surface(index))
+                .and_then(|index| self.compiled_target.surface(index))
                 .and_then(|surface| surface.rate)
                 && !self.kernel.budget_noted(&key)
             {
@@ -463,24 +472,26 @@ impl Control for InProcessControl {
             let pre_approval =
                 self.kernel.settings().flag(crate::bounds::PRE_APPROVAL) == Some(true);
             let module = self
-                .plan
+                .compiled_target
                 .tool(&self.run.tool_name)
                 .and_then(|tool| tool.module.clone())
                 .unwrap_or_else(|| "main".to_owned());
-            // The tool's hazard, from the plan: a hazard forbids writing
-            // without a person, so the question must carry it. A tool the
-            // plan does not hold is asked about with no record count, and
-            // no pre-approval rule covers a run of unknown size.
+            // The tool's hazard, from the compiled target: a hazard forbids
+            // writing without a person, so the question must carry it. A tool
+            // the compiled target does not hold is asked about with no record
+            // count, and no pre-approval rule covers a run of unknown size.
             let hazard = self
-                .plan
+                .compiled_target
                 .tool(&self.run.tool_name)
                 .and_then(|tool| match tool.runs {
-                    ToolRuns::Operation(index) => {
-                        self.plan.operation(index).map(|found| found.hazard)
-                    }
-                    ToolRuns::Pipeline(index) => {
-                        self.plan.pipeline(index).map(|found| found.hazard)
-                    }
+                    ToolRuns::Operation(index) => self
+                        .compiled_target
+                        .operation(index)
+                        .map(|found| found.hazard),
+                    ToolRuns::Pipeline(index) => self
+                        .compiled_target
+                        .pipeline(index)
+                        .map(|found| found.hazard),
                 });
             let mut context = Context::plain(self.run.workspace, self.run.environment.clone());
             context.effect = self.run.effect;
@@ -497,7 +508,7 @@ impl Control for InProcessControl {
             // record of the run is one of them (decision 0145). Only a
             // published version's word counts (decision 0273).
             let test_keys = test_record_keys(
-                &self.plan.environments,
+                &self.compiled_target.environments,
                 &self.run.environment,
                 self.drafted(),
             );
@@ -860,8 +871,8 @@ impl Control for InProcessControl {
                     store
                         .write(self.run_durability(), move |tx| {
                             let mut ledger = tx.ledger();
-                            // The engine says `validating` before it has
-                            // the plan, and may say a state the run is
+                            // The engine says `validating` before it has the
+                            // compiled target, and may say a state the run is
                             // already in: that is no move.
                             if ledger.run(run)?.state == to {
                                 return Ok(());
@@ -948,7 +959,7 @@ impl Control for InProcessControl {
                         "code": failure.as_ref().map(|(_, code)| code.as_str()),
                     });
                     let workspace = self.run.workspace;
-                    let target = self.plan.header.target.as_str().to_owned();
+                    let target = self.compiled_target.header.target.as_str().to_owned();
                     store
                         .write(Durability::Synced, move |tx| {
                             tx.ledger()
@@ -1119,7 +1130,7 @@ impl Control for InProcessControl {
             // The surface's own declared budget, set once, as `rate` sets it.
             if let Some(rate) = self
                 .surface_index(surface)
-                .and_then(|index| self.plan.surface(index))
+                .and_then(|index| self.compiled_target.surface(index))
                 .and_then(|surface| surface.rate)
                 && !self.kernel.budget_noted(&key)
             {
@@ -1307,12 +1318,12 @@ impl a2m_provider::OtherRecords for StoredOthers {
     }
 }
 
-/// The test records `environment` declares, when the plan is a published
-/// version's and declares that environment a test copy. A draft's word that
-/// an environment is a test copy counts for nothing: an agent may write a
-/// draft (finding C1 of the sixth audit, decision 0273).
+/// The test records `environment` declares, when the compiled target is a
+/// published version's and declares that environment a test copy. A draft's
+/// word that an environment is a test copy counts for nothing: an agent may
+/// write a draft (finding C1 of the sixth audit, decision 0273).
 fn test_record_keys(
-    environments: &[a2m_core::EnvironmentPlan],
+    environments: &[a2m_core::CompiledEnvironment],
     environment: &a2m_core::Environment,
     drafted: bool,
 ) -> Option<Vec<a2m_core::RecordKey>> {
@@ -1355,7 +1366,7 @@ mod told_tests {
     fn a_drafts_test_environment_gives_no_test_records() {
         let staging = a2m_core::Environment::new("staging").unwrap();
         let key = a2m_core::RecordKey::new(vec![a2m_core::Value::Text("T-1".to_owned())]).unwrap();
-        let environments = [a2m_core::EnvironmentPlan {
+        let environments = [a2m_core::CompiledEnvironment {
             name: staging.clone(),
             kind: a2m_core::EnvironmentKind::Test,
             addresses: Vec::new(),

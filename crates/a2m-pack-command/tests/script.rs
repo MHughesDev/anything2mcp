@@ -15,7 +15,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use a2m_core::{Digest, Environment, Epoch, FailureClass, NoSecrets, Plan, RunId, Value, Values};
+use a2m_core::{
+    CompiledTarget, Digest, Environment, Epoch, FailureClass, NoSecrets, RunId, Value, Values,
+};
 use a2m_files::Diagnostics;
 use a2m_pack_command::codes;
 use a2m_provider::{
@@ -58,7 +60,7 @@ struct Pair {
 struct Scene {
     folder: Folder,
     registry: Registry,
-    plan: Plan,
+    compiled_target: CompiledTarget,
     out: PathBuf,
     script: PathBuf,
 }
@@ -148,12 +150,13 @@ impl Scene {
         let out = folder.path().join("received.bin");
         let digest = Digest::of(pair.text.as_bytes());
         let path = script_path.map_or_else(|| format!("scripts/{}", pair.name), str::to_owned);
-        let plan =
-            common::compile(&files(pair, &path, &digest, &out), registry.compiler_set())?.plan;
+        let compiled_target =
+            common::compile(&files(pair, &path, &digest, &out), registry.compiler_set())?
+                .compiled_target;
         Ok(Self {
             folder,
             registry,
-            plan,
+            compiled_target,
             out,
             script,
         })
@@ -164,9 +167,9 @@ impl Scene {
     async fn run(&self, pair: &Pair) -> Result<(), StepFailure> {
         let handle = self.registry.driver(&codes::mode()).unwrap();
         let surface = SurfaceRef {
-            target: self.plan.header.target.clone(),
+            target: self.compiled_target.header.target.clone(),
             environment: Environment::new("test").unwrap(),
-            surface: self.plan.surfaces[0].clone(),
+            surface: self.compiled_target.surfaces[0].clone(),
         };
         let supervisor = handle.supervisor(
             surface
@@ -190,7 +193,7 @@ impl Scene {
             run: RunId::from_bytes([9; 16]),
             epoch: Epoch::new(1),
             surface: &surface,
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             posture: Posture::Live,
             deadline: Deadline::after(WITHIN),
             redact: &NoSecrets,
@@ -203,7 +206,7 @@ impl Scene {
         for (n, value) in values(pair).iter().enumerate() {
             args.insert(format!("p{}", n + 1), Value::from(value.as_str()));
         }
-        let operation = &self.plan.operations[0];
+        let operation = &self.compiled_target.operations[0];
         let mut result = Ok(());
         for step in &operation.bindings[0].act {
             let input = StepInput::new(&args, Deadline::after(WITHIN));

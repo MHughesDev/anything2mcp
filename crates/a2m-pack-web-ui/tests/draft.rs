@@ -21,8 +21,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use a2m_core::{
-    Address, Coverage, EvidenceLevel, FailureClass, Finding, FindingKind, LimitationCode,
-    NoSecrets, Plan, ProducedBy, Source, Subject, Timestamp, Value, Values,
+    Address, CompiledTarget, Coverage, EvidenceLevel, FailureClass, Finding, FindingKind,
+    LimitationCode, NoSecrets, ProducedBy, Source, Subject, Timestamp, Value, Values,
 };
 use a2m_files::{
     CompileMode, Diagnostics, DraftContext, DraftDoc, DraftReport, DraftValue, Drafter,
@@ -141,7 +141,7 @@ fn compile_drafts(
     report: &DraftReport,
     path: &str,
     change: impl Fn(&str) -> String,
-) -> Result<Plan, Diagnostics> {
+) -> Result<CompiledTarget, Diagnostics> {
     let mut files: Vec<(RelPath, Vec<u8>)> = files_of(folder.path())
         .into_iter()
         .filter(|(file, _)| !file.as_str().starts_with("held/"))
@@ -162,11 +162,11 @@ fn compile_drafts(
     let set = stand.registry.compiler_set();
     let sources = a2m_files::load_files(&TargetRoot::new(folder.path()), &files, set)?;
     a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
-        .map(|compiled| compiled.plan)
+        .map(|compiled| compiled.compiled_target)
 }
 
 /// Compiles a target folder as it stands, leaving out the holding folder.
-fn compile_without_held(stand: &Stand, folder: &Folder) -> Result<Plan, Diagnostics> {
+fn compile_without_held(stand: &Stand, folder: &Folder) -> Result<CompiledTarget, Diagnostics> {
     let files: Vec<(RelPath, Vec<u8>)> = files_of(folder.path())
         .into_iter()
         .filter(|(file, _)| !file.as_str().starts_with("held/"))
@@ -174,19 +174,20 @@ fn compile_without_held(stand: &Stand, folder: &Folder) -> Result<Plan, Diagnost
     let set = stand.registry.compiler_set();
     let sources = a2m_files::load_files(&TargetRoot::new(folder.path()), &files, set)?;
     a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
-        .map(|compiled| compiled.plan)
+        .map(|compiled| compiled.compiled_target)
 }
 
 fn class_and_code(failure: &StepFailure) -> (FailureClass, &str) {
     (failure.failure.class(), failure.failure.code().as_str())
 }
 
-/// Runs one read of a plan in a run that may only look.
+/// Runs one read of a compiled target in a run that may only look.
 async fn look(scene: &Scene, operation: &str) -> Result<common::Ran, StepFailure> {
     look_with(scene, operation, &Values::new()).await
 }
 
-/// Runs one read of a plan with these inputs, in a run that may only look.
+/// Runs one read of a compiled target with these inputs, in a run that may
+/// only look.
 async fn look_with(
     scene: &Scene,
     operation: &str,
@@ -266,20 +267,20 @@ async fn a_snapshot_of_a_page_that_shows_an_order_drafts_a_read_that_reads_what_
         "{operation}"
     );
 
-    let plan = compile_drafts(&stand, &folder, &report, "", str::to_owned)
+    let compiled_target = compile_drafts(&stand, &folder, &report, "", str::to_owned)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    let read = plan
+    let read = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == READ)
         .unwrap();
     assert_eq!(read.effect, a2m_core::EffectClass::Read);
     for output in &read.outputs {
-        assert!(plan.field_types[output.field_type.unwrap().get()].untrusted);
+        assert!(compiled_target.field_types[output.field_type.unwrap().get()].untrusted);
     }
 
     // Through the driver's handle, in a run that may only look.
-    let scene = Scene::over(stand, plan.clone(), &origin);
+    let scene = Scene::over(stand, compiled_target.clone(), &origin);
     let ran = look(&scene, READ).await.unwrap();
     let column = |of: &dyn Fn(&example_app::store::StoredItem) -> String| {
         Value::List(
@@ -321,11 +322,11 @@ async fn a_snapshot_of_a_page_that_shows_an_order_drafts_a_read_that_reads_what_
         (FailureClass::Drift, "fingerprint_mismatch"),
         "{drift}"
     );
-    changed.plan = compile_drafts(&changed.stand, &folder, &report, SCREEN, |text| {
+    changed.compiled_target = compile_drafts(&changed.stand, &folder, &report, SCREEN, |text| {
         text.replacen("name: \"Line items\"", "name: \"Lines\"", 1)
     })
     .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    for operation in &mut changed.plan.operations {
+    for operation in &mut changed.compiled_target.operations {
         for binding in &mut operation.bindings {
             for step in &mut binding.act {
                 step.timeout_ms = 1500;
@@ -546,9 +547,10 @@ async fn a_read_never_runs_in_a_tab_that_can_write_in_any_posture() {
     )
     .unwrap();
     let stand = Stand::new("trap", Arc::new(NoSecrets));
-    let plan = compile_drafts(&stand, &folder, &DraftReport::default(), "", str::to_owned)
-        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    let scene = Scene::over(stand, plan, &origin);
+    let compiled_target =
+        compile_drafts(&stand, &folder, &DraftReport::default(), "", str::to_owned)
+            .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    let scene = Scene::over(stand, compiled_target, &origin);
     // In every posture, a live run and a sandbox with test records among
     // them, the read's tab cannot write: the browser fails the page's
     // write before it leaves, and the run stops on it by name.
@@ -657,10 +659,10 @@ async fn two_pages_of_one_screen_draft_reads_by_key_that_read_each_order_and_ref
         }
     }
 
-    let plan = compile_drafts(&stand, &folder, &report, "", str::to_owned)
+    let compiled_target = compile_drafts(&stand, &folder, &report, "", str::to_owned)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
     for name in [BY_KEY, VALUES] {
-        let read = plan
+        let read = compiled_target
             .operations
             .iter()
             .find(|operation| operation.name.as_str() == name)
@@ -674,7 +676,7 @@ async fn two_pages_of_one_screen_draft_reads_by_key_that_read_each_order_and_ref
         assert_eq!(inputs, ["order_id"], "{name}");
     }
 
-    let scene = Scene::over(stand, plan, &origin);
+    let scene = Scene::over(stand, compiled_target, &origin);
     for order in ["A-100", "A-101"] {
         let key = Values::new().with("order_id", order);
         let stored = app.stored_order(order).await.unwrap().unwrap();
@@ -907,10 +909,10 @@ fn a_page_with_a_form_and_a_button_drafts_no_operation_that_could_write_by_any_r
         .filter(|path| path.starts_with("operations/"))
         .collect();
     assert_eq!(operations.len(), 4, "{report:?}");
-    let plan = compile_drafts(&stand, &folder, &report, "", str::to_owned)
+    let compiled_target = compile_drafts(&stand, &folder, &report, "", str::to_owned)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    assert_eq!(plan.operations.len(), 4);
-    for operation in &plan.operations {
+    assert_eq!(compiled_target.operations.len(), 4);
+    for operation in &compiled_target.operations {
         assert_eq!(
             operation.effect,
             a2m_core::EffectClass::Read,
@@ -1132,9 +1134,9 @@ async fn a_page_that_loads_from_its_other_name_drafts_a_read_that_declares_that_
     std::fs::create_dir_all(folder.path().join("operations")).unwrap();
     std::fs::write(folder.path().join(list), kept.join("\n") + "\n").unwrap();
     std::fs::remove_file(&held_file).unwrap();
-    let plan = compile_without_held(&stand, &folder)
+    let compiled_target = compile_without_held(&stand, &folder)
         .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    let read = plan
+    let read = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str().ends_with("_line_items_list"))
@@ -1144,7 +1146,7 @@ async fn a_page_that_loads_from_its_other_name_drafts_a_read_that_declares_that_
 
     // Without the declaration the page stops the run, naming the origin, and
     // nothing reaches it.
-    let mut scene = Scene::over(stand, plan.clone(), &origin);
+    let mut scene = Scene::over(stand, compiled_target.clone(), &origin);
     let stopped = look(&scene, &name).await.unwrap_err();
     assert_eq!(
         class_and_code(&stopped),

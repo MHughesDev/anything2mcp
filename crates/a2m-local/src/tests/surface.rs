@@ -1150,6 +1150,8 @@ fn the_publish_page_shows_where_each_surface_leads_its_notices_and_every_warning
                 ),
             ],
             notices: vec![notice],
+            new_in: vec!["live".to_owned()],
+            new_here: false,
         },
         ActSurface {
             name: "files".to_owned(),
@@ -1157,6 +1159,8 @@ fn the_publish_page_shows_where_each_surface_leads_its_notices_and_every_warning
             address: "prices".to_owned(),
             addresses: Vec::new(),
             notices: Vec::new(),
+            new_in: Vec::new(),
+            new_here: false,
         },
     ];
     let warnings = [ActWarning {
@@ -1164,10 +1168,13 @@ fn the_publish_page_shows_where_each_surface_leads_its_notices_and_every_warning
         message: "target.yaml: The surface `api` accepts \"credentials\" over <http>.".to_owned(),
     }];
     let page = version_html(&surfaces, &warnings);
+    // An address no person registered is marked where it is listed, and
+    // no other.
     assert!(
-        page.contains("<code>api</code>, a surface of the kind <code>http</code>, leads to <code>http://203.0.113.7/&lt;b&gt;orders&lt;/b&gt;</code> in the environment <code>test</code>; <code>https://orders.example.com/\\u{202e}gro</code> in the environment <code>live</code>."),
+        page.contains(&format!("<code>api</code>, a surface of the kind <code>http</code>, leads to <code>http://203.0.113.7/&lt;b&gt;orders&lt;/b&gt;</code> in the environment <code>test</code>; <code>https://orders.example.com/\\u{{202e}}gro</code> in the environment <code>live</code> <strong class=\"new-place\">({})</strong>.", a2m_actions::NEW_PLACE)),
         "{page}"
     );
+    assert_eq!(page.matches("class=\"new-place\"").count(), 1, "{page}");
     assert!(!page.contains('\u{202e}'), "{page}");
     assert!(
         page.contains("<code>files</code>, a surface of the kind <code>file</code>, leads to <code>prices</code>.</li>"),
@@ -1454,10 +1461,10 @@ async fn the_sign_in_page_asks_for_each_role_the_provider_needs_and_shows_none_b
 fn the_act_page_shows_sign_ins_before_tools_and_escapes_and_hides_every_secret_value() {
     use crate::surface::review_shown::review_html;
     use a2m_files::{
-        BindingReview, BindingStates, CredentialShown, EnvironmentVariable, PROBE_PENDING,
-        ProbeReview, ProgramRun, REACH_NOT_STATED, Reach, ReachGroup, ReviewItem, ReviewSummary,
-        RunReview, SCRIPT_NOTICE, SentAddress, SentGroup, SentTo, SentToReview, SignInReview,
-        VariableValue,
+        BindingReview, BindingStates, CredentialShown, EnvironmentVariable, LAUNCHER_NOTICE,
+        PROBE_PENDING, ProbeReview, ProgramRun, REACH_NOT_STATED, Reach, ReachGroup, ReviewItem,
+        ReviewSummary, RunReview, SCRIPT_NOTICE, SentAddress, SentGroup, SentTo, SentToReview,
+        SignInReview, VariableValue,
     };
     let surface = || a2m_core::SurfaceName::new("api").unwrap();
     let sign_in = |entry: usize, probe: ProbeReview| SignInReview {
@@ -1501,16 +1508,28 @@ fn the_act_page_shows_sign_ins_before_tools_and_escapes_and_hides_every_secret_v
                 surface: surface(),
                 surface_programs: Vec::new(),
                 states: BindingStates::Stated {
-                    runs: vec![RunReview {
-                        run: ProgramRun::Script {
-                            interpreter: "/usr/bin/example-interpreter".to_owned(),
-                            interpreter_digests: vec![Digest::of(b"interpreter")],
-                            arguments: vec!["-I".to_owned()],
-                            script: "scripts/<run>.example\u{202e}".to_owned(),
-                            script_digest: Digest::of(b"script"),
+                    runs: vec![
+                        RunReview {
+                            run: ProgramRun::Script {
+                                interpreter: "/usr/bin/example-interpreter".to_owned(),
+                                interpreter_digests: vec![Digest::of(b"interpreter")],
+                                arguments: vec!["-I".to_owned()],
+                                script: "scripts/<run>.example\u{202e}".to_owned(),
+                                script_digest: Digest::of(b"script"),
+                            },
+                            notice: Some(SCRIPT_NOTICE),
                         },
-                        notice: Some(SCRIPT_NOTICE),
-                    }],
+                        RunReview {
+                            run: ProgramRun::Launcher {
+                                launcher: "/usr/bin/example-launcher".to_owned(),
+                                launcher_digests: vec![Digest::of(b"launcher")],
+                                arguments: vec!["--fixed".to_owned()],
+                                entry: "/opt/example/lib/server.example".to_owned(),
+                                entry_digest: Digest::of(b"entry"),
+                            },
+                            notice: Some(LAUNCHER_NOTICE),
+                        },
+                    ],
                     environment: vec![
                         EnvironmentVariable {
                             name: "EXAMPLE_MODE".to_owned(),
@@ -1583,6 +1602,15 @@ fn the_act_page_shows_sign_ins_before_tools_and_escapes_and_hides_every_secret_v
     );
     assert!(page.contains(&escape_like_page(SCRIPT_NOTICE)), "{page}");
     assert!(page.contains(&Digest::of(b"script").to_string()), "{page}");
+    // A launcher: its path, the entry file's path and digest, and its own
+    // sentence.
+    assert!(page.contains("Starts the launcher"), "{page}");
+    assert!(
+        page.contains("<code>/opt/example/lib/server.example</code>"),
+        "{page}"
+    );
+    assert!(page.contains(&escape_like_page(LAUNCHER_NOTICE)), "{page}");
+    assert!(page.contains(&Digest::of(b"entry").to_string()), "{page}");
     assert!(
         page.contains("<code>EXAMPLE_MODE</code>: set to <code>a&amp;b</code>"),
         "{page}"

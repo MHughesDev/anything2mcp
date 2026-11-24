@@ -71,7 +71,7 @@ fn the_fixtures_compile_twice_to_the_same_bytes() {
     // The pack's section: every statement is a constant, and a table-form
     // write carries the full key and its guard.
     let section: Section = first
-        .plan
+        .compiled_target
         .section_of(&STATEMENT, &DATABASE)
         .unwrap()
         .payload
@@ -119,7 +119,7 @@ fn the_fixtures_compile_twice_to_the_same_bytes() {
     };
     let binding = |name: &str| {
         &first
-            .plan
+            .compiled_target
             .operations
             .iter()
             .find(|operation| operation.name.as_str() == name)
@@ -394,8 +394,9 @@ fn a_write_never_compiles_as_a_read_and_a_delete_never_as_a_plain_write() {
     assert!(problem.fix.contains("irreversible"), "{problem}");
 }
 
-/// Compiles a copy of the fixtures after one replacement, and gives the plan.
-fn plan_after(file: &[&str], from: &str, to: &str) -> a2m_core::Plan {
+/// Compiles a copy of the fixtures after one replacement, and gives the
+/// compiled target.
+fn compiled_target_after(file: &[&str], from: &str, to: &str) -> a2m_core::CompiledTarget {
     let folder = Folder::new("compile");
     let registry = registry_of(&crate::pack(), &folder, Arc::new(NoSecrets));
     let root = folder.path().join("example");
@@ -407,13 +408,17 @@ fn plan_after(file: &[&str], from: &str, to: &str) -> a2m_core::Plan {
     assert!(text.contains(from), "the fixture no longer holds `{from}`");
     std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
     match compile_folder(&registry, &root) {
-        Ok(compiled) => compiled.plan,
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("it must compile: {problems:#?}"),
     }
 }
 
-fn evidence_of(plan: &a2m_core::Plan, operation: &str) -> a2m_core::WriteEvidence {
-    plan.operations
+fn evidence_of(
+    compiled_target: &a2m_core::CompiledTarget,
+    operation: &str,
+) -> a2m_core::WriteEvidence {
+    compiled_target
+        .operations
         .iter()
         .find(|found| found.name.as_str() == operation)
         .unwrap()
@@ -425,27 +430,27 @@ fn evidence_of(plan: &a2m_core::Plan, operation: &str) -> a2m_core::WriteEvidenc
 fn an_append_with_no_key_states_the_stores_count_as_its_evidence_and_every_other_write_is_read_back()
  {
     // The assigned-key insert keeps the read-back it names.
-    let plan = plan_after(
+    let compiled_target = compiled_target_after(
         &["operations", "shipment_create.yaml"],
         "    verb: create\n",
         "    verb: create\n",
     );
     assert_eq!(
-        evidence_of(&plan, "example_shipment_create"),
+        evidence_of(&compiled_target, "example_shipment_create"),
         a2m_core::WriteEvidence::ReadBack
     );
     assert_eq!(
-        evidence_of(&plan, "example_line_item_update"),
+        evidence_of(&compiled_target, "example_line_item_update"),
         a2m_core::WriteEvidence::ReadBack
     );
     // The same insert with no read-back: `irreversible`, identity `none`.
-    let plan = plan_after(
+    let compiled_target = compiled_target_after(
         &["operations", "shipment_create.yaml"],
         "    read_back: shipment_read_back\n",
         "",
     );
     assert_eq!(
-        evidence_of(&plan, "example_shipment_create"),
+        evidence_of(&compiled_target, "example_shipment_create"),
         a2m_core::WriteEvidence::Acknowledged
     );
 }

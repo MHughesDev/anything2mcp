@@ -1,6 +1,6 @@
 # 0244. The desktop pack reads macOS applications, and every act proves the record again
 
-**Status:** Accepted. Design decision. The owner had not read this record when it was merged.
+**Status:** Accepted. Design decision. The owner had not read this record when it was merged. Superseded in part by [decision 0409](0409-a-macos-window-keeps-its-key-for-as-long-as-it-is-listed.md): a window's key is a number it keeps while it is listed, not its place in one of the last four listings.
 
 **Date:** 2026-11-18
 

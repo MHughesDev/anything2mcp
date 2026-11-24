@@ -12,6 +12,7 @@ use a2m_sources::SourceReader;
 use a2m_telemetry::Telemetry;
 
 use crate::action::ProviderAction;
+use crate::capture::CaptureSource;
 use crate::codes;
 use crate::discover::{Describer, Discoverer};
 use crate::driver::Driver;
@@ -199,6 +200,7 @@ pub(crate) struct Collected {
     pub source_readers: Vec<Arc<dyn SourceReader>>,
     pub compiler: CompilerRegistrations,
     pub actions: Vec<Arc<dyn ProviderAction>>,
+    pub capture: Option<Arc<dyn CaptureSource>>,
 }
 
 /// What a pack hands its objects to. Each call is checked against the
@@ -286,6 +288,23 @@ impl<'a> Registrar<'a> {
         }
         self.once(format!("the discoverer `{name}`"))?;
         self.collected.discoverers.push((discoverer, describer));
+        Ok(())
+    }
+
+    /// Registers the pack's one capture source, which offers traffic
+    /// capture of the surface kinds the manifest lists under
+    /// `points.traffic_capture` (decision 0391).
+    ///
+    /// # Errors
+    ///
+    /// `policy`/`effect_not_declared` when the manifest lists none, or for
+    /// a second source.
+    pub fn traffic_capture(&mut self, source: Arc<dyn CaptureSource>) -> Result<(), Failure> {
+        if self.manifest.points.traffic_capture.is_empty() {
+            return Err(self.undeclared("a traffic capture source"));
+        }
+        self.once("a traffic capture source".to_owned())?;
+        self.collected.capture = Some(source);
         Ok(())
     }
 

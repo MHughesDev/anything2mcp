@@ -26,9 +26,10 @@ pub mod forgery;
 pub mod harness;
 mod identity;
 mod later;
+pub use later::EXPORT_MARKER;
 mod leaving;
 mod openapi;
-mod own_requests;
+pub mod own_requests;
 mod pages;
 pub mod releases;
 pub mod store;
@@ -80,6 +81,9 @@ pub(crate) struct Inner {
     /// Package 9.1: how the form of a line item is changed, as a release
     /// would change it.
     pub(crate) line_item_change: releases::ScreenChange,
+    /// Case 39: the rows a page asks for with `POST`, and what their route
+    /// was sent.
+    pub(crate) case_rows: own_requests::CaseRows,
 }
 
 /// How many requests the application remembers having received.
@@ -101,6 +105,7 @@ impl Default for Inner {
             case_events: Vec::new(),
             export_started: None,
             line_item_change: releases::ScreenChange::default(),
+            case_rows: own_requests::CaseRows::default(),
         }
     }
 }

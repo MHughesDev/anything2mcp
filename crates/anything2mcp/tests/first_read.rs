@@ -22,7 +22,7 @@ async fn a_target_is_added_linted_published_and_read_five_times_with_one_trace_s
     let machine = Machine::new("orders", &[(PLACEHOLDER, &app.url(""))]);
     let world = machine.open().await;
 
-    // The drafts lint and compile, and the plan names the tools.
+    // The drafts lint and compile, and the compiled target names the tools.
     let linted = world.ok(&["draft", "lint", "example"]).await;
     assert_eq!(linted["ok"], true, "{linted}");
     assert!(
@@ -40,7 +40,7 @@ async fn a_target_is_added_linted_published_and_read_five_times_with_one_trace_s
     let published = world.person(&["version", "publish", "example"]).await;
     assert_eq!(published.finished.code, 0, "{:?}", published.finished);
     assert_eq!(published.result()["version"], "1.0.0");
-    assert!(published.result()["plan_hash"].is_string());
+    assert!(published.result()["compiled_target_hash"].is_string());
 
     // The tool is found, and called five times.
     let found = world.ok(&["tool", "search", "order"]).await;

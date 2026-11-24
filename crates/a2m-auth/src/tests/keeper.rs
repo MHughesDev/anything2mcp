@@ -143,8 +143,10 @@ async fn one_renewal_also_under_real_parallelism() {
 
 /// Two engines over one store: two keepers, each with its own waiters, meet
 /// one expired session at once. The store's compare-and-set on the
-/// session's state and epoch lets one of them start the renewal; the other
-/// waits for it, and every run of both is given the one renewed epoch. A
+/// session's state and epoch lets one of them start the renewal, whichever
+/// it is: the one that signed the session in, or the other, whose runner
+/// opens the saved state first. The other waits for it, and every run of
+/// both is given the one renewed epoch. A
 /// keeper hears of its own renewal at once, and of the other engine's at
 /// its next tick, which wakes every waiting call to read the store again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -175,15 +177,29 @@ async fn two_engines_over_one_store_make_one_renewal() {
         .collect();
     until(|| world.keeper.waiting() + other.waiting() == 10 && world.fake.refreshes() == 1).await;
     world.fake.release_renewals();
+    // Which engine won the compare-and-set is the scheduler's choice. The
+    // renewal's task ends after its last write, and only the first engine
+    // has telemetry, which counts the renewal when that engine made it.
+    world.keeper.idle().await;
+    other.idle().await;
+    let first_renewed = match world.telemetry.metrics().counter(RENEWALS, &[]) {
+        1 => true,
+        0 => false,
+        counted => panic!("the first engine counted {counted} renewals"),
+    };
+    let waiter = if first_renewed { &other } else { &world.keeper };
     let (mine, theirs): (Vec<_>, Vec<_>) = runs
         .into_iter()
         .enumerate()
-        .partition(|(at, _)| at % 2 == 0);
+        .partition(|(at, _)| (at % 2 == 0) == first_renewed);
+    // The renewer's own runs hear of its renewal at once, with no tick.
     for (_, run) in mine {
         assert_eq!(run.await.unwrap().unwrap().epoch(), 2);
     }
-    // The other engine's tick, as its tending task makes it.
-    other.tick().await;
+    // The other engine's runs wait until that engine's own tick, as its
+    // tending task makes it.
+    assert_eq!(waiter.waiting(), 5);
+    waiter.tick().await;
     for (_, run) in theirs {
         let lease = tokio::time::timeout(Duration::from_secs(30), run)
             .await
@@ -202,6 +218,64 @@ async fn two_engines_over_one_store_make_one_renewal() {
             .count(),
         1
     );
+}
+
+/// The engine that renews is not always the one that holds the session's
+/// credentials: here the other engine signed the session in, and this one
+/// meets it expired. Its runner opens the credentials from the saved state
+/// and renews silently, as the engine that signed in would; the session is
+/// never put to its person for want of credentials another runner holds.
+#[tokio::test]
+async fn an_engine_that_did_not_sign_in_renews_from_the_saved_state() {
+    let world = World::new(STORED_RENEWING).await;
+    let other = world.second_engine();
+    let key = account_key("robot");
+    let entry = fake_entry();
+    world
+        .keeper
+        .lease(request(&key, &entry, Wait::DEFAULT))
+        .await
+        .unwrap();
+    world.clock.advance(2 * HOUR);
+    let lease = other
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    assert_eq!(lease.epoch(), 2);
+    assert_eq!((world.fake.refreshes(), world.fake.sign_ins()), (1, 1));
+    assert!(!placed(&lease).is_empty());
+    assert_eq!(world.state(&key).await, SessionState::Valid);
+    let kinds = world.kinds(&key).await;
+    assert!(!kinds.contains(&"prompted"), "{kinds:?}");
+    assert!(world.person.asks.lock().unwrap().is_empty());
+}
+
+/// After a restart the runner holds nothing, and a session whose
+/// credentials ran out meanwhile is renewed from its saved state, silently,
+/// with no sign-in and no ask of its person.
+#[tokio::test]
+async fn a_restarted_engine_renews_an_expired_session_from_the_saved_state() {
+    let world = World::on_disk(STORED_RENEWING).await;
+    let key = account_key("robot");
+    let entry = fake_entry();
+    world
+        .keeper
+        .lease(request(&key, &entry, Wait::DEFAULT))
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    let world = world.restarted().await;
+    world.clock.advance(2 * HOUR);
+    let lease = world
+        .keeper
+        .lease(request(&key, &entry, Wait::NoWait))
+        .await
+        .unwrap();
+    assert_eq!(lease.epoch(), 2);
+    assert_eq!((world.fake.refreshes(), world.fake.sign_ins()), (1, 1));
+    assert!(!placed(&lease).is_empty());
+    assert_eq!(world.state(&key).await, SessionState::Valid);
+    assert!(world.person.asks.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

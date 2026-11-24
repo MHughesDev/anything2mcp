@@ -4,7 +4,7 @@
 //!
 //! Only the session keeper signs in. `session.login` finds the sign-in the
 //! target's files declare for the surface, builds the keeper's entry from
-//! the plan exactly as a run's lease does, and asks the keeper. A
+//! the compiled target exactly as a run's lease does, and asks the keeper. A
 //! credential is never an input: an agent's ask is shown to the person on a
 //! page of the person surface, where the person types what the provider
 //! needs; it reaches the handler beside the press, is sealed in the vault
@@ -98,11 +98,11 @@ impl Declared {
 }
 
 /// The sign-in `input` names, or `None` when the target's files declare no
-/// sign-in for the surface named, or for any surface when none is named.
-/// The plan is the drafts' in a project that holds the target, and the
+/// sign-in for the surface named, or for any surface when none is named. The
+/// compiled target is the drafts' in a project that holds the target, and the
 /// published version's otherwise, as the scout observes it. A drafts'
-/// declaration that is the published version's, the same in everything
-/// that decides what is sent where, is the published version's.
+/// declaration that is the published version's, the same in everything that
+/// decides what is sent where, is the published version's.
 async fn declared(
     kernel: &Kernel,
     project: Option<PathBuf>,
@@ -111,25 +111,26 @@ async fn declared(
     let text = |name: &str| input.get(name).and_then(Json::as_str);
     let target = TargetName::new(text("target").unwrap_or_default())?;
     let published = kernel
-        .current_plans()
+        .current_compiled_targets()
         .await?
         .0
         .into_iter()
         .find(|(name, _, _)| name == &target)
-        .map(|(_, hash, plan)| (hash, plan));
-    let (hash, plan) = super::tools::plan_in(kernel, project, &target).await?;
+        .map(|(_, hash, compiled_target)| (hash, compiled_target));
+    let (hash, compiled_target) =
+        super::tools::compiled_target_in(kernel, project, &target).await?;
     let from_published = published.as_ref().is_some_and(|(at, _)| *at == hash);
-    let Some(found) = declared_in(&target, &plan, input, from_published)? else {
+    let Some(found) = declared_in(&target, &compiled_target, input, from_published)? else {
         return Ok(None);
     };
     if from_published {
         return Ok(Some(found));
     }
-    if let Some((_, plan)) = &published {
+    if let Some((_, compiled_target)) = &published {
         let mut pinned = input.clone();
         pinned.insert("surface".to_owned(), json!(found.surface.as_str()));
         pinned.insert("environment".to_owned(), json!(found.environment.as_str()));
-        if let Ok(Some(same)) = declared_in(&target, plan, &pinned, true)
+        if let Ok(Some(same)) = declared_in(&target, compiled_target, &pinned, true)
             && same.digest() == found.digest()
         {
             return Ok(Some(same));
@@ -138,11 +139,11 @@ async fn declared(
     Ok(Some(found))
 }
 
-/// The sign-in `input` names in `plan`, a published version's when
+/// The sign-in `input` names in `compiled_target`, a published version's when
 /// `published` says so.
 fn declared_in(
     target: &TargetName,
-    plan: &a2m_core::Plan,
+    compiled_target: &a2m_core::CompiledTarget,
     input: &Map<String, Json>,
     published: bool,
 ) -> Result<Option<Declared>, Failure> {
@@ -150,7 +151,7 @@ fn declared_in(
     let text = |name: &str| input.get(name).and_then(Json::as_str);
     let index = match text("surface") {
         Some(named) => {
-            let Some(at) = plan
+            let Some(at) = compiled_target
                 .surfaces
                 .iter()
                 .position(|surface| surface.name.as_str() == named)
@@ -167,10 +168,10 @@ fn declared_in(
             at
         }
         None => {
-            let first = (0..plan.surfaces.len()).find(|at| {
+            let first = (0..compiled_target.surfaces.len()).find(|at| {
                 u32::try_from(*at)
                     .ok()
-                    .and_then(|at| plan.auth_of(SurfaceIndex::new(at)))
+                    .and_then(|at| compiled_target.auth_of(SurfaceIndex::new(at)))
                     .is_some()
             });
             let Some(at) = first else {
@@ -181,14 +182,18 @@ fn declared_in(
     };
     let Some(auth) = u32::try_from(index)
         .ok()
-        .and_then(|at| plan.auth_of(SurfaceIndex::new(at)))
+        .and_then(|at| compiled_target.auth_of(SurfaceIndex::new(at)))
     else {
         return Ok(None);
     };
     let environment = match text("environment") {
         Some(named) => {
             let named = Environment::new(named)?;
-            if !plan.environments.iter().any(|env| env.name == named) {
+            if !compiled_target
+                .environments
+                .iter()
+                .any(|env| env.name == named)
+            {
                 return Err(codes::input(
                     codes::NOT_FOUND,
                     format!("The target `{target}` declares no environment `{named}`."),
@@ -197,7 +202,7 @@ fn declared_in(
             }
             named
         }
-        None => plan
+        None => compiled_target
             .default_environment()
             .map(|env| env.name.clone())
             .ok_or_else(|| {
@@ -208,10 +213,10 @@ fn declared_in(
                 )
             })?,
     };
-    let entry = crate::control::entry_of(plan, auth, &environment, published);
+    let entry = crate::control::entry_of(compiled_target, auth, &environment, published);
     Ok(Some(Declared {
         target,
-        surface: plan.surfaces[index].name.clone(),
+        surface: compiled_target.surfaces[index].name.clone(),
         environment,
         entry,
         basis: if published {

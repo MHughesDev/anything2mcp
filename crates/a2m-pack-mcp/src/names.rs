@@ -4,7 +4,7 @@ use a2m_core::{Failure, FileKindName, FindingKind, LintCode, Mode, StepKind, Sur
 use a2m_provider::DiscovererName;
 
 /// The pack's name: the owner of its file kind, its lint codes, and its
-/// section of a plan.
+/// section of a compiled target.
 pub const PACK: &str = "mcp";
 
 /// The folder of mapping files.

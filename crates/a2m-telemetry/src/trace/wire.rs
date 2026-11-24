@@ -46,8 +46,11 @@ pub struct HeaderLine {
     pub attempt: u32,
     /// The tool that was called.
     pub operation: OperationName,
-    /// The hash of the plan that was run.
-    pub plan: Digest,
+    /// The hash of the compiled target that was run.
+    /// Stored under the compiled target's old name, `plan`, so that what an
+    /// older build wrote still reads (decision 0402).
+    #[serde(rename = "plan")]
+    pub compiled_target: Digest,
     /// The engine's version.
     pub engine: Version,
     /// The digest of the registry of providers.
@@ -66,7 +69,7 @@ pub struct StepLine {
     pub pass: u32,
     /// The part of the loop.
     pub phase: Phase,
-    /// The step's position in its list in the plan, from 0.
+    /// The step's position in its list in the compiled target, from 0.
     pub step: u32,
     /// The kind of step.
     pub kind: StepKind,

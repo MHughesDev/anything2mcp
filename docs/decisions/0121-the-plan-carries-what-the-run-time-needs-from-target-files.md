@@ -58,7 +58,7 @@ A pack's auth provider needs a setting that is not text; the engine's design giv
 ## Spec sections
 
 - [205. Target files](../spec/2-kernel/205-target-files.md)
-- [206. The compiler and the plan](../spec/2-kernel/206-the-compiler-and-the-plan.md)
+- [206. The compiler and the plan](../spec/2-kernel/206-the-compiler-and-the-compiled-target.md)
 - [215. Sessions and the session keeper](../spec/2-kernel/215-sessions-and-the-session-keeper.md)
 - [File formats](../reference/file-formats.md)
 - [`a2m-core`](../architecture/crates/a2m-core.md), [`a2m-files`](../architecture/crates/a2m-files.md), [`a2m-sources`](../architecture/crates/a2m-sources.md)

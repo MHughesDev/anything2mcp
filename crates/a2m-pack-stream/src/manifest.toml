@@ -159,7 +159,7 @@ code = "credential_not_carried"
 class = "input"
 code = "nothing_recorded"
 
-# A plan compiled by another build of the pack: `a2m-core`'s own code.
+# A compiled target made by another build of the pack: `a2m-core`'s own code.
 [[failure_codes]]
 class = "input"
 code = "payload_unreadable"

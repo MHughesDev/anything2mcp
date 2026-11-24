@@ -317,6 +317,13 @@ pub(crate) struct RunnerState {
     keeper_task: Mutex<Option<JoinHandle<()>>>,
     engine: OnceLock<Arc<Engine>>,
     budgets: Mutex<BTreeSet<String>>,
+    /// Set once the leases this runner held before this process started
+    /// are declared lost, at the first start of the loop.
+    earlier_leases_lost: tokio::sync::OnceCell<()>,
+    /// The threads of the jobs in hand, each holding a clone of the kernel
+    /// until its job has ended: [`Kernel::close`] waits for them, so that
+    /// no clone of the store outlives a closed kernel.
+    jobs: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl Default for RunnerState {
@@ -326,6 +333,8 @@ impl Default for RunnerState {
             keeper_task: Mutex::new(None),
             engine: OnceLock::new(),
             budgets: Mutex::new(BTreeSet::new()),
+            earlier_leases_lost: tokio::sync::OnceCell::new(),
+            jobs: Mutex::new(Vec::new()),
         }
     }
 }
@@ -344,9 +353,9 @@ impl RunnerLoop {
         self.runner
     }
 
-    /// Stops the loop. A job in hand is dropped between the engine's own
-    /// waits; its lease runs out and the run is reconciled before anyone
-    /// else gets the job.
+    /// Stops the loop: no job is claimed after it. A job in hand goes on to
+    /// its end on its own thread, which cannot be aborted;
+    /// [`Kernel::close`] waits for it.
     pub async fn stop(self) {
         self.kernel.stop_runner_loop().await;
     }
@@ -378,6 +387,23 @@ impl Kernel {
                     set_fact(tx, "runner", &made.to_string())?;
                     Ok(made)
                 }
+            })
+            .await?;
+        // The runner is this installation's one, and the process that holds
+        // the store's lock on its data folder is the only one that can be
+        // it: a lease it holds from before this process started was given
+        // to a process that has ended. Each is declared lost now, before
+        // anything is claimed, so that its run is reconciled before it is
+        // written again, and not left `running` until the lease runs out
+        // (spec section 224, decision 0416). Once per process: a loop
+        // started again may still have work in hand.
+        self.inner
+            .runner
+            .earlier_leases_lost
+            .get_or_try_init(|| async {
+                sched.runner_ended(runner).await?;
+                self.run_changed();
+                Ok::<(), Failure>(())
             })
             .await?;
         let modes: Vec<Mode> = self.providers().modes().cloned().collect();
@@ -428,17 +454,21 @@ impl Kernel {
                     let Ok(permit) = Arc::clone(&permits).acquire_owned().await else {
                         return;
                     };
-                    let kernel = kernel.clone();
                     // The engine's future is not `Send`: a driver's prepared
                     // state is held across its waits and may not be shared
                     // between threads. So a job runs on a thread of its
                     // own, driven by this same runtime, whose timers and
                     // connections it goes on using.
                     let runtime = tokio::runtime::Handle::current();
-                    tokio::task::spawn_blocking(move || {
-                        runtime.block_on(kernel.work(lease, terms));
-                        drop(permit);
+                    let job = tokio::task::spawn_blocking({
+                        let kernel = kernel.clone();
+                        move || {
+                            runtime.block_on(kernel.work(lease, terms));
+                            drop(kernel);
+                            drop(permit);
+                        }
                     });
+                    kernel.hold_job(job);
                 }
             }
         });
@@ -473,12 +503,16 @@ impl Kernel {
                     let Ok(permit) = Arc::clone(&kept).acquire_owned().await else {
                         return;
                     };
-                    let kernel = kernel.clone();
                     let runtime = tokio::runtime::Handle::current();
-                    tokio::task::spawn_blocking(move || {
-                        runtime.block_on(kernel.work(lease, terms));
-                        drop(permit);
+                    let job = tokio::task::spawn_blocking({
+                        let kernel = kernel.clone();
+                        move || {
+                            runtime.block_on(kernel.work(lease, terms));
+                            drop(kernel);
+                            drop(permit);
+                        }
                     });
+                    kernel.hold_job(job);
                 }
             }
         });
@@ -554,7 +588,7 @@ impl Kernel {
     pub(crate) async fn held_alone(
         &self,
         row_workspace: a2m_core::WorkspaceId,
-        plan: &a2m_core::Plan,
+        compiled_target: &a2m_core::CompiledTarget,
         tool: &a2m_core::OperationName,
         environment: &a2m_core::Environment,
         writes: bool,
@@ -564,11 +598,11 @@ impl Kernel {
         }
         let engine = self.engine().await?;
         let mut keys = Vec::new();
-        for need in engine.exclusive_needs(plan, tool) {
+        for need in engine.exclusive_needs(compiled_target, tool) {
             keys.push(a2m_sched::ResourceKey::held_alone(
                 need.kind.as_str(),
                 row_workspace,
-                &plan.header.target,
+                &compiled_target.header.target,
                 environment,
                 need.surface.as_str(),
             )?);
@@ -586,6 +620,26 @@ impl Kernel {
         for task in tasks.into_iter().flatten() {
             task.abort();
             let _ = task.await;
+        }
+    }
+
+    /// Keeps the thread of a job in hand, and lets go of those that ended.
+    fn hold_job(&self, job: JoinHandle<()>) {
+        let mut jobs = lock(&self.inner.runner.jobs);
+        jobs.retain(|held| !held.is_finished());
+        jobs.push(job);
+    }
+
+    /// Waits for every job in hand to end, once the loops that hand jobs
+    /// out have stopped. A job's thread cannot be aborted, and it holds a
+    /// clone of the kernel, and so of the store, until its job has ended;
+    /// a closed kernel holds no file of its data folder open, which Windows
+    /// needs to remove or replace one. Each job ends of itself: its steps
+    /// keep their time limits and its lease its length.
+    pub(crate) async fn end_jobs_in_hand(&self) {
+        let jobs: Vec<JoinHandle<()>> = lock(&self.inner.runner.jobs).drain(..).collect();
+        for job in jobs {
+            let _ = job.await;
         }
     }
 
@@ -797,7 +851,9 @@ impl Kernel {
                 Ok((row, call))
             })
             .await?;
-        let plan = self.plan_by_hash(&row.target, &row.target_version).await?;
+        let compiled_target = self
+            .compiled_target_by_hash(&row.target, &row.target_version)
+            .await?;
         let Some(call) = call else {
             return self.end_unreadable(fence).await;
         };
@@ -876,17 +932,24 @@ impl Kernel {
             (ToolRef::Tool(row.tool_name.clone()), input)
         };
         let health = self.health();
-        let sessions = self.session_conditions(&row, &plan).await;
+        let sessions = self.session_conditions(&row, &compiled_target).await;
         // The bindings a drift mark of the target stops (decision 0380). A
         // store that cannot say ends the job here: nothing is run on a
         // guess that nothing drifted.
         let drifted = {
-            let (workspace, plan) = (row.workspace, Arc::clone(&plan));
+            let (workspace, compiled_target) = (row.workspace, Arc::clone(&compiled_target));
             store
-                .read(move |tx| crate::drift::stopped(tx, workspace, &plan))
+                .read(move |tx| crate::drift::stopped(tx, workspace, &compiled_target))
                 .await?
         };
+        // With too little room for evidence, a run keeps the lowest capture
+        // level, whatever the settings say (spec section 224).
+        let short_of_space = health
+            .reasons
+            .iter()
+            .any(|reason| reason.part == crate::health::Part::EvidenceSpace);
         let capture = |key: &str| match self.settings().text(key) {
+            _ if short_of_space => CaptureLevel::Minimal,
             Some("full") => CaptureLevel::Full,
             Some("standard") => CaptureLevel::Standard,
             _ => CaptureLevel::Minimal,
@@ -898,7 +961,7 @@ impl Kernel {
             attempt: lease.attempt,
             epoch: fence.epoch,
             kind,
-            plan: row.target_version,
+            compiled_target: row.target_version,
             tool,
             environment: Some(row.environment.clone()),
             identity: Some(Identity::Person(row.principal)),
@@ -968,10 +1031,16 @@ impl Kernel {
         } else {
             a2m_auth::Purpose::Run
         };
-        let control =
-            InProcessControl::new(self.clone(), fence, lease.lease_ref(), row, plan, caller)
-                .with_discovery_files(handed)
-                .with_purpose(purpose);
+        let control = InProcessControl::new(
+            self.clone(),
+            fence,
+            lease.lease_ref(),
+            row,
+            compiled_target,
+            caller,
+        )
+        .with_discovery_files(handed)
+        .with_purpose(purpose);
         let outcome = engine.run_job(&job, &control).await;
         // The check after a lost runner is the reconcile's own last part,
         // in its lease, while the heartbeats go on: the run has one live
@@ -1138,20 +1207,20 @@ impl Kernel {
         self.run_changed();
     }
 
-    /// The state of the session of each surface of the plan that is signed
-    /// in to, as the session keeper holds it at claim time, for guard's
-    /// third check (decision 0309). Only a session that was ended on
+    /// The state of the session of each surface of the compiled target that
+    /// is signed in to, as the session keeper holds it at claim time, for
+    /// guard's third check (decision 0309). Only a session that was ended on
     /// purpose is listed: it is never signed in again by a lease, so a call
     /// on it can only stop with `needs_login`. A session that is absent or
-    /// expired may still be signed in from a stored credential at the
-    /// lease, one that waits is waited for, one the keeper holds no row for
-    /// has its first sign-in at the lease, and a keeper that cannot be
-    /// asked leaves everything unlisted: the lease decides all of those. No
-    /// source of edge blocks exists here, so `edge_blocked` stays empty.
+    /// expired may still be signed in from a stored credential at the lease,
+    /// one that waits is waited for, one the keeper holds no row for has its
+    /// first sign-in at the lease, and a keeper that cannot be asked leaves
+    /// everything unlisted: the lease decides all of those. No source of edge
+    /// blocks exists here, so `edge_blocked` stays empty.
     async fn session_conditions(
         &self,
         row: &RunRow,
-        plan: &a2m_core::Plan,
+        compiled_target: &a2m_core::CompiledTarget,
     ) -> Vec<(a2m_core::SurfaceName, a2m_core::SessionState)> {
         let Ok(keeper) = self.keeper() else {
             return Vec::new();
@@ -1169,12 +1238,16 @@ impl Kernel {
         if ours.state != a2m_core::SessionState::Revoked {
             return Vec::new();
         }
-        plan.surfaces
+        compiled_target
+            .surfaces
             .iter()
             .enumerate()
             .filter(|(index, _)| {
-                u32::try_from(*index)
-                    .is_ok_and(|at| plan.auth_of(a2m_core::SurfaceIndex::new(at)).is_some())
+                u32::try_from(*index).is_ok_and(|at| {
+                    compiled_target
+                        .auth_of(a2m_core::SurfaceIndex::new(at))
+                        .is_some()
+                })
             })
             .map(|(_, surface)| (surface.name.clone(), ours.state))
             .collect()

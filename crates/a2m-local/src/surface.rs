@@ -721,7 +721,7 @@ pub(crate) fn written_by_html(record: &PreviewRecord) -> String {
 pub(crate) mod version_shown {
     use std::fmt::Write as _;
 
-    use a2m_actions::{ActSurface, ActWarning, PreviewNotice};
+    use a2m_actions::{ActSurface, ActWarning, NEW_PLACE, PreviewNotice};
 
     use super::escape;
 
@@ -747,6 +747,16 @@ pub(crate) mod version_shown {
         out
     }
 
+    /// The mark beside an address no person registered for the target, in
+    /// the kernel's fixed words (decision 0413); nothing beside any other.
+    fn new_place(new: bool) -> String {
+        if new {
+            format!(" <strong class=\"new-place\">({NEW_PLACE})</strong>")
+        } else {
+            String::new()
+        }
+    }
+
     /// The surfaces of a version and its lint warnings, for the page a
     /// person publishes from. Every surface is listed with its kind and its
     /// address in each environment, named, since a version runs against
@@ -763,16 +773,22 @@ pub(crate) mod version_shown {
                     shown(&surface.kind),
                 );
                 if surface.addresses.is_empty() {
-                    let _ = write!(out, "<code>{}</code>.", shown(&surface.address));
+                    let _ = write!(
+                        out,
+                        "<code>{}</code>{}.",
+                        shown(&surface.address),
+                        new_place(surface.new_here),
+                    );
                 } else {
                     let at: Vec<String> = surface
                         .addresses
                         .iter()
                         .map(|(environment, address)| {
                             format!(
-                                "<code>{}</code> in the environment <code>{}</code>",
+                                "<code>{}</code> in the environment <code>{}</code>{}",
                                 shown(address),
                                 shown(environment),
+                                new_place(surface.new_in.contains(environment)),
                             )
                         })
                         .collect();
@@ -984,6 +1000,20 @@ pub(crate) mod review_shown {
                 codes(arguments),
                 code(script),
                 code(&script_digest.to_string()),
+            ),
+            ProgramRun::Launcher {
+                launcher,
+                launcher_digests,
+                arguments,
+                entry,
+                entry_digest,
+            } => format!(
+                "Starts the launcher {}, {}, with the fixed arguments {}, on the entry file {}, pinned to the digest {}.",
+                code(launcher),
+                digests(launcher_digests),
+                codes(arguments),
+                code(entry),
+                code(&entry_digest.to_string()),
             ),
         };
         if let Some(notice) = notice {
@@ -1553,12 +1583,12 @@ fn act_html(ask: &PersonActAsk) -> (String, String) {
         out
     };
     let details = match &ask.review {
-        // A publish: the sign-ins, then the tools, then where each surface
-        // leads, then the kernel's own lines and the checks' warnings
-        // (decision 0264).
+        // A publish: where each surface leads first, each new place marked
+        // there; then the sign-ins and the tools; then the kernel's own
+        // lines and the checks' warnings (decisions 0264 and 0413).
         Some(review) => {
-            let mut details = review_shown::review_html(review);
-            details.push_str(&version_shown::version_html(&ask.surfaces, &[]));
+            let mut details = version_shown::version_html(&ask.surfaces, &[]);
+            details.push_str(&review_shown::review_html(review));
             details.push_str(&lines("<h2>Before you publish</h2>"));
             details.push_str(&version_shown::version_html(&[], &ask.warnings));
             details

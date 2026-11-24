@@ -22,7 +22,7 @@ fn is_word(text: &str, longest: usize) -> bool {
 
 /// The name of an auth provider, such as `api_key`, and a reference to a
 /// stored credential, `vault://` and one to four parts. Both are `a2m-core`'s,
-/// because the compiled plan carries them (decision 0121); this crate names
+/// because the compiled target carries them (decision 0121); this crate names
 /// them as it always has.
 pub use a2m_core::{AuthProviderName as ProviderName, CredentialRef};
 

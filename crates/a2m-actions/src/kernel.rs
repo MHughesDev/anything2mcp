@@ -19,8 +19,8 @@ use a2m_auth::{
     StoredCredentials,
 };
 use a2m_core::{
-    Digest, EffectClass, Environment, Failure, Hazard, OperationName, Plan, PrincipalId, Redact,
-    Secret, TargetName, WorkspaceId,
+    CompiledTarget, Digest, EffectClass, Environment, Failure, Hazard, OperationName, PrincipalId,
+    Redact, Secret, TargetName, WorkspaceId,
 };
 use a2m_ledger::{AuditEntry, Durability, Owner, SqlValue, Store, StoreConfig, Tx};
 use a2m_policy::{ActingFor, BuiltIn, Policy, PolicyHealth, PrincipalRef};
@@ -195,6 +195,9 @@ pub(crate) struct Inner {
     redact: Arc<dyn Redact>,
     pub(crate) telemetry: Telemetry,
     pub(crate) policy: Option<Policy>,
+    /// How the approval desk reaches the store, emptied at close so that a
+    /// person surface that keeps the desk holds no clone of the store.
+    desk_reach: Option<crate::person::DeskReach>,
     pub(crate) keeper: Option<Keeper>,
     /// The keeper's way to run a session's probe through the engine.
     pub(crate) probes: Arc<ProbeBridge>,
@@ -207,16 +210,19 @@ pub(crate) struct Inner {
     local: bool,
     health: Mutex<Health>,
     fixed: Vec<Impaired>,
+    /// How the room left for evidence is measured.
+    free_space: Mutex<Arc<dyn crate::space::FreeSpace>>,
     /// The protected settings whose value is not the one in force. Any
     /// one of them stops the kernel; `config.show` marks each.
     pub(crate) not_in_force: Vec<crate::bounds::NotInForce>,
     /// Where other programs keep their data on this machine: what a
     /// project folder may not be.
     pub(crate) places: crate::project::Places,
-    /// The plans read from the store, by target and hash, the newest
-    /// [`PLANS_KEPT`] of them.
-    pub(crate) plans: Mutex<BTreeMap<(TargetName, Digest), Arc<Plan>>>,
-    /// The drafted plans of trials, newest last, the newest [`DRAFTS_KEPT`].
+    /// The compiled targets read from the store, by target and hash, the
+    /// newest [`COMPILED_TARGETS_KEPT`] of them.
+    pub(crate) compiled_targets: Mutex<BTreeMap<(TargetName, Digest), Arc<CompiledTarget>>>,
+    /// The drafted compiled targets of trials, newest last, the newest
+    /// [`DRAFTS_KEPT`].
     pub(crate) drafts: Mutex<Vec<KeptDraft>>,
     /// The trials a fixture is being recorded from, by the digest that
     /// makes each the run it is, with what each step observed, in memory
@@ -380,6 +386,7 @@ impl Kernel {
         let acts = crate::acts::Acts::new();
         let mut installation = None;
         let mut policy = None;
+        let mut desk_reach = None;
         let mut keeper = None;
         let probes = Arc::new(ProbeBridge::default());
         let mut credentials = None;
@@ -417,9 +424,10 @@ impl Kernel {
                 Ok((opened, surface)) => {
                     // The one handle that can record an approval goes to the
                     // person surface, and nowhere else.
+                    let reach = crate::person::DeskReach::new(store.clone(), surface);
+                    desk_reach = Some(reach.clone());
                     person.take_desk(ApprovalDesk::new(
-                        surface,
-                        store.clone(),
+                        reach,
                         found.workspace,
                         Arc::clone(&signals),
                         Arc::clone(&prepared.redact),
@@ -441,6 +449,25 @@ impl Kernel {
             ));
 
             if let Some(vault) = &prepared.vault {
+                // The key the local person's runs are sealed under is opened
+                // now, while the key store answered the digest key, and held
+                // for the life of the process: a key store that stops after
+                // the start then leaves that person's reads their evidence,
+                // sealed as ever (section 224, decision 0417). A server
+                // serves many people, and opens each key at first use.
+                if local
+                    && let Err(failure) = vault
+                        .hold_owner_key(
+                            &found.workspace,
+                            &a2m_vault::OwnerRef::of(&a2m_core::Identity::Person(found.user)),
+                        )
+                        .await
+                {
+                    fixed.push(Impaired {
+                        part: Part::Vault,
+                        failure,
+                    });
+                }
                 let mut set = ProviderSet::neutral();
                 for provider in providers.auth_providers() {
                     match set.with(provider) {
@@ -508,6 +535,7 @@ impl Kernel {
                 redact: prepared.redact,
                 telemetry: prepared.telemetry,
                 policy,
+                desk_reach,
                 keeper,
                 probes,
                 credentials,
@@ -519,9 +547,10 @@ impl Kernel {
                 local,
                 health: Mutex::new(Health::of(Vec::new())),
                 fixed,
+                free_space: Mutex::new(Arc::new(crate::space::VolumeFreeSpace)),
                 not_in_force,
                 places: crate::project::Places::of_process(),
-                plans: Mutex::new(BTreeMap::new()),
+                compiled_targets: Mutex::new(BTreeMap::new()),
                 drafts: Mutex::new(Vec::new()),
                 recordings: Mutex::new(BTreeMap::new()),
                 runner: crate::runner::RunnerState::default(),
@@ -616,6 +645,12 @@ impl Kernel {
                 });
             }
         }
+        if let Some(failure) = self.evidence_space_short() {
+            reasons.push(Impaired {
+                part: Part::EvidenceSpace,
+                failure,
+            });
+        }
         let health = Health::of(reasons);
         let before = {
             let mut held = lock(&inner.health);
@@ -633,6 +668,31 @@ impl Kernel {
                 .await;
         }
         health
+    }
+
+    /// Why the evidence store has too little room, when it has less free
+    /// than `store.free_space_floor`; `None` when it has enough, or when
+    /// the room cannot be measured.
+    fn evidence_space_short(&self) -> Option<Failure> {
+        let floor = u64::try_from(self.inner.settings.int("store.free_space_floor")?).ok()?;
+        let measure = Arc::clone(&*lock(&self.inner.free_space));
+        let free = measure.free_bytes(&self.inner.paths.blobs)?;
+        (free < floor).then(|| {
+            codes::busy(
+                a2m_ledger::codes::STORAGE_FULL,
+                format!(
+                    "The evidence store has {free} bytes free, below the floor of {floor} set by `store.free_space_floor`, so no write can be proven."
+                ),
+                "Free space on the disk that holds the data directory; the engine notices by itself when there is room.",
+            )
+        })
+    }
+
+    /// Measures the room left for evidence through `measure` from now on,
+    /// as a test that cannot fill a disk does.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn measure_free_space_with(&self, measure: Arc<dyn crate::space::FreeSpace>) {
+        *lock(&self.inner.free_space) = measure;
     }
 
     /// Writes one entry to the audit log, when there is a store to write
@@ -987,12 +1047,14 @@ impl Kernel {
         lock(&self.inner.tasks).push(task);
     }
 
-    /// Stops the runner loop and the tending task, stops every subsystem
-    /// the supervisor holds, and writes the reason to the audit log.
+    /// Stops the runner loop and the tending task, waits for every job in
+    /// hand to end, stops every subsystem the supervisor holds, and writes
+    /// the reason to the audit log.
     /// Sessions' saved state is in the store already: the keeper saves it
     /// whenever credentials change.
     pub async fn close(self, why: CloseReason) {
         self.stop_runner_loop().await;
+        self.end_jobs_in_hand().await;
         let tasks: Vec<JoinHandle<()>> = lock(&self.inner.tasks).drain(..).collect();
         for task in &tasks {
             task.abort();
@@ -1016,6 +1078,11 @@ impl Kernel {
                 },
             )
             .await;
+        // The approval desk lets go of the store: a person surface may
+        // keep the desk after the kernel has gone.
+        if let Some(reach) = &self.inner.desk_reach {
+            reach.close();
+        }
         // The engine is closed: the store's lock on its data folder goes,
         // though a clone of the store may outlive this kernel for a while.
         if let Some(store) = &self.inner.store {
@@ -1024,12 +1091,14 @@ impl Kernel {
     }
 }
 
-/// How many plans read from the store are kept in memory.
-pub(crate) const PLANS_KEPT: usize = 64;
-/// A drafted plan kept for a trial: its target and hash, and the plan.
-pub(crate) type KeptDraft = ((TargetName, Digest), Arc<Plan>);
-/// How many drafted plans of trials are kept in memory. A trial whose plan
-/// was let go since cannot be resumed; it is tried again.
+/// How many compiled targets read from the store are kept in memory.
+pub(crate) const COMPILED_TARGETS_KEPT: usize = 64;
+/// A drafted compiled target kept for a trial: its target and hash, and the
+/// compiled target.
+pub(crate) type KeptDraft = ((TargetName, Digest), Arc<CompiledTarget>);
+/// How many drafted compiled targets of trials are kept in memory. A trial
+/// whose compiled target was let go since cannot be resumed; it is tried
+/// again.
 pub(crate) const DRAFTS_KEPT: usize = 16;
 
 /// The shortest lease the in-process runner works under. The engine sends

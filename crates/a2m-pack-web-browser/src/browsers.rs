@@ -14,8 +14,8 @@ use a2m_core::{
     Values,
 };
 use a2m_provider::{
-    Access, CheckedPath, Cleanup, Deadline, LaunchSpec, PackContext, ProgramRef, RootName,
-    ScopedSupervisor, SubsystemId, SubsystemKind,
+    Access, CheckedPath, Cleanup, Deadline, LaunchSpec, Leftover, PackContext, ProgramRef,
+    RootName, ScopedSupervisor, SubsystemId, SubsystemKind,
 };
 
 use crate::client::{Client, ClientError, Why};
@@ -27,8 +27,9 @@ use crate::protocol::{
     GetVersion, GrantPermissions, SetAutoAttach, SetCookies, SetDocumentContent,
     SetDownloadBehavior, TargetFilter,
 };
+use crate::safe::SafeRequests;
 use crate::tab::{
-    ActTab, ObserveTab, Page, PageEnvironment, Posture, SafeRequests, open_page, shown,
+    ActTab, ObserveTab, Page, PageEnvironment, Posture, WatchStart, WatchTab, open_page, shown,
     watch_windows,
 };
 
@@ -46,6 +47,17 @@ pub const DOWNLOADS_FOLDER: &str = "downloads";
 
 /// The kind of subsystem a browser is, as the supervisor counts it.
 pub const BROWSER_KIND: &str = "browser";
+
+/// How many hangs of its tabs a browser takes before it is recycled, when
+/// the settings say nothing else (decision 0422). A tab hangs when its
+/// page gives no answer to a call by the call's deadline, nor to the probe
+/// after it ([`BrowserSettings::hang_probe`]).
+pub const HANGS_BEFORE_RECYCLE: u32 = 3;
+
+/// How long a tab whose call went unanswered is given to answer a probe
+/// before it is called hung and closed, when the settings say nothing else
+/// (decision 0422).
+pub const HANG_PROBE: Duration = Duration::from_secs(5);
 
 /// The version of the DevTools protocol the engine speaks.
 const PROTOCOL_VERSION: &str = "1.3";
@@ -83,6 +95,16 @@ pub struct BrowserSettings {
     pub max_message_bytes: usize,
     /// The longest text one read may return, in characters.
     pub max_read_chars: usize,
+    /// How many hangs of its tabs a browser takes before it is recycled:
+    /// closed and started afresh, at the next open that finds no tab of it
+    /// held, which is between two runs and never inside one. A count of 0
+    /// is taken as 1. [`HANGS_BEFORE_RECYCLE`] by default.
+    pub hangs_before_recycle: u32,
+    /// How long a tab of the engine's whose call went unanswered by its
+    /// deadline is given to answer a probe that asks the page for nothing
+    /// but an answer. A tab that gives none is hung: it is closed, and the
+    /// hang is counted against its browser. [`HANG_PROBE`] by default.
+    pub hang_probe: Duration,
     /// Test equipment only: starts the browser without its sandbox, for a
     /// machine whose tests run as the superuser. It exists only in a test
     /// build, and nothing in the product can set it.
@@ -97,6 +119,20 @@ pub struct BrowserSettings {
     /// such as a proxy.
     #[cfg(test)]
     pub(crate) environment_for_tests: Vec<(String, std::ffi::OsString)>,
+    /// This crate's own tests only: the first launch that has started its
+    /// program says so here and then waits for ever, as a start slower
+    /// than its caller's limit does, so that a test can drop it there.
+    #[cfg(test)]
+    pub(crate) stall_after_start: Option<Arc<StallOnce>>,
+}
+
+/// This crate's own tests only: one launch that stops after its program
+/// started, and says when it has.
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub(crate) struct StallOnce {
+    pub(crate) started: tokio::sync::Notify,
+    done: std::sync::atomic::AtomicBool,
 }
 
 impl Default for BrowserSettings {
@@ -109,12 +145,16 @@ impl Default for BrowserSettings {
             call_deadline: Duration::from_secs(30),
             max_message_bytes: 64 * 1024 * 1024,
             max_read_chars: 1024 * 1024,
+            hangs_before_recycle: HANGS_BEFORE_RECYCLE,
+            hang_probe: HANG_PROBE,
             #[cfg(any(test, feature = "test-support"))]
             without_sandbox: false,
             #[cfg(any(test, feature = "test-support"))]
             display: None,
             #[cfg(test)]
             environment_for_tests: Vec::new(),
+            #[cfg(test)]
+            stall_after_start: None,
         }
     }
 }
@@ -245,6 +285,8 @@ pub struct OpenBrowser {
     pub tabs: usize,
     /// How many acting tabs it has opened since it started.
     pub runs: u64,
+    /// How many of its tabs hung and were closed since it started.
+    pub hangs: u64,
     /// What it is doing.
     pub health: BrowserHealth,
 }
@@ -258,6 +300,9 @@ pub(crate) struct BrowserInner {
     verified: bool,
     pub(crate) tabs: AtomicUsize,
     runs: AtomicU64,
+    /// How many of its tabs hung and were closed: past the count the
+    /// settings give, the browser is recycled between runs.
+    pub(crate) hangs: AtomicU64,
     /// The open tabs, by the browser's name for each, so that what the
     /// browser itself refuses can be reported by the tab it concerns.
     pages: Mutex<BTreeMap<String, Weak<Page>>>,
@@ -367,6 +412,14 @@ impl BrowserInner {
         }
     }
 
+    /// Whether the browser is due to be recycled: its tabs hung as often
+    /// as the settings allow, and no tab of it is held, so that no run is
+    /// using it.
+    fn due_for_recycling(&self, settings: &BrowserSettings) -> bool {
+        let limit = u64::from(settings.hangs_before_recycle.max(1));
+        self.hangs.load(Ordering::SeqCst) >= limit && self.tabs.load(Ordering::SeqCst) == 0
+    }
+
     fn health(&self) -> BrowserHealth {
         if self.client.closed().is_some() {
             BrowserHealth::Exited
@@ -386,6 +439,11 @@ pub(crate) struct Shared {
     open: Mutex<BTreeMap<ProfileKey, Arc<BrowserInner>>>,
     /// One launch at a time, so that a profile is never started twice.
     launching: tokio::sync::Mutex<()>,
+    /// Browsers whose launch was dropped after their program started,
+    /// before they were recorded in `open`, each with the stop begun for
+    /// it where a runtime ran. The next launch and the shutdown finish
+    /// these stops first.
+    abandoned: Mutex<Vec<(SubsystemId, Option<tokio::task::JoinHandle<Cleanup>>)>>,
     pub(crate) next_tab: AtomicU64,
 }
 
@@ -394,6 +452,98 @@ impl Shared {
         self.open
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Ends a browser that is no longer recorded among the open ones: asks
+    /// it to close, so that it writes its session to its data directory,
+    /// waits for its end up to the close deadline, then has the supervisor
+    /// end and reap its whole process group.
+    async fn end(&self, browser: &BrowserInner) -> Cleanup {
+        if browser.client.closed().is_none() {
+            let deadline = Deadline::after(self.settings.close_deadline);
+            let mut ended = browser.client.subscribe(None);
+            if browser
+                .client
+                .call(None, &CloseBrowser {}, deadline)
+                .await
+                .is_ok()
+            {
+                // The end of the pipe is the end of the browser.
+                let _ = tokio::time::timeout_at(deadline.at(), async {
+                    while ended.recv().await.is_some() {}
+                })
+                .await;
+            }
+        }
+        browser.client.close();
+        self.supervisor.stop(browser.subsystem).await
+    }
+
+    /// Finishes the stop of every browser whose launch was dropped, and
+    /// says what could not be cleaned up.
+    async fn stop_abandoned(&self) -> Vec<Leftover> {
+        let abandoned = std::mem::take(
+            &mut *self
+                .abandoned
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        let mut remaining = Vec::new();
+        for (subsystem, stopping) in abandoned {
+            let cleanup = match stopping {
+                Some(stopping) => match stopping.await {
+                    Ok(cleanup) => cleanup,
+                    // The stop did not finish: it is asked again, and a
+                    // subsystem already stopped is a complete cleanup.
+                    Err(_) => self.supervisor.stop(subsystem).await,
+                },
+                None => self.supervisor.stop(subsystem).await,
+            };
+            remaining.extend(cleanup.remaining);
+        }
+        remaining
+    }
+}
+
+/// A browser whose program started and that is not yet recorded among the
+/// open ones. The engine drops a driver's preparation that passes its own
+/// limit, and a browser's start may take longer than that; a launch
+/// dropped there must leave no subsystem holding the profile's place.
+/// Dropped while armed, it begins the stop at once where a runtime runs,
+/// and leaves the subsystem for the next launch to finish stopping.
+struct Unrecorded<'a> {
+    shared: &'a Shared,
+    subsystem: Option<SubsystemId>,
+}
+
+impl Unrecorded<'_> {
+    /// The browser is recorded among the open ones: nothing to stop.
+    fn recorded(mut self) {
+        self.subsystem = None;
+    }
+
+    /// Stops the browser now, on a launch that failed.
+    async fn stop(mut self) {
+        if let Some(subsystem) = self.subsystem.take() {
+            self.shared.supervisor.stop(subsystem).await;
+        }
+    }
+}
+
+impl Drop for Unrecorded<'_> {
+    fn drop(&mut self) {
+        let Some(subsystem) = self.subsystem.take() else {
+            return;
+        };
+        let stopping = tokio::runtime::Handle::try_current().ok().map(|runtime| {
+            let supervisor = self.shared.supervisor.clone();
+            runtime.spawn(async move { supervisor.stop(subsystem).await })
+        });
+        self.shared
+            .abandoned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((subsystem, stopping));
     }
 }
 
@@ -549,6 +699,7 @@ async fn show_notice(
     shared: &Arc<Shared>,
     inner: &Arc<BrowserInner>,
     text: &str,
+    purpose: NoticeFor,
 ) -> Result<ActTab, BrowserError> {
     let page = open_page(
         shared,
@@ -561,7 +712,7 @@ async fn show_notice(
     .await?;
     let tab = ActTab::new(page);
     let deadline = Deadline::after(shared.settings.call_deadline);
-    let html = notice_html(text);
+    let html = notice_html(text, purpose);
     tab.page
         .call(
             &SetDocumentContent {
@@ -599,8 +750,21 @@ async fn show_notice(
     Ok(tab)
 }
 
+/// What a window is for, and so what its notice says under its heading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoticeFor {
+    /// A sign-in the person carries out (decision 0254).
+    SignIn,
+    /// A use of the system the engine watches (decision 0392, point 1).
+    Watch,
+}
+
+/// What a window's notice says under its heading, for each purpose.
+const SIGN_IN_NOTICE: &str = "The next tab is the sign-in page. The engine types nothing there and reads nothing you type. Close the window to stop.";
+const WATCH_NOTICE: &str = "The next tab is the system, opened once on its own address. Use it as you always do. The engine presses and types nothing there, sends it nowhere, and sends nothing of its own. It keeps the shape of each request the page sends and of each screen you visit: names and kinds, never a value you type or the page shows. Close the window to stop.";
+
 /// The notice, as a page: plain text, escaped, with no script.
-fn notice_html(text: &str) -> String {
+fn notice_html(text: &str, purpose: NoticeFor) -> String {
     let mut escaped = String::with_capacity(text.len());
     for c in text.chars() {
         match c {
@@ -613,7 +777,11 @@ fn notice_html(text: &str) -> String {
         }
     }
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{escaped}</title></head><body><main><h1>{escaped}</h1><p>The next tab is the sign-in page. The engine types nothing there and reads nothing you type. Close the window to stop.</p></main></body></html>"
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{escaped}</title></head><body><main><h1>{escaped}</h1><p>{said}</p></main></body></html>",
+        said = match purpose {
+            NoticeFor::SignIn => SIGN_IN_NOTICE,
+            NoticeFor::Watch => WATCH_NOTICE,
+        }
     )
 }
 
@@ -656,6 +824,7 @@ impl Browsers {
                 settings,
                 open: Mutex::new(BTreeMap::new()),
                 launching: tokio::sync::Mutex::new(()),
+                abandoned: Mutex::new(Vec::new()),
                 next_tab: AtomicU64::new(1),
             }),
         })
@@ -704,7 +873,10 @@ impl Browsers {
     }
 
     /// The profile's browser, started on first use. A browser whose
-    /// process has ended is stopped, cleaned up, and started afresh.
+    /// process has ended is stopped, cleaned up, and started afresh; so is
+    /// one whose tabs hung [`BrowserSettings::hangs_before_recycle`] times,
+    /// once no tab of it is held: it is closed as [`Self::close`] closes
+    /// it, between two runs and never inside one.
     ///
     /// # Errors
     ///
@@ -721,8 +893,22 @@ impl Browsers {
         profile: &ProfileKey,
         show: Visibility,
     ) -> Result<Browser, BrowserError> {
+        self.open_for(profile, show, NoticeFor::SignIn).await
+    }
+
+    /// As [`Self::open`], with a window's notice written for `purpose`.
+    pub(crate) async fn open_for(
+        &self,
+        profile: &ProfileKey,
+        show: Visibility,
+        purpose: NoticeFor,
+    ) -> Result<Browser, BrowserError> {
         let shared = &self.shared;
         let _one = shared.launching.lock().await;
+        // A launch dropped earlier may have left a browser holding the
+        // place; it is gone before anything starts. What could not be
+        // ended is the supervisor's leftover, and it refuses the start.
+        shared.stop_abandoned().await;
         let existing = shared.open().get(profile).cloned();
         let notice = match &show {
             Visibility::Background => None,
@@ -732,7 +918,9 @@ impl Browsers {
         if let Some(existing) = existing {
             // A browser in the background is used again; a window never is,
             // and one is never used for a run in the background.
-            if existing.health() != BrowserHealth::Exited && !window && !existing.window {
+            let exited = existing.health() == BrowserHealth::Exited;
+            let due = existing.due_for_recycling(&shared.settings);
+            if !exited && !due && !window && !existing.window {
                 return Ok(Browser {
                     inner: existing,
                     shared: Arc::clone(shared),
@@ -740,8 +928,14 @@ impl Browsers {
                 });
             }
             shared.open().remove(profile);
-            existing.client.close();
-            shared.supervisor.stop(existing.subsystem).await;
+            if exited {
+                existing.client.close();
+                shared.supervisor.stop(existing.subsystem).await;
+            } else {
+                // A browser that still answers is asked to close, so that it
+                // writes what it keeps to its data directory first.
+                shared.end(&existing).await;
+            }
         }
         let failed = |reason| BrowserError::LaunchFailed(reason);
         let screen = if window {
@@ -824,14 +1018,26 @@ impl Browsers {
             )
             .await
             .map_err(|failure| failed(LaunchReason::Supervisor(failure)))?;
+        let subsystem = link.id;
+        // From here until it is recorded, a dropped launch stops it.
+        let unrecorded = Unrecorded {
+            shared,
+            subsystem: Some(subsystem),
+        };
         // A program was started: one launch, counted under its profile
         // root, inside the section that lets one launch through at a time.
         #[cfg(any(test, feature = "test-support"))]
         if let Ok(root) = &shared.root {
             crate::test_support::launched(root.as_path());
         }
+        #[cfg(test)]
+        if let Some(stall) = &shared.settings.stall_after_start
+            && !stall.done.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            stall.started.notify_one();
+            std::future::pending::<()>().await;
+        }
 
-        let subsystem = link.id;
         let known = &shared.settings.known_digests;
         let reviewed = known.contains(&link.program_digest);
         let client = Client::connect(
@@ -879,7 +1085,7 @@ impl Browsers {
             Ok(product) => product,
             Err(reason) => {
                 client.close();
-                shared.supervisor.stop(subsystem).await;
+                unrecorded.stop().await;
                 return Err(failed(reason));
             }
         };
@@ -897,7 +1103,7 @@ impl Browsers {
             Ok(made) => made.browser_context_id,
             Err(_) => {
                 client.close();
-                shared.supervisor.stop(subsystem).await;
+                unrecorded.stop().await;
                 return Err(failed(LaunchReason::NotOwned(
                     "it did not make a context that keeps its state in memory".to_owned(),
                 )));
@@ -912,6 +1118,7 @@ impl Browsers {
             verified: link.verified || reviewed,
             tabs: AtomicUsize::new(0),
             runs: AtomicU64::new(0),
+            hangs: AtomicU64::new(0),
             pages: Mutex::new(BTreeMap::new()),
             held: Mutex::new(Held::default()),
             windows: Mutex::new(BTreeMap::new()),
@@ -924,21 +1131,22 @@ impl Browsers {
         // can own: it is closed.
         if let Err(why) = lock_browser(&inner, shared.settings.call_deadline).await {
             inner.client.close();
-            shared.supervisor.stop(subsystem).await;
+            unrecorded.stop().await;
             return Err(failed(LaunchReason::NotOwned(why)));
         }
         let notice = match notice {
             None => None,
-            Some(text) => match show_notice(shared, &inner, &text).await {
+            Some(text) => match show_notice(shared, &inner, &text, purpose).await {
                 Ok(tab) => Some(Arc::new(tab)),
                 Err(error) => {
                     inner.client.close();
-                    shared.supervisor.stop(subsystem).await;
+                    unrecorded.stop().await;
                     return Err(error);
                 }
             },
         };
         shared.open().insert(profile.clone(), Arc::clone(&inner));
+        unrecorded.recorded();
         Ok(Browser {
             inner,
             shared: Arc::clone(shared),
@@ -969,6 +1177,7 @@ impl Browsers {
                 verified: browser.verified,
                 tabs: browser.tabs.load(Ordering::SeqCst),
                 runs: browser.runs.load(Ordering::SeqCst),
+                hangs: browser.hangs.load(Ordering::SeqCst),
                 health: browser.health(),
             })
             .collect()
@@ -984,30 +1193,16 @@ impl Browsers {
         let Some(browser) = shared.open().remove(profile) else {
             return Cleanup::complete();
         };
-        if browser.client.closed().is_none() {
-            let deadline = Deadline::after(shared.settings.close_deadline);
-            let mut ended = browser.client.subscribe(None);
-            if browser
-                .client
-                .call(None, &CloseBrowser {}, deadline)
-                .await
-                .is_ok()
-            {
-                // The end of the pipe is the end of the browser.
-                let _ = tokio::time::timeout_at(deadline.at(), async {
-                    while ended.recv().await.is_some() {}
-                })
-                .await;
-            }
-        }
-        browser.client.close();
-        shared.supervisor.stop(browser.subsystem).await
+        shared.end(&browser).await
     }
 
     /// Closes every browser. What could not be cleaned up is listed.
     pub async fn shutdown(&self) -> Cleanup {
+        let mut remaining = {
+            let _one = self.shared.launching.lock().await;
+            self.shared.stop_abandoned().await
+        };
         let profiles: Vec<ProfileKey> = self.shared.open().keys().cloned().collect();
-        let mut remaining = Vec::new();
         for profile in profiles {
             remaining.extend(self.close(&profile).await.remaining);
         }
@@ -1035,9 +1230,9 @@ impl fmt::Debug for Browser {
 
 impl Browser {
     /// A new tab that may act, with the fixed environment given, for the
-    /// origins given: the destinations the plan declares. The tab goes to
-    /// no other origin, whoever moves it, and looks at and acts on no page
-    /// of another: each of those is [`BrowserError::ForeignOrigin`].
+    /// origins given: the destinations the compiled target declares. The tab
+    /// goes to no other origin, whoever moves it, and looks at and acts on no
+    /// page of another: each of those is [`BrowserError::ForeignOrigin`].
     ///
     /// # Errors
     ///
@@ -1305,8 +1500,9 @@ fn lost(error: &ClientError, redact: &dyn Redact) -> BrowserError {
     }
 }
 
-/// A set of browsers that can only look: it opens observing tabs, which
-/// have no method that acts, and there is no way from it to an acting tab.
+/// A set of browsers that can only look: it opens observing tabs and
+/// watching tabs, neither of which has a method that acts, and there is no
+/// way from it to an acting tab.
 #[derive(Clone)]
 pub struct Observer {
     browsers: Browsers,
@@ -1348,6 +1544,54 @@ impl Observer {
         )
         .await?;
         Ok(ObserveTab::new(page))
+    }
+
+    /// A tab a person uses while the engine watches (decision 0392, point
+    /// 1), in a window of the profile's browser, started afresh as for a
+    /// sign-in, whose first tab shows `notice` and says what is kept. The
+    /// tab is held to `origins` as a sign-in tab is, sent once to `start`,
+    /// and sent nowhere after that. Nothing in it is failed for its method,
+    /// and it records every request of its page to those origins and the
+    /// screens the page shows, by structure, from the moment it opens. It
+    /// has no method that presses, types, navigates, or sends.
+    ///
+    /// # Errors
+    ///
+    /// [`BrowserError::ForeignOrigin`] when `start` is not on `origins`;
+    /// nothing was opened. As [`Browsers::open`] with a window, and as a
+    /// `goto` of the first address.
+    pub async fn watching_tab(
+        &self,
+        profile: &ProfileKey,
+        env: &PageEnvironment,
+        notice: &str,
+        origins: &Origins,
+        start: &WatchStart,
+        deadline: Deadline,
+    ) -> Result<WatchTab, BrowserError> {
+        if !origins.allows(start.address()) {
+            return Err(BrowserError::ForeignOrigin(start.address().origin()));
+        }
+        let browser = self
+            .browsers
+            .open_for(
+                profile,
+                Visibility::Window {
+                    notice: notice.to_owned(),
+                },
+                NoticeFor::Watch,
+            )
+            .await?;
+        let page = open_page(
+            &browser.shared,
+            &browser.inner,
+            env,
+            Posture::Watch,
+            origins,
+            None,
+        )
+        .await?;
+        WatchTab::open(page, browser, start, deadline).await
     }
 
     /// Whether a browser program is installed. Starts nothing.

@@ -1,6 +1,6 @@
 //! What the pack compiles `statements/` files to: its own section of the
-//! plan, and the details it puts on each step. The kernel stores and hashes
-//! both and never reads them; only this crate decodes them.
+//! compiled target, and the details it puts on each step. The kernel stores
+//! and hashes both and never reads them; only this crate decodes them.
 //!
 //! Every map is ordered, and nothing here holds a float, so the same files
 //! give the same bytes.
@@ -154,7 +154,8 @@ pub(crate) struct Statement {
     pub by_key: bool,
     /// Whether it may change data.
     pub access: Access,
-    /// The statement, a constant of the plan. Nothing is ever placed in it.
+    /// The statement, a constant of the compiled target. Nothing is ever
+    /// placed in it.
     pub text: String,
     /// What it does.
     pub does: Does,
@@ -179,7 +180,7 @@ pub(crate) struct Statement {
     pub isolation: Isolation,
 }
 
-/// The pack's section of the plan: every statement, by name.
+/// The pack's section of the compiled target: every statement, by name.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Section {

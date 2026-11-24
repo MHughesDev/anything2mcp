@@ -11,7 +11,7 @@ mod common;
 
 use std::sync::Arc;
 
-use a2m_core::{FailureClass, PackPayload, Plan, Step, Value, Values};
+use a2m_core::{CompiledTarget, FailureClass, PackPayload, Step, Value, Values};
 use a2m_pack_mcp::{UpstreamMcp, codes};
 use a2m_provider::{
     Authority, Destinations, DriverHandle, Observed, Posture, Prepared, Registry, Sent,
@@ -28,7 +28,7 @@ use example_mcp::store::INSTRUCTION_TEXT;
 struct Scene {
     _folder: Folder,
     registry: Registry,
-    plan: Plan,
+    compiled_target: CompiledTarget,
     stand: HttpStand,
     surface: SurfaceRef,
 }
@@ -36,13 +36,13 @@ struct Scene {
 async fn scene_with(registry_of: impl FnOnce(&Folder) -> Registry) -> Scene {
     let folder = Folder::new("driver");
     let registry = registry_of(&folder);
-    let plan = compiled_fixture(&registry);
+    let compiled_target = compiled_fixture(&registry);
     let stand = HttpStand::start().await.unwrap();
-    let surface = surface(&plan, "orders", Some(&stand.url()));
+    let surface = surface(&compiled_target, "orders", Some(&stand.url()));
     Scene {
         _folder: folder,
         registry,
-        plan,
+        compiled_target,
         stand,
         surface,
     }
@@ -56,7 +56,7 @@ impl Scene {
     async fn prepared(&self) -> (DriverHandle, Prepared) {
         prepare(
             &self.registry,
-            &self.plan,
+            &self.compiled_target,
             &self.surface,
             fence_of(7),
             Posture::Live,
@@ -82,7 +82,7 @@ impl Scene {
     }
 
     async fn get(&self, order: &str) -> Result<StepOutcome, StepFailure> {
-        let step = steps(&self.plan, "example_order_get").act;
+        let step = steps(&self.compiled_target, "example_order_get").act;
         self.read(&step, Values::new().with("order_id", order))
             .await
     }
@@ -164,7 +164,7 @@ async fn a_read_returns_what_the_stand_holds_and_five_runs_observe_the_same() {
     ));
 
     // A slow tool with no arguments, and a list read as a list.
-    let report = steps(&scene.plan, "example_order_report").act;
+    let report = steps(&scene.compiled_target, "example_order_report").act;
     let counted = done(scene.read(&report, Values::new()).await);
     assert_eq!(counted.values.get("draft"), Some(&Value::Int(2)));
 }
@@ -176,7 +176,7 @@ async fn a_write_is_sent_once_with_the_ledgers_token_and_read_back_from_the_stan
     let fence = running(&ledger, 1, &["A-100"]).await;
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &scene.surface,
         fence,
         Posture::Live,
@@ -184,7 +184,7 @@ async fn a_write_is_sent_once_with_the_ledgers_token_and_read_back_from_the_stan
     )
     .await
     .unwrap();
-    let update = steps(&scene.plan, "example_order_note_update");
+    let update = steps(&scene.compiled_target, "example_order_note_update");
     let args = Values::new()
         .with("order_id", "A-100")
         .with("field", "note")
@@ -246,7 +246,7 @@ async fn a_write_is_sent_once_with_the_ledgers_token_and_read_back_from_the_stan
     let other = running(&ledger, 2, &["A-101"]).await;
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &scene.surface,
         other,
         Posture::Live,
@@ -295,7 +295,7 @@ async fn a_write_lost_in_flight_is_possible_commit_and_the_lookup_finds_the_one_
         .unwrap();
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &scene.surface,
         fence,
         Posture::Live,
@@ -303,7 +303,7 @@ async fn a_write_lost_in_flight_is_possible_commit_and_the_lookup_finds_the_one_
     )
     .await
     .unwrap();
-    let create = steps(&scene.plan, "example_order_create");
+    let create = steps(&scene.compiled_target, "example_order_create");
     let args = Values::new()
         .with("customer", "Fourth Example Customer")
         .with("note", Value::Null);
@@ -377,7 +377,7 @@ async fn a_lookup_that_finds_two_records_is_ambiguous_and_picks_neither() {
     let control = scene.stand.control();
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &scene.surface,
         fence,
         Posture::Live,
@@ -385,7 +385,7 @@ async fn a_lookup_that_finds_two_records_is_ambiguous_and_picks_neither() {
     )
     .await
     .unwrap();
-    let create = steps(&scene.plan, "example_order_create");
+    let create = steps(&scene.compiled_target, "example_order_create");
     let args = Values::new()
         .with("customer", "Same Stamp Customer")
         .with("note", Value::Null);
@@ -476,7 +476,7 @@ async fn only_mapped_tools_are_reachable() {
     // A step that names a tool the server lists and the mapping does not:
     // one the server always had, and one it added.
     for unmapped in ["orders_delete", "orders_archive"] {
-        let mut step = steps(&scene.plan, "example_order_get").act;
+        let mut step = steps(&scene.compiled_target, "example_order_get").act;
         step.payload = PackPayload::encode(&serde_json::json!({
             "surface": "orders",
             "tool": unmapped,
@@ -492,7 +492,7 @@ async fn only_mapped_tools_are_reachable() {
         );
     }
     // A tool mapped as a write, in a step that does not commit.
-    let mut write = steps(&scene.plan, "example_order_note_update").act;
+    let mut write = steps(&scene.compiled_target, "example_order_note_update").act;
     write.commits = false;
     let args = Values::new()
         .with("order_id", "A-100")
@@ -503,7 +503,7 @@ async fn only_mapped_tools_are_reachable() {
         code(FailureClass::Policy, &codes::NOT_GRANTED, Sent::NotSent)
     );
     // Arguments that do not fit the pinned input schema never leave.
-    let get = steps(&scene.plan, "example_order_get").act;
+    let get = steps(&scene.compiled_target, "example_order_get").act;
     assert_eq!(
         failed(
             scene
@@ -535,7 +535,7 @@ async fn in_the_sandbox_a_write_tool_is_called_only_by_the_step_that_commits() {
         .with("order_id", "A-100")
         .with("field", "note")
         .with("value", "x");
-    let mut unmarked = steps(&scene.plan, "example_order_note_update").act;
+    let mut unmarked = steps(&scene.compiled_target, "example_order_note_update").act;
     unmarked.commits = false;
     for posture in [
         Posture::Sandbox { test_records: true },
@@ -545,7 +545,7 @@ async fn in_the_sandbox_a_write_tool_is_called_only_by_the_step_that_commits() {
     ] {
         let (handle, mut prepared) = prepare(
             &scene.registry,
-            &scene.plan,
+            &scene.compiled_target,
             &scene.surface,
             fence,
             posture,
@@ -633,7 +633,7 @@ async fn what_the_server_gets_wrong_is_a_named_stop() {
     control
         .set_fault(on_get(FaultKind::Delay { ms: 5_000 }))
         .unwrap();
-    let mut slow = steps(&scene.plan, "example_order_get").act;
+    let mut slow = steps(&scene.compiled_target, "example_order_get").act;
     slow.timeout_ms = 200;
     assert_eq!(
         failed(
@@ -649,7 +649,7 @@ async fn what_the_server_gets_wrong_is_a_named_stop() {
     // and the next run connects again.
     let (handle, mut prepared) = scene.prepared().await;
     control.expire_sessions().unwrap();
-    let get = steps(&scene.plan, "example_order_get").act;
+    let get = steps(&scene.compiled_target, "example_order_get").act;
     let args = Values::new().with("order_id", "A-100");
     let gone = handle
         .act(
@@ -676,13 +676,13 @@ async fn what_the_server_gets_wrong_is_a_named_stop() {
 async fn an_https_upstream_is_refused_because_tls_is_not_built() {
     let scene = scene().await;
     let secure = surface(
-        &scene.plan,
+        &scene.compiled_target,
         "orders",
         Some("https://orders.example.test/mcp"),
     );
     let refused = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &secure,
         fence_of(7),
         Posture::Live,
@@ -722,7 +722,7 @@ async fn the_revision_with_no_handshake_is_spoken_when_the_surface_states_it() {
         PackPayload::encode(&serde_json::json!({"revision": "2026-07-28"})).unwrap();
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &stateless,
         fence_of(7),
         Posture::Live,
@@ -730,7 +730,7 @@ async fn the_revision_with_no_handshake_is_spoken_when_the_surface_states_it() {
     )
     .await
     .unwrap();
-    let get = steps(&scene.plan, "example_order_get").act;
+    let get = steps(&scene.compiled_target, "example_order_get").act;
     let args = Values::new().with("order_id", "A-102");
     let read = done(
         handle
@@ -766,7 +766,7 @@ async fn a_header_of_the_products_own_is_never_sent() {
         let lease = sessions.lease_through(entry, "key", account, secret).await;
         let refused = prepare(
             &scene.registry,
-            &scene.plan,
+            &scene.compiled_target,
             &scene.surface,
             fence_of(7),
             Posture::Live,
@@ -798,13 +798,13 @@ async fn each_identity_has_its_own_connection_and_no_secret_reaches_a_caller() {
     control.accept_token("PLANTED-token-of-bob", "bob").unwrap();
     let ada = sessions.lease("ada", "PLANTED-token-of-ada").await;
     let bob = sessions.lease("bob", "PLANTED-token-of-bob").await;
-    let get = steps(&scene.plan, "example_order_get").act;
+    let get = steps(&scene.compiled_target, "example_order_get").act;
     let args = Values::new().with("order_id", "A-100");
 
     // With no credential the server refuses, and the driver says so.
     let refused = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &scene.surface,
         fence_of(7),
         Posture::Live,
@@ -818,7 +818,7 @@ async fn each_identity_has_its_own_connection_and_no_secret_reaches_a_caller() {
     for lease in [&ada, &bob, &ada] {
         let (handle, mut prepared) = prepare(
             &scene.registry,
-            &scene.plan,
+            &scene.compiled_target,
             &scene.surface,
             fence_of(7),
             Posture::Live,
@@ -895,7 +895,7 @@ async fn each_identity_has_its_own_connection_and_no_secret_reaches_a_caller() {
     );
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &scene.surface,
         fence_of(7),
         Posture::Live,
@@ -953,7 +953,7 @@ async fn each_identity_has_its_own_connection_and_no_secret_reaches_a_caller() {
 #[tokio::test]
 async fn a_tool_that_runs_free_text_is_never_called() {
     let mut scene = scene().await;
-    let search = steps(&scene.plan, "example_order_search").act;
+    let search = steps(&scene.compiled_target, "example_order_search").act;
     let args = || Values::new().with("query", "dock");
 
     // The tool's whole input is one string. A reviewer stated that the
@@ -966,10 +966,10 @@ async fn a_tool_that_runs_free_text_is_never_called() {
 
     // A mapping that says the server runs the string, and one that says
     // nothing about it: neither makes the tool callable, whatever compiled
-    // the plan.
-    let compiled = scene.plan.clone();
+    // the compiled target.
+    let compiled = scene.compiled_target.clone();
     for flag in [serde_json::json!(true), serde_json::Value::Null] {
-        scene.plan = remapped(&compiled, "orders", "orders_search", |entry| {
+        scene.compiled_target = remapped(&compiled, "orders", "orders_search", |entry| {
             entry["free_text"] = flag.clone();
         });
         assert_eq!(
@@ -980,7 +980,7 @@ async fn a_tool_that_runs_free_text_is_never_called() {
     }
     // The same for a tool with more than one argument that a reviewer says
     // runs free text.
-    scene.plan = remapped(&compiled, "orders", "orders_list", |entry| {
+    scene.compiled_target = remapped(&compiled, "orders", "orders_list", |entry| {
         entry["free_text"] = serde_json::json!(true);
     });
     let list = steps(&compiled, "example_order_create").lookup.unwrap();
@@ -993,10 +993,10 @@ async fn a_tool_that_runs_free_text_is_never_called() {
 }
 
 #[tokio::test]
-async fn a_connection_is_reused_only_for_the_far_end_the_plan_names() {
+async fn a_connection_is_reused_only_for_the_far_end_the_compiled_target_names() {
     let scene = scene().await;
     let control = scene.stand.control();
-    let get = steps(&scene.plan, "example_order_get").act;
+    let get = steps(&scene.compiled_target, "example_order_get").act;
     let args = Values::new().with("order_id", "A-100");
     // The first run opens a connection, and the driver keeps it.
     done(scene.get("A-100").await);
@@ -1007,7 +1007,7 @@ async fn a_connection_is_reused_only_for_the_far_end_the_plan_names() {
     let nowhere = Destinations::new(Vec::<String>::new());
     let refused = prepare_reaching(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &scene.surface,
         fence_of(7),
         Posture::Live,
@@ -1025,14 +1025,14 @@ async fn a_connection_is_reused_only_for_the_far_end_the_plan_names() {
         (FailureClass::Policy, &codes::NOT_GRANTED, Sent::NotSent)
     );
 
-    // The plan is published again with another protocol revision: the next
-    // run does not speak the old one over the old connection.
+    // The compiled target is published again with another protocol revision:
+    // the next run does not speak the old one over the old connection.
     let mut stateless = scene.surface.clone();
     stateless.surface.payload =
         PackPayload::encode(&serde_json::json!({"revision": "2026-07-28"})).unwrap();
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &stateless,
         fence_of(7),
         Posture::Live,
@@ -1056,14 +1056,14 @@ async fn a_connection_is_reused_only_for_the_far_end_the_plan_names() {
         "stateless"
     );
 
-    // The plan is published again with another address: the next run
-    // reaches the server at the new address, not the one it was connected
+    // The compiled target is published again with another address: the next
+    // run reaches the server at the new address, not the one it was connected
     // to.
     let other = HttpStand::start().await.unwrap();
-    let moved = surface(&scene.plan, "orders", Some(&other.url()));
+    let moved = surface(&scene.compiled_target, "orders", Some(&other.url()));
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &moved,
         fence_of(7),
         Posture::Live,
@@ -1094,7 +1094,7 @@ async fn a_tool_that_changes_within_a_run_is_not_called_against_its_old_pin() {
     let fence = running(&ledger, 1, &["A-100"]).await;
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &scene.surface,
         fence,
         Posture::Live,
@@ -1102,7 +1102,7 @@ async fn a_tool_that_changes_within_a_run_is_not_called_against_its_old_pin() {
     )
     .await
     .unwrap();
-    let get = steps(&scene.plan, "example_order_get").act;
+    let get = steps(&scene.compiled_target, "example_order_get").act;
     let order_args = Values::new().with("order_id", "A-100");
     done(
         handle
@@ -1123,7 +1123,7 @@ async fn a_tool_that_changes_within_a_run_is_not_called_against_its_old_pin() {
         })
         .unwrap();
     let listed = control.request_count("tools/list").unwrap();
-    let update = steps(&scene.plan, "example_order_note_update");
+    let update = steps(&scene.compiled_target, "example_order_note_update");
     let args = Values::new()
         .with("order_id", "A-100")
         .with("field", "note")
@@ -1167,7 +1167,7 @@ async fn a_read_is_compared_with_a_list_no_older_than_the_setting_allows() {
     .await;
     let control = scene.stand.control();
     let (handle, mut prepared) = scene.prepared().await;
-    let get = steps(&scene.plan, "example_order_get").act;
+    let get = steps(&scene.compiled_target, "example_order_get").act;
     let args = Values::new().with("order_id", "A-100");
     let first = handle
         .act(
@@ -1207,7 +1207,7 @@ async fn a_read_is_compared_with_a_list_no_older_than_the_setting_allows() {
 async fn a_structured_result_gives_only_what_the_mapping_lists_and_is_checked_against_it() {
     let mut scene = scene().await;
     let control = scene.stand.control();
-    let compiled = scene.plan.clone();
+    let compiled = scene.compiled_target.clone();
 
     // A tool with a pinned output schema. The order A-101 holds, in its
     // note, text aimed at an agent. The mapping lists the note as text
@@ -1220,7 +1220,7 @@ async fn a_structured_result_gives_only_what_the_mapping_lists_and_is_checked_ag
     // A mapping that does not list it: the note does not reach a caller.
     // What cannot hold free text still does: a number, and a string its
     // pinned schema closes to a list of values.
-    scene.plan = remapped(&compiled, "orders", "orders_get", |entry| {
+    scene.compiled_target = remapped(&compiled, "orders", "orders_get", |entry| {
         entry["untrusted_fields"] = serde_json::json!(["customer"]);
     });
     let unlisted = done(scene.get("A-101").await);
@@ -1230,7 +1230,7 @@ async fn a_structured_result_gives_only_what_the_mapping_lists_and_is_checked_ag
 
     // A tool with no output schema, mapped as one whose result is
     // structured. The mapping names what it takes: a key and a note.
-    scene.plan = remapped(&compiled, "orders", "orders_search", |entry| {
+    scene.compiled_target = remapped(&compiled, "orders", "orders_search", |entry| {
         entry["result"] = serde_json::json!("structured");
         entry["key"] = serde_json::json!(["order_id"]);
         entry["untrusted_fields"] = serde_json::json!(["note"]);
@@ -1283,17 +1283,17 @@ async fn a_structured_result_gives_only_what_the_mapping_lists_and_is_checked_ag
 async fn an_address_that_holds_a_user_name_or_a_password_is_refused_unsent() {
     let scene = scene().await;
     let control = scene.stand.control();
-    let get = steps(&scene.plan, "example_order_get").act;
+    let get = steps(&scene.compiled_target, "example_order_get").act;
     let args = Values::new().with("order_id", "A-100");
     let plain = scene.stand.url();
     for address in [
         plain.replacen("http://", "http://svc:PLANTED-pw@", 1),
         plain.replacen("http://", "http://svc@", 1),
     ] {
-        let far = surface(&scene.plan, "orders", Some(&address));
+        let far = surface(&scene.compiled_target, "orders", Some(&address));
         let outcome = match prepare(
             &scene.registry,
-            &scene.plan,
+            &scene.compiled_target,
             &far,
             fence_of(7),
             Posture::Live,
@@ -1335,17 +1335,17 @@ async fn a_credential_crosses_an_unencrypted_link_only_where_the_surface_accepts
     let control = scene.stand.control();
     control.accept_token("PLANTED-token-of-ada", "ada").unwrap();
     let ada = sessions.lease("ada", "PLANTED-token-of-ada").await;
-    let get = steps(&scene.plan, "example_order_get").act;
+    let get = steps(&scene.compiled_target, "example_order_get").act;
     let args = Values::new().with("order_id", "A-100");
     let by_name = scene.stand.url().replace("127.0.0.1", "localhost");
     assert_ne!(by_name, scene.stand.url());
 
     // Not accepted: refused before anything is sent; the stand saw nothing.
     for address in [by_name.as_str(), "http://192.0.2.10:9/mcp"] {
-        let far = surface(&scene.plan, "orders", Some(address));
+        let far = surface(&scene.compiled_target, "orders", Some(address));
         let refused = prepare(
             &scene.registry,
-            &scene.plan,
+            &scene.compiled_target,
             &far,
             fence_of(7),
             Posture::Live,
@@ -1375,7 +1375,7 @@ async fn a_credential_crosses_an_unencrypted_link_only_where_the_surface_accepts
     // Over the loopback address nothing changes.
     let (handle, mut prepared) = prepare(
         &scene.registry,
-        &scene.plan,
+        &scene.compiled_target,
         &scene.surface,
         fence_of(7),
         Posture::Live,
@@ -1415,10 +1415,10 @@ async fn a_credential_crosses_an_unencrypted_link_only_where_the_surface_accepts
             .find("mcp.unencrypted_credentials")
             .is_some()
     );
-    let far = surface(&compiled.plan, "orders", Some(&by_name));
+    let far = surface(&compiled.compiled_target, "orders", Some(&by_name));
     let (handle, mut prepared) = prepare(
         &registry,
-        &compiled.plan,
+        &compiled.compiled_target,
         &far,
         fence_of(7),
         Posture::Live,
@@ -1426,7 +1426,7 @@ async fn a_credential_crosses_an_unencrypted_link_only_where_the_surface_accepts
     )
     .await
     .unwrap();
-    let get = steps(&compiled.plan, "example_order_get").act;
+    let get = steps(&compiled.compiled_target, "example_order_get").act;
     done(
         handle
             .act(
@@ -1469,7 +1469,7 @@ fn a_surface_that_accepts_an_unencrypted_link_carries_its_notice_and_no_other_do
     });
     let accepted = common::compile(&registry, &root)
         .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
-        .plan;
+        .compiled_target;
     let orders = accepted
         .surfaces
         .iter()

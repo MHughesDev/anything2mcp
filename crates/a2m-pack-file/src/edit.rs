@@ -5,7 +5,7 @@
 //! every other byte where it was. The untouched check then parses the new
 //! bytes and compares every place outside the named ones with what it was.
 
-use a2m_core::{DecimalMark, FieldFormat, FieldTypePlan, Rounding, Value};
+use a2m_core::{CompiledFieldType, DecimalMark, FieldFormat, Rounding, Value};
 use a2m_provider::StepFailure;
 use a2m_sources::json::{JsonNode, JsonValue};
 use a2m_sources::{ByteSpan, ParsedPart};
@@ -54,7 +54,7 @@ pub(crate) fn apply(bytes: &[u8], mut patches: Vec<Patch>) -> Option<Vec<u8>> {
 /// A date, a time, a list, and a record have no spelling here yet.
 pub(crate) fn spell(
     value: &Value,
-    field_type: &FieldTypePlan,
+    field_type: &CompiledFieldType,
 ) -> Result<Option<String>, StepFailure> {
     let comma = matches!(
         field_type.format,
@@ -164,7 +164,7 @@ fn json_string(text: &str) -> Vec<u8> {
 /// replaces, when it replaces one: a value kept as a string stays a string.
 pub(crate) fn json_literal(
     value: &Value,
-    field_type: &FieldTypePlan,
+    field_type: &CompiledFieldType,
     existing: Option<&[u8]>,
 ) -> Result<Vec<u8>, StepFailure> {
     let Some(text) = spell(value, field_type)? else {

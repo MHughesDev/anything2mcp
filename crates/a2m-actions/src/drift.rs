@@ -4,7 +4,9 @@
 //! the runner into a job's conditions, so that every binding the drifted
 //! knowledge stops is refused before anything is sent.
 
-use a2m_core::{Failure, FailureCode, Mode, OperationName, Plan, RunId, SurfaceName, WorkspaceId};
+use a2m_core::{
+    CompiledTarget, Failure, FailureCode, Mode, OperationName, RunId, SurfaceName, WorkspaceId,
+};
 use a2m_engine::{DriftKnowledge, DriftMark};
 use a2m_ledger::{Owner, SqlValue, Tx};
 
@@ -94,55 +96,204 @@ pub(crate) fn lift(
     Ok(())
 }
 
-/// Every binding of `plan`, by its operation and mode, that a mark of its
-/// target stops. A mark that cannot be read stops every binding of the
-/// plan: what it said is not known, and unknown means stop.
-pub(crate) fn stopped(
+/// One mark of a target, as it was kept: what it names, the entry's name
+/// (empty for a mark of a whole binding), and when it was made.
+pub(crate) struct Held {
+    pub mark: DriftMark,
+    pub entry: String,
+    pub found_at: i64,
+}
+
+/// The marks of a target, or that one of them cannot be read: what it said
+/// is not known, and unknown means stop.
+pub(crate) enum Marks {
+    Read(Vec<Held>),
+    Unreadable,
+}
+
+/// The marks kept of the target of `compiled_target`.
+pub(crate) fn marks(
     tx: &mut Tx<'_>,
     workspace: WorkspaceId,
-    plan: &Plan,
-) -> Result<Vec<(OperationName, Mode)>, Failure> {
+    target: &str,
+) -> Result<Marks, Failure> {
     let rows = tx.tables(Owner::Actions).query(
-        "SELECT surface, mode, knowledge, digest, entry, operation
-         FROM actions_drift_marks WHERE workspace_id = ?1 AND target = ?2",
+        "SELECT surface, mode, knowledge, digest, entry, operation, found_at
+         FROM actions_drift_marks WHERE workspace_id = ?1 AND target = ?2
+         ORDER BY found_at",
         &[
             SqlValue::from(workspace.to_string()),
-            SqlValue::from(plan.header.target.as_str()),
+            SqlValue::from(target),
         ],
     )?;
     let mut marks = Vec::with_capacity(rows.len());
     for row in rows {
-        let read = || -> Option<DriftMark> {
+        let read = || -> Option<Held> {
             let digest = row.text(3).ok()?.parse().ok()?;
-            Some(DriftMark {
-                surface: SurfaceName::new(row.text(0).ok()?).ok()?,
-                mode: Mode::new(row.text(1).ok()?).ok()?,
-                knowledge: match row.text(2).ok()? {
-                    "entry" => DriftKnowledge::Entry {
-                        section: digest,
-                        entry: row.text(4).ok()?.to_owned(),
+            let entry = row.text(4).ok()?.to_owned();
+            Some(Held {
+                mark: DriftMark {
+                    surface: SurfaceName::new(row.text(0).ok()?).ok()?,
+                    mode: Mode::new(row.text(1).ok()?).ok()?,
+                    knowledge: match row.text(2).ok()? {
+                        "entry" => DriftKnowledge::Entry {
+                            section: digest,
+                            entry: entry.clone(),
+                        },
+                        "binding" => DriftKnowledge::Binding(digest),
+                        _ => return None,
                     },
-                    "binding" => DriftKnowledge::Binding(digest),
-                    _ => return None,
+                    operation: OperationName::new(row.text(5).ok()?).ok()?,
                 },
-                operation: OperationName::new(row.text(5).ok()?).ok()?,
+                entry,
+                found_at: row.int(6).ok()?,
             })
         };
         match read() {
-            Some(mark) => marks.push(mark),
-            None => {
-                return Ok(plan
-                    .operations
-                    .iter()
-                    .flat_map(|operation| {
-                        operation
-                            .bindings
-                            .iter()
-                            .map(|binding| (operation.name.clone(), binding.mode.clone()))
-                    })
-                    .collect());
+            Some(held) => marks.push(held),
+            None => return Ok(Marks::Unreadable),
+        }
+    }
+    Ok(Marks::Read(marks))
+}
+
+/// Every binding of `compiled_target`, by its operation and mode.
+fn every_binding(compiled_target: &CompiledTarget) -> Vec<(OperationName, Mode)> {
+    compiled_target
+        .operations
+        .iter()
+        .flat_map(|operation| {
+            operation
+                .bindings
+                .iter()
+                .map(|binding| (operation.name.clone(), binding.mode.clone()))
+        })
+        .collect()
+}
+
+/// Every binding of `compiled_target`, by its operation and mode, that a mark
+/// of its target stops. A mark that cannot be read stops every binding of the
+/// compiled target: what it said is not known, and unknown means stop.
+pub(crate) fn stopped(
+    tx: &mut Tx<'_>,
+    workspace: WorkspaceId,
+    compiled_target: &CompiledTarget,
+) -> Result<Vec<(OperationName, Mode)>, Failure> {
+    match marks(tx, workspace, compiled_target.header.target.as_str())? {
+        Marks::Unreadable => Ok(every_binding(compiled_target)),
+        Marks::Read(held) => {
+            let marks: Vec<DriftMark> = held.into_iter().map(|held| held.mark).collect();
+            Ok(a2m_engine::drift_covers(compiled_target, &marks))
+        }
+    }
+}
+
+/// Why a tool is unavailable now (decision 0396): the knowledge a mark that
+/// stops it names, as the mark holds it, and when the mark was made. The
+/// name is the entry's, or, for a mark of a whole binding, the operation's
+/// whose binding drifted. A mark that cannot be read names nothing and
+/// says no time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Unavailable {
+    pub knowledge: String,
+    pub marked_at: Option<i64>,
+}
+
+impl Unavailable {
+    /// As `tool.search` and `tool.describe` give it.
+    pub(crate) fn json(&self) -> serde_json::Value {
+        let mut out = serde_json::json!({"reason": "drift", "knowledge": self.knowledge});
+        if let (Some(at), serde_json::Value::Object(map)) = (self.marked_at, &mut out) {
+            map.insert("marked_at".to_owned(), serde_json::json!(at));
+        }
+        out
+    }
+}
+
+/// Which tools of `compiled_target` the marks of its target make unavailable
+/// now (decision 0396): an operation every binding of which a mark stops,
+/// as the engine would refuse it; a pipeline with a step whose operation is
+/// one. Each names the latest mark that stops it.
+pub(crate) fn unavailable(
+    compiled_target: &CompiledTarget,
+    marks: &Marks,
+) -> std::collections::BTreeMap<OperationName, Unavailable> {
+    // Each binding, with what stops it.
+    let mut stops: std::collections::BTreeMap<(OperationName, Mode), Unavailable> =
+        std::collections::BTreeMap::new();
+    match marks {
+        Marks::Unreadable => {
+            for pair in every_binding(compiled_target) {
+                stops.insert(
+                    pair,
+                    Unavailable {
+                        knowledge: String::new(),
+                        marked_at: None,
+                    },
+                );
+            }
+        }
+        Marks::Read(held) => {
+            for one in held {
+                let named = if one.entry.is_empty() {
+                    one.mark.operation.as_str().to_owned()
+                } else {
+                    one.entry.clone()
+                };
+                // Kept in the order they were made, so the latest wins.
+                for pair in
+                    a2m_engine::drift_covers(compiled_target, std::slice::from_ref(&one.mark))
+                {
+                    stops.insert(
+                        pair,
+                        Unavailable {
+                            knowledge: named.clone(),
+                            marked_at: Some(one.found_at),
+                        },
+                    );
+                }
             }
         }
     }
-    Ok(a2m_engine::drift_covers(plan, &marks))
+    let mut out = std::collections::BTreeMap::new();
+    if stops.is_empty() {
+        return out;
+    }
+    let latest = |found: Option<Unavailable>, next: &Unavailable| match found {
+        Some(found) if found.marked_at >= next.marked_at => Some(found),
+        _ => Some(next.clone()),
+    };
+    for operation in &compiled_target.operations {
+        if operation.bindings.is_empty() {
+            continue;
+        }
+        let mut why = None;
+        let every = operation.bindings.iter().all(|binding| {
+            match stops.get(&(operation.name.clone(), binding.mode.clone())) {
+                Some(stop) => {
+                    why = latest(why.take(), stop);
+                    true
+                }
+                None => false,
+            }
+        });
+        if let (true, Some(why)) = (every, why) {
+            out.insert(operation.name.clone(), why);
+        }
+    }
+    for pipeline in &compiled_target.pipelines {
+        let mut why = None;
+        for step in &pipeline.steps {
+            if let Some(stop) = compiled_target
+                .operation(step.operation)
+                .and_then(|operation| out.get(&operation.name))
+            {
+                why = latest(why.take(), stop);
+            }
+        }
+        if let Some(why) = why {
+            out.insert(pipeline.name.clone(), why);
+        }
+    }
+    out
 }

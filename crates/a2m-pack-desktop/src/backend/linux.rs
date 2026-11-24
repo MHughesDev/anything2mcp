@@ -25,7 +25,7 @@ use a2m_provider::Deadline;
 use futures_core::Stream;
 use zbus::{Connection, MatchRule, MessageStream, OwnedObjectPath, OwnedVariant};
 
-use super::{App, AxError, Limits, Window};
+use super::{Acted, App, AxError, Heard, Limits, Settable, Window};
 use crate::roles;
 use crate::tree::{El, Node, Tree};
 
@@ -220,14 +220,6 @@ where
         .map_err(|error| Acted::Unknown(lost(&error)))
 }
 
-/// How an act failed: before anything was sent, or after it was sent,
-/// with its fate unknown.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Acted {
-    NotSent(AxError),
-    Unknown(AxError),
-}
-
 /// Reads one property of [`READ_PROPERTIES`].
 async fn property(
     conn: &Connection,
@@ -347,17 +339,6 @@ pub(crate) struct Watch {
     gone: MessageStream,
 }
 
-/// What a watch heard first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Heard {
-    /// The application signalled a change.
-    Changed,
-    /// The application's connection to the bus ended: it exited.
-    Gone,
-    /// The deadline passed first.
-    Passed,
-}
-
 impl Watch {
     /// Waits for the application's next signal. `false` when the deadline
     /// passed first.
@@ -412,18 +393,6 @@ fn started(process: u32) -> Option<u64> {
     // twenty-second.
     let (_, after) = stat.rsplit_once(')')?;
     after.split_whitespace().nth(19)?.parse().ok()
-}
-
-/// Whether an element offers a text that may be set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Settable {
-    Yes,
-    /// It offers the interface, and its state says it takes no text today.
-    ReadOnly,
-    /// It offers the interface, and its state says it is not enabled.
-    Disabled,
-    /// It offers no editable text at all.
-    NoInterface,
 }
 
 /// The acting half of the back end, over one look and the proof of its

@@ -12,7 +12,7 @@ mod common;
 
 use std::time::Duration;
 
-use a2m_core::{Decimal, FailureClass, PackPayload, Plan, Value, Values};
+use a2m_core::{CompiledTarget, Decimal, FailureClass, PackPayload, Value, Values};
 use a2m_expr::Normalizer;
 use a2m_pack_web_browser::MASK;
 use a2m_provider::{
@@ -44,22 +44,26 @@ fn class_and_code(failure: &StepFailure) -> (FailureClass, &str) {
     (failure.failure.class(), failure.failure.code().as_str())
 }
 
-/// The plan with one file of the fixture changed.
-fn changed(scene: &Scene, path: &str, change: impl Fn(&str) -> String) -> Plan {
+/// The compiled target with one file of the fixture changed.
+fn changed(scene: &Scene, path: &str, change: impl Fn(&str) -> String) -> CompiledTarget {
     compile_changed(&scene.stand.registry, "example", path, change)
         .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
-        .plan
+        .compiled_target
 }
 
-/// Reads one line item with a plan that differs from the fixture's.
-async fn read_with(scene: &mut Scene, plan: Plan) -> Result<common::Ran, StepFailure> {
-    let kept = std::mem::replace(&mut scene.plan, plan);
+/// Reads one line item with a compiled target that differs from the
+/// fixture's.
+async fn read_with(
+    scene: &mut Scene,
+    compiled_target: CompiledTarget,
+) -> Result<common::Ran, StepFailure> {
+    let kept = std::mem::replace(&mut scene.compiled_target, compiled_target);
     let (handle, mut prepared) = scene.reader().await;
     let read = scene
         .read(&handle, &mut prepared, GET, &item("A-100", "L-101"))
         .await;
     handle.release(prepared, read.is_err()).await;
-    scene.plan = kept;
+    scene.compiled_target = kept;
     read
 }
 
@@ -198,11 +202,11 @@ async fn a_changed_screen_is_drift_and_what_has_no_rule_stops() {
     let form = "screens/line_item.yaml";
 
     // The field is no longer where any of its locators says.
-    let plan = changed(&scene, form, |text| {
+    let compiled_target = changed(&scene, form, |text| {
         text.replace("name: Description}", "name: Summary}")
             .replace("{label: Description}", "{label: Summary}")
     });
-    let gone = read_with(&mut scene, plan).await.unwrap_err();
+    let gone = read_with(&mut scene, compiled_target).await.unwrap_err();
     assert_eq!(
         class_and_code(&gone),
         (FailureClass::Drift, "locator_not_found")
@@ -210,11 +214,11 @@ async fn a_changed_screen_is_drift_and_what_has_no_rule_stops() {
     assert!(gone.failure.message().contains("`description`"), "{gone}");
 
     // A locator that matches several elements never picks the first.
-    let plan = changed(&scene, form, |text| {
+    let compiled_target = changed(&scene, form, |text| {
         text.replace("- {role: textbox, name: Description}\n", "")
             .replace("- {label: Description}", "- {css: 'input'}")
     });
-    let several = read_with(&mut scene, plan).await.unwrap_err();
+    let several = read_with(&mut scene, compiled_target).await.unwrap_err();
     assert_eq!(
         class_and_code(&several),
         (FailureClass::Drift, "locator_ambiguous")
@@ -228,8 +232,8 @@ async fn a_changed_screen_is_drift_and_what_has_no_rule_stops() {
         ),
         ("near_text: inches", "near_text: feet"),
     ] {
-        let plan = changed(&scene, form, |text| text.replace(from, to));
-        let moved = read_with(&mut scene, plan).await.unwrap_err();
+        let compiled_target = changed(&scene, form, |text| text.replace(from, to));
+        let moved = read_with(&mut scene, compiled_target).await.unwrap_err();
         assert_eq!(
             class_and_code(&moved),
             (FailureClass::Drift, "fingerprint_mismatch"),
@@ -237,10 +241,11 @@ async fn a_changed_screen_is_drift_and_what_has_no_rule_stops() {
         );
     }
 
-    // A plan that names a control this driver has no rule for: compiled by
-    // a pack that knew more. It is a stop, never a guess at a text box.
-    let mut plan = scene.plan.clone();
-    let section = plan
+    // A compiled target that names a control this driver has no rule for:
+    // compiled by a pack that knew more. It is a stop, never a guess at a
+    // text box.
+    let mut compiled_target = scene.compiled_target.clone();
+    let section = compiled_target
         .packs
         .iter_mut()
         .find(|section| section.pack == "web")
@@ -251,24 +256,24 @@ async fn a_changed_screen_is_drift_and_what_has_no_rule_stops() {
     )
     .unwrap();
     section.payload = PackPayload::encode(&other).unwrap();
-    let unknown = read_with(&mut scene, plan).await.unwrap_err();
+    let unknown = read_with(&mut scene, compiled_target).await.unwrap_err();
     assert_eq!(
         class_and_code(&unknown),
         (FailureClass::UnknownVariant, "unknown_control")
     );
 
     // A page that is neither ready nor in a state the screen declares.
-    let mut plan = changed(&scene, form, |text| {
+    let mut compiled_target = changed(&scene, form, |text| {
         text.replace("name: \"Line Item Details\"}}", "name: \"Line Item\"}}")
     });
-    for operation in &mut plan.operations {
+    for operation in &mut compiled_target.operations {
         for binding in &mut operation.bindings {
             for step in &mut binding.act {
                 step.timeout_ms = 1500;
             }
         }
     }
-    let strange = read_with(&mut scene, plan).await.unwrap_err();
+    let strange = read_with(&mut scene, compiled_target).await.unwrap_err();
     assert_eq!(
         class_and_code(&strange),
         (FailureClass::UnknownVariant, "unexpected_page")
@@ -278,8 +283,8 @@ async fn a_changed_screen_is_drift_and_what_has_no_rule_stops() {
 }
 
 /// The field type's own rule for an output, as the engine loads it.
-fn normalizer(plan: &Plan, operation: &str, output: &str) -> Normalizer {
-    let operation = plan
+fn normalizer(compiled_target: &CompiledTarget, operation: &str, output: &str) -> Normalizer {
+    let operation = compiled_target
         .operations
         .iter()
         .find(|known| known.name.as_str() == operation)
@@ -289,8 +294,13 @@ fn normalizer(plan: &Plan, operation: &str, output: &str) -> Normalizer {
         .iter()
         .find(|known| known.name == output)
         .unwrap();
-    let field_type = &plan.field_types[output.field_type.unwrap().get()];
-    Normalizer::load(plan.expression(field_type.normalizer.unwrap()).unwrap()).unwrap()
+    let field_type = &compiled_target.field_types[output.field_type.unwrap().get()];
+    Normalizer::load(
+        compiled_target
+            .expression(field_type.normalizer.unwrap())
+            .unwrap(),
+    )
+    .unwrap()
 }
 
 fn update(description: &str, quantity: i64, length: &str) -> Values {
@@ -371,14 +381,14 @@ async fn one_write_is_stored_once_and_reads_back_as_the_field_type_compares_it()
     // the field type's rule the two are one value, and another is not.
     let shown = back.values.get("length_in").unwrap();
     assert_eq!(shown, &Value::from("12.5"));
-    let rule = normalizer(&scene.plan, UPDATE, "length_in");
+    let rule = normalizer(&scene.compiled_target, UPDATE, "length_in");
     let intended = rule.normalize(inputs.get("length_in").unwrap()).unwrap();
     assert!(rule.normalize(shown).unwrap().agrees_with(&intended));
     let other = rule
         .normalize(&Value::from(Decimal::parse("12.5625").unwrap()))
         .unwrap();
     assert!(!rule.normalize(shown).unwrap().agrees_with(&other));
-    let quantity = normalizer(&scene.plan, UPDATE, "quantity");
+    let quantity = normalizer(&scene.compiled_target, UPDATE, "quantity");
     assert!(
         quantity
             .normalize(back.values.get("quantity").unwrap())
@@ -444,7 +454,7 @@ async fn a_write_the_application_refuses_is_rejected_and_stores_nothing() {
     handle.release(prepared, true).await;
 
     // A surface the run may not reach is not opened.
-    let mut elsewhere = Scene::over(scene.stand, scene.plan, &app.url(""));
+    let mut elsewhere = Scene::over(scene.stand, scene.compiled_target, &app.url(""));
     elsewhere.destinations = Destinations::new(["http://127.0.0.1:9".to_owned()]);
     let outside = elsewhere
         .try_prepare(None, Posture::Live)
@@ -676,11 +686,11 @@ async fn a_password_on_the_page_is_never_read_traced_or_logged() {
     server.abort();
 }
 
-/// The plan with the line item's screen reached through one of the test
-/// application's `leaving` pages, and a write run prepared over it.
+/// The compiled target with the line item's screen reached through one of the
+/// test application's `leaving` pages, and a write run prepared over it.
 async fn leaving(how: &str) -> (TestApp, Scene, Write, DriverHandle, Prepared) {
     let (app, mut scene) = scene(&format!("leaving-{how}")).await;
-    scene.plan = changed(&scene, "screens/line_item.yaml", |text| {
+    scene.compiled_target = changed(&scene, "screens/line_item.yaml", |text| {
         text.replace(
             "reach: {url: \"/orders/",
             &format!("reach: {{url: \"/leaving/{how}/orders/"),
@@ -845,13 +855,15 @@ async fn a_page_that_loads_from_an_origin_the_tool_does_not_declare_stops_and_se
     // `fetch` to the application's other name while it loads.
     let (app, mut scene) = scene("loads").await;
     the_other_name_is_reachable(&app).await;
-    let plan = changed(&scene, "screens/line_item.yaml", |text| {
+    let compiled_target = changed(&scene, "screens/line_item.yaml", |text| {
         text.replace(
             "reach: {url: \"/orders/",
             "reach: {url: \"/leaving/loads/orders/",
         )
     });
-    let failure = read_with(&mut scene, plan.clone()).await.unwrap_err();
+    let failure = read_with(&mut scene, compiled_target.clone())
+        .await
+        .unwrap_err();
     assert_eq!(
         class_and_code(&failure),
         (FailureClass::Policy, "origin_not_declared"),
@@ -871,7 +883,9 @@ async fn a_page_that_loads_from_an_origin_the_tool_does_not_declare_stops_and_se
     let surface = app.url("");
     let surface = surface.trim_end_matches('/');
     scene.destinations = Destinations::new([surface.to_owned(), other.replacen("http://", "", 1)]);
-    let failure = read_with(&mut scene, plan.clone()).await.unwrap_err();
+    let failure = read_with(&mut scene, compiled_target.clone())
+        .await
+        .unwrap_err();
     assert_eq!(
         class_and_code(&failure),
         (FailureClass::Policy, "origin_not_declared"),
@@ -879,7 +893,7 @@ async fn a_page_that_loads_from_an_origin_the_tool_does_not_declare_stops_and_se
     );
     assert!(app.trap_writes().await.unwrap().is_empty());
     scene.destinations = Destinations::new([surface.to_owned(), other.to_owned()]);
-    let read = read_with(&mut scene, plan).await.unwrap();
+    let read = read_with(&mut scene, compiled_target).await.unwrap();
     let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
     assert_eq!(
         read.values.get("description"),
@@ -928,7 +942,7 @@ async fn an_origin_the_surface_refuses_quietly_is_refused_and_the_read_goes_on()
         refusing(&format!("\"{other}\"")),
     )
     .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
-    .plan;
+    .compiled_target;
     scene.surface.surface.payload = quiet.surfaces[0].payload.clone();
     for destinations in [vec![surface.clone()], vec![surface.clone(), other.clone()]] {
         scene.destinations = Destinations::new(destinations.clone());
@@ -952,7 +966,7 @@ async fn an_origin_the_surface_refuses_quietly_is_refused_and_the_read_goes_on()
         refusing("\"http://elsewhere.invalid\""),
     )
     .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
-    .plan;
+    .compiled_target;
     scene.surface.surface.payload = aside.surfaces[0].payload.clone();
     scene.destinations = Destinations::new([surface.clone()]);
     let failure = read_with(&mut scene, loading.clone()).await.unwrap_err();
@@ -970,15 +984,15 @@ async fn an_origin_the_surface_refuses_quietly_is_refused_and_the_read_goes_on()
         "\"localhost\"".to_owned(),
         format!("\"{surface}\""),
     ] {
-        let plan = compile_changed(
+        let compiled_target = compile_changed(
             &scene.stand.registry,
             "example",
             "target.yaml",
             refusing(&bad),
         )
         .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
-        .plan;
-        scene.surface.surface.payload = plan.surfaces[0].payload.clone();
+        .compiled_target;
+        scene.surface.surface.payload = compiled_target.surfaces[0].payload.clone();
         let Err(failure) = scene.try_prepare(None, Posture::Live).await else {
             panic!("{bad}: the run was prepared");
         };

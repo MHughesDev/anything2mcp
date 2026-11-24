@@ -200,8 +200,11 @@ pub struct DiffCounts {
 pub struct Diff {
     /// The tool.
     pub tool: OperationName,
-    /// The tool's version: the hash of the plan.
-    pub plan: Digest,
+    /// The tool's version: the hash of the compiled target.
+    /// Stored under the compiled target's old name, `plan`, so that what an
+    /// older build wrote still reads (decision 0402).
+    #[serde(rename = "plan")]
+    pub compiled_target: Digest,
     /// The target.
     pub target: TargetName,
     /// The environment.
@@ -260,7 +263,7 @@ impl Diff {
         let mut hasher = FieldHasher::new();
         hasher.field("purpose", b"anything2mcp diff 1");
         hasher.field("tool", self.tool.as_str().as_bytes());
-        hasher.field("plan", self.plan.as_bytes());
+        hasher.field("plan", self.compiled_target.as_bytes());
         hasher.field("target", self.target.as_str().as_bytes());
         hasher.field("environment", self.environment.as_str().as_bytes());
         let identity = self
@@ -446,7 +449,7 @@ mod tests {
         );
         Diff {
             tool: OperationName::new("example_items_item_save").unwrap(),
-            plan: Digest::of(b"the sample plan"),
+            compiled_target: Digest::of(b"the sample plan"),
             target: TargetName::new("example").unwrap(),
             environment: Environment::new("test").unwrap(),
             identity: Some("account:example_writer".parse().unwrap()),

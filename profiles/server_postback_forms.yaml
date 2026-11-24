@@ -1,0 +1,19 @@
+# Pages of a server forms framework whose identifiers are made from the
+# control's place in the page, so that they change when a control is added or
+# moved, and whose partial postbacks draw the form again. Locate by label; take
+# the focus away and wait until the form is drawn again. Detected by a hidden
+# field that carries the page's state between postbacks, or by the page's own
+# postback function. No readiness test is stated: the family's own test is a
+# call into its framework's script object, which would name the framework.
+profile: server_postback_forms
+detect:
+  any:
+    - {dom: "form input[type='hidden'][name^='__'][name$='STATE']"}
+    - {js: "typeof __doPostBack === 'function'"}
+locators:
+  priority: [label, role, text, css]
+  reject_id_patterns: ["^ctl\\d+_", "^MainContent_"]
+input_commit: blur_then_wait_ready
+frames: {mode: declared}
+drift_risk: low
+support_tier: full

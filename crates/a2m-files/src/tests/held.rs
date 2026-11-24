@@ -1,8 +1,8 @@
-//! Decision 0298: a draft with an open question waits in `held/`. The
-//! drafter writes it there, with each file of its finding that names what it
-//! defines, and leaves the rest of the finding in place; the loader does
-//! not read the folder, so the target's files, digest, and plan do not
-//! depend on it; the compiler is not changed.
+//! Decision 0298: a draft with an open question waits in `held/`. The drafter
+//! writes it there, with each file of its finding that names what it defines,
+//! and leaves the rest of the finding in place; the loader does not read the
+//! folder, so the target's files, digest, and compiled target do not depend
+//! on it; the compiler is not changed.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -459,16 +459,16 @@ fn no_pack_registers_a_file_kind_in_the_holding_folder() {
 }
 
 /// Point 2 of the loader: the holding folder at the top is not read, so the
-/// sources, their digest, and the plan's hash are those of the target
-/// without it; a folder named `held` deeper down is not special; and an
-/// open question in a file outside `held/` is still the error it was.
+/// sources, their digest, and the compiled target's hash are those of the
+/// target without it; a folder named `held` deeper down is not special; and
+/// an open question in a file outside `held/` is still the error it was.
 #[test]
 fn the_loader_does_not_read_the_holding_folder_and_the_compiler_is_as_it_was() {
     let folder = scratch("loader");
     let root = TargetRoot::new(&folder);
     let set = set();
     let plain = load(&root, &set).unwrap();
-    let plan_without = compile(&plain, &set, CompileMode::Draft, DRAFT_VERSION)
+    let compiled_target_without = compile(&plain, &set, CompileMode::Draft, DRAFT_VERSION)
         .unwrap()
         .encoded
         .hash;
@@ -481,11 +481,11 @@ fn the_loader_does_not_read_the_holding_folder_and_the_compiler_is_as_it_was() {
     let with = load(&root, &set).unwrap();
     assert_eq!(with.digest, plain.digest);
     assert_eq!(with.files.len(), plain.files.len());
-    let plan_with = compile(&with, &set, CompileMode::Draft, DRAFT_VERSION)
+    let compiled_target_with = compile(&with, &set, CompileMode::Draft, DRAFT_VERSION)
         .unwrap()
         .encoded
         .hash;
-    assert_eq!(plan_with, plan_without);
+    assert_eq!(compiled_target_with, compiled_target_without);
 
     // `held` below the top is an ordinary folder, and is read.
     std::fs::create_dir_all(folder.join("calls/held")).unwrap();

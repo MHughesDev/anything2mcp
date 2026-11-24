@@ -969,3 +969,156 @@ fn a_held_folder_swapped_for_a_link_takes_every_call_and_the_link_none() {
         &codes::PATH_NOT_ALLOWED
     );
 }
+
+/// Each place in a pack crate that resolves a path itself, with how many
+/// times it does and why it is not the reading of a file a person or an
+/// agent names. Only the check in this crate makes a `CheckedPath`
+/// (section 502); a new use in a pack is either added here, with its
+/// reason, or is a pack resolving a path, which fails this test.
+const RESOLVES_A_PATH: &[(&str, usize, &str)] = &[
+    (
+        "a2m-pack-command/src/driver.rs",
+        2,
+        "a program the published target declares, resolved to name the file it runs, so the provider's closed tables of interpreters and of programs that run their own code are matched by that name too (decisions 0250 and 0299); nothing is read",
+    ),
+    (
+        "a2m-pack-mcp/src/driver.rs",
+        1,
+        "the program of a declared server, resolved to name the file it runs, so a package runner is refused by that name too (decision 0299, point 5); nothing is read",
+    ),
+    (
+        "a2m-pack-desktop/src/backend/linux.rs",
+        2,
+        "the declared program of a desktop application and the program a running process of the engine's own user runs (`/proc/<id>/exe`), compared to prove which process is the application; nothing is read",
+    ),
+    (
+        "a2m-pack-command/src/safety/before_0250.rs",
+        1,
+        "a frozen copy of the check from before decision 0250, used by one test alone to compare verdicts",
+    ),
+    (
+        "a2m-pack-command/src/safety.rs",
+        1,
+        "that test's own temporary folder",
+    ),
+    (
+        "a2m-pack-command/tests/script.rs",
+        2,
+        "a test that finds the shell the machine has",
+    ),
+    (
+        "a2m-pack-desktop/tests/read.rs",
+        1,
+        "a test that names the program it starts as the driver will see it",
+    ),
+    (
+        "a2m-pack-mcp/tests/launcher.rs",
+        1,
+        "a test that finds the launcher the machine has",
+    ),
+];
+
+/// The calls that turn a path into the file it leads to.
+const RESOLVERS: &[&str] = &[
+    "canonicalize",
+    "read_link",
+    "realpath",
+    "GetFinalPathNameByHandleW",
+];
+
+fn rust_files(folder: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(folder).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|name| name != "target") {
+                rust_files(&path, found);
+            }
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            found.push(path);
+        }
+    }
+}
+
+/// How many times `line` calls one of the resolvers, as a whole word.
+fn resolutions(line: &str) -> usize {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    RESOLVERS
+        .iter()
+        .map(|name| {
+            line.match_indices(name)
+                .filter(|(at, _)| {
+                    let before = line[..*at].chars().next_back();
+                    let after = line[at + name.len()..].chars().next();
+                    !before.is_some_and(word) && !after.is_some_and(word)
+                })
+                .count()
+        })
+        .sum()
+}
+
+#[test]
+fn no_pack_resolves_a_path_but_where_the_list_says_why() {
+    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let mut found: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut packs = 0;
+    for entry in std::fs::read_dir(&crates).unwrap() {
+        let folder = entry.unwrap().path();
+        let Some(name) = folder.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("a2m-pack-") {
+            continue;
+        }
+        packs += 1;
+        let mut files = Vec::new();
+        rust_files(&folder, &mut files);
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap();
+            let count: usize = text
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .map(resolutions)
+                .sum();
+            if count > 0 {
+                let relative = file
+                    .strip_prefix(&crates)
+                    .unwrap()
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                found.insert(relative, count);
+            }
+        }
+    }
+    assert!(packs >= 10, "the pack crates were not found: {packs}");
+    let allowed: std::collections::BTreeMap<String, usize> = RESOLVES_A_PATH
+        .iter()
+        .map(|(file, count, why)| {
+            assert!(!why.is_empty());
+            ((*file).to_owned(), *count)
+        })
+        .collect();
+    assert_eq!(
+        found, allowed,
+        "a pack resolves a path where the list does not say why, or the list names a use that is gone"
+    );
+}
+
+#[test]
+fn the_search_for_a_resolution_finds_each_call_and_no_longer_name() {
+    assert_eq!(
+        resolutions("let real = std::fs::canonicalize(&path).ok();"),
+        1
+    );
+    assert_eq!(
+        resolutions("path.canonicalize()?; std::fs::read_link(p)"),
+        2
+    );
+    assert_eq!(resolutions("tokio::fs::canonicalize(p).await"), 1);
+    assert_eq!(resolutions("fn canonicalize_name(x: &str)"), 0);
+    assert_eq!(resolutions("let uncanonicalized = 1;"), 0);
+}

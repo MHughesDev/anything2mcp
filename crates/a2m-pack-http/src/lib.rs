@@ -1,11 +1,11 @@
 //! The HTTP pack: a target can be a service reached by HTTP requests.
 //!
 //! The pack owns the endpoint catalog, the `endpoints/` file kind, and
-//! compiles each entry into a typed request template, its own payload in
-//! the plan. Its driver, of the mode `http`, builds every request position
-//! by position from a template, sends it to the surface's own address with
-//! no browser, and checks the answer against the shape the endpoint
-//! declares. Its discoverers read a published description and what a
+//! compiles each entry into a typed request template, its own payload in the
+//! compiled target. Its driver, of the mode `http`, builds every request
+//! position by position from a template, sends it to the surface's own
+//! address with no browser, and checks the answer against the shape the
+//! endpoint declares. Its discoverers read a published description and what a
 //! surface says about itself, with requests that cannot write.
 //!
 //! The product crate registers the pack with one call:
@@ -43,7 +43,6 @@ mod json;
 mod link;
 mod lower;
 mod openapi;
-mod shape;
 mod template;
 mod xml;
 
@@ -51,6 +50,10 @@ use std::sync::Arc;
 
 use a2m_core::{Failure, Mode};
 use a2m_files::{JsonSchema, SurfaceKindSpec};
+/// The closed shape of a body, which this pack reads in its endpoint
+/// entries and checks against answers, is the provider contract's, shared
+/// with the web pack's page requests (decision 0394, point 1).
+use a2m_provider::shape;
 use a2m_provider::{CompilerRegistrations, Pack, PackContext, Registrar, RegistryBuilder};
 
 pub use described::{API_MODE, DESCRIPTION_KIND};

@@ -18,7 +18,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use a2m_core::{FailureClass, Finding, NoSecrets, Plan, Value, Values};
+use a2m_core::{CompiledTarget, FailureClass, Finding, NoSecrets, Value, Values};
 use a2m_files::{CompileMode, Diagnostics, DraftValue, Drafter, RelPath, TargetRoot};
 use a2m_provider::{Authority, Deadline, Posture, Sent, StepFailure, StepInput};
 use common::{Folder, Ran, Scene, Stand, Write, fixture, page_http_mode, shown};
@@ -112,11 +112,11 @@ fn target(name: &str, origin: &str, path: &str, change: impl Fn(&str) -> String)
     folder
 }
 
-fn compile(stand: &Stand, folder: &Folder) -> Result<Plan, Diagnostics> {
+fn compile(stand: &Stand, folder: &Folder) -> Result<CompiledTarget, Diagnostics> {
     let set = stand.registry.compiler_set();
     let sources = a2m_files::load(&TargetRoot::new(folder.path()), set)?;
     a2m_files::compile(&sources, set, CompileMode::Draft, a2m_files::DRAFT_VERSION)
-        .map(|compiled| compiled.plan)
+        .map(|compiled| compiled.compiled_target)
 }
 
 fn refused_as(stand: &Stand, path: &str, change: impl Fn(&str) -> String, rule: &str) {
@@ -187,8 +187,9 @@ impl a2m_files::DraftingRule for DraftsAWrite {
 fn a_write_entry_states_its_token_its_answers_and_its_read_back_or_does_not_compile() {
     let stand = Stand::new("page-http-write-compile", Arc::new(NoSecrets));
     let folder = target("compiles", "http://127.0.0.1:4010", "", str::to_owned);
-    let plan = compile(&stand, &folder).unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    let operation = plan
+    let compiled_target =
+        compile(&stand, &folder).unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    let operation = compiled_target
         .operations
         .iter()
         .find(|known| known.name.as_str() == UPDATE)
@@ -409,8 +410,9 @@ fn a_write_entry_states_its_token_its_answers_and_its_read_back_or_does_not_comp
 fn scene(name: &str, app: &TestApp, path: &str, change: impl Fn(&str) -> String) -> Scene {
     let stand = Stand::new(name, Arc::new(NoSecrets));
     let folder = target(name, &app.url(""), path, change);
-    let plan = compile(&stand, &folder).unwrap_or_else(|problems| panic!("{}", shown(&problems)));
-    Scene::over(stand, plan, &app.url(""))
+    let compiled_target =
+        compile(&stand, &folder).unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    Scene::over(stand, compiled_target, &app.url(""))
 }
 
 /// Every text a step gave: its values, its captures, and its failure.

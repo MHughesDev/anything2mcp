@@ -15,6 +15,7 @@ use crate::auth::{AuthReport, AuthSettings, Credential};
 use crate::details::StoredDelivery;
 use crate::faults::Fault;
 use crate::forgery::NotesReport;
+use crate::own_requests::CaseRowsReport;
 use crate::store::{StoredItem, StoredOrder, WriteRecord};
 
 /// The one account's username. Made up.
@@ -612,6 +613,16 @@ impl TestApp {
     /// Returns an error if the control interface could not be asked.
     pub async fn case_events(&self) -> Result<Vec<String>, HarnessError> {
         Ok(self.ask::<CaseEvents>("/__control/cases").await?.events)
+    }
+
+    /// What case 39 stored: its rows, and the `op` of every body its route
+    /// was sent, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn case_rows(&self) -> Result<CaseRowsReport, HarnessError> {
+        self.ask::<CaseRowsReport>("/__control/case-rows").await
     }
 
     /// What the anti-forgery case stored: each order's note, how many writes

@@ -388,7 +388,7 @@ async fn a_published_map_drafts_reads_that_read_the_stand_and_send_no_frame_to_d
     // The held read is not read by the loader, so the rest compiles, and a
     // drafted read returns what the stand holds, through the handle.
     assert!(folder.path().join(questioned[0]).is_file());
-    scene.plan = common::compile_folder(folder.path(), scene.registry.compiler_set());
+    scene.compiled_target = common::compile_folder(folder.path(), scene.registry.compiler_set());
     let (handle, mut prepared) = scene.prepare(None, Posture::Live).await;
     let ran = scene
         .run(
@@ -445,7 +445,7 @@ async fn a_published_map_drafts_reads_that_read_the_stand_and_send_no_frame_to_d
         other,
     )
     .unwrap();
-    scene.plan = common::compile_folder(folder.path(), scene.registry.compiler_set());
+    scene.compiled_target = common::compile_folder(folder.path(), scene.registry.compiler_set());
     let (handle, mut prepared) = scene.prepare(None, Posture::Live).await;
     let stopped = scene
         .run(

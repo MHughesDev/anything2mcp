@@ -6,9 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    BindingPlan, Digest, EffectClass, ExprIndex, Failure, FailureClass, IdentityStrategy,
-    InputPlan, OperationIndex, OperationName, OperationPlan, REDACTED, RecordKey, RecordState,
-    RunState, StepArg, Timestamp, ToolRuns, Value, Values, WriteEvidence,
+    CompiledBinding, CompiledInput, CompiledOperation, Digest, EffectClass, ExprIndex, Failure,
+    FailureClass, IdentityStrategy, OperationIndex, OperationName, REDACTED, RecordKey,
+    RecordState, RunState, StepArg, Timestamp, ToolRuns, Value, Values, WriteEvidence,
 };
 use a2m_expr::names;
 use a2m_ledger::{
@@ -125,7 +125,7 @@ fn act_key(record: &Planned) -> Option<&RecordKey> {
 /// the system assigned, or the key of the record's key inputs. `None` when
 /// the record has neither; never its place in the run, which names nothing
 /// in the system.
-fn read_key(found: &OperationPlan, record: &Planned) -> Option<RecordKey> {
+fn read_key(found: &CompiledOperation, record: &Planned) -> Option<RecordKey> {
     if let Some(assigned) = &record.assigned {
         return Some(assigned.clone());
     }
@@ -163,11 +163,11 @@ struct Call {
 /// (decision 0196). Such a record is never read before it is written,
 /// nothing is compared after, and a lookup is asked of it only in
 /// reconcile, for whether it landed, never for its values.
-fn cannot_read(binding: &BindingPlan) -> bool {
+fn cannot_read(binding: &CompiledBinding) -> bool {
     binding.evidence == WriteEvidence::Acknowledged && binding.read_back.is_empty()
 }
 
-fn writes(operation: &OperationPlan) -> bool {
+fn writes(operation: &CompiledOperation) -> bool {
     operation
         .bindings
         .iter()
@@ -288,7 +288,7 @@ fn kept(run: &Run<'_>, values: &Values) -> Values {
 }
 
 /// The steps of a binding in the order a write runs them.
-fn steps_of(binding: &BindingPlan) -> impl Iterator<Item = &a2m_core::Step> {
+fn steps_of(binding: &CompiledBinding) -> impl Iterator<Item = &a2m_core::Step> {
     binding
         .act
         .iter()
@@ -299,7 +299,10 @@ fn steps_of(binding: &BindingPlan) -> impl Iterator<Item = &a2m_core::Step> {
 /// A binding saves once in one call: this engine carries out one commit
 /// point per call. Checked for the binding that is about to write, before
 /// anything is sent.
-fn one_save(operation: &OperationPlan, binding: Option<&BindingPlan>) -> Result<(), Failure> {
+fn one_save(
+    operation: &CompiledOperation,
+    binding: Option<&CompiledBinding>,
+) -> Result<(), Failure> {
     let commits = binding.map_or(0, |binding| {
         binding.act.iter().filter(|step| step.commits).count()
     });
@@ -329,7 +332,7 @@ fn not_a_test_record() -> Failure {
 /// The record's key: its identity inputs, or, for an operation that names
 /// none, its place in the run.
 fn key_of(
-    operation: &OperationPlan,
+    operation: &CompiledOperation,
     inputs: &Values,
     record: RecordRef,
 ) -> Result<RecordKey, Failure> {
@@ -359,7 +362,7 @@ fn key_of(
 /// The key of a record that has none of its own yet: its place in the run.
 /// It is the key of a record whose operation names no key input, and of a
 /// record whose key waits for a record written earlier in the run.
-fn place_key(operation: &OperationPlan, record: RecordRef) -> Result<RecordKey, Failure> {
+fn place_key(operation: &CompiledOperation, record: RecordRef) -> Result<RecordKey, Failure> {
     RecordKey::new(vec![
         Value::Text(operation.name.to_string()),
         Value::Int(i64::from(record.step_seq)),
@@ -381,7 +384,7 @@ fn parse_key(text: &str) -> Option<RecordKey> {
 /// absent stops the run, as a `null` in it does.
 fn outputs_of(
     loaded: &Loaded,
-    operation: &OperationPlan,
+    operation: &CompiledOperation,
     observed: &Values,
 ) -> Result<Values, Failure> {
     let mut out = Values::new();
@@ -413,8 +416,8 @@ fn output_unexpected(what: String) -> Failure {
 /// by its field type.
 pub(crate) fn output_value(
     loaded: &Loaded,
-    operation: &OperationPlan,
-    output: &a2m_core::OutputPlan,
+    operation: &CompiledOperation,
+    output: &a2m_core::CompiledOutput,
     raw: &Value,
 ) -> Result<Value, Failure> {
     let unexpected = output_unexpected;
@@ -499,7 +502,7 @@ pub(crate) fn output_value(
 
 /// The fields of what a read returns, for the trace: the outputs that have
 /// a field type.
-fn output_fields(loaded: &Loaded, operation: &OperationPlan) -> Vec<Field> {
+fn output_fields(loaded: &Loaded, operation: &CompiledOperation) -> Vec<Field> {
     operation
         .outputs
         .iter()
@@ -516,7 +519,7 @@ fn output_fields(loaded: &Loaded, operation: &OperationPlan) -> Vec<Field> {
 fn shape<'p>(
     loaded: &'p Loaded,
     runs: ToolRuns,
-) -> Result<(Vec<StepShape<'p>>, &'p [InputPlan]), Failure> {
+) -> Result<(Vec<StepShape<'p>>, &'p [CompiledInput]), Failure> {
     match runs {
         ToolRuns::Operation(index) => {
             let found = operation(loaded, index)?;
@@ -535,8 +538,8 @@ fn shape<'p>(
             ))
         }
         ToolRuns::Pipeline(index) => {
-            let pipeline = loaded.plan.pipeline(index).ok_or_else(|| {
-                codes::job_invalid("The tool names a pipeline the plan does not hold.")
+            let pipeline = loaded.compiled_target.pipeline(index).ok_or_else(|| {
+                codes::job_invalid("The tool names a pipeline the compiled target does not hold.")
             })?;
             let mut steps = Vec::with_capacity(pipeline.steps.len());
             for (position, step) in pipeline.steps.iter().enumerate() {
@@ -644,8 +647,16 @@ impl Tool<'_> {
                     ));
                 }
             }
+            let inputs = loaded.inputs_waiting(&found.inputs, &given, &waiting)?;
+            crate::destination::guard_url_inputs(
+                &loaded.compiled_target,
+                &found.inputs,
+                &inputs,
+                &found.manifest.destinations,
+                &format!("the step `{}`", step.id),
+            )?;
             calls.push(Call {
-                inputs: loaded.inputs_waiting(&found.inputs, &given, &waiting)?,
+                inputs,
                 pending: !waiting.is_empty(),
             });
         }
@@ -684,7 +695,7 @@ async fn read_source(
         return Ok((Value::Null, 0));
     };
     let Some(source) = loaded
-        .plan
+        .compiled_target
         .pipeline(index)
         .and_then(|pipeline| pipeline.source.as_ref())
     else {
@@ -704,7 +715,7 @@ async fn read_source(
             "Call the tool with its source input.",
         ));
     };
-    let definition = LoadedSource::load(&loaded.plan, source)?;
+    let definition = LoadedSource::load(&loaded.compiled_target, source)?;
     let builtin = Sources::builtin();
     let sources = if builtin
         .readers()
@@ -747,10 +758,9 @@ async fn read_source(
 /// Carries out the tool the job names.
 pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<Done, Stop> {
     let loaded = Arc::clone(&run.loaded);
-    let tool = loaded
-        .plan
-        .tool(name)
-        .ok_or_else(|| codes::job_invalid(format!("The plan holds no tool named `{name}`.")))?;
+    let tool = loaded.compiled_target.tool(name).ok_or_else(|| {
+        codes::job_invalid(format!("The compiled target holds no tool named `{name}`."))
+    })?;
     let (steps, declared) = shape(&loaded, tool.runs)?;
     let writing = steps.iter().any(|step| step.writes);
     let (effect, hazard, limits) = match tool.runs {
@@ -763,8 +773,8 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
             )
         }
         ToolRuns::Pipeline(index) => {
-            let pipeline = loaded.plan.pipeline(index).ok_or_else(|| {
-                codes::job_invalid("The tool names a pipeline the plan does not hold.")
+            let pipeline = loaded.compiled_target.pipeline(index).ok_or_else(|| {
+                codes::job_invalid("The tool names a pipeline the compiled target does not hold.")
             })?;
             (pipeline.effect, pipeline.hazard, pipeline.limits)
         }
@@ -781,7 +791,7 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
     // Guard: the session's state allows the call. The steps the call is
     // sure to run are the ones asked about: a step under a condition or run
     // for each row may not run at all, and is left to choose.
-    let sure: Vec<&OperationPlan> = steps
+    let sure: Vec<&CompiledOperation> = steps
         .iter()
         .filter(|step| step.when.is_none() && step.for_each.is_none())
         .map(|step| operation(&loaded, step.operation))
@@ -793,6 +803,23 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
         run.moved(RunState::Validating).await?;
     }
     let inputs = loaded.inputs(declared, &run.job.input)?;
+    // Guard: an input of the type `url` is an address the operation
+    // declares; for a pipeline, one an operation it calls declares, and
+    // each call is held to its own operation's again (section 502).
+    let reachable: Vec<String> = steps
+        .iter()
+        .map(|step| operation(&loaded, step.operation))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flat_map(|found| found.manifest.destinations.iter().cloned())
+        .collect();
+    crate::destination::guard_url_inputs(
+        &loaded.compiled_target,
+        declared,
+        &inputs,
+        &reachable,
+        &format!("the tool `{name}`"),
+    )?;
     let (source, rows) = read_source(run, &loaded, tool.runs).await?;
     if let Some(most) = limits.max_records
         && rows > most
@@ -905,9 +932,13 @@ async fn read_steps_of(
 }
 
 /// The name of the surface `binding` acts on.
-fn surface_name(run: &Run<'_>, loaded: &Loaded, binding: &BindingPlan) -> a2m_core::SurfaceName {
+fn surface_name(
+    run: &Run<'_>,
+    loaded: &Loaded,
+    binding: &CompiledBinding,
+) -> a2m_core::SurfaceName {
     loaded
-        .plan
+        .compiled_target
         .surface(binding.surface)
         .map_or_else(|| run.surface_of(0), |surface| surface.name.clone())
 }
@@ -918,7 +949,7 @@ fn surface_name(run: &Run<'_>, loaded: &Loaded, binding: &BindingPlan) -> a2m_co
 async fn read_operation(
     run: &mut Run<'_>,
     loaded: &Loaded,
-    found: &OperationPlan,
+    found: &CompiledOperation,
     inputs: &Values,
 ) -> Result<Values, Stop> {
     run.checkpoint(Duration::ZERO)?;
@@ -953,7 +984,7 @@ async fn read_operation(
                             mode: binding.mode.clone(),
                             surface: surface_name(run, loaded, binding),
                             failure: None,
-                            knowledge: crate::drift::knowledge_of(&loaded.plan, binding),
+                            knowledge: crate::drift::knowledge_of(&loaded.compiled_target, binding),
                         })
                         .await;
                     }
@@ -995,9 +1026,10 @@ async fn read_operation(
         );
         if failure.class() == FailureClass::Drift {
             let step = run.drift_step.take();
-            let knowledge = crate::drift::drifted_knowledge(&loaded.plan, binding, step.as_ref())
-                .into_iter()
-                .collect();
+            let knowledge =
+                crate::drift::drifted_knowledge(&loaded.compiled_target, binding, step.as_ref())
+                    .into_iter()
+                    .collect();
             run.tell(EngineEvent::BindingHealth {
                 operation: found.name.clone(),
                 mode: binding.mode.clone(),
@@ -1030,8 +1062,8 @@ async fn read_operation(
 async fn read_pass(
     run: &mut Run<'_>,
     loaded: &Loaded,
-    found: &OperationPlan,
-    binding: &BindingPlan,
+    found: &CompiledOperation,
+    binding: &CompiledBinding,
     candidate: &Candidate,
     scope: &Scope,
     fields: &[Field],
@@ -1059,7 +1091,7 @@ async fn read_pass(
 pub(crate) async fn observe(
     run: &mut Run<'_>,
     held: usize,
-    binding: &BindingPlan,
+    binding: &CompiledBinding,
     scope: &Scope,
     fields: &[Field],
 ) -> Result<Option<Values>, Failure> {
@@ -1114,8 +1146,8 @@ async fn write_tool(run: &mut Run<'_>, loaded: &Loaded, tool: &mut Tool<'_>) -> 
             read_steps_of(run, loaded, tool, 0, first_write).await?;
             let mut diff = Diff {
                 tool: tool.name.clone(),
-                plan: loaded.hash,
-                target: loaded.plan.header.target.clone(),
+                compiled_target: loaded.hash,
+                target: loaded.compiled_target.header.target.clone(),
                 environment: run.environment.clone(),
                 identity: run.job.identity.clone(),
                 records: Vec::new(),
@@ -1402,7 +1434,7 @@ fn derive_step(
             // The sandbox writes only to declared test records. A record
             // keyed by its place in the run is never one: that key names
             // nothing in the system (audit finding E-6).
-            let environment = &loaded.plan.environments[run.env_position];
+            let environment = &loaded.compiled_target.environments[run.env_position];
             if place_keyed || !environment.test_records.contains(&key) {
                 return Err(Stop::Fail(not_a_test_record()));
             }
@@ -1620,7 +1652,7 @@ fn adopt(
 /// from the one it is read in only in the sandbox.
 async fn hold_for(
     run: &mut Run<'_>,
-    found: &OperationPlan,
+    found: &CompiledOperation,
     record: &mut Planned,
     mode: Option<&a2m_core::Mode>,
     writes: bool,
@@ -1671,7 +1703,7 @@ async fn hold_for(
 /// behind the write it is asked about.
 async fn read_record(
     run: &mut Run<'_>,
-    found: &OperationPlan,
+    found: &CompiledOperation,
     record: &mut Planned,
     held: usize,
     settles: bool,
@@ -1728,7 +1760,7 @@ async fn read_record(
 /// `Ok(None)` when a step answered that the record is absent.
 async fn read_once(
     run: &mut Run<'_>,
-    found: &OperationPlan,
+    found: &CompiledOperation,
     record: &mut Planned,
     held: usize,
     steps: &[a2m_core::Step],
@@ -1927,7 +1959,7 @@ async fn preview_record(
     // its binding chosen only then: every binding it could take is named,
     // and its evidence is the weakest of theirs, so that the page warns of
     // a write that may not be read back.
-    let named = |position: usize, binding: &a2m_core::BindingPlan| DiffBinding {
+    let named = |position: usize, binding: &a2m_core::CompiledBinding| DiffBinding {
         position: u32::try_from(position).unwrap_or(u32::MAX),
         mode: binding.mode.clone(),
         evidence: binding.evidence,
@@ -2202,7 +2234,7 @@ async fn reconcile(
 /// was found, shown as the system's data. Nothing is sent.
 fn keyless_in_doubt(
     run: &Run<'_>,
-    found: &OperationPlan,
+    found: &CompiledOperation,
     record: &Planned,
     why: &str,
     seen: Option<&Values>,
@@ -2266,7 +2298,7 @@ fn keyless_in_doubt(
 async fn reconcile_keyless(
     run: &mut Run<'_>,
     loaded: &Loaded,
-    found: &OperationPlan,
+    found: &CompiledOperation,
     record: &mut Planned,
     held: Option<&RecordSnapshot>,
 ) -> Result<(), Stop> {
@@ -2411,7 +2443,7 @@ async fn reconcile_keyless(
 async fn keyless_found(
     run: &mut Run<'_>,
     loaded: &Loaded,
-    found: &OperationPlan,
+    found: &CompiledOperation,
     record: &mut Planned,
     raw: Values,
 ) -> Result<(), Stop> {
@@ -2506,7 +2538,7 @@ async fn keyless_found(
 async fn read_in_doubt(
     run: &mut Run<'_>,
     loaded: &Loaded,
-    found: &OperationPlan,
+    found: &CompiledOperation,
     record: &mut Planned,
     mode: Option<&a2m_core::Mode>,
 ) -> Result<(Option<Values>, Option<Values>, BlobRef, usize), Stop> {
@@ -2619,7 +2651,7 @@ async fn commit_point(
         // The sandbox writes only to a declared test record. The key is
         // checked here once more, where the write is made, and not only
         // where the records were worked out.
-        let environment = &loaded.plan.environments[run.env_position];
+        let environment = &loaded.compiled_target.environments[run.env_position];
         if record.place_keyed || !environment.test_records.contains(&record.key) {
             return Err(Stop::Fail(not_a_test_record()));
         }
@@ -2665,9 +2697,10 @@ async fn commit_point(
         )));
     }
     // A record found by its key and read back by the binding is verified by
-    // that read, never ended on the answer alone (decision 0193). The plan
-    // check refuses such a binding; a plan that reached the engine some
-    // other way is held to it here, before anything is sent.
+    // that read, never ended on the answer alone (decision 0193). The
+    // compiled target check refuses such a binding; a compiled target that
+    // reached the engine some other way is held to it here, before anything
+    // is sent.
     if binding.evidence == WriteEvidence::Acknowledged
         && !a2m_core::acknowledgement_may_stand(found.identity.strategy, &binding.read_back)
     {
@@ -3118,7 +3151,7 @@ async fn commit_point(
 async fn acknowledge(
     run: &mut Run<'_>,
     loaded: &Loaded,
-    found: &OperationPlan,
+    found: &CompiledOperation,
     record: &mut Planned,
     acted: &ActedToken,
     answer: Values,

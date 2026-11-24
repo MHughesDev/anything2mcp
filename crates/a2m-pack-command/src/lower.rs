@@ -56,7 +56,7 @@ fn problem(rule: &'static str, at: &Place, message: String, fix: &str) -> Diagno
     Diagnostic::error(lint(rule), Stage::Lower, at, message, fix)
 }
 
-/// The pack's section, decoded, with its place in the plan.
+/// The pack's section, decoded, with its place in the compiled target.
 fn section(cx: &LowerContext<'_>) -> Option<(SectionIndex, Section)> {
     let (index, found) = cx.section(&FILE_KIND, &SURFACE_KIND)?;
     found.payload.decode::<Section>().ok().map(|s| (index, s))

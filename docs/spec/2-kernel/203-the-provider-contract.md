@@ -21,7 +21,7 @@ A provider fills one or more of a fixed list. It cannot add to the list.
 | Source reader | How one kind of input becomes validated records | `a2m-sources`; section 210 |
 | Widget driver | How one kind of control is set and read | The technical reference |
 | Discoverer | How a target is observed, returning findings | `a2m-provider`; [section 218](218-discovery-and-findings.md) |
-| Compiler registrations | File kinds, the lowering of each verb of its modes, lint rules, and drafting rules | `a2m-files`; [section 206](206-the-compiler-and-the-plan.md) |
+| Compiler registrations | File kinds, the lowering of each verb of its modes, lint rules, and drafting rules | `a2m-files`; [section 206](206-the-compiler-and-the-compiled-target.md) |
 
 A provider may also add actions to the registry, under its own name space. They are defined once, like every action, and their four faces are generated. Only the dispatcher in `a2m-actions` calls one, after the caller's credential is checked and policy has decided, and it is given checked paths and the registry, never the store. A provider never adds a command or a tool by hand.
 
@@ -50,7 +50,7 @@ One declaration per provider. It is data: the runtime can read it without loadin
 | Extension points | Which it fills |
 | Modes and verbs | For a driver: the modes it serves, each with its archetype, verbs, and step kinds; its rank, the default place in binding order when an operation states none; the intents stored ahead of acting; the parallel reads and writes per session; and what one write holds alone |
 | Surface kinds | The surface kinds it registers, each with its archetype and whether a session is held on it |
-| Discoverers | Each with its archetype, the finding kinds it may return, the sources it uses, the highest level it may claim, and its bounds |
+| Discoverers | Each with its archetype, the finding kinds it may return, the sources it uses, the highest level it may claim, and its bounds. Whether the engine or a person drives it, `driven_by`, `engine` when left out ([decision 0392](../../decisions/0392-a-page-that-reads-by-a-method-that-may-write-is-learned-from-a-persons-watched-use-and-read-through-an-asserted-request.md), as [decision 0395](../../decisions/0395-a-person-driven-discoverer-is-called-through-a-method-of-its-own-and-the-scope-is-left-as-it-is.md) builds it); a discoverer a person drives belongs to a pack that declares a traffic capture. It reads a recording of that capture, whose yield passes the contract's one check; the registry never gives it to a scout or to `discover.run`; it is called by `watch` alone, handed no port, and returns when the kernel sets the capture's end or at its bound, which the handle holds ([decision 0406](../../decisions/0406-a-person-driven-discoverer-is-held-to-its-bound-by-the-handle-and-has-a-code-for-the-watch-it-lacks.md)). Not built: the capture job that starts it, which its person begins on the engine's own page (package E2b) |
 | File kinds | The target-file kinds and binding fields it defines, with their schemas; its lint rules, with codes and levels; its drafting rules, from finding kind to file kind |
 | Reads | The file kinds and finding kinds of other packs it reads as data |
 | Actions | The actions it adds, each with its effect |
@@ -120,5 +120,5 @@ A provider that does something its manifest did not declare is stopped, and the 
 
 ## Open points
 
-- How schemas and lint rules cross a process boundary for plug-ins. The `a2m-provider` design proposes that schemas cross as the files the manifest names and that lowerings and lint rules are calls made at compile time, with the plug-in's digest recorded in the plan; the compiler's design still leaves it open.
+- How schemas and lint rules cross a process boundary for plug-ins. The `a2m-provider` design proposes that schemas cross as the files the manifest names and that lowerings and lint rules are calls made at compile time, with the plug-in's digest recorded in the compiled target; the compiler's design still leaves it open.
 - The manifest example in the `a2m-provider` design has no field yet for the kinds a provider reads from other packs.

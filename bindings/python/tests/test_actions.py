@@ -111,6 +111,20 @@ class MethodShapeTests(unittest.TestCase):
         self.assertIn("from", recorder.sent[1])
 
 
+class MethodNameTests(unittest.TestCase):
+    """The rule both generators apply (decision 0405)."""
+
+    def test_an_underscore_in_a_noun_or_a_verb_stays_and_the_dot_becomes_one(self) -> None:
+        self.assertEqual(generator.method_name("tool.call"), "tool_call")
+        self.assertEqual(generator.method_name("policy.tools_allowed"), "policy_tools_allowed")
+        self.assertEqual(generator.method_name("spec.import"), "spec_import")
+
+    def test_a_name_of_another_form_stops_the_generator(self) -> None:
+        for action in ("tool", "a.b.c", "Tool.call", "tool.Call", "a._b", "a.b_", "a.b__c", "a-b.c", "1a.b", ""):
+            with self.assertRaises(generator.GenerateError, msg=action):
+                generator.method_name(action)
+
+
 class GeneratorTests(unittest.TestCase):
     def document(self, schema: Dict[str, Any], summary: str = "Does a thing.") -> Dict[str, Any]:
         return {
@@ -119,6 +133,7 @@ class GeneratorTests(unittest.TestCase):
                 "/api/v1/actions/thing.do": {
                     "post": {
                         "x-action": "thing.do",
+                        "x-sdk": True,
                         "summary": summary,
                         "requestBody": {"content": {"application/json": {"schema": schema}}},
                     }
@@ -174,6 +189,29 @@ class GeneratorTests(unittest.TestCase):
         ):
             self.assertIn(expected, text)
         compile(text, "<generated>", "exec")
+
+    def test_an_action_without_an_sdk_face_gets_no_method(self) -> None:
+        schema = {"type": "object", "additionalProperties": False, "properties": {}}
+        document = self.document(schema)
+        document["paths"]["/api/v1/actions/thing.skip"] = {
+            "post": {**document["paths"]["/api/v1/actions/thing.do"]["post"], "x-action": "thing.skip", "x-sdk": False}
+        }
+        text = generator.render(document)
+        self.assertIn("def thing_do(", text)
+        self.assertNotIn("thing_skip", text)
+        self.assertNotIn("thing.skip", text)
+
+    def test_a_route_that_does_not_say_whether_it_has_a_method_stops_the_generator(self) -> None:
+        schema = {"type": "object", "additionalProperties": False, "properties": {}}
+        for value in (None, "true", 1):
+            document = self.document(schema)
+            operation = document["paths"]["/api/v1/actions/thing.do"]["post"]
+            if value is None:
+                del operation["x-sdk"]
+            else:
+                operation["x-sdk"] = value
+            with self.assertRaises(generator.GenerateError, msg=repr(value)):
+                generator.render(document)
 
     def test_a_document_it_does_not_understand_stops_the_generator(self) -> None:
         free = {"type": "object", "additionalProperties": {}, "properties": {}}

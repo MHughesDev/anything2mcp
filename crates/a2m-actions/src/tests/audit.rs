@@ -244,7 +244,7 @@ async fn a_run_whose_stored_call_cannot_be_read_is_ended_and_never_run() {
     let world = world(Options::default()).await;
     world
         .kernel
-        .publish_plan(&super::kernel::engine::plan(&world.app.url("")))
+        .publish_compiled_target(&super::kernel::engine::compiled_target(&world.app.url("")))
         .await
         .unwrap();
     // The runner says hello and its loop is stopped, so that it is
@@ -884,16 +884,20 @@ async fn a_write_whose_binding_has_six_steps_at_the_default_limit_fits_the_lease
     // thirty seconds, and there are six of them: the save, and the
     // read-back five times over. The engine sends the save only when the
     // lease leaves time for all of them.
-    let mut plan = super::kernel::engine::plan(&world.app.url(""));
-    plan.header.version = a2m_core::Version::new(2, 0, 0);
-    let binding = &mut plan.operations[2].bindings[0];
+    let mut compiled_target = super::kernel::engine::compiled_target(&world.app.url(""));
+    compiled_target.header.version = a2m_core::Version::new(2, 0, 0);
+    let binding = &mut compiled_target.operations[2].bindings[0];
     let read = binding.read_back[0].clone();
     binding.read_back.extend(std::iter::repeat_n(read, 4));
     for step in binding.act.iter_mut().chain(&mut binding.read_back) {
         step.timeout_ms = 0;
     }
     assert_eq!(binding.act.len() + binding.read_back.len(), 6);
-    world.kernel.publish_plan(&plan).await.unwrap();
+    world
+        .kernel
+        .publish_compiled_target(&compiled_target)
+        .await
+        .unwrap();
 
     let (run, id) = world.rest_a_write("L-495").await;
     world.approve(id).await;

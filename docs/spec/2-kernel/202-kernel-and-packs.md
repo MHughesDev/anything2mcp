@@ -27,7 +27,7 @@ A pack is a provider ([section 203](203-the-provider-contract.md)) that lives in
 | The pack registers | The kernel uses it to |
 | --- | --- |
 | Schemas for its file kinds and for the fields its bindings add | Validate target files in the compiler's second stage |
-| A lowering from each verb it supports to a list of steps | Build the plan |
+| A lowering from each verb it supports to a list of steps | Build the compiled target |
 | Lint rules, with stable codes | Report problems with the pack's own files |
 | A driver for its modes | Run steps |
 | Discoverers and a describer | Observe a target and show an agent what was seen |

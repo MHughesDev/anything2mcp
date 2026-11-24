@@ -133,18 +133,22 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     assert_eq!(roots, ["profiles"]);
 }
 
-/// The hash of the plan the `example` pages target compiles to. Held in the
-/// source so that each of the three CI systems compares its own build to the
-/// same value (package 1.3): the plan's bytes carry no line ending of a
-/// system, and no path or time of a machine.
-const PAGES_PLAN_HASH: &str = "b7964c167c02b0501e690dd8083c2d794e4aba382193b9d8c3811416a51caf31";
+/// The hash of the compiled target the `example` pages target compiles to.
+/// Held in the source so that each of the three CI systems compares its own
+/// build to the same value (package 1.3): the compiled target's bytes carry
+/// no line ending of a system, and no path or time of a machine.
+const PAGES_COMPILED_TARGET_HASH: &str =
+    "b7964c167c02b0501e690dd8083c2d794e4aba382193b9d8c3811416a51caf31";
 
 #[test]
-fn the_pages_target_compiles_to_the_same_plan_bytes_on_every_machine() {
-    let stand = stand("plan_hash");
+fn the_pages_target_compiles_to_the_same_compiled_target_bytes_on_every_machine() {
+    let stand = stand("compiled_target_hash");
     let compiled = compile(&stand.registry, "example");
     assert!(!compiled.encoded.bytes.contains(&b'\r'));
-    assert_eq!(compiled.encoded.hash.to_string(), PAGES_PLAN_HASH);
+    assert_eq!(
+        compiled.encoded.hash.to_string(),
+        PAGES_COMPILED_TARGET_HASH
+    );
 }
 
 #[test]
@@ -157,8 +161,8 @@ fn the_fixture_target_compiles_twice_to_the_same_bytes() {
 
     // What a write lowers to: one commit point, which is the action, and a
     // read-back that is a lookup and never commits.
-    let plan = first.plan;
-    let update = plan
+    let compiled_target = first.compiled_target;
+    let update = compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_line_item_update")
@@ -182,8 +186,8 @@ fn the_fixture_target_compiles_twice_to_the_same_bytes() {
             .all(|step| step.lookup && !step.commits)
     );
     // The locators are in the pack's section and nowhere in a step; the
-    // plan holds the path's template and no address.
-    let section = plan
+    // compiled target holds the path's template and no address.
+    let section = compiled_target
         .packs
         .iter()
         .find(|section| section.pack == "web")
@@ -363,6 +367,28 @@ fn what_a_screen_may_not_say_is_refused_with_a_file_a_line_and_a_fix() {
         |text| text.replacen("handling: absent", "handling: stop", 1),
         "web.read_back_never_absent",
     );
+    // A download whose name and size go to one output, and one that gives
+    // an output the operation does not declare (decision 0421).
+    let downloads = |download: &'static str| {
+        move |text: &str| {
+            text.replacen(
+                "    commits: true\n",
+                &format!("    commits: true\n    download: {download}\n"),
+                1,
+            )
+        }
+    };
+    refused(
+        form,
+        downloads("{most_bytes: 10, into: file, size_into: file}"),
+        "web.download_invalid",
+    );
+    let undeclared = refused(
+        form,
+        downloads("{most_bytes: 10, into: file}"),
+        "web.unknown_field",
+    );
+    assert!(undeclared.message.contains("`file`"), "{undeclared}");
 }
 
 /// The review states where a web tool sends, which the browser holds it to
@@ -412,5 +438,57 @@ fn the_review_states_that_a_web_tool_sends_to_its_surface_and_its_declared_desti
         addresses.sort_unstable();
         expected.sort_unstable();
         assert_eq!(addresses, expected, "{}", item.tool);
+    }
+}
+
+/// Decision 0404: a page request's shapes are read by the provider
+/// contract's shared shape, and a page request takes a part of it in this
+/// version. What the file kind's own schema refused before is still
+/// refused, now under `web.request_shape_invalid` at the word or value; and
+/// what the shared shape refuses that this pack also refused stays refused.
+#[test]
+fn a_page_requests_shape_takes_only_flat_typed_properties_of_the_shared_shape() {
+    let stand = stand("shape");
+    let entry = "page_requests/order_totals.yaml";
+    compile_changed(&stand.registry, "secure", entry, str::to_owned)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    for (from, to) in [
+        (
+            "order_id: {type: string}",
+            "order_id: {type: string, nullable: true}",
+        ),
+        (
+            "order_id: {type: string}",
+            "order_id: {type: string, enum: [a]}",
+        ),
+        ("order_id: {type: string}", "order_id: {type: any}"),
+        (
+            "order_id: {type: string}",
+            "order_id: {type: object, properties: {a: {type: string}}}",
+        ),
+        ("order_id: {type: string}", "order_id: {type: text}"),
+        ("  type: object\n", "  type: object\n  nullable: true\n"),
+        ("  type: object\n", "  type: array\n"),
+        (
+            "  required: [order_id, total_quantity]\n",
+            "  required: order_id\n",
+        ),
+        (
+            "  required: [order_id, total_quantity]\n",
+            "  required: [order_id, total_quantity, other]\n",
+        ),
+        ("  type: object\n", "  type: object\n  pattern: x\n"),
+    ] {
+        let problems = compile_changed(&stand.registry, "secure", entry, |text| {
+            assert!(text.contains(from), "{from}");
+            text.replacen(from, to, 1)
+        })
+        .err()
+        .unwrap_or_else(|| panic!("`{to}` compiled"));
+        let found = problems
+            .find("web.request_shape_invalid")
+            .unwrap_or_else(|| panic!("`{to}`:\n{}", shown(&problems)));
+        assert_eq!(found.at.file.as_str(), entry, "{to}");
+        assert!(found.at.line > 1, "{to}: {found:?}");
     }
 }

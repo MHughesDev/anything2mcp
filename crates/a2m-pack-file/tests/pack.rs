@@ -77,7 +77,7 @@ fn every_failure_code_of_the_pack_is_declared_with_its_one_class() {
 }
 
 #[test]
-fn the_fixtures_compile_twice_to_identical_plan_bytes() {
+fn the_fixtures_compile_twice_to_identical_compiled_target_bytes() {
     let registry = registry(Roots::none());
     let first = compile(&fixtures(), registry.compiler_set()).unwrap();
     let second = compile(&fixtures(), registry.compiler_set()).unwrap();
@@ -85,7 +85,7 @@ fn the_fixtures_compile_twice_to_identical_plan_bytes() {
     assert_eq!(first.encoded.hash, second.encoded.hash);
     // A write saves once, confirms, and reads back by opening the file again.
     let set = first
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|operation| operation.name.as_str() == "example_stock_set")
@@ -639,11 +639,11 @@ fn a_write_never_compiles_as_a_read_whatever_the_file_says() {
 fn a_delete_is_irreversible_because_nothing_restores_the_row() {
     // The fixtures declare it so, and they compile.
     let registry = registry(Roots::none());
-    let plan = compile(&fixtures(), registry.compiler_set())
+    let compiled_target = compile(&fixtures(), registry.compiler_set())
         .unwrap_or_else(|problems| panic!("{problems}"))
-        .plan;
+        .compiled_target;
     for name in ["example_stock_remove", "example_warehouse_remove"] {
-        let operation = plan
+        let operation = compiled_target
             .operations
             .iter()
             .find(|operation| operation.name.as_str() == name)
@@ -792,7 +792,7 @@ fn a_settings_write_declares_its_record_one_fixed_place() {
         ("example_ini_orders_set", "ini_settings.orders"),
     ] {
         let operation = compiled
-            .plan
+            .compiled_target
             .operations
             .iter()
             .find(|operation| operation.name.as_str() == tool)
@@ -886,13 +886,14 @@ fn the_review_states_what_the_file_pack_runs_and_where_it_sends() {
     );
 }
 
-/// Whether each output of `operation` in the plan of `root` may be absent.
+/// Whether each output of `operation` in the compiled target of `root` may be
+/// absent.
 fn absent_of(root: &Path, operation: &str) -> Vec<(String, bool)> {
     let registry = registry(Roots::none());
-    let plan = compile(root, registry.compiler_set())
+    let compiled_target = compile(root, registry.compiler_set())
         .unwrap_or_else(|problems| panic!("{problems}"))
-        .plan;
-    let found = plan
+        .compiled_target;
+    let found = compiled_target
         .operations
         .iter()
         .find(|found| found.name.as_str() == operation)

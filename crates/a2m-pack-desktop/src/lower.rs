@@ -1,6 +1,6 @@
 //! The lowering of the `desktop` mode: one binding into `goto`, `wait`,
 //! `read`, `set`, and `invoke` steps, each naming its screen in the pack's
-//! section of the plan and carrying this pack's own payload.
+//! section of the compiled target and carrying this pack's own payload.
 //!
 //! | Verb | Act | Read back |
 //! | --- | --- | --- |
@@ -725,8 +725,9 @@ impl<'a> Lower<'a, '_> {
 }
 
 /// Whether a management namespace begins with two separators,
-/// `\\host\root` or `//host/root`: another machine's.
-fn names_another_machine(namespace: &str) -> bool {
+/// `\\host\root` or `//host/root`: another machine's. The statement is
+/// withdrawn for one, and the driver refuses to ask one.
+pub(crate) fn names_another_machine(namespace: &str) -> bool {
     let mut chars = namespace.chars();
     matches!(
         (chars.next(), chars.next()),

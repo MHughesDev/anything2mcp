@@ -256,14 +256,14 @@ async fn catalog_of(
     call: &Call,
     toolset: Option<&ToolsetName>,
 ) -> Result<Vec<(ToolRef, Context)>, Failure> {
-    let (plans, _) = kernel.current_plans().await?;
+    let (compiled_targets, _) = kernel.current_compiled_targets().await?;
     let mut out = Vec::new();
-    for (target, hash, plan) in &plans {
-        for tool in &plan.tools {
+    for (target, hash, compiled_target) in &compiled_targets {
+        for tool in &compiled_target.tools {
             let found = crate::tools::FoundTool {
                 target: target.clone(),
-                plan_hash: *hash,
-                plan: std::sync::Arc::clone(plan),
+                compiled_target_hash: *hash,
+                compiled_target: std::sync::Arc::clone(compiled_target),
                 tool: tool.clone(),
             };
             let (effect, hazard) = found.effect();

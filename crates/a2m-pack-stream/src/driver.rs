@@ -263,14 +263,14 @@ pub(crate) struct StreamDriver {
 fn run_of(prepared: &mut Prepared) -> Result<&mut Run, StepFailure> {
     prepared
         .state::<Run>()
-        .ok_or_else(|| wrong_plan("the run was prepared by another driver"))
+        .ok_or_else(|| wrong_compiled_target("the run was prepared by another driver"))
 }
 
-fn wrong_plan(what: &str) -> StepFailure {
+fn wrong_compiled_target(what: &str) -> StepFailure {
     StepFailure::not_sent(Failure::new(
         FailureClass::Input,
         FailureCode::PAYLOAD_UNREADABLE,
-        format!("The plan does not fit this build of the stream pack: {what}."),
+        format!("The compiled target does not fit this build of the stream pack: {what}."),
         "Compile the target again with the versions of the packs that are enabled.",
     ))
 }
@@ -484,10 +484,10 @@ impl Run {
         })
     }
 
-    /// Whether this step may write or take. Live, any step the plan marks
-    /// to write. In a sandbox with test records, only the step marked
-    /// `commits`: the engine gives that posture to the context that writes
-    /// a declared test record, and cannot see what a step that is not
+    /// Whether this step may write or take. Live, any step the compiled
+    /// target marks to write. In a sandbox with test records, only the step
+    /// marked `commits`: the engine gives that posture to the context that
+    /// writes a declared test record, and cannot see what a step that is not
     /// marked does there, so the driver's own guard stays for every other
     /// step.
     fn writes_allowed(&self, step: &Step) -> bool {
@@ -498,15 +498,17 @@ impl Run {
         }
     }
 
-    /// The channel a step of the plan refers to.
+    /// The channel a step of the compiled target refers to.
     fn declared(&self, step: &Step) -> Result<(String, ChannelEntry), StepFailure> {
         let Some(refers_to) = &step.refers_to else {
-            return Err(wrong_plan("a step names no channel"));
+            return Err(wrong_compiled_target("a step names no channel"));
         };
         self.channels
             .get(&refers_to.entry)
             .map(|entry| (refers_to.entry.clone(), entry.clone()))
-            .ok_or_else(|| wrong_plan("a step names a channel its section does not hold"))
+            .ok_or_else(|| {
+                wrong_compiled_target("a step names a channel its section does not hold")
+            })
     }
 
     /// A detail of how the step was done, which the trace's signature
@@ -619,10 +621,9 @@ impl Run {
     /// given; what other producers put in headers is not the caller's.
     fn record(&self, entry: &ChannelEntry, message: &Message) -> Result<Values, StepFailure> {
         if let Some(name) = &entry.schema {
-            let schema = self
-                .schemas
-                .get(name)
-                .ok_or_else(|| wrong_plan("a channel names a schema the plan does not hold"))?;
+            let schema = self.schemas.get(name).ok_or_else(|| {
+                wrong_compiled_target("a channel names a schema the compiled target does not hold")
+            })?;
             schema.check(&message.body).map_err(|why| mismatch(&why))?;
         }
         let mut values = match message.body.to_value().map_err(mismatch)? {
@@ -1051,7 +1052,7 @@ impl StreamDriver {
             return Err(not_owned(&name));
         }
         if !detail.take && (entry.shape == Shape::Queue || !entry.own_subscription) {
-            return Err(wrong_plan(
+            return Err(wrong_compiled_target(
                 "a wait on a channel that is not read through a subscription of the runtime's own",
             ));
         }
@@ -1135,7 +1136,9 @@ impl StreamDriver {
             .get(&name)
             .map(|open| (open.handle.clone(), open.placed, open.ack_wait))
         else {
-            return Err(wrong_plan("a wait before its subscription was opened"));
+            return Err(wrong_compiled_target(
+                "a wait before its subscription was opened",
+            ));
         };
         if detail.take
             && (entry.shape != Shape::Queue || entry.ownership != Ownership::RuntimeOwned)
@@ -1395,7 +1398,9 @@ impl StreamDriver {
             return Err(not_owned(&name));
         }
         let Some(held) = run.held.take_if(|held| held.channel == name) else {
-            return Err(wrong_plan("an acknowledgement with no message taken"));
+            return Err(wrong_compiled_target(
+                "an acknowledgement with no message taken",
+            ));
         };
         let at: MessageAt = (
             run_address(run),
@@ -1511,10 +1516,9 @@ impl StreamDriver {
         }
         let body = Json::Object(body);
         if let Some(schema_name) = &entry.schema {
-            let schema = run
-                .schemas
-                .get(schema_name)
-                .ok_or_else(|| wrong_plan("a channel names a schema the plan does not hold"))?;
+            let schema = run.schemas.get(schema_name).ok_or_else(|| {
+                wrong_compiled_target("a channel names a schema the compiled target does not hold")
+            })?;
             schema.check(&body).map_err(|why| {
                 stopped(
                     Sent::NotSent,
@@ -1571,7 +1575,9 @@ impl StreamDriver {
     ) -> Result<StepOutcome, StepFailure> {
         let (name, entry) = run.declared(step)?;
         if entry.shape != Shape::Log {
-            return Err(wrong_plan("a position read on a channel that is not a log"));
+            return Err(wrong_compiled_target(
+                "a position read on a channel that is not a log",
+            ));
         }
         let facts = run
             .described(&*self.redact, &name, &entry, input.deadline)
@@ -1716,7 +1722,7 @@ impl StreamDriver {
         one: bool,
     ) -> Result<StepOutcome, StepFailure> {
         if run.posture == Posture::Live {
-            return Err(wrong_plan("a step of a discovery in a live run"));
+            return Err(wrong_compiled_target("a step of a discovery in a live run"));
         }
         if one {
             let address = discovery_address(run, detail)?;
@@ -1802,7 +1808,7 @@ fn not_owned(name: &str) -> StepFailure {
 fn discovery_address(run: &Run, detail: &StepDetail) -> Result<String, StepFailure> {
     match (&detail.address, run.posture) {
         (Some(address), Posture::Discovery | Posture::Sandbox { .. }) => Ok(address.clone()),
-        _ => Err(wrong_plan(
+        _ => Err(wrong_compiled_target(
             "a step names a channel outside the target's files",
         )),
     }
@@ -1889,12 +1895,12 @@ impl Driver for StreamDriver {
             }
             let mut channels = BTreeMap::new();
             let mut schemas = BTreeMap::new();
-            for section in &cx.plan.packs {
+            for section in &cx.compiled_target.packs {
                 if section.pack != PACK || section.surface_kind != BROKER {
                     continue;
                 }
                 if section.format != SECTION_FORMAT {
-                    return Err(wrong_plan("a section of another format"));
+                    return Err(wrong_compiled_target("a section of another format"));
                 }
                 if section.kind == CHANNEL {
                     let all: BTreeMap<String, ChannelEntry> =
@@ -2003,7 +2009,9 @@ impl Driver for StreamDriver {
             } else if step.kind == STEP_DESCRIBE {
                 self.channels(run, &detail, input, true).await
             } else {
-                Err(wrong_plan("a step of a kind the driver does not carry out"))
+                Err(wrong_compiled_target(
+                    "a step of a kind the driver does not carry out",
+                ))
             };
             let run = run_of(prepared)?;
             if let Err(failed) = &result {

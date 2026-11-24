@@ -9,8 +9,8 @@
 //! runs another binding in its name.
 
 use a2m_core::{
-    BindingPlan, BindingStatus, CanonicalJson, Digest, ExprIndex, Failure, Mode, OperationName,
-    OperationPlan, Plan, Step,
+    BindingStatus, CanonicalJson, CompiledBinding, CompiledOperation, CompiledTarget, Digest,
+    ExprIndex, Failure, Mode, OperationName, Step,
 };
 use serde_json::{Value as Json, json};
 
@@ -31,16 +31,20 @@ pub struct BindingPin {
 }
 
 impl BindingPin {
-    /// The pin of the binding at `position` of `operation`, as the plan
-    /// holds it now. `None` when there is no binding there.
+    /// The pin of the binding at `position` of `operation`, as the compiled
+    /// target holds it now. `None` when there is no binding there.
     #[must_use]
-    pub fn of(plan: &Plan, operation: &OperationPlan, position: usize) -> Option<Self> {
+    pub fn of(
+        compiled_target: &CompiledTarget,
+        operation: &CompiledOperation,
+        position: usize,
+    ) -> Option<Self> {
         let binding = operation.bindings.get(position)?;
         Some(Self {
             operation: operation.name.clone(),
             position,
             mode: binding.mode.clone(),
-            digest: binding_digest(plan, binding)?,
+            digest: binding_digest(compiled_target, binding)?,
         })
     }
 
@@ -71,15 +75,20 @@ impl BindingPin {
     }
 
     /// Whether this pin names the binding at its place of `operation` as
-    /// the plan holds it now: the same mode and the same digest.
+    /// the compiled target holds it now: the same mode and the same digest.
     #[must_use]
-    pub fn holds_in(&self, plan: &Plan, operation: &OperationPlan) -> bool {
+    pub fn holds_in(
+        &self,
+        compiled_target: &CompiledTarget,
+        operation: &CompiledOperation,
+    ) -> bool {
         operation.name == self.operation
             && operation
                 .bindings
                 .get(self.position)
                 .is_some_and(|binding| {
-                    binding.mode == self.mode && binding_digest(plan, binding) == Some(self.digest)
+                    binding.mode == self.mode
+                        && binding_digest(compiled_target, binding) == Some(self.digest)
                 })
     }
 }
@@ -89,7 +98,7 @@ impl BindingPin {
 /// where none is verified, the first that is not retired. `None` when every
 /// binding is retired.
 #[must_use]
-pub fn default_binding(operation: &OperationPlan) -> Option<usize> {
+pub fn default_binding(operation: &CompiledOperation) -> Option<usize> {
     operation
         .bindings
         .iter()
@@ -103,22 +112,29 @@ pub fn default_binding(operation: &OperationPlan) -> Option<usize> {
 }
 
 /// The digest of what one binding does: its mode, verb, surface, every
-/// lowered step with the text of each expression it evaluates and the
-/// whole of each pack section it refers to, its settle time, its evidence,
-/// and its precondition. Its status is left out, so a promotion keeps the
-/// digest. Indexes into the plan are replaced by what they name, so a change
-/// elsewhere in the plan does not change it. `None` when the plan does not
-/// hold what the binding refers to, or it cannot be encoded.
+/// lowered step with the text of each expression it evaluates and the whole
+/// of each pack section it refers to, its settle time, its evidence, and its
+/// precondition. Its status is left out, so a promotion keeps the digest.
+/// Indexes into the compiled target are replaced by what they name, so a
+/// change elsewhere in the compiled target does not change it. `None` when
+/// the compiled target does not hold what the binding refers to, or it cannot
+/// be encoded.
 #[must_use]
-pub fn binding_digest(plan: &Plan, binding: &BindingPlan) -> Option<Digest> {
+pub fn binding_digest(
+    compiled_target: &CompiledTarget,
+    binding: &CompiledBinding,
+) -> Option<Digest> {
     let steps = |steps: &[Step]| -> Option<Vec<Json>> {
-        steps.iter().map(|step| step_json(plan, step)).collect()
+        steps
+            .iter()
+            .map(|step| step_json(compiled_target, step))
+            .collect()
     };
     let shown = json!({
         "format": 1,
         "mode": binding.mode.as_str(),
         "verb": binding.verb.as_str(),
-        "surface": serde_json::to_value(plan.surface(binding.surface)?).ok()?,
+        "surface": serde_json::to_value(compiled_target.surface(binding.surface)?).ok()?,
         "act": steps(&binding.act)?,
         "confirm": steps(&binding.confirm)?,
         "read_back": steps(&binding.read_back)?,
@@ -126,7 +142,7 @@ pub fn binding_digest(plan: &Plan, binding: &BindingPlan) -> Option<Digest> {
         "settle_ms": binding.settle_ms,
         "evidence": serde_json::to_value(binding.evidence).ok()?,
         "precondition": match binding.precondition {
-            Some(index) => expr_json(plan, index)?,
+            Some(index) => expr_json(compiled_target, index)?,
             None => Json::Null,
         },
     });
@@ -135,8 +151,8 @@ pub fn binding_digest(plan: &Plan, binding: &BindingPlan) -> Option<Digest> {
         .map(|encoded| encoded.digest())
 }
 
-fn expr_json(plan: &Plan, index: ExprIndex) -> Option<Json> {
-    let expr = plan.expression(index)?;
+fn expr_json(compiled_target: &CompiledTarget, index: ExprIndex) -> Option<Json> {
+    let expr = compiled_target.expression(index)?;
     Some(json!({
         "source": expr.source,
         "result": serde_json::to_value(&expr.result).ok()?,
@@ -144,10 +160,10 @@ fn expr_json(plan: &Plan, index: ExprIndex) -> Option<Json> {
     }))
 }
 
-fn step_json(plan: &Plan, step: &Step) -> Option<Json> {
+fn step_json(compiled_target: &CompiledTarget, step: &Step) -> Option<Json> {
     let refers_to = match &step.refers_to {
         Some(reference) => json!({
-            "section": serde_json::to_value(plan.packs.get(reference.section.get())?).ok()?,
+            "section": serde_json::to_value(compiled_target.packs.get(reference.section.get())?).ok()?,
             "entry": reference.entry,
         }),
         None => Json::Null,
@@ -155,7 +171,7 @@ fn step_json(plan: &Plan, step: &Step) -> Option<Json> {
     let args: Option<Vec<Json>> = step
         .args
         .iter()
-        .map(|arg| Some(json!({"name": arg.name, "value": expr_json(plan, arg.value)?})))
+        .map(|arg| Some(json!({"name": arg.name, "value": expr_json(compiled_target, arg.value)?})))
         .collect();
     Some(json!({
         "kind": serde_json::to_value(&step.kind).ok()?,
@@ -167,7 +183,7 @@ fn step_json(plan: &Plan, step: &Step) -> Option<Json> {
         "lookup": step.lookup,
         "idempotent": step.idempotent,
         "when": match step.when {
-            Some(index) => expr_json(plan, index)?,
+            Some(index) => expr_json(compiled_target, index)?,
             None => Json::Null,
         },
         "payload": serde_json::to_value(&step.payload).ok()?,

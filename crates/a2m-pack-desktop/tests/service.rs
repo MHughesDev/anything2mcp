@@ -311,11 +311,11 @@ async fn a_property_stated_read_only_is_drafted_as_a_read_and_never_as_a_write()
 
     // The drafts compile, and run against the stand: the values the
     // service holds, read.
-    scene.plan = match common::compile_at(&scene.registry, root.path()) {
-        Ok(compiled) => compiled.plan,
+    scene.compiled_target = match common::compile_at(&scene.registry, root.path()) {
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the drafts do not compile:\n{}", common::shown(&problems)),
     };
-    scene.surface = common::surface_of(&scene.plan, &scene.program);
+    scene.surface = common::surface_of(&scene.compiled_target, &scene.program);
     let total = scene
         .read("example_orders_total_get", WITHIN)
         .await

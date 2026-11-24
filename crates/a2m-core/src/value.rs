@@ -2,7 +2,7 @@
 //!
 //! A value came from a file, a caller, or a system. It is never a float and
 //! never a secret. Its type is described by a [`ValueType`], which the
-//! expression checker and the plan share.
+//! expression checker and the compiled target share.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -411,7 +411,7 @@ impl Value {
     }
 
     /// Adds the value's canonical bytes to `out`: the same bytes on every
-    /// machine, and the same as the plan's encoding gives.
+    /// machine, and the same as the compiled target's encoding gives.
     pub fn write_canonical(&self, out: &mut Vec<u8>) {
         match self {
             Self::Null => out.extend_from_slice(b"null"),
@@ -660,8 +660,9 @@ impl<'de> serde::Deserialize<'de> for Value {
 /// The names are held sorted, by their bytes, whatever order they were added
 /// in. So the same named values are equal, are written alike, and have the
 /// same digest, whoever built them and in whatever order; nobody has to
-/// remember to sort. The order a person sees is the order the plan's schema
-/// declares, which the reader of the schema applies (decision 0068).
+/// remember to sort. The order a person sees is the order the compiled
+/// target's schema declares, which the reader of the schema applies (decision
+/// 0068).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct Values(BTreeMap<String, Value>);
@@ -843,8 +844,8 @@ impl From<RecordKey> for Vec<Value> {
 }
 
 /// The type of a value: of an input, an output, a name in an expression, or
-/// an expression's result. The expression checker and the plan share this
-/// one description. It has no float.
+/// an expression's result. The expression checker and the compiled target
+/// share this one description. It has no float.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValueType {
@@ -1009,7 +1010,7 @@ mod tests {
     }
 
     #[test]
-    fn the_canonical_bytes_are_what_the_plans_encoding_gives() {
+    fn the_canonical_bytes_are_what_the_compiled_targets_encoding_gives() {
         let values = every_kind();
         assert_eq!(values.canonical_bytes(), to_bytes(&values).unwrap());
         let single = Value::Record(values);

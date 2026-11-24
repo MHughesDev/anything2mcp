@@ -40,7 +40,7 @@ a2m_core::failure_codes! {
         meaning "A value breaks its declared pattern or kind, or an exit says so.",
         next "Correct the values and call again.";
     STEP_NOT_USABLE = Input, "step_not_usable",
-        meaning "A step this driver cannot carry out as the plan wrote it: a command that writes on a step that is no commit point, or a step whose program was not started first.",
+        meaning "A step this driver cannot carry out as the compiled target wrote it: a command that writes on a step that is no commit point, or a step whose program was not started first.",
         next "Compile the target again with the version of the command pack that is enabled.";
     APP_VALIDATION_ERROR = Rejected, "app_validation_error",
         meaning "An exit declared `rejected`.",
@@ -208,12 +208,14 @@ pub(crate) fn possible_commit(what: &str) -> StepFailure {
     ))
 }
 
-/// A step the plan wrote in a way this driver cannot carry out. Nothing
-/// was started.
+/// A step the compiled target wrote in a way this driver cannot carry out.
+/// Nothing was started.
 pub(crate) fn not_usable(what: &str) -> StepFailure {
     not_sent(
         &row::STEP_NOT_USABLE,
-        format!("The `cli` driver cannot carry out this step as the plan wrote it: {what}."),
+        format!(
+            "The `cli` driver cannot carry out this step as the compiled target wrote it: {what}."
+        ),
         "Compile the target again with the version of the command pack that is enabled.",
     )
 }

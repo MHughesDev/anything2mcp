@@ -13,9 +13,9 @@ use std::time::Duration;
 
 use a2m_auth::SessionLease;
 use a2m_core::{
-    Archetype, Digest, Environment, Epoch, Failure, FailureClass, FailureCode, Mode, Plan,
-    RecordKey, Redact, RunId, ScopedHost, Step, StepKind, SurfacePlan, TargetName, Value, Values,
-    Version,
+    Archetype, CompiledSurface, CompiledTarget, Digest, Environment, Epoch, Failure, FailureClass,
+    FailureCode, Mode, RecordKey, Redact, RunId, ScopedHost, Step, StepKind, TargetName, Value,
+    Values, Version,
 };
 use a2m_ledger::{IntentToken, RecordRef};
 use a2m_telemetry::Acting;
@@ -58,16 +58,17 @@ impl Deadline {
     }
 }
 
-/// The surface a driver acts on: the plan's surface, with the address of the
-/// run's environment already applied.
+/// The surface a driver acts on: the compiled target's surface, with the
+/// address of the run's environment already applied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfaceRef {
     /// The target.
     pub target: TargetName,
     /// The environment of the run.
     pub environment: Environment,
-    /// The surface, as the plan holds it, at this environment's address.
-    pub surface: SurfacePlan,
+    /// The surface, as the compiled target holds it, at this environment's
+    /// address.
+    pub surface: CompiledSurface,
 }
 
 /// What a run may do to the system. Outside `Live` a driver applies its own
@@ -153,9 +154,9 @@ pub struct PrepareContext<'a> {
     pub epoch: Epoch,
     /// The surface.
     pub surface: &'a SurfaceRef,
-    /// The published plan, as data. A step's `refers_to` names an entry of
-    /// one of its pack sections.
-    pub plan: &'a Plan,
+    /// The published compiled target, as data. A step's `refers_to` names an
+    /// entry of one of its pack sections.
+    pub compiled_target: &'a CompiledTarget,
     /// What the run may do.
     pub posture: Posture,
     /// When preparing must be done.
@@ -166,7 +167,8 @@ pub struct PrepareContext<'a> {
     pub destinations: &'a Destinations,
     /// Every file the run may touch, already checked.
     pub paths: &'a CheckedPaths,
-    /// Starts only what the manifest and the published plan declare.
+    /// Starts only what the manifest and the published compiled target
+    /// declare.
     pub supervisor: &'a ScopedSupervisor,
 }
 
@@ -475,7 +477,7 @@ pub enum StepOutcome {
     /// It was done.
     Done(Observed),
     /// The record it looked for does not exist. Allowed only for a step the
-    /// plan marks `lookup`.
+    /// compiled target marks `lookup`.
     Absent(Observed),
 }
 
@@ -728,15 +730,17 @@ impl DriverHandle {
     }
 
     /// The supervisor to put in the [`PrepareContext`]: it starts only the
-    /// programs the provider's manifest declares, and, when the manifest
-    /// says `plan_programs`, those of `plan_programs`, which the engine
-    /// takes from the published plan.
+    /// programs the provider's manifest declares, and, when the manifest says
+    /// `compiled_target_programs`, those of `compiled_target_programs`, which
+    /// the engine takes from the published compiled target.
     #[must_use]
     pub fn supervisor(
         &self,
-        plan_programs: Vec<crate::supervisor::ProgramRef>,
+        compiled_target_programs: Vec<crate::supervisor::ProgramRef>,
     ) -> ScopedSupervisor {
-        self.facts.supervisor.with_plan_programs(plan_programs)
+        self.facts
+            .supervisor
+            .with_compiled_target_programs(compiled_target_programs)
     }
 
     /// Calls the driver's `prepare`, and remembers the run, the lease

@@ -1,0 +1,45 @@
+# The pinned description of the test application's published reading of one line item (decision 0389).
+description: "http"
+surface: "http"
+digest: "d4fad13684d71103a4d43203a9bf65bec9f84923cd0da046fb75ebb6c53111e0"
+served_at: "/api/openapi.json"
+operation_id: "get_item"
+method: "GET"
+path: "/api/orders/{order_id}/items/{item_code}"
+auth: "none"
+parameters:
+  -
+    name: "order_id"
+    in: "path"
+    required: true
+  -
+    name: "item_code"
+    in: "path"
+    required: true
+response_schema:
+  type: "object"
+  required:
+    - "order_id"
+    - "item_code"
+    - "description"
+    - "quantity"
+    - "length_in"
+    - "version"
+  properties:
+    description:
+      type: "string"
+    item_code:
+      type: "string"
+    length_in:
+      type: "string"
+    order_id:
+      type: "string"
+    quantity:
+      type: "integer"
+    version:
+      type: "integer"
+responses:
+  ok:
+    - 200
+  absent:
+    - 404

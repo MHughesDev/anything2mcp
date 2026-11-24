@@ -39,7 +39,7 @@ rustix = { workspace = true, features = ["fs"] }
 
 [features]
 # A way for the tests of the crates above this one to have a published tool
-# without the compiler: `Kernel::publish_plan`. Never part of the product.
+# without the compiler: `Kernel::publish_compiled`. Never part of the product.
 testing = []
 
 [dev-dependencies]
@@ -47,6 +47,10 @@ a2m-files = { path = "../a2m-files", features = ["testing"] }
 a2m-sources = { path = "../a2m-sources" }
 example-app = { path = "../../targets/example-app" }
 reqwest.workspace = true
+# A second connection to the store's file, to hold its write lock and to
+# damage a copy of it, as a program that can read the file could
+# (`tests/kernel.rs`, package 9.3c). Tests only.
+rusqlite.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

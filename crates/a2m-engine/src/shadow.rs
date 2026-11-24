@@ -25,7 +25,9 @@
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use a2m_core::{BindingStatus, Environment, EnvironmentKind, OperationPlan, Plan, Values};
+use a2m_core::{
+    BindingStatus, CompiledOperation, CompiledTarget, Environment, EnvironmentKind, Values,
+};
 use a2m_ledger::{Difference, DifferingOutput, ShadowOutcome};
 use a2m_provider::Posture;
 use tokio::time::Instant;
@@ -47,21 +49,22 @@ const SHADOW_POSTURE: Posture = Posture::Sandbox {
 /// rest is kept for keeping their comparisons.
 const READ_QUARTERS: u32 = 3;
 
-/// The environments the evidence for promoting a binding of `plan` must
-/// come from (decision 0251): every environment of kind `production`, or,
-/// in a plan that has none, every environment. Matches in a test
-/// environment, whose data a caller may have written, never make a binding
-/// promotable for production.
+/// The environments the evidence for promoting a binding of `compiled_target`
+/// must come from (decision 0251): every environment of kind `production`,
+/// or, in a compiled target that has none, every environment. Matches in a
+/// test environment, whose data a caller may have written, never make a
+/// binding promotable for production.
 #[must_use]
-pub fn shadow_evidence_environments(plan: &Plan) -> Vec<Environment> {
-    let production: Vec<Environment> = plan
+pub fn shadow_evidence_environments(compiled_target: &CompiledTarget) -> Vec<Environment> {
+    let production: Vec<Environment> = compiled_target
         .environments
         .iter()
         .filter(|environment| environment.kind == EnvironmentKind::Production)
         .map(|environment| environment.name.clone())
         .collect();
     if production.is_empty() {
-        plan.environments
+        compiled_target
+            .environments
             .iter()
             .map(|environment| environment.name.clone())
             .collect()
@@ -75,12 +78,15 @@ pub fn shadow_evidence_environments(plan: &Plan) -> Vec<Environment> {
 /// when none is verified. Only matches against it count toward promoting
 /// a binding beside it (decision 0251).
 #[must_use]
-pub fn verified_binding(plan: &Plan, operation: &OperationPlan) -> Option<BindingPin> {
+pub fn verified_binding(
+    compiled_target: &CompiledTarget,
+    operation: &CompiledOperation,
+) -> Option<BindingPin> {
     let position = operation
         .bindings
         .iter()
         .position(|binding| binding.status == BindingStatus::Verified)?;
-    BindingPin::of(plan, operation, position)
+    BindingPin::of(compiled_target, operation, position)
 }
 
 /// The end of the job's shadow budget: `shadow_limit` from now, or sooner
@@ -110,7 +116,7 @@ fn reads_end(start: Instant, end: Instant) -> Instant {
 pub(crate) async fn beside(
     run: &mut Run<'_>,
     loaded: &Loaded,
-    found: &OperationPlan,
+    found: &CompiledOperation,
     verified: usize,
     scope: &Scope,
     inputs: &Values,
@@ -126,7 +132,7 @@ pub(crate) async fn beside(
         return;
     }
     run.shadowed.push(found.name.clone());
-    let Some(verified) = BindingPin::of(&loaded.plan, found, verified) else {
+    let Some(verified) = BindingPin::of(&loaded.compiled_target, found, verified) else {
         return;
     };
     // One budget for every shadow of the job, set when the first starts:
@@ -146,7 +152,7 @@ pub(crate) async fn beside(
         if Instant::now() >= reads_until || run.checkpoint(Duration::ZERO).is_err() {
             return;
         }
-        let Some(shadow) = BindingPin::of(&loaded.plan, found, position) else {
+        let Some(shadow) = BindingPin::of(&loaded.compiled_target, found, position) else {
             continue;
         };
         let before = run.granted.load(Ordering::Relaxed);
@@ -217,12 +223,17 @@ pub(crate) async fn keep(run: &mut Run<'_>) {
 /// person to sign in.
 async fn read(
     run: &mut Run<'_>,
-    found: &OperationPlan,
+    found: &CompiledOperation,
     candidate: &Candidate,
     scope: &Scope,
 ) -> Result<Option<Values>, a2m_core::Failure> {
     let binding = &found.bindings[candidate.binding];
-    if run.loaded.plan.auth_of(binding.surface).is_some() && !run.holds_session_on(binding.surface)
+    if run
+        .loaded
+        .compiled_target
+        .auth_of(binding.surface)
+        .is_some()
+        && !run.holds_session_on(binding.surface)
     {
         return Err(codes::fail(
             &codes::row::NO_BINDING,
@@ -264,7 +275,7 @@ fn not_compared(failure: &a2m_core::Failure) -> ShadowOutcome {
 /// mismatch, and so is a read that found nothing.
 fn compare(
     loaded: &Loaded,
-    found: &OperationPlan,
+    found: &CompiledOperation,
     verified: &Values,
     observed: Option<&Values>,
 ) -> ShadowOutcome {

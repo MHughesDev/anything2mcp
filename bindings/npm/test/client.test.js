@@ -339,7 +339,7 @@ test("every action of the document has a method, and a type, on the client", () 
 
 test("an input field named like the per-call key is not generated twice", () => {
   const schema = { type: "object", additionalProperties: false, required: ["idempotency_key"], properties: { idempotency_key: { type: "string" }, name: { type: "string" } } };
-  const document = { info: {}, paths: { "/api/v1/actions/a.b": { post: { "x-action": "a.b", summary: "S.", requestBody: { content: { "application/json": { schema } } } } } } };
+  const document = { info: {}, paths: { "/api/v1/actions/a.b": { post: { "x-action": "a.b", "x-sdk": true, summary: "S.", requestBody: { content: { "application/json": { schema } } } } } } };
   const { js, dts } = generator.render(document);
   assert.ok(!dts.includes("idempotency_key"), dts);
   assert.ok(!js.includes("idempotency_key"), js);
@@ -348,11 +348,32 @@ test("an input field named like the per-call key is not generated twice", () => 
 });
 
 test("a generator that does not understand the document stops", () => {
-  const free = { info: {}, paths: { "/api/v1/actions/a.b": { post: { "x-action": "a.b", summary: "S.", requestBody: { content: { "application/json": { schema: { type: "object", additionalProperties: {}, properties: {} } } } } } } } };
+  const free = { info: {}, paths: { "/api/v1/actions/a.b": { post: { "x-action": "a.b", "x-sdk": true, summary: "S.", requestBody: { content: { "application/json": { schema: { type: "object", additionalProperties: {}, properties: {} } } } } } } } };
   assert.throws(() => generator.render(free), generator.GenerateError);
   assert.throws(() => generator.render({ info: {}, paths: {} }), generator.GenerateError);
   assert.strictEqual(generator.methodName("tool.call"), "toolCall");
   assert.strictEqual(generator.methodName("run.get"), "runGet");
+});
+
+test("an action without an SDK face gets no method, and a route that does not say stops", () => {
+  const operation = (action, sdk) => ({ "x-action": action, "x-sdk": sdk, summary: "S.", requestBody: { content: { "application/json": { schema: { type: "object", additionalProperties: false, properties: {} } } } } });
+  const document = { info: {}, paths: { "/api/v1/actions/a.b": { post: operation("a.b", true) }, "/api/v1/actions/a.skip": { post: operation("a.skip", false) } } };
+  const { js, dts } = generator.render(document);
+  assert.ok(js.includes("  aB(input"), js);
+  assert.ok(!js.includes("aSkip") && !js.includes("a.skip"), js);
+  assert.ok(!dts.includes("aSkip") && !dts.includes("ASkipInput"), dts);
+  for (const sdk of [undefined, "true", 1]) {
+    const unsaid = { info: {}, paths: { "/api/v1/actions/a.b": { post: operation("a.b", sdk) } } };
+    assert.throws(() => generator.render(unsaid), generator.GenerateError, String(sdk));
+  }
+});
+
+test("an underscore in a noun or a verb starts a word, as the dot does (decision 0405)", () => {
+  assert.strictEqual(generator.methodName("policy.tools_allowed"), "policyToolsAllowed");
+  assert.strictEqual(generator.methodName("spec.import"), "specImport");
+  for (const action of ["tool", "a.b.c", "Tool.call", "tool.Call", "a._b", "a.b_", "a.b__c", "a-b.c", "1a.b", ""]) {
+    assert.throws(() => generator.methodName(action), generator.GenerateError, action);
+  }
 });
 
 const BINARY = process.env.A2M_TEST_BINARY || "";

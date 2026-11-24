@@ -156,6 +156,9 @@ a2m_core::failure_codes! {
     FINDING_NOT_DECLARED = UnknownVariant, "finding_not_declared",
         meaning "A discoverer made a finding of a kind or level it did not declare.",
         next "Report this to the provider's author; a discoverer returns only the kinds and levels it declares.";
+    DISCOVERER_CANNOT_WATCH = UnknownVariant, "discoverer_cannot_watch",
+        meaning "A discoverer its manifest says a person drives was built without the method that watches a capture, so nothing was recorded.",
+        next "Report this to the provider's author; a discoverer driven by a person implements `watch`.";
     CONNECTION_LOST = Transient, "connection_lost",
         meaning "A stream to a subsystem broke.",
         next "Try again; if the stream keeps breaking, run `anything2mcp doctor`.";

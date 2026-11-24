@@ -225,11 +225,11 @@ async fn a_property_get_in_a_type_library_is_drafted_as_a_read_and_a_function_is
     }
     // They compile, and they are reads. This version carries out no such
     // step, which is a named stop with nothing sent.
-    scene.plan = match common::compile_at(&scene.registry, root.path()) {
-        Ok(compiled) => compiled.plan,
+    scene.compiled_target = match common::compile_at(&scene.registry, root.path()) {
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the drafts do not compile:\n{}", common::shown(&problems)),
     };
-    scene.surface = common::surface_of(&scene.plan, &scene.program);
+    scene.surface = common::surface_of(&scene.compiled_target, &scene.program);
     let binding = scene.binding("example_orders_total_get");
     let kinds: Vec<&str> = binding.act.iter().map(|step| step.kind.as_str()).collect();
     assert_eq!(kinds, ["com_get"]);
@@ -321,11 +321,11 @@ async fn a_property_marked_read_only_in_a_schema_is_drafted_as_a_read_and_never_
             }
         }
     }
-    scene.plan = match common::compile_at(&scene.registry, root.path()) {
-        Ok(compiled) => compiled.plan,
+    scene.compiled_target = match common::compile_at(&scene.registry, root.path()) {
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the drafts do not compile:\n{}", common::shown(&problems)),
     };
-    scene.surface = common::surface_of(&scene.plan, &scene.program);
+    scene.surface = common::surface_of(&scene.compiled_target, &scene.program);
     let binding = scene.binding("example_example_counter_total_get");
     let kinds: Vec<&str> = binding.act.iter().map(|step| step.kind.as_str()).collect();
     assert_eq!(kinds, ["management_get"]);
@@ -365,6 +365,29 @@ async fn a_management_class_a_surface_names_stops_by_name_off_windows() {
         failure.message().contains("only on Windows"),
         "{}",
         failure.message()
+    );
+    assert!(findings.is_empty());
+}
+
+/// On Windows, a namespace of another machine is refused by the driver
+/// itself, before the management service is asked anything: the review
+/// withdraws the binding's statement, and the driver fails closed as well.
+#[cfg(windows)]
+#[tokio::test]
+async fn a_management_namespace_of_another_machine_is_refused_by_the_driver() {
+    let Some(scene) = Scene::with_surface_lines(
+        "management-remote",
+        "    management_class: Example_Counter\n    management_namespace: '//other/root'\n",
+    )
+    .await
+    else {
+        return;
+    };
+    let (said, findings) = discover(&scene, "desktop_management", None).await;
+    let failure = said.unwrap_err();
+    assert_eq!(
+        (failure.class(), failure.code().as_str()),
+        (a2m_core::FailureClass::Policy, "remote_namespace_refused")
     );
     assert!(findings.is_empty());
 }

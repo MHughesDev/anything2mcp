@@ -128,17 +128,17 @@ fn the_fixture_target_compiles_twice_to_the_same_bytes() {
 
     // A write commits and has the mapped read tool as its read-back; a read
     // by key is a lookup; a create carries its lookup.
-    let plan = compiled_fixture(&registry);
-    let update = steps(&plan, "example_order_note_update");
+    let compiled_target = compiled_fixture(&registry);
+    let update = steps(&compiled_target, "example_order_note_update");
     assert!(update.act.commits && !update.act.lookup);
     let read_back = update.read_back.unwrap();
     assert!(!read_back.commits && read_back.lookup);
     assert!(read_back.args.is_empty());
-    let get = steps(&plan, "example_order_get");
+    let get = steps(&compiled_target, "example_order_get");
     assert!(!get.act.commits && get.act.lookup);
-    let create = steps(&plan, "example_order_create");
+    let create = steps(&compiled_target, "example_order_create");
     assert!(create.act.commits && create.lookup.unwrap().lookup);
-    assert_eq!(plan.surfaces[1].programs.len(), 1);
+    assert_eq!(compiled_target.surfaces[1].programs.len(), 1);
 }
 
 /// Decision 0315: the target's files pin a tool's output schema only by its
@@ -150,9 +150,10 @@ fn the_fixture_target_compiles_twice_to_the_same_bytes() {
 fn an_output_is_certain_only_where_the_mapping_makes_it_so() {
     let folder = Folder::new("absent");
     let registry = registry(&folder);
-    let plan = compiled_fixture(&registry);
+    let compiled_target = compiled_fixture(&registry);
     let flags = |operation: &str| -> Vec<(String, bool)> {
-        plan.operations
+        compiled_target
+            .operations
             .iter()
             .find(|found| found.name.as_str() == operation)
             .unwrap()
@@ -184,7 +185,7 @@ fn an_output_is_certain_only_where_the_mapping_makes_it_so() {
     });
     let keyed = compile(&registry, &root).unwrap_or_else(|problems| panic!("{}", shown(&problems)));
     let create = keyed
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|found| found.name.as_str() == "example_order_create")
@@ -456,11 +457,12 @@ fn a_call_to_an_irreversible_tool_with_no_read_back_states_the_acknowledgement()
             .replace("    read_back: {}\n", ""),
         _ => text,
     });
-    let plan = compile(&registry, &root)
+    let compiled_target = compile(&registry, &root)
         .unwrap_or_else(|problems| panic!("the target does not compile:\n{}", shown(&problems)))
-        .plan;
-    let evidence = |plan: &a2m_core::Plan, name: &str| {
-        plan.operations
+        .compiled_target;
+    let evidence = |compiled_target: &a2m_core::CompiledTarget, name: &str| {
+        compiled_target
+            .operations
             .iter()
             .find(|operation| operation.name.as_str() == name)
             .unwrap()
@@ -468,7 +470,7 @@ fn a_call_to_an_irreversible_tool_with_no_read_back_states_the_acknowledgement()
             .evidence
     };
     assert_eq!(
-        evidence(&plan, "example_order_note_update"),
+        evidence(&compiled_target, "example_order_note_update"),
         a2m_core::WriteEvidence::Acknowledged
     );
     // A write that names a read-back keeps it.

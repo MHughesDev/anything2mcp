@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, Digest, Environment, Failure, Finding, NoSecrets, PackPayload, Redact, SurfaceKind,
-    SurfaceName, SurfacePlan, TargetName, Value, Values,
+    Archetype, CompiledSurface, Digest, Environment, Failure, Finding, NoSecrets, PackPayload,
+    Redact, SurfaceKind, SurfaceName, TargetName, Value, Values,
 };
 use a2m_pack_web_browser::{PROFILE_ROOT, SharedBrowsers, test_support};
 use a2m_provider::{
@@ -38,6 +38,7 @@ use serde_json::Value as Json;
 
 use crate::{SURFACE_KIND, WebProbePack};
 
+mod capture;
 mod rules;
 mod scouting;
 mod sign_in;
@@ -169,7 +170,7 @@ impl Bench {
         let surface = SurfaceRef {
             target: TargetName::new("example").unwrap(),
             environment: Environment::new("test").unwrap(),
-            surface: SurfacePlan {
+            surface: CompiledSurface {
                 name: SurfaceName::new("app").unwrap(),
                 kind: SurfaceKind::new(SURFACE_KIND).unwrap(),
                 address: address.to_owned(),

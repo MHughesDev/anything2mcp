@@ -3,11 +3,11 @@
 //! write that rests until a person approves it at the desk, the decision
 //! recorded for every dispatch, and the redactor on the way out.
 //!
-//! The test pack, its driver over the test application's JSON interface,
-//! and the hand-built plan of the imaginary `example` target are the
+//! The test pack, its driver over the test application's JSON interface, and
+//! the hand-built compiled target of the imaginary `example` target are the
 //! engine's own test helpers, used here as they are. The tests are part of
-//! the library's own test build, because they publish that plan through
-//! `Kernel::publish_plan`, which exists only for tests.
+//! the library's own test build, because they publish that compiled target
+//! through `Kernel::publish_compiled_target`, which exists only for tests.
 
 #[path = "../../../a2m-engine/tests/common/mod.rs"]
 pub(super) mod engine;
@@ -186,6 +186,32 @@ pub(super) struct World {
     pub(super) logins: Arc<AtomicU32>,
 }
 
+/// The key store's own randomness: counted, as the kernel's is, and never
+/// the same bytes. Two counters that both start at nought hand out one
+/// stream, and a key one draws can then be wrapped under a nonce the other
+/// drew equal to its first bytes, which the vault rightly refuses as a stuck
+/// source (`busy`/`randomness_unavailable`). In a running engine both are
+/// the operating system's.
+pub(super) struct KeyStoreCounted(std::sync::atomic::AtomicU64);
+
+impl KeyStoreCounted {
+    pub(super) fn new() -> Arc<Self> {
+        Arc::new(Self(std::sync::atomic::AtomicU64::new(0)))
+    }
+}
+
+impl a2m_vault::RandomSource for KeyStoreCounted {
+    fn fill(&self, out: &mut [u8]) -> Result<(), Failure> {
+        for chunk in out.chunks_mut(a2m_core::Digest::LENGTH) {
+            let number = self.0.fetch_add(1, Ordering::SeqCst);
+            let block =
+                a2m_core::Digest::of(&[b"key store ".as_slice(), &number.to_le_bytes()].concat());
+            chunk.copy_from_slice(&block.as_bytes()[..chunk.len()]);
+        }
+        Ok(())
+    }
+}
+
 pub(super) struct Options {
     place: StorePlace,
     key_store: Arc<dyn KeyStore>,
@@ -197,8 +223,9 @@ pub(super) struct Options {
     /// The test application's pack also registers its surface kind with
     /// the compiler, with a notice for `profile: open`.
     pub(super) notices: bool,
-    /// The auth provider `example_login`, which the hand-built plan names,
-    /// is registered: a provider that needs the person (`super::probe`).
+    /// The auth provider `example_login`, which the hand-built compiled
+    /// target names, is registered: a provider that needs the person
+    /// (`super::probe`).
     pub(super) login: bool,
     /// One more pack a test brings, registered beside the others.
     pub(super) extra_pack: Option<Arc<dyn a2m_provider::Pack>>,
@@ -238,7 +265,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             place: StorePlace::Memory,
-            key_store: Arc::new(MemoryKeyStore::with_random(Counted::new())),
+            key_store: Arc::new(MemoryKeyStore::with_random(KeyStoreCounted::new())),
             block_store: false,
             settings: Settings::defaults(),
             before_open: None,
@@ -376,7 +403,7 @@ impl World {
         world.kernel.start_runner_loop(4).await.unwrap();
         world
             .kernel
-            .publish_plan(&engine::plan(&world.app.url("")))
+            .publish_compiled_target(&engine::compiled_target(&world.app.url("")))
             .await
             .unwrap();
         world
@@ -409,7 +436,7 @@ impl World {
         world.kernel.start_runner_loop(4).await.unwrap();
         world
             .kernel
-            .publish_plan(&engine::plan(&world.app.url("")))
+            .publish_compiled_target(&engine::compiled_target(&world.app.url("")))
             .await
             .unwrap();
         world
@@ -620,7 +647,34 @@ async fn a_write_rests_until_a_person_approves_at_the_desk_and_is_written_exactl
     assert_eq!(again.result.as_ref().unwrap()["status"], "completed");
     assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 1);
 
+    // Closed, the kernel leaves no clone of the store behind, though the
+    // surface keeps the desk: the desk answers that the engine has closed,
+    // and no file of the store is open, which Windows needs to remove or
+    // replace one.
     world.kernel.close(CloseReason::Asked).await;
+    let closed = desk.waiting(run_id).await.unwrap_err();
+    assert_eq!(closed.code(), &a2m_actions::codes::ENGINE_DEGRADED);
+    assert_eq!(
+        open_under(&Paths::under(world.folder.path()).store),
+        Vec::<std::path::PathBuf>::new()
+    );
+}
+
+/// The files under `folder` this process has open, read from
+/// `/proc/self/fd` on Linux; empty on every other system.
+fn open_under(folder: &Path) -> Vec<std::path::PathBuf> {
+    if !cfg!(target_os = "linux") {
+        return Vec::new();
+    }
+    let folder = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    std::fs::read_dir("/proc/self/fd")
+        .map(|entries| {
+            entries
+                .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+                .filter(|target| target.starts_with(&folder))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -881,6 +935,121 @@ async fn a_stopped_store_serves_status_and_nothing_else() {
     world.kernel.close(CloseReason::Asked).await;
 }
 
+/// A write the person has not approved, as an agent would send it.
+fn an_upsert() -> Json {
+    json!({"tool": ITEM_UPSERT, "input": {
+        "order_id": "A-102",
+        "item_code": "L-300",
+        "description": "New rail",
+        "quantity": 3,
+        "length_in": "150.5",
+    }})
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_store_that_stops_committing_while_the_engine_runs_stops_the_kernel_and_sends_nothing() {
+    let world = World::ready_with(Options {
+        place: StorePlace::Disk,
+        ..Options::default()
+    })
+    .await;
+    assert_eq!(world.kernel.health().state, HealthState::Ok);
+
+    // Another program holds the database's write lock, as a failing disk or
+    // a stuck process would leave it: the store's own commits fail.
+    let file = Paths::under(world.folder.path())
+        .store
+        .join(a2m_ledger::DATABASE_FILE_NAME);
+    let other = rusqlite::Connection::open(&file).unwrap();
+    other.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let health = world.kernel.recheck().await;
+    assert_eq!(health.state, HealthState::Stopped, "{health:?}");
+    assert!(health.cause().contains("store"), "{}", health.cause());
+    assert_eq!(world.kernel.health().state, HealthState::Stopped);
+
+    // A write answers `busy`, `engine_degraded`, naming the store and the
+    // stop, and the test application is asked what it stored: nothing.
+    let refused = world.call("tool.call", an_upsert()).await;
+    let error = refused.error.unwrap_or_else(|| panic!("the write ran"));
+    assert_eq!(
+        (error.class, error.code.as_str()),
+        (FailureClass::Busy, "engine_degraded")
+    );
+    assert!(error.message.contains("stopped"), "{}", error.message);
+    assert!(error.message.contains("store"), "{}", error.message);
+    assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 0);
+    assert!(world.app.writes().await.unwrap().is_empty());
+
+    // The status says why.
+    let status = world.ok("engine.status", json!({})).await;
+    assert_eq!(status["state"], "stopped");
+    assert_eq!(status["reasons"][0]["part"], "store");
+    assert_eq!(status["reasons"][0]["code"], "store_unavailable");
+    assert!(world.app.writes().await.unwrap().is_empty());
+    drop(other);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// A file that is a database whose pages after the first are overwritten,
+/// as a failing disk would leave it.
+fn a_damaged_database(paths: &Paths) {
+    std::fs::create_dir_all(&paths.store).unwrap();
+    let file = paths.store.join(a2m_ledger::DATABASE_FILE_NAME);
+    let raw = rusqlite::Connection::open(&file).unwrap();
+    raw.query_row("PRAGMA journal_mode = DELETE", [], |_| Ok(()))
+        .unwrap();
+    raw.execute_batch("CREATE TABLE filler (x TEXT)").unwrap();
+    for _ in 0..40 {
+        raw.execute("INSERT INTO filler VALUES (?1)", ["x".repeat(900)])
+            .unwrap();
+    }
+    drop(raw);
+    let mut bytes = std::fs::read(&file).unwrap();
+    let page = usize::from(u16::from_be_bytes([bytes[16], bytes[17]]));
+    assert!(bytes.len() > 3 * page, "{} bytes", bytes.len());
+    for byte in &mut bytes[page..] {
+        *byte = 0x5a;
+    }
+    std::fs::write(&file, &bytes).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_database_file_damaged_before_the_start_leaves_the_kernel_stopped_and_sends_nothing() {
+    let world = world(Options {
+        place: StorePlace::Disk,
+        before_open: Some(a_damaged_database),
+        ..Options::default()
+    })
+    .await;
+    let health = world.kernel.health();
+    assert_eq!(health.state, HealthState::Stopped, "{health:?}");
+    assert!(health.cause().contains("store"), "{}", health.cause());
+
+    // Status names the cause by the store's own code.
+    let status = world.ok("engine.status", json!({})).await;
+    assert_eq!(status["state"], "stopped");
+    assert_eq!(status["reasons"][0]["part"], "store");
+    assert_eq!(status["reasons"][0]["code"], "store_corrupt");
+
+    // A write is refused, and the test application stored nothing.
+    let refused = world.call("tool.call", an_upsert()).await;
+    let error = refused.error.unwrap_or_else(|| panic!("the write ran"));
+    assert_eq!(
+        (error.class, error.code.as_str()),
+        (FailureClass::Busy, "engine_degraded")
+    );
+    assert!(error.message.contains("stopped"), "{}", error.message);
+    assert!(world.app.writes().await.unwrap().is_empty());
+
+    // The damaged file was kept as it was left, for its restore.
+    let file = Paths::under(world.folder.path())
+        .store
+        .join(a2m_ledger::DATABASE_FILE_NAME);
+    let bytes = std::fs::read(&file).unwrap();
+    assert!(bytes.ends_with(&[0x5a; 64]));
+    world.kernel.close(CloseReason::Asked).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_a_key_store_the_kernel_is_degraded_and_writes_nothing() {
     let world = world(Options {
@@ -911,6 +1080,250 @@ async fn without_a_key_store_the_kernel_is_degraded_and_writes_nothing() {
         assert_eq!(error.code, "engine_degraded", "{action}");
         assert!(error.message.contains("degraded"));
     }
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// A key store that answers until it is switched off, as one that is
+/// locked or stopped after the engine started would.
+struct Switchable {
+    inner: MemoryKeyStore,
+    down: std::sync::atomic::AtomicBool,
+}
+
+impl Switchable {
+    fn set_down(&self, down: bool) {
+        self.down.store(down, Ordering::SeqCst);
+    }
+
+    fn is_down(&self) -> bool {
+        self.down.load(Ordering::SeqCst)
+    }
+}
+
+impl KeyStore for Switchable {
+    fn describe(&self) -> a2m_vault::StoreDescription {
+        self.inner.describe()
+    }
+
+    fn wrap<'a>(
+        &'a self,
+        key: &'a a2m_vault::KeyMaterial,
+        bound_to: &'a a2m_vault::Binding,
+    ) -> VaultFuture<'a, Result<a2m_vault::Wrapped, Failure>> {
+        Box::pin(async move {
+            if self.is_down() {
+                Err(unreachable_store())
+            } else {
+                self.inner.wrap(key, bound_to).await
+            }
+        })
+    }
+
+    fn unwrap<'a>(
+        &'a self,
+        wrapped: &'a a2m_vault::Wrapped,
+        bound_to: &'a a2m_vault::Binding,
+    ) -> VaultFuture<'a, Result<a2m_vault::KeyMaterial, Failure>> {
+        Box::pin(async move {
+            if self.is_down() {
+                Err(unreachable_store())
+            } else {
+                self.inner.unwrap(wrapped, bound_to).await
+            }
+        })
+    }
+
+    fn health(&self) -> VaultFuture<'_, a2m_vault::StoreHealth> {
+        Box::pin(async move {
+            if self.is_down() {
+                a2m_vault::StoreHealth::Unreachable
+            } else {
+                self.inner.health().await
+            }
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_key_store_that_stops_after_the_start_degrades_the_kernel_until_it_answers_again() {
+    let store = Arc::new(Switchable {
+        inner: MemoryKeyStore::with_random(KeyStoreCounted::new()),
+        down: std::sync::atomic::AtomicBool::new(false),
+    });
+    let world = World::ready_with(Options {
+        key_store: Arc::clone(&store) as Arc<dyn KeyStore>,
+        ..Options::default()
+    })
+    .await;
+    // One read while the key store answers: the workspace's key that seals
+    // a run's trace is opened and held in memory, as it is in an engine
+    // that has run anything since its start.
+    let warm = world
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
+        .await;
+    assert!(warm.ok, "{:?}", warm.error);
+
+    // The key store stops answering after the start.
+    store.set_down(true);
+    let health = world.kernel.recheck().await;
+    assert_eq!(health.state, HealthState::Degraded, "{health:?}");
+    assert!(health.cause().contains("vault"), "{}", health.cause());
+    let status = world.ok("engine.status", json!({})).await;
+    assert_eq!(status["state"], "degraded");
+    assert_eq!(status["reasons"][0]["part"], "vault");
+    assert_eq!(status["reasons"][0]["code"], "key_store_unreachable");
+
+    // A write is refused before anything runs, and the test application
+    // is asked what it stored: nothing.
+    let refused = world.call("tool.call", an_upsert()).await;
+    let error = refused.error.unwrap_or_else(|| panic!("the write ran"));
+    assert_eq!(
+        (error.class, error.code.as_str()),
+        (FailureClass::Busy, "engine_degraded")
+    );
+    assert!(error.message.contains("degraded"), "{}", error.message);
+    assert!(world.app.writes().await.unwrap().is_empty());
+
+    // A read that needs no secret runs.
+    let read = world
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
+        .await;
+    assert!(read.ok, "{:?}", read.error);
+    assert_eq!(read.result.unwrap()["result"]["order_id"], "A-100");
+
+    // Switched on again, the next look finds the kernel healthy, with no
+    // restart.
+    store.set_down(false);
+    let health = world.kernel.recheck().await;
+    assert_eq!(health.state, HealthState::Ok, "{health:?}");
+    assert_eq!(world.ok("engine.status", json!({})).await["state"], "ok");
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_key_store_that_stops_before_any_read_still_lets_a_read_run() {
+    let store = Arc::new(Switchable {
+        inner: MemoryKeyStore::with_random(KeyStoreCounted::new()),
+        down: std::sync::atomic::AtomicBool::new(false),
+    });
+    let world = World::ready_with(Options {
+        key_store: Arc::clone(&store) as Arc<dyn KeyStore>,
+        ..Options::default()
+    })
+    .await;
+    store.set_down(true);
+    assert_eq!(world.kernel.recheck().await.state, HealthState::Degraded);
+    let read = world
+        .call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
+        .await;
+    assert!(read.ok, "{:?}", read.error);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// The room a test says the evidence store's disk has.
+struct Room(std::sync::atomic::AtomicU64);
+
+impl a2m_actions::FreeSpace for Room {
+    fn free_bytes(&self, _folder: &Path) -> Option<u64> {
+        Some(self.0.load(Ordering::SeqCst))
+    }
+}
+
+/// The captures a run kept: its events that tie a capture to it.
+async fn kept_captures(world: &World, response: &Response) -> Vec<Json> {
+    let run: a2m_core::RunId = response.result.as_ref().unwrap()["run_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    world
+        .kernel
+        .store()
+        .unwrap()
+        .read(move |tx| tx.ledger().events(run, 0, u32::MAX))
+        .await
+        .unwrap()
+        .iter()
+        .filter(|event| event.kind == a2m_ledger::EventKind::Need)
+        .map(|event| serde_json::from_str::<Json>(&event.payload).unwrap_or(Json::Null))
+        .filter(|payload| payload.get("capture").is_some())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_evidence_store_with_no_room_degrades_the_kernel_to_minimal_reads_until_there_is_room() {
+    // Reads keep every exchange, and a read of an order captures the
+    // application's answer.
+    let world = World::ready_with(Options::with_user_settings(
+        "[evidence]\ncapture = \"full\"\n",
+    ))
+    .await;
+    world.hooks.tells_acting.store(true, Ordering::SeqCst);
+    let room = Arc::new(Room(std::sync::atomic::AtomicU64::new(u64::MAX)));
+    world
+        .kernel
+        .measure_free_space_with(Arc::clone(&room) as Arc<dyn a2m_actions::FreeSpace>);
+    let read = || {
+        world.call(
+            "tool.call",
+            json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}}),
+        )
+    };
+    assert_eq!(world.kernel.recheck().await.state, HealthState::Ok);
+    let roomy = read().await;
+    assert!(roomy.ok, "{:?}", roomy.error);
+    assert!(
+        kept_captures(&world, &roomy)
+            .await
+            .iter()
+            .any(|capture| capture["capture"] == "response"),
+        "with room, the read keeps its capture"
+    );
+
+    // Less free than the floor, the default of one gibibyte.
+    room.0.store(1_000, Ordering::SeqCst);
+    let health = world.kernel.recheck().await;
+    assert_eq!(health.state, HealthState::Degraded, "{health:?}");
+    let status = world.ok("engine.status", json!({})).await;
+    assert_eq!(status["state"], "degraded");
+    assert_eq!(status["reasons"][0]["part"], "evidence_space");
+    assert_eq!(status["reasons"][0]["code"], "storage_full");
+
+    // A read runs, and keeps nothing above the lowest capture level.
+    let short = read().await;
+    assert!(short.ok, "{:?}", short.error);
+    assert_eq!(
+        short.result.as_ref().unwrap()["result"]["order_id"],
+        "A-100"
+    );
+    let kept = kept_captures(&world, &short).await;
+    assert!(kept.is_empty(), "{kept:?}");
+
+    // A write is refused before a run is made, and the test application
+    // is asked what it stored: nothing.
+    let refused = world.call("tool.call", an_upsert()).await;
+    let error = refused.error.unwrap_or_else(|| panic!("the write ran"));
+    assert_eq!(
+        (error.class, error.code.as_str()),
+        (FailureClass::Busy, "engine_degraded")
+    );
+    assert!(error.message.contains("degraded"), "{}", error.message);
+    assert!(refused.result.is_none());
+    assert!(world.app.writes().await.unwrap().is_empty());
+
+    // With room again, the next look finds the kernel healthy.
+    room.0.store(u64::MAX, Ordering::SeqCst);
+    assert_eq!(world.kernel.recheck().await.state, HealthState::Ok);
+    assert_eq!(world.ok("engine.status", json!({})).await["state"], "ok");
     world.kernel.close(CloseReason::Asked).await;
 }
 
@@ -1027,8 +1440,13 @@ async fn the_first_actions_of_building_answer_through_the_dispatcher() {
     let targets = world.ok("target.list", json!({})).await;
     assert_eq!(targets["targets"][0]["target"], "example");
     assert_eq!(targets["targets"][0]["versions"][0]["current"], true);
-    let plan = world.ok("plan.show", json!({"target": "example"})).await;
-    assert!(plan["text"].as_str().unwrap().contains(ORDER_GET));
+    let compiled_target = world.ok("target.show", json!({"target": "example"})).await;
+    assert!(
+        compiled_target["text"]
+            .as_str()
+            .unwrap()
+            .contains(ORDER_GET)
+    );
 
     let sessions = world.ok("session.status", json!({})).await;
     assert_eq!(sessions["sessions"], json!([]));

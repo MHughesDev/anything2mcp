@@ -64,14 +64,14 @@ fn a_started_telemetry_logs_to_its_file_and_nothing_carries_a_planted_secret() {
     // a value a system returned.
     let tool = OperationName::new("example_sales_order_read").unwrap();
     let kind = StepKind::new("request").unwrap();
-    let plan = Digest::of(b"the plan");
+    let compiled_target = Digest::of(b"the plan");
     let mut trace = TraceBuilder::new(
         TraceIdentity {
             workspace: WorkspaceId::from_bytes([7; 16]),
             run: RunId::from_bytes([1; 16]),
             attempt: 1,
             operation: tool.clone(),
-            plan,
+            compiled_target,
             engine: Version::new(0, 1, 0),
             registry: Digest::of(b"registry"),
         },
@@ -115,7 +115,7 @@ fn a_started_telemetry_logs_to_its_file_and_nothing_carries_a_planted_secret() {
     }
     telemetry.record_call(
         &tool,
-        &plan,
+        &compiled_target,
         a2m_telemetry::CallOutcome::Success,
         Duration::from_millis(3),
     );

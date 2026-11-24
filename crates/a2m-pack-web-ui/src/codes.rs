@@ -44,7 +44,7 @@ a2m_core::failure_codes! {
         meaning "A value was committed on a surface whose platform profile says the page sends a change and draws the form again, and the page did not draw it again in the time given. What became of the value is not known.",
         next "Look at the page and find out what the application holds; then correct the surface's `profile`, or the screen, before running the tool again.";
     UNKNOWN_CONTROL = UnknownVariant, "unknown_control",
-        meaning "The plan names a control this driver has no rule for.",
+        meaning "The compiled target names a control this driver has no rule for.",
         next "Compile the target again with the version of the web pack that is enabled.";
     READ_TOO_LARGE = UnknownVariant, "read_too_large",
         meaning "What a read gave is larger than the limit.",
@@ -60,7 +60,7 @@ a2m_core::failure_codes! {
         next "Declare the surface in the target's files if the system really lives there; otherwise look at why the page moved.";
     PAGE_WRITE_REFUSED = Policy, "page_write_refused",
         meaning "The page sent a request that could change the system while a read ran, and the tab, which cannot write, failed it (decision 0195).",
-        next "Look at what the page does when it loads; a page that writes by itself is not read by the web pack, so read the record another way.";
+        next "Look at what the page does when it loads. When a page request asserts the request with `read_asserted: true`, run the tool from a published version, live or in an environment of kind `test` (decision 0394); a page that writes by itself is not read by the web pack, so read the record another way.";
     ORIGIN_NOT_DECLARED = Policy, "origin_not_declared",
         meaning "The page, a frame of it, or a worker sent a request to an origin that is neither the surface's nor one the operation declares. The browser failed it before it left (decision 0292).",
         next "Declare the origin in the operation's `permissions.destinations`, with its scheme, if the system's pages really load from it; otherwise look at why the page sends there.";
@@ -99,7 +99,7 @@ a2m_core::failure_codes! {
         meaning "A file input was given a name that is not the name of a file in the staging folder: it holds no file of that name, or the name is not one plain name.",
         next "Put the file in the staging folder under the name, and give that name; no path is taken.";
     STEP_NOT_USABLE = Input, "step_not_usable",
-        meaning "A step this driver cannot carry out as the plan wrote it.",
+        meaning "A step this driver cannot carry out as the compiled target wrote it.",
         next "Compile the target again with the version of the web pack that is enabled.";
     SIGN_IN_BLOCKED = EdgeBlocked, "sign_in_blocked",
         meaning "The sign-in page of a form sign-in shows the block the target declares: a locked account, a check the engine does not get past (decision 0245).",
@@ -140,7 +140,7 @@ pub(crate) fn not_usable(why: impl Into<String>) -> StepFailure {
     StepFailure::not_sent(failure(
         &row::STEP_NOT_USABLE,
         format!(
-            "The interface driver cannot carry out this step as the plan wrote it: {}.",
+            "The interface driver cannot carry out this step as the compiled target wrote it: {}.",
             why.into()
         ),
         "Compile the target again with the version of the web pack that is enabled.",

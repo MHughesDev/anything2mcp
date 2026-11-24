@@ -4,8 +4,9 @@
 //! nothing the system returns becomes an instruction to the engine.
 //!
 //! The engine holds this by construction: an input is a typed value, the
-//! plan alone names surfaces, steps, and keys, and a step's arguments are
-//! values handed to the driver by name. These tests hold it to that.
+//! compiled target alone names surfaces, steps, and keys, and a step's
+//! arguments are values handed to the driver by name. These tests hold it to
+//! that.
 
 #![allow(
     clippy::unwrap_used,
@@ -19,7 +20,7 @@ use a2m_core::{FailureClass, Mode, RecordState, RunState, Value, Values};
 use a2m_engine::{JobKind, JobOutcome};
 use common::{
     ITEM_UPSERT, ORDER_FILL, ORDER_GET, SECOND_MODE, Scene, approved, completed, failed_as, item,
-    item_key,
+    item_key, reads_take_a_link,
 };
 
 const DRIVER_STEPS: [&str; 3] = ["get_order", "get_item", "put_item"];
@@ -35,8 +36,8 @@ async fn an_input_that_is_an_address_does_not_change_where_the_request_goes() {
             Values::new().with("order_id", elsewhere),
         )
         .await;
-    // The driver was prepared for the surface's address, which the plan
-    // gives, and was handed the input as a value under its name. The
+    // The driver was prepared for the surface's address, which the compiled
+    // target gives, and was handed the input as a value under its name. The
     // system has no order of that name.
     let steps = scene.hooks.given("get_order");
     assert!(!steps.is_empty());
@@ -85,7 +86,7 @@ async fn an_input_the_tool_does_not_declare_is_refused_before_anything_runs() {
 }
 
 #[tokio::test]
-async fn an_environment_or_a_mode_the_plan_does_not_hold_runs_nothing() {
+async fn an_environment_or_a_mode_the_compiled_target_does_not_hold_runs_nothing() {
     let scene = Scene::new(ITEM_UPSERT, |_| {}).await;
     let rail = item("A-102", "L-300", "New rail", 3, "150.5");
     // The operation has one binding, and it is not through this mode.
@@ -157,7 +158,7 @@ async fn an_input_that_reads_like_an_expression_or_a_key_stays_one_value() {
 }
 
 #[tokio::test]
-async fn which_steps_run_is_the_plans_whatever_the_inputs_say() {
+async fn which_steps_run_is_the_compiled_targets_whatever_the_inputs_say() {
     let scene = Scene::new(ORDER_FILL, |_| {}).await;
     // The order is submitted, and the pipeline's first step expects a
     // draft. The inputs ask, in words, for that step to be skipped.
@@ -207,8 +208,8 @@ async fn text_from_the_system_that_reads_like_an_instruction_is_carried_as_a_val
 
     let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, input).await;
     assert!(completed(&outcome), "{outcome:?}");
-    // The engine did what the plan says for this record and nothing else:
-    // the freshness read, the save, the read-back.
+    // The engine did what the compiled target says for this record and
+    // nothing else: the freshness read, the save, the read-back.
     assert_eq!(
         scene.steps(&DRIVER_STEPS),
         ["get_item", "get_item", "put_item", "get_item"]
@@ -220,4 +221,152 @@ async fn text_from_the_system_that_reads_like_an_instruction_is_carried_as_a_val
     assert_eq!(untouched.items.len(), 3);
     assert_eq!(scene.app.writes().await.unwrap().len(), 2);
     assert_eq!(scene.app.write_count("A-102", "L-300").await.unwrap(), 2);
+}
+
+/// The one destination the read of an order declares, and the one the
+/// write of a line item declares.
+const DECLARED: &str = "https://files.example.com";
+const UPSERT_DECLARES: &str = "https://upload.example.com:8443";
+
+/// What a refused call must leave: the class and the code, the input
+/// named and its value not, no driver prepared, no step reached, and the
+/// test application asked for nothing.
+async fn refused_unsent(scene: &Scene, tool: &str, input: Values, link: &str, whose: &str) {
+    let heard = scene.app.seen().await.unwrap();
+    let prepared = scene.hooks.postures.lock().unwrap().len();
+    let outcome = scene.work(JobKind::Execute, tool, input).await;
+    assert_eq!(
+        failed_as(&outcome),
+        (FailureClass::Policy, "surface_not_declared".to_owned()),
+        "{link:?}"
+    );
+    let failure = outcome.failure().unwrap();
+    assert!(failure.message().contains("`link`"), "{failure}");
+    assert!(failure.message().contains(whose), "{failure}");
+    if !link.is_empty() {
+        assert!(!failure.message().contains(link), "{failure}");
+    }
+    assert!(scene.steps(&DRIVER_STEPS).is_empty(), "{link:?}");
+    assert_eq!(
+        scene.hooks.postures.lock().unwrap().len(),
+        prepared,
+        "{link:?}"
+    );
+    assert_eq!(
+        scene.app.heard_since(&heard).await.unwrap(),
+        Vec::<String>::new(),
+        "{link:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_url_input_accepts_only_a_destination_its_operation_declares() {
+    let scene = Scene::new(ORDER_GET, |compiled_target| {
+        reads_take_a_link(compiled_target, DECLARED, UPSERT_DECLARES);
+    })
+    .await;
+    let read = |link: &str| Values::new().with("order_id", "A-100").with("link", link);
+    let app = scene.app.url("api/orders/A-100");
+    let app_host = app
+        .split("://")
+        .nth(1)
+        .and_then(|rest| rest.split('/').next())
+        .unwrap()
+        .to_owned();
+    let refused = [
+        // Another host, and one that only looks like the declared one.
+        "https://elsewhere.example.net/reports".to_owned(),
+        "https://files.example.com.example.net/".to_owned(),
+        // Another scheme, and another port.
+        "ftp://files.example.com/reports".to_owned(),
+        "file:///etc/passwd".to_owned(),
+        "https://files.example.com:8443/".to_owned(),
+        // A user part, and forms that hide another host behind the
+        // declared one.
+        "https://user:secret@files.example.com/".to_owned(),
+        "https://files.example.com@elsewhere.example.net/".to_owned(),
+        "https://files.example.com\\@elsewhere.example.net/".to_owned(),
+        // An encoded host, and a letter that only looks like one.
+        "https://files%2eexample.com/".to_owned(),
+        "https://files.ex\u{0430}mple.com/".to_owned(),
+        // IP literals: the machine, the cloud's metadata address, a number
+        // read as an address, and the test application itself.
+        "http://127.0.0.1/".to_owned(),
+        "http://[::1]/".to_owned(),
+        "http://169.254.169.254/latest/meta-data/".to_owned(),
+        "http://2130706433/".to_owned(),
+        app.clone(),
+        // The declared address given a redirect to the application: refused,
+        // because the address itself is not a destination.
+        format!("http://{app_host}/redirect?to={DECLARED}"),
+    ];
+    for link in &refused {
+        scene.another_run(ORDER_GET).await;
+        refused_unsent(&scene, ORDER_GET, read(link), link, ORDER_GET).await;
+    }
+
+    // The declared destination runs, and the driver is prepared with the
+    // surfaces and that destination and nothing an input says: a redirect
+    // the address asks for is the driver's to refuse, and it was given no
+    // other destination to follow it to.
+    for link in [
+        "https://files.example.com/reports/A-100.pdf".to_owned(),
+        format!("{DECLARED}/go?to=https://elsewhere.example.net/"),
+    ] {
+        scene.another_run(ORDER_GET).await;
+        let outcome = scene.work(JobKind::Execute, ORDER_GET, read(&link)).await;
+        assert!(completed(&outcome), "{link}: {outcome:?}");
+        let prepared = scene.hooks.prepared_with.lock().unwrap().clone();
+        let (_, destinations) = prepared.last().unwrap();
+        assert!(
+            destinations.iter().any(|known| known == DECLARED),
+            "{destinations:?}"
+        );
+        assert!(
+            destinations
+                .iter()
+                .all(|known| !known.contains("elsewhere")),
+            "{destinations:?}"
+        );
+    }
+    assert!(!scene.steps(&["get_order"]).is_empty());
+}
+
+#[tokio::test]
+async fn a_url_input_a_pipeline_passes_on_is_held_to_the_operation_it_reaches() {
+    let scene = Scene::new(ORDER_FILL, |compiled_target| {
+        reads_take_a_link(compiled_target, DECLARED, UPSERT_DECLARES);
+    })
+    .await;
+    let fill = |link: &str| {
+        Values::new()
+            .with("order_id", "A-101")
+            .with("first_code", "L-301")
+            .with("second_code", "L-302")
+            .with("description", "Rail")
+            .with("quantity", 1_i64)
+            .with("length_in", "20")
+            .with("link", link)
+    };
+    // No operation the pipeline calls declares it: refused as the tool's.
+    refused_unsent(
+        &scene,
+        ORDER_FILL,
+        fill("https://elsewhere.example.net/"),
+        "elsewhere.example.net",
+        ORDER_FILL,
+    )
+    .await;
+    // The write declares it, and the read it is passed to does not:
+    // refused at that step, before it is prepared.
+    scene.another_run(ORDER_FILL).await;
+    refused_unsent(
+        &scene,
+        ORDER_FILL,
+        fill(&format!("{UPSERT_DECLARES}/in")),
+        "upload.example.com",
+        "`check`",
+    )
+    .await;
+    assert!(scene.app.writes().await.unwrap().is_empty());
 }

@@ -149,11 +149,12 @@ impl World {
         Self::ready_with(prompt, window, |_| {}).await
     }
 
-    /// The same, with the published plan changed by `change` first.
+    /// The same, with the published compiled target changed by `change`
+    /// first.
     pub(crate) async fn ready_with(
         prompt: Arc<dyn PresencePrompt>,
         window: Duration,
-        change: fn(&mut a2m_core::Plan),
+        change: fn(&mut a2m_core::CompiledTarget),
     ) -> Self {
         Self::build(prompt, window, change, false).await
     }
@@ -178,7 +179,7 @@ impl World {
     async fn build(
         prompt: Arc<dyn PresencePrompt>,
         window: Duration,
-        change: fn(&mut a2m_core::Plan),
+        change: fn(&mut a2m_core::CompiledTarget),
         codes: bool,
     ) -> Self {
         let app = TestApp::start().await.unwrap();
@@ -190,7 +191,7 @@ impl World {
             settings: Settings::defaults(),
             paths: paths.clone(),
             place: StorePlace::Memory,
-            key_store: Arc::new(MemoryKeyStore::with_random(Counted::new())),
+            key_store: Arc::new(MemoryKeyStore::with_random(Counted::apart())),
             clock: Arc::clone(&clock),
             random: Counted::new(),
             os_user: user.clone(),
@@ -232,9 +233,12 @@ impl World {
             .await
             .unwrap();
         kernel.start_runner_loop(4).await.unwrap();
-        let mut plan = engine::plan(&app.url(""));
-        change(&mut plan);
-        kernel.publish_plan(&plan).await.unwrap();
+        let mut compiled_target = engine::compiled_target(&app.url(""));
+        change(&mut compiled_target);
+        kernel
+            .publish_compiled_target(&compiled_target)
+            .await
+            .unwrap();
         Self {
             app,
             kernel,
@@ -491,12 +495,12 @@ impl a2m_auth::AuthProvider for PasswordProvider {
     }
 }
 
-/// The published plan, with its first surface signed in to through
+/// The published compiled target, with its first surface signed in to through
 /// [`PasswordProvider`] with a username and a password stored for the
-/// person, probed with the read the plan has first.
-fn declare_password_sign_in(plan: &mut a2m_core::Plan) {
-    declare_code_sign_in(plan);
-    let Some(auth) = plan.auth.last_mut() else {
+/// person, probed with the read the compiled target has first.
+fn declare_password_sign_in(compiled_target: &mut a2m_core::CompiledTarget) {
+    declare_code_sign_in(compiled_target);
+    let Some(auth) = compiled_target.auth.last_mut() else {
         unreachable!("the code sign-in was just declared");
     };
     auth.provider = a2m_auth::ProviderName::fixed(PASSWORD_PROVIDER);
@@ -512,16 +516,16 @@ fn declare_password_sign_in(plan: &mut a2m_core::Plan) {
     ];
 }
 
-/// The published plan, with its first surface signed in to through the
-/// test provider, probed with the read the plan has first.
-fn declare_code_sign_in(plan: &mut a2m_core::Plan) {
+/// The published compiled target, with its first surface signed in to through
+/// the test provider, probed with the read the compiled target has first.
+fn declare_code_sign_in(compiled_target: &mut a2m_core::CompiledTarget) {
     let mut inputs = a2m_core::Values::new();
     inputs.insert("order_id", a2m_core::Value::Text("A-100".to_owned()));
-    plan.auth.push(a2m_core::AuthPlan {
+    compiled_target.auth.push(a2m_core::CompiledAuth {
         surfaces: vec![a2m_core::SurfaceIndex::new(0)],
         mode: a2m_core::SignInMode::ManagedSession,
         provider: a2m_auth::ProviderName::fixed(CODE_PROVIDER),
-        probe: a2m_core::ProbePlan::Operation {
+        probe: a2m_core::CompiledProbe::Operation {
             operation: a2m_core::OperationIndex::new(0),
             inputs,
         },

@@ -23,7 +23,7 @@ The command pack lets a target be a program: something started with arguments, w
 
 A script is allowed only as a fixed pair: the interpreter, named by path and checked like any program, and a script file the target keeps, named by its path inside the target's folder and checked by digest at every start, with no input in any position the interpreter reads as code ([decision 0216](../../decisions/0216-the-command-pack-on-three-systems-the-administrators-group-and-a-script-the-target-keeps.md)). The interpreter is given the fixed arguments its file declares, then the path of a checked copy of the script in the run's own folder, then the command's typed elements. The interpreter is started only in the one form a closed table in the provider contract gives it, in which it reads a script file and takes every element after it as data: the POSIX shell with no fixed argument, Python with `-I`, the JavaScript runtime with none, Windows PowerShell with `-NoProfile -NonInteractive -ExecutionPolicy Bypass -File`, and `osascript` with none. Python and the JavaScript runtime are launchers too: given the file they load, pinned so, they are the second step of [decision 0299](../../decisions/0299-programs-that-run-what-their-arguments-name-are-reached-in-two-steps.md), and the digest pins that file and nothing it loads ([decision 0349](../../decisions/0349-the-two-steps-of-decision-0299-as-built-a-closed-list-of-commands-and-the-javascript-runtime-as-a-launcher.md)). An interpreter enters the table only with a test on a system that has it, proving that a value reaches the script as the same bytes; every other interpreter, and every other form, is refused, and the command interpreters that read their whole line as code are refused by name ([decision 0250](../../decisions/0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md)). The copy of the script, its folder, and every folder on the way to it must be closed to other users when the interpreter starts.
 
-A launcher, a version manager, or a container runner, refused by its name, is started in the commands of it that run no code but its own, and in no other: a closed list in the provider contract gives, for each such program, the exact argument lists that start nothing else, each traced on a machine that had the program, and whether names may follow them after `--`. Every argument list a program's files could give it, its commands', its version check's, and its help forms', must be one of them, each command `read`, with no variable given; a file that breaks this does not compile, and a plan changed after compiling is refused before anything starts (decisions 0299 and 0349). A program's configuration in its user's folders can still make such a command do more, and the review shows the command, not that configuration.
+A launcher, a version manager, or a container runner, refused by its name, is started in the commands of it that run no code but its own, and in no other: a closed list in the provider contract gives, for each such program, the exact argument lists that start nothing else, each traced on a machine that had the program, and whether names may follow them after `--`. Every argument list a program's files could give it, its commands', its version check's, and its help forms', must be one of them, each command `read`, with no variable given; a file that breaks this does not compile, and a compiled target changed after compiling is refused before anything starts (decisions 0299 and 0349). A program's configuration in its user's folders can still make such a command do more, and the review shows the command, not that configuration.
 
 The digest pins the script: the bytes reviewed at publish are the bytes started. It does not make the script safe. A script is the developer's code on the person's machine, its effect is the developer's declaration as a command's is, and a person reviews it at publish.
 
@@ -40,7 +40,7 @@ The digest pins the script: the bytes reviewed at publish are the bytes started.
 | 7. Effects and hazards declared | "Effects and hazards" |
 | 8. A decision record for the mode | [Decision 0098](../../decisions/0098-the-cli-mode-is-real-and-a-program-is-a-surface.md) |
 
-It registers, as every pack does: the schema of `commands/` and of the `cli` binding fields, a lowering for each verb, lint rules, the driver, a discoverer and a describer, and drafting rules. It also registers a surface kind, `program`, whose `path` is the program the plan declares for the surface.
+It registers, as every pack does: the schema of `commands/` and of the `cli` binding fields, a lowering for each verb, lint rules, the driver, a discoverer and a describer, and drafting rules. It also registers a surface kind, `program`, whose `path` is the program the compiled target declares for the surface.
 
 ## The `commands/` file kind
 
@@ -181,7 +181,7 @@ The pack adds the four step kinds that section 201 lists for the command archety
 
 **Prepare.** Resolve the surface's path for the environment. Refuse it if it is not absolute, if it or any folder above it can be written by another user, or if it is a script run by a command interpreter. The path is walked as the system walks it at a start: every folder on the way, every link, the folder each link is in, and the way to where each link leads must be closed to other users. On Windows the owner and access list of the file and of each folder are read instead of a mode, and the folder that holds the program is closed also to another identity adding a file beside it, because a program loads its libraries from there. An access list that cannot be read is a refusal. The program is started by the path as declared. Take its digest and look it up for this platform. Run the version command once per lease and check the version. Make the working folder. Build the environment from `env` alone, with the session's injected values. Nothing is inherited.
 
-**Act.** Start the program through the kernel's supervisor ([section 204](../2-kernel/204-supervising-subsystems.md)), which checks it against the plan's declared programs and owns the process from then on. A command that writes is started only by the step the plan marks as its commit point, for a record the ledger holds an intent for; the driver checks this itself and does not rely on the compiler.
+**Act.** Start the program through the kernel's supervisor ([section 204](../2-kernel/204-supervising-subsystems.md)), which checks it against the compiled target's declared programs and owns the process from then on. A command that writes is started only by the step the compiled target marks as its commit point, for a record the ledger holds an intent for; the driver checks this itself and does not rely on the compiler.
 
 | | POSIX systems | Windows |
 | --- | --- | --- |
@@ -220,7 +220,7 @@ A key the program prints when it creates a record is taken from `assigns` and st
 
 | Effect in the pack's manifest | Held |
 | --- | --- |
-| Starts a process: only the programs a published plan declares for a `program` surface, by path. The builds its `commands/` files list for each platform are checked by the pack before a start, and the digest it matched by the supervisor at the start | `enforced` |
+| Starts a process: only the programs a published compiled target declares for a `program` surface, by path. The builds its `commands/` files list for each platform are checked by the pack before a start, and the digest it matched by the supervisor at the start | `enforced` |
 | Its arguments, environment, working folder, standard input, time limit, and output ceilings | `enforced` |
 | Reads and writes files: the run's own folder and the session's state folder | `enforced` for what the pack does; the program's own file access is `declared` |
 | Uses the network | None for the pack; a command's `reaches` is `declared` |
@@ -262,7 +262,7 @@ Of this section, only the redaction of both streams is built; no credential reac
 | The version is absent or not supported; of a program that prints more than one line, no line matches the pattern, or the lines that match disagree | `drift` | `program_version_unsupported` |
 | The file or a folder above it is writable by another user | `policy` | `program_path_unsafe` |
 | A value is NUL-bearing, or would become an option or the name of a file of arguments | `input` | `argument_unsafe` |
-| A step the driver cannot carry out as the plan wrote it: a command that writes on a step that is no commit point, or a step whose program was not started first | `input` | `step_not_usable` |
+| A step the driver cannot carry out as the compiled target wrote it: a command that writes on a step that is no commit point, or a step whose program was not started first | `input` | `step_not_usable` |
 | A value breaks its field type | `input` | `schema_invalid` |
 | An exit declared `rejected`; standard error is the untrusted message | `rejected` | `app_validation_error` |
 | An exit declared `stale` | `stale` | `version_conflict` |
@@ -320,7 +320,7 @@ Hypothesis H-26 is measured by counting kernel changes. **A kernel change** is a
 Where the kernel is most likely to need one, most likely first:
 
 1. **Surface kinds.** `target.yaml` lists the kinds `web`, `http`, `mcp`, `desktop` as a closed list. `program` needs either a kernel edit or surface kinds registered by packs, which the registrations of section 202 do not include.
-2. **The supervisor.** Section 204 describes long-lived subsystems that shake hands. A one-shot program does not, and the list of programs it may start comes from a published plan, not only from a manifest. The architecture's table does not yet show packs calling the supervisor.
+2. **The supervisor.** Section 204 describes long-lived subsystems that shake hands. A one-shot program does not, and the list of programs it may start comes from a published compiled target, not only from a manifest. The architecture's table does not yet show packs calling the supervisor.
 3. **Steps.** If the compiled step is a kernel enum of kinds, `spawn`, `expect`, `parse`, and `collect` are kernel edits. They should be a kernel envelope (kind, reference, time limit, failure class) around a payload only the pack reads.
 4. **Leases.** Most programs need no session. The engine asks for a `SessionLease` before prepare; a surface with no sign-in must get an empty lease, not a special case.
 5. **Read-back.** The two gaps the technical reference already names in the driver interface: read-back as a method or as steps, and reporting a record as absent.
@@ -329,7 +329,7 @@ Where the kernel is most likely to need one, most likely first:
 
 If more than items 1 and 3 need a kernel edit, the boundary is redrawn before a third pack is designed, as Stage D says.
 
-As built, item 2 needed one change, the plan's declared programs, and the other six needed none. The count, with what the kernel's types could not express and the pack does without, is in [decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md).
+As built, item 2 needed one change, the compiled target's declared programs, and the other six needed none. The count, with what the kernel's types could not express and the pack does without, is in [decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md).
 
 ## Another machine
 

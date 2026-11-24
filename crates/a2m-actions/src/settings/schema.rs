@@ -394,17 +394,13 @@ pub const SCHEMA: &[SettingDef] = &[
         "Evidence blobs are kept in the store's folder in the data directory.",
         "a slice of its own, as decision 0236 orders them",
     ),
-    not_built(
-        def(
-            "store.free_space_floor",
-            BYTES,
-            N(1_073_741_824),
-            I,
-            NextStart,
-            "The free space, in bytes, below which the engine is degraded. A draft.",
-        ),
-        "No free space is checked.",
-        "a slice of its own, as decision 0236 orders them",
+    def(
+        "store.free_space_floor",
+        BYTES,
+        N(1_073_741_824),
+        I,
+        NextStart,
+        "The free space, in bytes, on the disk that holds the evidence blobs, below which the engine is degraded: writes stop and reads keep the lowest capture level. Measured on Linux and macOS, not yet on Windows. A draft.",
     ),
     def(
         "vault.backend",

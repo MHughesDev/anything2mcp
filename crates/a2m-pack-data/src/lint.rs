@@ -114,7 +114,7 @@ impl LintRule for StatementUnused {
                     Stage::Lint,
                     &key.at,
                     format!("No binding names the statement `{name}`."),
-                    "Bind an operation to the statement, or remove it: every statement in a plan is one a tool may run.",
+                    "Bind an operation to the statement, or remove it: every statement in a compiled target is one a tool may run.",
                 )
                 .as_warning()
             })

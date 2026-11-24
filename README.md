@@ -9,7 +9,7 @@ Rust-powered core. Python-first distribution. MCP-native interfaces.
 
 Anything2MCP is a toolkit that wraps a system you are already entitled to use (a web application, an HTTP service, a command-line program, a database, files, a message stream, a device) in tools that any MCP client can call, and that do the same thing every time.
 
-- **No model runs inside a tool call.** A tool is a compiled plan. A step that cannot be done as written stops with a named failure.
+- **No model runs inside a tool call.** A tool is a compiled target. A step that cannot be done as written stops with a named failure.
 - **A write is recorded first, then read back and compared.** A run whose answer was lost is reconciled before anything is sent again.
 - **A person at the machine approves a write and publishes a tool.** An agent asks; it cannot approve or publish, and no command, tool, or route does it for them.
 - **Secrets never reach the caller.** Tokens and passwords stay in the engine's vault; the tests plant them and find them in no result, log, trace, or file.
@@ -91,7 +91,7 @@ The default toolset, `use`, serves the published tools and the calls around them
 ```text
    discover          model            verify           publish            run
   ──────────►     ──────────►     ──────────►      ──────────►      ──────────►
-  what the        plain files     offline tests    a person         compiled plan,
+  what the        plain files     offline tests    a person         compiled target,
   system can      describing      and trials;      reads the        every write
   do, with        each tool       the gates        page and         read back
   evidence                                         says yes
@@ -145,7 +145,7 @@ Today, only from source, as above. A release will bring one binary by two routes
 | See what was decided and why | [Decision records](docs/decisions/README.md) |
 | Check what is researched and what is a guess | [Research notes](docs/research/README.md) and [the hypotheses](docs/hypotheses/README.md) |
 | See how the code fits together | [The architecture](docs/architecture/README.md), with one design per crate |
-| Know the plan | [The roadmap](docs/plan/roadmap.md) and [the adoption plan](docs/plan/adoption.md) |
+| Know the compiled target | [The roadmap](docs/plan/roadmap.md) and [the adoption compiled target](docs/plan/adoption.md) |
 | See what it should feel like when finished | [The walkthrough](docs/reference/walkthrough.md) |
 | Build it | [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md) |
 

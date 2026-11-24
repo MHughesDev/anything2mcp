@@ -19,6 +19,9 @@ surface_kind = "web"
 
 [points]
 discoverer = ["web_probe", "web_snapshot", "web_capture", "web_auth"]
+# Traffic capture of the provider contract (decision 0391): an observing
+# tab records the requests a page makes by itself, by structure alone.
+traffic_capture = ["web"]
 
 [[discoverers]]
 name = "web_probe"

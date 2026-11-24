@@ -12,8 +12,8 @@ use std::fmt;
 use a2m_core::{Failure, FailureClass, FailureCode};
 
 pub use crate::codes::{
-    EXPRESSION_COST_EXCEEDED, EXPRESSION_INVALID, EXPRESSION_TYPE_ERROR,
-    PLAN_EXPRESSION_UNLOADABLE, VALUE_ABSENT, VALUE_OUT_OF_RANGE, VALUE_UNPARSABLE,
+    COMPILED_EXPRESSION_UNLOADABLE, EXPRESSION_COST_EXCEEDED, EXPRESSION_INVALID,
+    EXPRESSION_TYPE_ERROR, VALUE_ABSENT, VALUE_OUT_OF_RANGE, VALUE_UNPARSABLE,
 };
 
 /// A place inside an expression: byte offsets into the source text.
@@ -143,7 +143,7 @@ impl Fault {
 
     pub(crate) const fn unloadable(what: &'static str) -> Self {
         Self {
-            code: PLAN_EXPRESSION_UNLOADABLE,
+            code: COMPILED_EXPRESSION_UNLOADABLE,
             what,
         }
     }

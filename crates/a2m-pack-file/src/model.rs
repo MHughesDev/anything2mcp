@@ -213,7 +213,7 @@ pub struct FieldSpec {
     pub header: Option<String>,
     /// Its key path inside the record, in a JSON document.
     pub path: Vec<String>,
-    /// The position of its field type in the plan.
+    /// The position of its field type in the compiled target.
     pub field_type: u32,
     /// Whether a binding may set it.
     pub writable: bool,

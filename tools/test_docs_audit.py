@@ -106,7 +106,7 @@ class AuditCatches(unittest.TestCase):
     def test_the_engine_may_not_depend_on_the_compiler_or_on_policy(self):
         self.depend("a2m-engine", "a2m-files")
         self.depend("a2m-engine", "a2m-policy")
-        self.assert_finding("layering", "a2m-engine depends on a2m-files; the engine runs only compiled plans",
+        self.assert_finding("layering", "a2m-engine depends on a2m-files; the engine runs only compiled targets",
                             "a2m-engine depends on a2m-policy; only the control plane decides")
 
     def test_the_product_crate_may_depend_on_everything(self):
@@ -304,7 +304,7 @@ class AuditCatches(unittest.TestCase):
         planted = text.replace('next "Compile the target again with this engine.";', 'next "  ";', 1)
         self.assertNotEqual(text, planted)
         table.write_text(planted, encoding="utf-8")
-        self.assert_finding("codes", "`plan_expression_unloadable` has an empty next step")
+        self.assert_finding("codes", "`compiled_expression_unloadable` has an empty next step")
 
     def test_a_code_declared_outside_a_table_is_a_fault(self):
         source = self.root / "crates" / "a2m-expr" / "src" / "error.rs"

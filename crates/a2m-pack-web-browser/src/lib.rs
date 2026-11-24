@@ -31,13 +31,18 @@
 //! person carries out themself, in a tab held to the origins given that
 //! hears no network event ([`Browser::sign_in_tab`]); an acting tab's
 //! network events carry no body of a request its page's script makes
-//! (decision 0254).
+//! (decision 0254). A window also holds a tab a person uses while the
+//! engine watches ([`Observer::watching_tab`], [`WatchTab`]): it fails no
+//! request for its method, records each by structure with its body's names
+//! and kinds, and takes a snapshot of each screen with no value kept
+//! (decision 0392, point 1).
 //!
-//! Not built yet: page storage in a session's state, the watching tab, frames, the stream of every network exchange,
+//! Not built yet: page storage in a session's state, frames, the stream of every network exchange,
 //! declared pop-ups and downloads (an undeclared one is refused and
 //! reported), uploads, recycling, and the platform profiles.
 
 mod browsers;
+mod capture;
 mod client;
 mod error;
 mod launch;
@@ -45,6 +50,7 @@ mod origin;
 mod page_read;
 mod page_write;
 mod protocol;
+mod safe;
 mod snapshot;
 mod structure;
 mod tab;
@@ -59,9 +65,10 @@ pub use a2m_provider::Deadline;
 
 pub use browsers::{
     Address, BROWSER_KIND, Browser, BrowserHealth, BrowserSettings, BrowserState, Browsers,
-    DIGESTS_SETTING, DOWNLOADS_FOLDER, Observer, OpenBrowser, PROFILE_ROOT, ProfileKey,
-    STAGING_FOLDER, SharedBrowsers, StateCookie, Visibility,
+    DIGESTS_SETTING, DOWNLOADS_FOLDER, HANG_PROBE, HANGS_BEFORE_RECYCLE, Observer, OpenBrowser,
+    PROFILE_ROOT, ProfileKey, STAGING_FOLDER, SharedBrowsers, StateCookie, Visibility,
 };
+pub use capture::captured;
 pub use error::{BrowserError, Dispatch, LaunchReason, Reason, RequestShape, codes};
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
 pub use origin::Origins;
@@ -70,6 +77,7 @@ pub use page_write::{
     AntiForgery, BodyEncoding, FieldValue, LONGEST_FIELD_TEXT, LONGEST_WRITE_NAME, MOST_FIELDS,
     PageWrite, REFUSED_HEADERS, TokenFrom, TokenProblem, TokenTo, WriteMethod, plain_write_name,
 };
+pub use safe::{LONGEST_SAFE_BODY, SafeBody, SafeRequest, SafeRequests};
 pub use snapshot::{ElementState, MASK, Snapshot, SnapshotElement, SnapshotLimits};
 pub use structure::{
     ACTION_WORDS, LONGEST_NAME, LONGEST_NAME_PART, LONGEST_SEGMENT, LONGEST_SEGMENT_PART,
@@ -78,8 +86,8 @@ pub use structure::{
 };
 pub use tab::{
     ActTab, BROWSER_DEFAULT_HEADERS, BROWSER_HEADERS, By, CREDENTIAL_HEADER_WORDS, DialogAnswer,
-    Download, DownloadError, EXCHANGES_KEPT, Element, Input, Key, Loaded, Look, OUTSIDE,
-    ObserveTab, OpenDialog, PageEnvironment, PageExchange, PageExchanges, PageRequest,
-    PageResponse, Primitive, Query, RawValue, ReadWhat, SafeRequest, SafeRequests, SiteAnswer,
-    SiteTool, TextMatch, digest_of,
+    Download, DownloadError, EXCHANGES_KEPT, Element, Input, Key, LONGEST_WATCHED_BODY, Loaded,
+    Look, OUTSIDE, ObserveTab, OpenDialog, PageEnvironment, PageExchange, PageExchanges,
+    PageRequest, PageResponse, Primitive, Query, RawValue, ReadWhat, SCREENS_KEPT, SETTLE_BOUND,
+    SiteAnswer, SiteTool, TextMatch, WatchStart, WatchTab, WatchedScreens, digest_of,
 };

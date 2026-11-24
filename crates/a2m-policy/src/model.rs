@@ -2,9 +2,9 @@
 //! in which context.
 //!
 //! Every field here is a verified fact. `a2m-actions` builds a request from
-//! the caller's checked credential, the plan, and what the engine reports;
-//! nothing in it is read from a caller's input, and so [`Context`] can be
-//! written but never deserialized.
+//! the caller's checked credential, the compiled target, and what the engine
+//! reports; nothing in it is read from a caller's input, and so [`Context`]
+//! can be written but never deserialized.
 
 use std::fmt;
 

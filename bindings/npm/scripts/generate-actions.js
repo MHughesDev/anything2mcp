@@ -8,8 +8,10 @@
 // action the engine lacks. `bindings/python/tools/openapi.json` is the saved
 // copy, shared with the Python client (`tools/fetch_openapi.py` saves it).
 // This script reads it and writes `anything2mcp/client/actions.js` and
-// `anything2mcp/client/actions.d.ts`: one method per action, named as the
-// action names it in camel case (`tool.call` is `toolCall`), taking one
+// `anything2mcp/client/actions.d.ts`: one method per action whose route
+// carries `x-sdk: true` (the action's SDK face), named as the
+// action names it in camel case (`tool.call` is `toolCall`,
+// `policy.tools_allowed` is `policyToolsAllowed`), taking one
 // object of inputs, with the input types from the request schema and a
 // comment from the operation's summary. A method names its action and
 // passes its input; it decides nothing.
@@ -31,9 +33,22 @@ const RESERVED = new Set(["call", "close", "constructor"]);
 
 class GenerateError extends Error {}
 
+// The form of an action's name: a noun and a verb, each one or more words of
+// lower-case letters and digits joined by single underscores
+// (`policy.tools_allowed`). Every name of this form has a method name in both
+// clients; any other stops the generators (decision 0405).
+const ACTION_NAME = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
+
+// `tool.call` is `toolCall`: every word of the noun and the verb, split at a
+// dot or an underscore, in camel case (`policy.tools_allowed` is
+// `policyToolsAllowed`). The Python generator joins the same words with
+// underscores (decision 0405).
 function methodName(action) {
-  const parts = action.split(".");
-  const name = parts[0] + parts.slice(1).map((part) => part[0].toUpperCase() + part.slice(1)).join("");
+  if (typeof action !== "string" || !ACTION_NAME.test(action)) {
+    throw new GenerateError(`action \`${action}\` has no valid method name`);
+  }
+  const words = action.split(/[._]/);
+  const name = words[0] + words.slice(1).map((word) => word[0].toUpperCase() + word.slice(1)).join("");
   if (!/^[a-z][A-Za-z0-9]*$/.test(name) || RESERVED.has(name)) {
     throw new GenerateError(`action \`${action}\` has no valid method name`);
   }
@@ -106,6 +121,13 @@ function actionsOf(document) {
     if (action !== route.slice(ACTION_ROUTE.length)) {
       throw new GenerateError(`route ${route} names action ${JSON.stringify(action)}`);
     }
+    // `x-sdk` is the action's SDK face: an action without one gets no
+    // method, and a route that does not say stops the generator.
+    const sdk = item.post["x-sdk"];
+    if (typeof sdk !== "boolean") {
+      throw new GenerateError(`route ${route} does not say whether \`${action}\` has an SDK method`);
+    }
+    if (!sdk) continue;
     found.set(action, item.post);
   }
   if (found.size === 0) throw new GenerateError("the document has no action routes");

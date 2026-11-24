@@ -43,16 +43,19 @@ handler!(
     |kernel, call| {
         let query = call.text("query").unwrap_or("").to_lowercase();
         let full = call.flag("full").unwrap_or(false);
-        let (plans, unreadable) = kernel.current_plans().await?;
+        let (compiled_targets, unreadable) = kernel.current_compiled_targets().await?;
         let mut tools = Vec::new();
-        for (target, plan_hash, plan) in &plans {
+        for (target, compiled_target_hash, compiled_target) in &compiled_targets {
             if call
                 .text("target")
                 .is_some_and(|wanted| wanted != target.as_str())
             {
                 continue;
             }
-            for tool in &plan.tools {
+            // A tool a drift stopped stays in the list, marked (decision
+            // 0396).
+            let unavailable = kernel.unavailable_tools(target, compiled_target).await?;
+            for tool in &compiled_target.tools {
                 if call
                     .text("module")
                     .is_some_and(|wanted| tool.module.as_deref() != Some(wanted))
@@ -66,11 +69,15 @@ handler!(
                 }
                 let (effect, kind) = match tool.runs {
                     ToolRuns::Operation(index) => (
-                        plan.operation(index).map(|operation| operation.effect),
+                        compiled_target
+                            .operation(index)
+                            .map(|operation| operation.effect),
                         "operation",
                     ),
                     ToolRuns::Pipeline(index) => (
-                        plan.pipeline(index).map(|pipeline| pipeline.effect),
+                        compiled_target
+                            .pipeline(index)
+                            .map(|pipeline| pipeline.effect),
                         "pipeline",
                     ),
                 };
@@ -80,19 +87,20 @@ handler!(
                 let mut listed = json!({
                     "name": tool.name.as_str(),
                     "target": target.as_str(),
-                    "version": plan.header.version.to_string(),
+                    "version": compiled_target.header.version.to_string(),
                     "kind": kind,
                     "effect": effect.map_or_else(|| "unknown".to_owned(), |effect| effect.to_string()),
                     "description": tool.description,
                 });
+                mark(&mut listed, unavailable.get(&tool.name));
                 // In full, each tool is what `tool.describe` gives for it,
                 // so that a tool list costs one decided step and not one
                 // for each tool.
                 if full && let Json::Object(map) = &mut listed {
                     let found = FoundTool {
                         target: target.clone(),
-                        plan_hash: *plan_hash,
-                        plan: std::sync::Arc::clone(plan),
+                        compiled_target_hash: *compiled_target_hash,
+                        compiled_target: std::sync::Arc::clone(compiled_target),
                         tool: tool.clone(),
                     };
                     if let Json::Object(described) = described(&found) {
@@ -111,9 +119,9 @@ handler!(
         let page: Vec<Json> = tools.into_iter().skip(offset).take(limit).collect();
         let complete = unreadable.is_empty() && offset + page.len() >= total;
         let mut output = Output::ok(json!({"tools": page, "total": total, "complete": complete}));
-        for target in unreadable {
+        for (target, _) in unreadable {
             output = output.warn(format!(
-                "The plan of the target `{target}` cannot be read, so its tools are not listed. Publish it again from its sources."
+                "The compiled target of the target `{target}` cannot be read, so its tools are not listed. Publish it again from its sources."
             ));
         }
         Ok(output.then(Next::new(
@@ -130,7 +138,12 @@ handler!(
     |kernel, call| {
         let name = OperationName::new(call.required("tool")?)?;
         let found = kernel.find_tool(&name).await?;
-        Ok(Output::ok(described(&found)).then(Next::new(
+        let unavailable = kernel
+            .unavailable_tools(&found.target, &found.compiled_target)
+            .await?;
+        let mut out = described(&found);
+        mark(&mut out, unavailable.get(&found.tool.name));
+        Ok(Output::ok(out).then(Next::new(
             "tool.call",
             json!({"tool": found.tool.name.as_str(), "input": {}}),
             "to call it",
@@ -171,7 +184,7 @@ async fn given_source(
 ) -> Result<Option<GivenSource>, Failure> {
     let reads = match found.tool.runs {
         ToolRuns::Pipeline(index) => found
-            .plan
+            .compiled_target
             .pipeline(index)
             .and_then(|pipeline| pipeline.source.as_ref()),
         ToolRuns::Operation(_) => None,
@@ -387,18 +400,18 @@ pub(crate) async fn discovery_files(
     Ok(files)
 }
 
-/// What the discovery of a surface of a plan is about, as the registry
-/// asks which discoverers suit it: the surface's kind and archetype, and
-/// its address in the plan's default environment. `None` when no enabled
-/// provider serves its kind.
+/// What the discovery of a surface of a compiled target is about, as the
+/// registry asks which discoverers suit it: the surface's kind and archetype,
+/// and its address in the compiled target's default environment. `None` when
+/// no enabled provider serves its kind.
 pub(crate) fn surface_described(
     kernel: &Kernel,
-    plan: &a2m_core::Plan,
+    compiled_target: &a2m_core::CompiledTarget,
     position: usize,
 ) -> Option<a2m_provider::SurfaceDescription> {
-    let surface = plan.surfaces.get(position)?;
+    let surface = compiled_target.surfaces.get(position)?;
     let entry = kernel.providers().surface_kind(&surface.kind)?;
-    let address = plan
+    let address = compiled_target
         .default_environment()
         .and_then(|environment| {
             environment
@@ -426,7 +439,7 @@ pub(crate) fn surface_described(
 /// discoverer of any of the surfaces; the fix lists the names that are.
 pub(crate) fn files_by_surface(
     kernel: &Kernel,
-    plan: &a2m_core::Plan,
+    compiled_target: &a2m_core::CompiledTarget,
     surfaces: &[a2m_core::SurfaceName],
     files: &std::collections::BTreeMap<String, String>,
     resumed: bool,
@@ -435,10 +448,11 @@ pub(crate) fn files_by_surface(
     let taken: Vec<std::collections::BTreeSet<String>> = surfaces
         .iter()
         .map(|name| {
-            plan.surfaces
+            compiled_target
+                .surfaces
                 .iter()
                 .position(|surface| &surface.name == name)
-                .and_then(|position| surface_described(kernel, plan, position))
+                .and_then(|position| surface_described(kernel, compiled_target, position))
                 .map(|described| registry.files_taken(&described))
                 .unwrap_or_default()
         })
@@ -481,10 +495,21 @@ pub(crate) fn files_by_surface(
 
 /// One published tool in full, as `tool.describe` returns it and as
 /// `tool.search` lists it when asked for everything.
+/// Marks a listed or described tool `available`, and, when a drift stopped
+/// it, why it is not (decision 0396).
+fn mark(tool: &mut Json, unavailable: Option<&crate::drift::Unavailable>) {
+    if let Json::Object(map) = tool {
+        map.insert("available".to_owned(), json!(unavailable.is_none()));
+        if let Some(why) = unavailable {
+            map.insert("unavailable".to_owned(), why.json());
+        }
+    }
+}
+
 fn described(found: &FoundTool) -> Json {
     let (effect, hazard) = found.effect();
-    // A schema is a map. A plan that carries none for a tool says only
-    // that the value is an object.
+    // A schema is a map. A compiled target that carries none for a tool says
+    // only that the value is an object.
     let schema =
         |text: &a2m_core::CanonicalJson| match serde_json::from_slice::<Json>(text.as_bytes()) {
             Ok(Json::Object(map)) => Json::Object(map),
@@ -493,8 +518,8 @@ fn described(found: &FoundTool) -> Json {
     json!({
         "name": found.tool.name.as_str(),
         "target": found.target.as_str(),
-        "version": found.plan.header.version.to_string(),
-        "plan_hash": found.plan_hash.to_string(),
+        "version": found.compiled_target.header.version.to_string(),
+        "compiled_target_hash": found.compiled_target_hash.to_string(),
         "kind": found.kind(),
         "effect": effect.to_string(),
         "hazard": hazard.to_string(),
@@ -646,7 +671,7 @@ handler!(
         let environment = match call.text("environment") {
             Some(given) => Environment::new(given)?,
             None => found
-                .plan
+                .compiled_target
                 .default_environment()
                 .map(|environment| environment.name.clone())
                 .ok_or_else(|| {
@@ -657,7 +682,11 @@ handler!(
                     )
                 })?,
         };
-        if found.plan.environment_named(&environment).is_none() {
+        if found
+            .compiled_target
+            .environment_named(&environment)
+            .is_none()
+        {
             return Err(codes::input(
                 codes::NOT_FOUND,
                 format!(
@@ -770,7 +799,7 @@ handler!(
                 ToolRuns::Pipeline(_) => ToolKind::Pipeline,
             },
             target: found.target.clone(),
-            target_version: found.plan_hash,
+            target_version: found.compiled_target_hash,
             environment: environment.clone(),
             identity,
             effect,
@@ -814,7 +843,7 @@ handler!(
         let exclusive = kernel
             .held_alone(
                 principal.workspace,
-                &found.plan,
+                &found.compiled_target,
                 &name,
                 &environment,
                 effect != EffectClass::Read,
@@ -1254,14 +1283,18 @@ impl Kernel {
             )
         })?;
         let tool = self
-            .plan_by_hash(&row.target, &row.target_version)
+            .compiled_target_by_hash(&row.target, &row.target_version)
             .await
             .ok()
-            .and_then(|plan| {
-                let tool = plan.tool(&row.tool_name)?.clone();
+            .and_then(|compiled_target| {
+                let tool = compiled_target.tool(&row.tool_name)?.clone();
                 let hazard = match tool.runs {
-                    ToolRuns::Operation(index) => plan.operation(index).map(|found| found.hazard),
-                    ToolRuns::Pipeline(index) => plan.pipeline(index).map(|found| found.hazard),
+                    ToolRuns::Operation(index) => {
+                        compiled_target.operation(index).map(|found| found.hazard)
+                    }
+                    ToolRuns::Pipeline(index) => {
+                        compiled_target.pipeline(index).map(|found| found.hazard)
+                    }
                 };
                 Some((tool.module, hazard?))
             });
@@ -1696,15 +1729,15 @@ handler!(
         // resume never changes whose run it is, or what its caller was.
         kernel.may_resume(&call, &row).await?;
         // What the run's tool holds alone, as when the run was made. A run
-        // whose plan cannot be read is not queued: its job would be handed
-        // out without what it must hold.
-        let plan = kernel
-            .plan_by_hash(&row.target, &row.target_version)
+        // whose compiled target cannot be read is not queued: its job would
+        // be handed out without what it must hold.
+        let compiled_target = kernel
+            .compiled_target_by_hash(&row.target, &row.target_version)
             .await?;
         let exclusive = kernel
             .held_alone(
                 row.workspace,
-                &plan,
+                &compiled_target,
                 &row.tool_name,
                 &row.environment,
                 row.effect != EffectClass::Read,
@@ -1744,10 +1777,12 @@ handler!(
                 Err(failure) if failure.code() == &codes::SCHEMA_INVALID => false,
                 Err(failure) => {
                     let module = kernel
-                        .plan_by_hash(&row.target, &row.target_version)
+                        .compiled_target_by_hash(&row.target, &row.target_version)
                         .await
                         .ok()
-                        .and_then(|plan| plan.tool(&row.tool_name)?.module.clone());
+                        .and_then(|compiled_target| {
+                            compiled_target.tool(&row.tool_name)?.module.clone()
+                        });
                     let work = HeldWork {
                         target: &row.target,
                         module: module.as_deref(),
@@ -1855,12 +1890,15 @@ handler!(
 );
 
 handler!(
-    /// `plan.show`: a published plan as text.
-    plan_show,
+    /// `target.show`: a published compiled target as text.
+    target_show,
     |kernel, call| {
         let target = a2m_core::TargetName::new(call.required("target")?)?;
-        let (plans, _) = kernel.current_plans().await?;
-        let Some((_, hash, plan)) = plans.into_iter().find(|(name, _, _)| name == &target) else {
+        let (compiled_targets, _) = kernel.current_compiled_targets().await?;
+        let Some((_, hash, compiled_target)) = compiled_targets
+            .into_iter()
+            .find(|(name, _, _)| name == &target)
+        else {
             return Err(codes::input(
                 codes::NOT_FOUND,
                 format!("The target `{target}` has no published version."),
@@ -1869,9 +1907,9 @@ handler!(
         };
         Ok(Output::ok(json!({
             "target": target.as_str(),
-            "version": plan.header.version.to_string(),
-            "plan_hash": hash.to_string(),
-            "text": plan.show()?,
+            "version": compiled_target.header.version.to_string(),
+            "compiled_target_hash": hash.to_string(),
+            "text": compiled_target.show()?,
         })))
     }
 );
@@ -1882,13 +1920,13 @@ const TRIAL_NOTE: &str =
     "This is a trial in the sandbox. A published tool is called with `tool.call`.";
 
 handler!(
-    /// `draft.try`: runs one drafted read in the engine's sandbox, as a
-    /// `Try` job of its own run, and returns its outcome as `tool.call`
-    /// would. The drafts are compiled as a draft; the plan is kept in
-    /// memory for the run and never becomes a version, so no caller can
-    /// reach it through `tool.call`. A drafted write is not tried: a trial
-    /// that writes a declared test record needs the publish gates' test
-    /// records, which are not built.
+    /// `draft.try`: runs one drafted read in the engine's sandbox, as a `Try`
+    /// job of its own run, and returns its outcome as `tool.call` would. The
+    /// drafts are compiled as a draft; the compiled target is kept in memory
+    /// for the run and never becomes a version, so no caller can reach it
+    /// through `tool.call`. A drafted write is not tried: a trial that writes
+    /// a declared test record needs the publish gates' test records, which
+    /// are not built.
     draft_try,
     |kernel, call| {
         let target = a2m_core::TargetName::new(call.required("target")?)?;
@@ -1910,8 +1948,8 @@ handler!(
                 return Err(super::build::noting_held(Failure::from(problems), &held));
             }
         };
-        let plan = std::sync::Arc::new(compiled.plan);
-        let Some(tool) = plan.tool(&name).cloned() else {
+        let compiled_target = std::sync::Arc::new(compiled.compiled_target);
+        let Some(tool) = compiled_target.tool(&name).cloned() else {
             // A tool whose draft is held is refused by name, with its
             // question as the next step.
             let held = super::build::held_drafts(&call, &target).await?;
@@ -1926,8 +1964,8 @@ handler!(
         };
         let found = FoundTool {
             target: target.clone(),
-            plan_hash: compiled.encoded.hash,
-            plan: std::sync::Arc::clone(&plan),
+            compiled_target_hash: compiled.encoded.hash,
+            compiled_target: std::sync::Arc::clone(&compiled_target),
             tool,
         };
         let (effect, _) = found.effect();
@@ -1948,7 +1986,7 @@ handler!(
             })?,
             None => Values::new(),
         };
-        let environment = plan
+        let environment = compiled_target
             .default_environment()
             .map(|environment| environment.name.clone())
             .ok_or_else(|| {
@@ -1974,9 +2012,13 @@ handler!(
             })
             .await?
         };
-        let binding = named_binding(&plan, &found.tool, &call, file_modes.as_deref())?;
-        let surface = binding_surface(&plan, &found.tool, binding.as_ref());
-        kernel.keep_draft(&target, compiled.encoded.hash, std::sync::Arc::clone(&plan));
+        let binding = named_binding(&compiled_target, &found.tool, &call, file_modes.as_deref())?;
+        let surface = binding_surface(&compiled_target, &found.tool, binding.as_ref());
+        kernel.keep_draft(
+            &target,
+            compiled.encoded.hash,
+            std::sync::Arc::clone(&compiled_target),
+        );
         let asked_at = kernel.inner.clock.now();
         let run = submit_trial(kernel, &call, &found, &input, environment, binding).await?;
         let mut row = kernel.wait_for_rest(run, wait_of(&call)).await?;
@@ -2022,20 +2064,21 @@ handler!(
 /// The surface the binding a trial runs acts on: the one named, or the one
 /// the engine chooses by default.
 pub(crate) fn binding_surface(
-    plan: &a2m_core::Plan,
-    tool: &a2m_core::ToolPlan,
+    compiled_target: &a2m_core::CompiledTarget,
+    tool: &a2m_core::CompiledTool,
     binding: Option<&a2m_engine::BindingPin>,
 ) -> Option<a2m_core::SurfaceName> {
     let ToolRuns::Operation(index) = tool.runs else {
         return None;
     };
-    let operation = plan.operations.get(index.get())?;
+    let operation = compiled_target.operations.get(index.get())?;
     let position = match binding {
         Some(pin) => pin.position,
         None => a2m_engine::default_binding(operation)?,
     };
     let acted = operation.bindings.get(position)?;
-    plan.surface(acted.surface)
+    compiled_target
+        .surface(acted.surface)
         .map(|surface| surface.name.clone())
 }
 
@@ -2050,8 +2093,8 @@ pub(crate) fn sign_in_next(target: &a2m_core::TargetName, surface: &a2m_core::Su
 }
 
 /// Keeps the call of a trial of one drafted read and submits it as a `Try`
-/// job of a run of its own; the plan must be kept in memory already
-/// (`Kernel::keep_draft`). Gives the run.
+/// job of a run of its own; the compiled target must be kept in memory
+/// already (`Kernel::keep_draft`). Gives the run.
 pub(crate) async fn submit_trial(
     kernel: &Kernel,
     call: &Call,
@@ -2088,37 +2131,40 @@ pub(crate) async fn submit_trial(
 /// retired. A retired binding is refused. `None` for a pipeline, whose
 /// operations are chosen for as live.
 pub(crate) fn named_binding(
-    plan: &a2m_core::Plan,
-    tool: &a2m_core::ToolPlan,
+    compiled_target: &a2m_core::CompiledTarget,
+    tool: &a2m_core::CompiledTool,
     call: &Call,
     file_modes: Option<&[String]>,
 ) -> Result<Option<a2m_engine::BindingPin>, Failure> {
     let ToolRuns::Operation(index) = tool.runs else {
         return Ok(None);
     };
-    let Some(operation) = plan.operation(index) else {
+    let Some(operation) = compiled_target.operation(index) else {
         return Ok(None);
     };
     let mode = call.text("mode");
-    // The call counts bindings as the operation's file lists them; the plan
-    // holds them in the order the compiler gave them (package 4.6). A place
-    // that cannot be turned into the plan's names no binding: `usize::MAX`.
-    let position =
-        call.int("position")
-            .and_then(|position| usize::try_from(position).ok())
-            .and_then(|position| position.checked_sub(1))
-            .map(|given| {
-                let plan_modes: Vec<&str> = operation
-                    .bindings
-                    .iter()
-                    .map(|binding| binding.mode.as_str())
-                    .collect();
-                match file_modes {
-                    Some(file_modes) => crate::places::plan_place(&plan_modes, file_modes, given)
-                        .unwrap_or(usize::MAX),
-                    None => given,
+    // The call counts bindings as the operation's file lists them; the
+    // compiled target holds them in the order the compiler gave them (package
+    // 4.6). A place that cannot be turned into the compiled target's names no
+    // binding: `usize::MAX`.
+    let position = call
+        .int("position")
+        .and_then(|position| usize::try_from(position).ok())
+        .and_then(|position| position.checked_sub(1))
+        .map(|given| {
+            let compiled_modes: Vec<&str> = operation
+                .bindings
+                .iter()
+                .map(|binding| binding.mode.as_str())
+                .collect();
+            match file_modes {
+                Some(file_modes) => {
+                    crate::places::compiled_place(&compiled_modes, file_modes, given)
+                        .unwrap_or(usize::MAX)
                 }
-            });
+                None => given,
+            }
+        });
     let unnamed = || {
         codes::input(
             codes::NOT_FOUND,
@@ -2163,7 +2209,7 @@ pub(crate) fn named_binding(
             }
         }
     };
-    a2m_engine::BindingPin::of(plan, operation, chosen)
+    a2m_engine::BindingPin::of(compiled_target, operation, chosen)
         .map(Some)
         .ok_or_else(unnamed)
 }
@@ -2230,7 +2276,7 @@ pub(crate) async fn submit_trial_kept(
             ToolRuns::Pipeline(_) => ToolKind::Pipeline,
         },
         target: target.clone(),
-        target_version: found.plan_hash,
+        target_version: found.compiled_target_hash,
         environment: environment.clone(),
         identity: (principal.principal.kind == PrincipalKind::Person)
             .then_some(Identity::Person(principal.principal.id)),
@@ -2281,15 +2327,15 @@ pub(crate) async fn submit_trial_kept(
     Ok(run)
 }
 
-/// The plan a target's discovery or trial works on: its drafts, compiled
-/// as a draft and kept in memory, when the call is made in a project that
-/// holds the target; its current published version otherwise.
-pub(crate) async fn plan_to_observe(
+/// The compiled target a target's discovery or trial works on: its drafts,
+/// compiled as a draft and kept in memory, when the call is made in a project
+/// that holds the target; its current published version otherwise.
+pub(crate) async fn compiled_target_to_observe(
     kernel: &Kernel,
     call: &Call,
     target: &a2m_core::TargetName,
-) -> Result<(a2m_core::Digest, std::sync::Arc<a2m_core::Plan>), Failure> {
-    plan_in(
+) -> Result<(a2m_core::Digest, std::sync::Arc<a2m_core::CompiledTarget>), Failure> {
+    compiled_target_in(
         kernel,
         call.project_folder().ok().map(std::path::Path::to_path_buf),
         target,
@@ -2297,12 +2343,12 @@ pub(crate) async fn plan_to_observe(
     .await
 }
 
-/// As [`plan_to_observe`], for a project folder already checked, or none.
-pub(crate) async fn plan_in(
+/// As [`compiled_target_to_observe`], for a project folder already checked, or none.
+pub(crate) async fn compiled_target_in(
     kernel: &Kernel,
     folder: Option<std::path::PathBuf>,
     target: &a2m_core::TargetName,
-) -> Result<(a2m_core::Digest, std::sync::Arc<a2m_core::Plan>), Failure> {
+) -> Result<(a2m_core::Digest, std::sync::Arc<a2m_core::CompiledTarget>), Failure> {
     if let Some(folder) = folder {
         let named = target.clone();
         let kernel_for = kernel.clone();
@@ -2319,16 +2365,20 @@ pub(crate) async fn plan_in(
         })
         .await?;
         if let Some(compiled) = compiled {
-            let plan = std::sync::Arc::new(compiled.plan);
-            kernel.keep_draft(target, compiled.encoded.hash, std::sync::Arc::clone(&plan));
-            return Ok((compiled.encoded.hash, plan));
+            let compiled_target = std::sync::Arc::new(compiled.compiled_target);
+            kernel.keep_draft(
+                target,
+                compiled.encoded.hash,
+                std::sync::Arc::clone(&compiled_target),
+            );
+            return Ok((compiled.encoded.hash, compiled_target));
         }
     }
-    let (plans, _) = kernel.current_plans().await?;
-    plans
+    let (compiled_targets, _) = kernel.current_compiled_targets().await?;
+    compiled_targets
         .into_iter()
         .find(|(name, _, _)| name == target)
-        .map(|(_, hash, plan)| (hash, plan))
+        .map(|(_, hash, compiled_target)| (hash, compiled_target))
         .ok_or_else(|| {
             codes::input(
                 codes::NOT_FOUND,
@@ -2343,13 +2393,13 @@ pub(crate) const DISCOVER_TOOL: &str = "a2m_discover";
 
 /// Keeps the call of a discovery of one surface and submits it as a
 /// `Discover` job of a run of its own, in the engine's sandbox. Gives the
-/// run. A discovery of the same surface of the same plan by the same
-/// caller that has not ended is given back, not started again.
+/// run. A discovery of the same surface of the same compiled target by the
+/// same caller that has not ended is given back, not started again.
 pub(crate) async fn submit_discovery(
     kernel: &Kernel,
     call: &Call,
     target: &a2m_core::TargetName,
-    plan_hash: a2m_core::Digest,
+    compiled_target_hash: a2m_core::Digest,
     environment: &Environment,
     surface: &a2m_core::SurfaceName,
     files: &std::collections::BTreeMap<String, String>,
@@ -2396,7 +2446,7 @@ pub(crate) async fn submit_discovery(
         tool_name: tool,
         tool_kind: ToolKind::Operation,
         target: target.clone(),
-        target_version: plan_hash,
+        target_version: compiled_target_hash,
         environment: environment.clone(),
         identity: (principal.principal.kind == PrincipalKind::Person)
             .then_some(Identity::Person(principal.principal.id)),
@@ -2456,8 +2506,9 @@ handler!(
         // Each file the call names is checked before anything else, and a
         // file refused starts nothing.
         let files = discovery_files(kernel, &call, call.input.get("files")).await?;
-        let (plan_hash, plan) = plan_to_observe(kernel, &call, &target).await?;
-        let surfaces: Vec<a2m_core::SurfaceName> = plan
+        let (compiled_target_hash, compiled_target) =
+            compiled_target_to_observe(kernel, &call, &target).await?;
+        let surfaces: Vec<a2m_core::SurfaceName> = compiled_target
             .surfaces
             .iter()
             .map(|surface| surface.name.clone())
@@ -2473,7 +2524,7 @@ handler!(
                 "Name a surface the target's files declare, or leave `surface` out.",
             ));
         }
-        let environment = plan
+        let environment = compiled_target
             .default_environment()
             .map(|environment| environment.name.clone())
             .ok_or_else(|| {
@@ -2483,14 +2534,14 @@ handler!(
                     "Declare an environment in the target's files.",
                 )
             })?;
-        let handed = files_by_surface(kernel, &plan, &surfaces, &files, false)?;
+        let handed = files_by_surface(kernel, &compiled_target, &surfaces, &files, false)?;
         let mut runs = Vec::new();
         for (surface, files) in surfaces.iter().zip(&handed) {
             let run = submit_discovery(
                 kernel,
                 &call,
                 &target,
-                plan_hash,
+                compiled_target_hash,
                 &environment,
                 surface,
                 files,
@@ -2527,7 +2578,7 @@ handler!(
         }
         let output = Output::ok(json!({
             "target": target.as_str(),
-            "plan_hash": plan_hash.to_string(),
+            "compiled_target_hash": compiled_target_hash.to_string(),
             "surfaces": shown,
             "findings": findings.len(),
             "by_kind": by_kind,

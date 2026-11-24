@@ -52,6 +52,13 @@ pub(crate) const TOOL_VERSION_KEY: &str = "anything2mcp/version";
 /// The `_meta` key of who wrote a published tool's description.
 pub(crate) const TOOL_DESCRIPTION_BY_KEY: &str = "anything2mcp/description_by";
 
+/// The `_meta` key of why a published tool cannot be called now.
+pub(crate) const TOOL_UNAVAILABLE_KEY: &str = "anything2mcp/unavailable";
+/// The sentence a published tool a drift stopped begins its description
+/// with (decision 0396). The product's own words, never the system's.
+pub(crate) const UNAVAILABLE_SENTENCE: &str =
+    "Unavailable: the system changed and this tool was stopped until its target is repaired.";
+
 /// What an endpoint works with.
 pub(crate) struct Core {
     pub(crate) kernel: Kernel,
@@ -632,9 +639,9 @@ fn without_wait(input: &Json) -> Json {
 fn entry(name: &str, tool: &Json) -> ToolEntry {
     let hint = |key: &str| tool["annotations"][key].as_bool().unwrap_or(false);
     let title = tool["title"].as_str().unwrap_or(name).to_owned();
-    // The target and the version, as the plan the tool was published in
-    // states them, and who wrote the description, `rule` or `builder`
-    // (decision 0307, point 6).
+    // The target and the version, as the compiled target the tool was
+    // published in states them, and who wrote the description, `rule` or
+    // `builder` (decision 0307, point 6).
     let mut meta = Map::new();
     for (key, field) in [
         (TOOL_TARGET_KEY, "target"),
@@ -645,15 +652,27 @@ fn entry(name: &str, tool: &Json) -> ToolEntry {
             meta.insert(key.to_owned(), json!(text));
         }
     }
+    // A list never holds a tool with nothing to choose it by.
+    let mut description = tool["description"]
+        .as_str()
+        .filter(|text| !text.is_empty())
+        .unwrap_or(&title)
+        .to_owned();
+    // A tool a drift stopped is listed all the same, with its schema, and
+    // says so first (decision 0396). Only `false` marks it: a listing that
+    // does not say is the one the dispatcher gave before tools were marked.
+    if tool["available"] == false {
+        description = format!("{UNAVAILABLE_SENTENCE} {description}");
+        let why = match &tool["unavailable"] {
+            Json::Object(why) => Json::Object(why.clone()),
+            _ => json!({"reason": "drift"}),
+        };
+        meta.insert(TOOL_UNAVAILABLE_KEY.to_owned(), why);
+    }
     ToolEntry {
         name: name.to_owned(),
         meta,
-        // A list never holds a tool with nothing to choose it by.
-        description: tool["description"]
-            .as_str()
-            .filter(|text| !text.is_empty())
-            .unwrap_or(&title)
-            .to_owned(),
+        description,
         title,
         input_schema: object(tool["input_schema"].clone()),
         annotations: ToolAnnotationsFace {
@@ -692,6 +711,35 @@ mod tests {
     use serde_json::json;
 
     use super::render;
+
+    #[test]
+    fn a_tool_a_drift_stopped_is_listed_with_its_schema_and_says_so_first() {
+        let schema = json!({"type": "object", "properties": {"order_id": {"type": "string"}}});
+        let mut tool = json!({
+            "name": "example_line_item_update",
+            "title": "Update a line item",
+            "description": "Changes one line item.",
+            "target": "example",
+            "version": "1.0.0",
+            "input_schema": schema,
+            "available": true,
+        });
+        let open = super::entry("example_line_item_update", &tool);
+        assert_eq!(open.description, "Changes one line item.");
+        assert!(!open.meta.contains_key(super::TOOL_UNAVAILABLE_KEY));
+
+        let why = json!({"reason": "drift", "knowledge": "line_item", "marked_at": 7});
+        tool["available"] = json!(false);
+        tool["unavailable"] = why.clone();
+        let stopped = super::entry("example_line_item_update", &tool);
+        assert_eq!(
+            stopped.description,
+            format!("{} Changes one line item.", super::UNAVAILABLE_SENTENCE)
+        );
+        assert_eq!(stopped.meta[super::TOOL_UNAVAILABLE_KEY], why);
+        assert_eq!(stopped.input_schema, open.input_schema);
+        assert_eq!(stopped.annotations, open.annotations);
+    }
 
     #[test]
     fn a_next_step_names_a_tool_the_callers_toolset_lists() {

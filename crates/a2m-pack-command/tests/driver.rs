@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    BindingPlan, Digest, Environment, Epoch, FailureClass, NoSecrets, Plan, RecordKey, Redact,
-    RunId, Step, Value, Values,
+    CompiledBinding, CompiledTarget, Digest, Environment, Epoch, FailureClass, NoSecrets,
+    RecordKey, Redact, RunId, Step, Value, Values,
 };
 use a2m_ledger::{Fence, IntentToken, RecordRef};
 use a2m_pack_command::codes;
@@ -47,7 +47,7 @@ struct Scene {
     folder: Folder,
     stand: Stand,
     registry: Registry,
-    plan: Plan,
+    compiled_target: CompiledTarget,
     surface: SurfaceRef,
     handle: DriverHandle,
 }
@@ -73,21 +73,21 @@ impl Scene {
         let registry = registry(&folder, redact);
         let mut files = stand_files(&stand);
         change(&mut files);
-        let plan = match common::compile(&files, registry.compiler_set()) {
-            Ok(compiled) => compiled.plan,
+        let compiled_target = match common::compile(&files, registry.compiler_set()) {
+            Ok(compiled) => compiled.compiled_target,
             Err(problems) => panic!("{problems:#?}"),
         };
         let surface = SurfaceRef {
-            target: plan.header.target.clone(),
+            target: compiled_target.header.target.clone(),
             environment: Environment::new("test").unwrap(),
-            surface: plan.surfaces[0].clone(),
+            surface: compiled_target.surfaces[0].clone(),
         };
         let handle = registry.driver(&codes::mode()).unwrap();
         Self {
             folder,
             stand,
             registry,
-            plan,
+            compiled_target,
             surface,
             handle,
         }
@@ -102,7 +102,8 @@ impl Scene {
             run: RunId::from_bytes([7; 16]),
             epoch: Epoch::new(1),
         });
-        // As the engine will: the programs the published plan declares.
+        // As the engine will: the programs the published compiled target
+        // declares.
         let supervisor = self.handle.supervisor(
             self.surface
                 .surface
@@ -115,7 +116,7 @@ impl Scene {
             run: fence.run,
             epoch: fence.epoch,
             surface: &self.surface,
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             posture,
             deadline: Deadline::after(WITHIN),
             redact: &NoSecrets,
@@ -130,9 +131,9 @@ impl Scene {
         self.prepare(Posture::Live, None).await.unwrap()
     }
 
-    fn binding(&self, operation: &str) -> &BindingPlan {
+    fn binding(&self, operation: &str) -> &CompiledBinding {
         &self
-            .plan
+            .compiled_target
             .operations
             .iter()
             .find(|found| found.name.as_str() == operation)
@@ -612,16 +613,17 @@ async fn another_version_and_another_build_are_refused_before_anything_runs() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_plan_that_names_a_variable_of_the_engine_starts_nothing() {
+async fn a_compiled_target_that_names_a_variable_of_the_engine_starts_nothing() {
     for (list, name) in [
         ("env_set", "A2M_HOME"),
         ("env_pass", "a2m_vault_passphrase"),
     ] {
         let mut scene = Scene::new();
-        // A plan the compiler would never make: the section is changed by
-        // hand, as a plan altered after it was compiled would be.
+        // A compiled target the compiler would never make: the section is
+        // changed by hand, as a compiled target altered after it was compiled
+        // would be.
         let pack = scene
-            .plan
+            .compiled_target
             .packs
             .iter_mut()
             .find(|section| section.pack == "command")
@@ -1177,7 +1179,7 @@ async fn a_secret_on_standard_error_that_a_cut_would_divide_reaches_no_failure()
     assert_eq!(control.write_count("SK-1001").unwrap(), 0);
 }
 
-// ---- a plan that does not hold together ----
+// ---- a compiled target that does not hold together ----
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_command_that_writes_is_started_only_by_the_step_that_commits() {
@@ -1665,7 +1667,7 @@ async fn found_by_help(scene: &Scene) -> Vec<a2m_core::Finding> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_command_a_person_declared_a_read_is_drafted_as_an_operation_that_reads_the_stand() {
-    // Decision 0399. The help does not say what a command does, so the
+    // Decision 0387. The help does not say what a command does, so the
     // drafter drafts an operation only over a command whose `commands/`
     // file a person wrote with `effect: read`.
     let mut scene = Scene::new();
@@ -1753,8 +1755,8 @@ async fn a_command_a_person_declared_a_read_is_drafted_as_an_operation_that_read
         let text = std::fs::read_to_string(target.path().join(path)).unwrap();
         files.push((path.to_owned(), text.replace("\r\n", "\n")));
     }
-    scene.plan = match common::compile(&files, scene.registry.compiler_set()) {
-        Ok(compiled) => compiled.plan,
+    scene.compiled_target = match common::compile(&files, scene.registry.compiler_set()) {
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("{problems:#?}\n{files:#?}"),
     };
     let stored = seed.iter().find(|item| item.sku == "SK-1003").unwrap();
@@ -1811,7 +1813,7 @@ async fn an_output_the_form_does_not_make_certain_is_flagged_and_still_reads_nul
         );
     });
     let flags: Vec<(String, bool)> = scene
-        .plan
+        .compiled_target
         .operations
         .iter()
         .find(|found| found.name.as_str() == "example_item_get")

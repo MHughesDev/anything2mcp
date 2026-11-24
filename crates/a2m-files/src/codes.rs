@@ -74,6 +74,7 @@ kernel_codes! {
     STEP_CYCLE = "step_cycle": "A pipeline step uses only the results of steps before it.",
     SURFACE_NOT_DECLARED = "surface_not_declared": "Nothing names a surface the target does not declare.",
     SCOPE_INVALID = "scope_invalid": "A permission names one exact address or one name, once: no wildcard, no range of addresses, no path, and no user information.",
+    URL_WITHOUT_DESTINATION = "url_without_destination": "An operation with an input of the type `url` declares at least one destination with a scheme in `permissions.destinations`, and a pipeline with one calls an operation that does: such an input accepts only those destinations.",
     SURFACE_OF_ANOTHER_PACK = "surface_of_another_pack": "A lowering names a surface of a kind its own pack registered.",
     // Stage 7: lint.
     ACKNOWLEDGED_WITH_LOOKUP = "acknowledged_with_lookup": "A keyed binding that ends on an acknowledgement, with no read-back, declares no lookup that stands for a read-back; it is always a warning.",
@@ -90,12 +91,18 @@ kernel_codes! {
     TOOL_NAMES_TOO_ALIKE = "tool_names_too_alike": "No two tools differ only by a suffix.",
     DESCRIPTION_WEAK = "description_weak": "A description says what the tool does, in at least twenty characters.",
     DESCRIPTION_UNBOUNDED = "description_unbounded": "A description is plain text of at most 1,024 characters, with no control character.",
+    FIELD_TEXT_UNBOUNDED = "field_text_unbounded": "A field description, an enum label, or a text default of a tool's definition is plain text of at most 1,024 characters, with no control, bidirectional, or invisible character but a newline and a tab.",
+    DEFINITION_UNBOUNDED = "definition_unbounded": "A tool's definition holds at most 8,192 characters of free text in all.",
+    DESCRIPTION_INSTRUCTS_THE_READER = "description_instructs_the_reader": "A tool's description and its inputs' descriptions hold none of the phrases or markers of an instruction to the model that reads them, which the module `addressed` lists; it is always a warning.",
+    DESCRIPTION_NAMES_AN_UNPUBLISHED_TOOL = "description_names_an_unpublished_tool": "A tool's description and its inputs' descriptions name no tool this version does not publish, by the forms the module `addressed` lists; it is always a warning.",
+    DESCRIPTION_NAMES_A_PLACE_OUTSIDE = "description_names_a_place_outside": "A tool's description and its inputs' descriptions name no address the target does not reach and no file of the machine, by the forms the module `addressed` lists; it is always a warning.",
+    DESCRIPTION_ASKS_TO_HIDE = "description_asks_to_hide": "A tool's description and its inputs' descriptions hold none of the phrases of a request to keep something from the person, which the module `addressed` lists; it is always a warning.",
     OUTPUT_NOT_MARKED = "output_not_marked": "Free text that came from the system is of a field type marked untrusted.",
     // Stage 8: describe.
     TOOL_INDISTINGUISHABLE = "tool_indistinguishable": "No two tools have the same description and the same inputs.",
     // Stage 9: emit.
-    PLAN_NOT_ENCODABLE = "plan_not_encodable": "The plan holds together and encodes.",
-    DRAFT_UNDER_RELEASE_VERSION = "draft_under_release_version": "A draft is compiled under the draft version, so that it never has a published plan's bytes.",
+    COMPILED_TARGET_NOT_ENCODABLE = "compiled_target_not_encodable": "The compiled target holds together and encodes.",
+    DRAFT_UNDER_RELEASE_VERSION = "draft_under_release_version": "A draft is compiled under the draft version, so that it never has a published compiled target's bytes.",
 }
 
 /// The lint code for one of the constants above, each of which is checked

@@ -2,7 +2,7 @@
 //! each compiled to a normalizer through `a2m-expr`.
 
 use a2m_core::{
-    CodeLabel, Decimal, FieldBase, FieldFormat, FieldTypePlan, Rounding, Sensitivity,
+    CodeLabel, CompiledFieldType, Decimal, FieldBase, FieldFormat, Rounding, Sensitivity,
     WhitespaceRule, ZoneRule,
 };
 use a2m_expr::{DecimalMark, FieldRule, Whitespace};
@@ -28,7 +28,7 @@ fn text(case_sensitive: bool, whitespace: Whitespace) -> FieldRule {
 }
 
 /// The built-in field types that are complete as they stand, in the order
-/// the plan lists them.
+/// the compiled target lists them.
 pub(crate) fn built_ins() -> Vec<(&'static str, FieldRule)> {
     let sixteenth = Decimal::from_units(625, 4).unwrap_or_else(|_| Decimal::from_i64(1));
     vec![
@@ -104,11 +104,18 @@ pub(crate) fn built_ins() -> Vec<(&'static str, FieldRule)> {
         ("email", text(false, Whitespace::Trim)),
         ("phone", text(true, Whitespace::Collapse)),
         ("identifier", text(true, Whitespace::Trim)),
-        ("url", text(true, Whitespace::Trim)),
+        (URL_TYPE, text(true, Whitespace::Trim)),
         ("file", text(true, Whitespace::Exact)),
         (UNTRUSTED_TEXT, text(true, Whitespace::Collapse)),
     ]
 }
+
+/// The built-in field type of an address. An input of it accepts only the
+/// destinations its operation declares: the compiler refuses one with
+/// none (`kernel.url_without_destination`), and the engine refuses any
+/// other address at run time (section 502). The compiled field type keeps
+/// this name, which is how the engine knows it.
+pub const URL_TYPE: &str = "url";
 
 /// The built-in field type of free text that came from the system: `text`,
 /// marked untrusted. A drafting rule types such an output with it, so that
@@ -144,7 +151,7 @@ pub(crate) fn utc_offset_minutes(zone: &str) -> Option<i32> {
     Some(sign * (number(hours, 14)? * 60 + number(minutes, 59)?))
 }
 
-const fn plan_mark(mark: DecimalMark) -> a2m_core::DecimalMark {
+const fn compiled_mark(mark: DecimalMark) -> a2m_core::DecimalMark {
     match mark {
         DecimalMark::Point => a2m_core::DecimalMark::Point,
         DecimalMark::Comma => a2m_core::DecimalMark::Comma,
@@ -170,7 +177,7 @@ fn format_of(rule: &FieldRule) -> FieldFormat {
         | FieldRule::Decimal { mark, .. }
         | FieldRule::Money { mark, .. }
         | FieldRule::Measurement { mark, .. } => FieldFormat::Number {
-            decimal_mark: plan_mark(*mark),
+            decimal_mark: compiled_mark(*mark),
         },
         FieldRule::Date { format } | FieldRule::Time { format } => FieldFormat::Calendar {
             pattern: format.clone(),
@@ -199,24 +206,25 @@ pub(crate) struct Labels {
     pub zone: Option<ZoneRule>,
 }
 
-/// The plan's form of a field type: its rule compiled to a normalizer.
+/// The compiled target's form of a field type: its rule compiled to a
+/// normalizer.
 ///
 /// # Errors
 ///
 /// The sentence `a2m-expr` gives when the rule names something the
 /// expression library does not know.
-pub(crate) fn plan_of(
+pub(crate) fn compiled_of(
     name: &str,
     rule: &FieldRule,
     labels: Labels,
     exprs: &mut ExprTable,
-) -> Result<FieldTypePlan, String> {
+) -> Result<CompiledFieldType, String> {
     let normalizer = rule
         .normalizer()
-        .and_then(|compiled| compiled.to_plan_expr())
+        .and_then(|compiled| compiled.to_compiled_expr())
         .map_err(|error| error.message)?;
     let index = exprs.intern(normalizer);
-    let mut plan = FieldTypePlan {
+    let mut compiled = CompiledFieldType {
         name: name.to_owned(),
         base: rule.base(),
         ty: rule.value_type(),
@@ -237,8 +245,8 @@ pub(crate) fn plan_of(
         FieldRule::Decimal {
             places, rounding, ..
         } => {
-            plan.places = Some(*places);
-            plan.rounding = Some(*rounding);
+            compiled.places = Some(*places);
+            compiled.rounding = Some(*rounding);
         }
         FieldRule::Money {
             currency,
@@ -246,9 +254,9 @@ pub(crate) fn plan_of(
             rounding,
             ..
         } => {
-            plan.places = Some(places.unwrap_or_else(|| a2m_expr::currency_places(currency)));
-            plan.rounding = Some(*rounding);
-            plan.currency = Some(currency.clone());
+            compiled.places = Some(places.unwrap_or_else(|| a2m_expr::currency_places(currency)));
+            compiled.rounding = Some(*rounding);
+            compiled.currency = Some(currency.clone());
         }
         FieldRule::Measurement {
             unit,
@@ -257,16 +265,16 @@ pub(crate) fn plan_of(
             rounding,
             ..
         } => {
-            plan.places = Some(step.places());
-            plan.rounding = Some(*rounding);
-            plan.step = Some(*step);
-            plan.unit = Some(unit.clone());
-            plan.display_unit = Some(display_unit.clone());
+            compiled.places = Some(step.places());
+            compiled.rounding = Some(*rounding);
+            compiled.step = Some(*step);
+            compiled.unit = Some(unit.clone());
+            compiled.display_unit = Some(display_unit.clone());
         }
-        FieldRule::Choice { codes } => plan.codes.clone_from(codes),
+        FieldRule::Choice { codes } => compiled.codes.clone_from(codes),
         _ => {}
     }
-    Ok(plan)
+    Ok(compiled)
 }
 
 /// The keys of a field type that mean something for each base, beside
@@ -476,7 +484,7 @@ pub(crate) fn rule_of(
 
 #[cfg(test)]
 mod tests {
-    use super::{Labels, built_ins, plan_of, utc_offset_minutes};
+    use super::{Labels, built_ins, compiled_of, utc_offset_minutes};
     use crate::view::ExprTable;
     use a2m_core::{DecimalMark, FieldFormat};
 
@@ -501,14 +509,14 @@ mod tests {
     #[test]
     fn a_field_type_states_its_format_as_data_beside_its_normalizer() {
         let mut exprs = ExprTable::default();
-        let plan = |name: &str, exprs: &mut ExprTable| {
+        let compiled = |name: &str, exprs: &mut ExprTable| {
             let (_, rule) = built_ins()
                 .into_iter()
                 .find(|(known, _)| *known == name)
                 .unwrap();
-            plan_of(name, &rule, Labels::default(), exprs).unwrap()
+            compiled_of(name, &rule, Labels::default(), exprs).unwrap()
         };
-        let length = plan("length_ft_in", &mut exprs);
+        let length = compiled("length_ft_in", &mut exprs);
         assert_eq!(length.step.as_ref().unwrap().to_string(), "0.0625");
         assert_eq!(
             length.format,
@@ -517,14 +525,14 @@ mod tests {
             }
         );
         assert_eq!(
-            plan("datetime", &mut exprs).format,
+            compiled("datetime", &mut exprs).format,
             FieldFormat::Calendar {
                 pattern: "YYYY-MM-DD'T'HH:mm:ss".to_owned(),
                 utc_offset_minutes: Some(0),
             }
         );
         assert_eq!(
-            plan("date", &mut exprs).format,
+            compiled("date", &mut exprs).format,
             FieldFormat::Calendar {
                 pattern: "YYYY-MM-DD".to_owned(),
                 utc_offset_minutes: None,
@@ -536,9 +544,9 @@ mod tests {
     fn every_built_in_field_type_compiles_to_a_normalizer() {
         let mut exprs = ExprTable::default();
         for (name, rule) in built_ins() {
-            let plan = plan_of(name, &rule, Labels::default(), &mut exprs)
+            let compiled = compiled_of(name, &rule, Labels::default(), &mut exprs)
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
-            assert!(plan.normalizer.is_some(), "{name}");
+            assert!(compiled.normalizer.is_some(), "{name}");
         }
     }
 
@@ -548,7 +556,7 @@ mod tests {
         let marked: Vec<&str> = built_ins()
             .into_iter()
             .filter(|(name, rule)| {
-                plan_of(name, rule, super::built_in_labels(name), &mut exprs)
+                compiled_of(name, rule, super::built_in_labels(name), &mut exprs)
                     .unwrap()
                     .untrusted
             })

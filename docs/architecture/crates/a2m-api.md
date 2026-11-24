@@ -92,7 +92,7 @@ The `/api/v1/admin/...` row of the technical reference is not a separate surface
 
 ## OpenAPI
 
-The document is generated from the registry when the router is built: one operation per route, request and response schemas from the action's schemas, the failure body as one shared schema, and the security schemes in use. The route of a run's events is described in it with both of its answers, a page as JSON and a stream, and carries no `x-action`. It is also written into the recorded catalog, which the SDK generators read. A toolset can be exported as its own document, listing that toolset's target tools as operations, for platforms that consume OpenAPI instead of MCP (spec section 222).
+The document is generated from the registry when the router is built: one operation per route, request and response schemas from the action's schemas, the failure body as one shared schema, and the security schemes in use. The route of a run's events is described in it with both of its answers, a page as JSON and a stream, and carries no `x-action`. Every operation of an action carries `x-action`, its name, and `x-sdk`, whether it has an SDK method (its `faces.sdk`); the clients' generators write a method only where `x-sdk` is true ([decision 0420](../../decisions/0420-the-api-description-says-which-actions-have-a-client-method.md)). It is also written into the recorded catalog, which the SDK generators read. A toolset can be exported as its own document, listing that toolset's target tools as operations, for platforms that consume OpenAPI instead of MCP (spec section 222).
 
 ## Events
 

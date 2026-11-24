@@ -1,9 +1,9 @@
 //! The `registers/` file kind: one file per device model and map.
 //!
-//! A map holds every address the pack may touch, how each is encoded,
-//! whether it may be written, its safe range, and its hazard. An operation
-//! names a register, never an address. This module holds the schema of a
-//! map, its compilation into the plan's section, and the lint rules that
+//! A map holds every address the pack may touch, how each is encoded, whether
+//! it may be written, its safe range, and its hazard. An operation names a
+//! register, never an address. This module holds the schema of a map, its
+//! compilation into the compiled target's section, and the lint rules that
 //! refuse a writable register with no hazard or no range.
 
 use std::collections::BTreeMap;
@@ -174,7 +174,7 @@ pub(crate) enum ValueKind {
 /// numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RangePlan {
+pub(crate) struct CompiledRange {
     pub min: Decimal,
     pub max: Decimal,
     pub raw_min: i64,
@@ -194,7 +194,7 @@ pub(crate) struct ConfirmBy {
 /// One register of a map, compiled.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RegisterPlan {
+pub(crate) struct CompiledRegister {
     pub table: Table,
     pub offset: u16,
     pub data: Data,
@@ -203,7 +203,7 @@ pub(crate) struct RegisterPlan {
     pub scale: Option<Decimal>,
     pub kind: ValueKind,
     pub access: Access,
-    pub range: Option<RangePlan>,
+    pub range: Option<CompiledRange>,
     pub hazard: Option<Hazard>,
     pub read_effect: ReadEffect,
     pub confirm_by: Option<ConfirmBy>,
@@ -241,7 +241,7 @@ pub(crate) struct OnLinkLoss {
 /// written to one block address (spec section 310, Firmware).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct UpdatePlan {
+pub(crate) struct CompiledUpdate {
     /// The holding offset the update commands are written to, alone.
     pub command: u16,
     /// The holding offset the image's length in bytes is written to.
@@ -265,25 +265,25 @@ pub(crate) struct UpdatePlan {
     pub restart_within_ms: u32,
 }
 
-/// One map, compiled: an entry of the plan's section.
+/// One map, compiled: an entry of the compiled target's section.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct MapPlan {
+pub(crate) struct CompiledMap {
     pub surface: String,
     pub model: String,
     pub firmware: Vec<String>,
     pub identify: Vec<String>,
     pub pace: Pace,
-    pub registers: BTreeMap<String, RegisterPlan>,
+    pub registers: BTreeMap<String, CompiledRegister>,
     pub safe_state: Option<SafeState>,
     pub on_link_loss: Option<OnLinkLoss>,
     /// The device's own update mechanism, where the map declares one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub firmware_update: Option<UpdatePlan>,
+    pub firmware_update: Option<CompiledUpdate>,
 }
 
-/// The plan's section: every map of the target, by name.
-pub(crate) type MapSection = BTreeMap<String, MapPlan>;
+/// The compiled target's section: every map of the target, by name.
+pub(crate) type MapSection = BTreeMap<String, CompiledMap>;
 
 /// The schema of one map.
 pub(crate) fn schema() -> JsonSchema {
@@ -453,7 +453,7 @@ impl Compiler<'_, '_> {
         parsed
     }
 
-    fn map(&mut self, doc: &Located<Doc>) -> Option<(String, MapPlan)> {
+    fn map(&mut self, doc: &Located<Doc>) -> Option<(String, CompiledMap)> {
         let name = doc.text("device_map")?.to_owned();
         let surface = match self.cx.surface_of(doc) {
             Some(surface) if *surface.kind == self.names.surface_kind => {
@@ -567,7 +567,7 @@ impl Compiler<'_, '_> {
             .and_then(|update| self.update(update, &registers));
         Some((
             name,
-            MapPlan {
+            CompiledMap {
                 surface,
                 model: doc.text("model").unwrap_or_default().to_owned(),
                 firmware: doc
@@ -592,8 +592,8 @@ impl Compiler<'_, '_> {
     fn update(
         &mut self,
         doc: &Located<Doc>,
-        registers: &BTreeMap<String, RegisterPlan>,
-    ) -> Option<UpdatePlan> {
+        registers: &BTreeMap<String, CompiledRegister>,
+    ) -> Option<CompiledUpdate> {
         let number = |key: &str| doc.get(key).and_then(Located::as_int);
         let restart_within_ms = self.time(doc.get("restart_within"))?;
         let mut fine = true;
@@ -623,7 +623,7 @@ impl Compiler<'_, '_> {
         if !fine {
             return None;
         }
-        Some(UpdatePlan {
+        Some(CompiledUpdate {
             command: u16::try_from(number("command")?).ok()?,
             length: u16::try_from(number("length")?).ok()?,
             block: u16::try_from(number("block")?).ok()?,
@@ -637,7 +637,7 @@ impl Compiler<'_, '_> {
     }
 
     #[allow(clippy::too_many_lines)] // one check after another on one register; splitting hides the order
-    fn register(&mut self, name: &str, doc: &Located<Doc>) -> Option<RegisterPlan> {
+    fn register(&mut self, name: &str, doc: &Located<Doc>) -> Option<CompiledRegister> {
         let address = doc.get("address")?;
         let table: Table = parse_word(address.text("table")?)?;
         let offset = u16::try_from(address.get("offset")?.as_int()?).ok()?;
@@ -724,7 +724,10 @@ impl Compiler<'_, '_> {
         let field_type = doc
             .text("type")
             .and_then(|field_type| self.cx.target().field_type(field_type));
-        let kind = match (data, field_type.map(|view| (view.plan.base, &view.plan.ty))) {
+        let kind = match (
+            data,
+            field_type.map(|view| (view.compiled.base, &view.compiled.ty)),
+        ) {
             (Data::Bit, None | Some((FieldBase::Boolean, _))) => Some(ValueKind::Bool),
             (Data::Bit, Some((FieldBase::Choice, _))) => Some(ValueKind::Code),
             (Data::Text, None | Some((_, ValueType::Text))) => Some(ValueKind::Text),
@@ -753,7 +756,7 @@ impl Compiler<'_, '_> {
                 let raw_min = raw_of(&min, scale.as_ref())?;
                 let raw_max = raw_of(&max, scale.as_ref())?;
                 let (least, most) = data.bounds()?;
-                (min <= max && raw_min >= least && raw_max <= most).then_some(RangePlan {
+                (min <= max && raw_min >= least && raw_max <= most).then_some(CompiledRange {
                     min,
                     max,
                     raw_min,
@@ -783,7 +786,7 @@ impl Compiler<'_, '_> {
                 settle_ms: self.time(confirm.get("settle"))?,
             })
         });
-        fine.then_some(RegisterPlan {
+        fine.then_some(CompiledRegister {
             table,
             offset,
             data,

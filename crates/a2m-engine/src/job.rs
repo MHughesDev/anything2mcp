@@ -37,9 +37,9 @@ pub enum JobKind {
 /// What a job runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolRef {
-    /// A tool of the plan: an operation or a pipeline.
+    /// A tool of the compiled target: an operation or a pipeline.
     Tool(OperationName),
-    /// A surface of the plan, for a `Discover` job.
+    /// A surface of the compiled target, for a `Discover` job.
     Surface(SurfaceName),
 }
 
@@ -245,8 +245,9 @@ pub struct JobSpec {
     pub epoch: Epoch,
     /// What the job is for.
     pub kind: JobKind,
-    /// The plan's hash. The plan is fetched through `Control` and checked.
-    pub plan: Digest,
+    /// The compiled target's hash. The compiled target is fetched through
+    /// `Control` and checked.
+    pub compiled_target: Digest,
     /// What the job runs.
     pub tool: ToolRef,
     /// The environment; `None` for the target's default.

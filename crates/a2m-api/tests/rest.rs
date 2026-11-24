@@ -113,7 +113,7 @@ impl World {
             settings: Settings::defaults(),
             paths: Paths::under(folder.path()),
             place: StorePlace::Memory,
-            key_store: Arc::new(MemoryKeyStore::with_random(Counted::new())),
+            key_store: Arc::new(MemoryKeyStore::with_random(Counted::apart())),
             clock,
             random: Counted::new(),
             os_user: USER.to_owned(),
@@ -142,7 +142,7 @@ impl World {
         assert_eq!(kernel.health().state, HealthState::Ok);
         kernel.start_runner_loop(2).await.unwrap();
         kernel
-            .publish_plan(&engine::plan(&app.url("")))
+            .publish_compiled_target(&engine::compiled_target(&app.url("")))
             .await
             .unwrap();
 
@@ -704,6 +704,13 @@ async fn the_openapi_document_describes_every_route_and_nothing_else() {
         };
         assert_eq!(status, 400, "{method} {path}: {body}");
         assert_eq!(body["action"], op["x-action"], "{method} {path}");
+        // The clients' generators write a method only where this is true.
+        let def = world
+            .kernel
+            .actions()
+            .find(op["x-action"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(op["x-sdk"], Json::Bool(def.faces.sdk), "{method} {path}");
         assert_eq!(body["error"]["class"], "input", "{method} {path}: {body}");
     }
     world.close().await;

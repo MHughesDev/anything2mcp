@@ -1,0 +1,22 @@
+operation: example_case_list
+title: List the open cases
+effect: read
+inputs: {}
+outputs:
+  case_ids: {type: identifier, list: true}
+  statuses: {type: identifier, list: true}
+bindings:
+  - mode: ui
+    verb: list
+    screen: cases
+description: >
+  Lists the key and the status of every open case.
+---
+operation: example_activity_get
+effect: read
+inputs: {}
+outputs:
+  note: {type: untrusted_text}
+bindings:
+  - {mode: ui, verb: read, screen: activity}
+description: Reads the page that writes when it loads.

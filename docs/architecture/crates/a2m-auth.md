@@ -62,16 +62,16 @@ pub struct AuthEntry {
     pub surfaces: EntrySurfaces,                      // decisions 0245 and 0248: empty by default
 }
 impl AuthEntry { pub fn published(self) -> Self; /* new, setting, credential, required, optional, only */ }
-/// The entry's surfaces as the plan holds them in the environment, the plan's pack sections of their
-/// kinds, every address the target declares there, whether the plan is a published version's (only the
+/// The entry's surfaces as the compiled target holds them in the environment, the compiled target's pack sections of their
+/// kinds, every address the target declares there, whether the compiled target is a published version's (only the
 /// caller that loaded one says so), and whether the person carried out this one sign-in on a page that
 /// showed every address (only the caller that took the act says so). Decision 0248.
 pub struct EntrySurfaces {
-    pub surfaces: Vec<SurfacePlan>, pub sections: Vec<PackSection>,
+    pub surfaces: Vec<CompiledSurface>, pub sections: Vec<PackSection>,
     pub from_published: bool, pub shown_to_person: bool, pub destinations: SignInDestinations,
 }
 impl EntrySurfaces {
-    pub fn of(plan: &Plan, auth: &AuthPlan, environment: &Environment) -> Self;
+    pub fn of(compiled_target: &CompiledTarget, auth: &CompiledAuth, environment: &Environment) -> Self;
     pub fn published(self) -> Self; pub fn shown_to_person(self) -> Self;
 }
 /// Where a sign-in may send: the target's surface addresses in the environment, compared by origin
@@ -363,7 +363,7 @@ Not produced yet: `busy`, `session_in_use`, the per-session parallelism of secti
 
 ## Open points
 
-- **After a restart, a due renewal is started before the saved state is restored** ([decision 0374](../../decisions/0374-a-sessions-mark-that-it-was-made-under-drafts-is-kept-in-its-record.md), consequences). A lease that finds a valid session's credentials due moves it to `renewing` before it looks whether this process holds them, so a silent renewal finds nothing to refresh and the session waits for its person. Fail closed; restoring first would spare the person a sign-in.
+- Settled: a renewal whose runner holds nothing at the session's epoch, after a restart or because another engine over the same store signed the session in, opens the saved state on that runner before its silent or light rung ([decision 0403](../../decisions/0403-a-renewal-opens-the-saved-state-first-when-its-runner-holds-nothing.md)). For a home runner other than the local engine, which is not built, the keeper cannot see what the runner holds.
 - How reliably a fresh engine-owned profile signs in silently through the device's account. Research brief 30; hypothesis H-05.
 - Settled: there is no `SignInSurface` type. The worker is handed an `AskPerson`, and a pack's provider holds its own pack's handles (record 0085).
 - Where the authorization response of `oauth_authorization_code` is received on a server, where no loopback address reaches the person's browser: the console's address, most likely. Here it is whatever `AskPerson::return_address` gives.

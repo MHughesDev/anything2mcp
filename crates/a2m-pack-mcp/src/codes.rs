@@ -70,10 +70,11 @@ pub const CONNECTION_LOST: FailureCode = a2m_provider::codes::CONNECTION_LOST;
 
 /// The codes of other crates the driver returns as they are, which the
 /// manifest declares too: the provider contract's `timeout` and
-/// `connection_lost`, the core's `payload_unreadable` for a published plan
-/// that does not hold what the pack compiled into it, and the session
-/// keeper's TLS failures (decision 0157), every code of `a2m_auth::tls` but
-/// `trust_roots_unreadable`, which only the engine's start gives.
+/// `connection_lost`, the core's `payload_unreadable` for a published
+/// compiled target that does not hold what the pack compiled into it, and the
+/// session keeper's TLS failures (decision 0157), every code of
+/// `a2m_auth::tls` but `trust_roots_unreadable`, which only the engine's
+/// start gives.
 pub const PASSED_ON: &[FailureCode] = &[
     TIMEOUT,
     CONNECTION_LOST,
@@ -233,23 +234,25 @@ pub(crate) fn not_built(what: &str) -> Failure {
     )
 }
 
-pub(crate) fn plan_unreadable(what: &str) -> Failure {
+pub(crate) fn compiled_target_unreadable(what: &str) -> Failure {
     Failure::new(
         FailureClass::Input,
         FailureCode::PAYLOAD_UNREADABLE,
-        format!("The published plan does not hold what the MCP pack compiled into it: {what}."),
+        format!(
+            "The published compiled target does not hold what the MCP pack compiled into it: {what}."
+        ),
         "Compile the target again with the versions of the packs that are enabled.",
     )
 }
 
 /// The refusal of a variable that may not be handed to a local server
-/// program, found in a plan that holds one all the same.
+/// program, found in a compiled target that holds one all the same.
 pub(crate) fn variable_refused(name: &str, why: &str) -> Failure {
     Failure::new(
         FailureClass::Input,
         FailureCode::PAYLOAD_UNREADABLE,
         format!(
-            "The published plan hands a local server program the variable `{}`, which {why}.",
+            "The published compiled target hands a local server program the variable `{}`, which {why}.",
             shown(name)
         ),
         "Remove the variable from the surface and compile the target again. A credential for a local server program goes through the session keeper, never through its environment.",
@@ -373,9 +376,9 @@ pub(crate) fn shown(name: &str) -> String {
     kept(name, &['_', '-', '.', '/'])
 }
 
-/// A path the published plan declares, made safe to show as [`shown`] makes
-/// a name, keeping too the backslash and the colon of a Windows path, so
-/// that `C:\Programs\example-mcp.exe` is shown as itself.
+/// A path the published compiled target declares, made safe to show as
+/// [`shown`] makes a name, keeping too the backslash and the colon of a
+/// Windows path, so that `C:\Programs\example-mcp.exe` is shown as itself.
 pub(crate) fn shown_path(path: &str) -> String {
     kept(path, &['_', '-', '.', '/', '\\', ':'])
 }

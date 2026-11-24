@@ -1,0 +1,14 @@
+# An order's total length, read from inside the cases page, whose own script
+# searches by `POST` as it loads.
+endpoint: order_lengths
+surface: app
+method: GET
+path: "/api/orders/{order_id}/lengths"
+page: "/cases/rows-by-post"
+effect: read
+response_schema:
+  type: object
+  required: [order_id, total_length]
+  properties:
+    order_id: {type: string}
+    total_length: {type: string}

@@ -17,7 +17,7 @@
 //! defines and character references; depth and size are bounded. A binary
 //! property list is a named stop: not built.
 
-use a2m_core::{FieldTypePlan, Value};
+use a2m_core::{CompiledFieldType, Value};
 use a2m_provider::StepFailure;
 use a2m_sources::{ByteSpan, Limits, RawCell};
 
@@ -781,7 +781,7 @@ pub(crate) fn literal(
     which: Which,
     quotes: Quotes,
     value: &Value,
-    field_type: &FieldTypePlan,
+    field_type: &CompiledFieldType,
 ) -> Result<Vec<u8>, StepFailure> {
     if setting.unread.is_some() || matches!(setting.kind, Kind::Data | Kind::Nested) {
         return Err(refused("stands at a place the file pack does not read"));
@@ -893,8 +893,8 @@ mod tests {
         }
     }
 
-    fn text_type() -> FieldTypePlan {
-        FieldTypePlan {
+    fn text_type() -> CompiledFieldType {
+        CompiledFieldType {
             name: "text".to_owned(),
             base: a2m_core::FieldBase::Text,
             ty: a2m_core::ValueType::Text,

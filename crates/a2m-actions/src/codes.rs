@@ -85,8 +85,11 @@ a2m_core::failure_codes! {
     IDEMPOTENCY_KEY_REUSED = Input, "idempotency_key_reused",
         meaning "An idempotency key the caller already gave with another call: another tool, environment, input, or source.",
         next "Use a new key for a new call. To get the run of the call the key was first given with, make that call again with the key, or call `run.list` with `idempotency_key`.";
+    ADDRESS_UNREGISTERED = Policy, "address_unregistered",
+        meaning "A publish would reach an address no person registered for the target, and it was not carried out from the publish page that names it.",
+        next "Ask for the publish on its page, with `publish.request`, read the new address it names, and press there.";
     DRAFTS_CHANGED = Stale, "drafts_changed",
-        meaning "The drafts of a publish a person was shown changed before they pressed: they compile to another plan.",
+        meaning "The drafts of a publish a person was shown changed before they pressed: they compile to another compiled target.",
         next "Ask again, and read the new page before pressing.";
     PUBLISH_GATES_NOT_PASSED = Input, "publish_gates_not_passed",
         meaning "A publish whose offline tests did not all run and pass: a version is published only when they do (spec section 403, decision 0180).",

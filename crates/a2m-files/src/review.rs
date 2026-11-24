@@ -11,8 +11,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use a2m_core::{
-    AddressScope, AuthProviderName, CredentialRef, DeclaredProgram, Digest, EffectClass,
-    Environment, Hazard, Mode, OperationName, Plan, ProbePlan, ScopedHost, SignInMode,
+    AddressScope, AuthProviderName, CompiledProbe, CompiledTarget, CredentialRef, DeclaredProgram,
+    Digest, EffectClass, Environment, Hazard, Mode, OperationName, ScopedHost, SignInMode,
     SurfaceIndex, SurfaceName,
 };
 use serde::Serialize;
@@ -23,6 +23,9 @@ pub const NOT_STATED: &str = "this kind of tool does not state what it runs";
 /// What the summary says beside a script a target keeps (decision 0216).
 pub const SCRIPT_NOTICE: &str =
     "runs a script this target keeps: the digest pins its bytes; it does not make it safe";
+/// What the summary says beside a program started through a launcher
+/// (decision 0398).
+pub const LAUNCHER_NOTICE: &str = "starts a program through a launcher: the digests pin the launcher and its entry file; whatever the entry file loads, and whatever that starts, is not pinned and is not shown here";
 /// What the summary says of a tool's reach when a binding's pack does not
 /// state where it sends requests.
 pub const REACH_NOT_STATED: &str = "where this kind of tool sends requests is not stated: only the addresses shown are known, and it may reach others";
@@ -108,6 +111,22 @@ pub enum ProgramRun {
         script: String,
         /// The digest of the script's bytes.
         script_digest: Digest,
+    },
+    /// A program started through a launcher: the launcher, the arguments it
+    /// is always given, and the entry file an installer put on the machine,
+    /// run where it lies (decision 0398). Nothing the entry file loads is
+    /// pinned.
+    Launcher {
+        /// The launcher's absolute path.
+        launcher: String,
+        /// The digests the launcher is pinned to; empty where none.
+        launcher_digests: Vec<Digest>,
+        /// The arguments it is always given before the entry file's path.
+        arguments: Vec<String>,
+        /// The entry file's path as it lies on the machine.
+        entry: String,
+        /// The digest of the entry file's bytes.
+        entry_digest: Digest,
     },
 }
 
@@ -221,12 +240,14 @@ pub enum BindingStates {
     },
 }
 
-/// A program a binding starts, with the fixed notice a script carries.
+/// A program a binding starts, with the fixed notice a script or a launcher
+/// carries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RunReview {
     /// The program.
     pub run: ProgramRun,
-    /// [`SCRIPT_NOTICE`] for a script the target keeps; none for a program.
+    /// [`SCRIPT_NOTICE`] for a script the target keeps, [`LAUNCHER_NOTICE`]
+    /// for a launcher; none for a program.
     pub notice: Option<&'static str>,
 }
 
@@ -264,7 +285,7 @@ pub enum Reach {
 /// One entry of `auth.yaml`, for the person who publishes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SignInReview {
-    /// The entry's place in the plan's `auth`, which
+    /// The entry's place in the compiled target's `auth`, which
     /// [`ReviewSummary::state_sent_to`] names.
     pub entry: usize,
     /// The surfaces it signs in to.
@@ -407,6 +428,19 @@ impl ReviewSummary {
                 arguments: all(arguments),
                 script: f(script),
                 script_digest: *script_digest,
+            },
+            ProgramRun::Launcher {
+                launcher,
+                launcher_digests,
+                arguments,
+                entry,
+                entry_digest,
+            } => ProgramRun::Launcher {
+                launcher: f(launcher),
+                launcher_digests: launcher_digests.clone(),
+                arguments: all(arguments),
+                entry: f(entry),
+                entry_digest: *entry_digest,
             },
         };
         let items = self
@@ -627,29 +661,36 @@ fn groups(addresses: &BTreeSet<String>) -> Vec<ReachGroup> {
 }
 
 /// What the compiler learned of one operation while lowering it, beyond
-/// its plan: the fixed place, and what each binding's pack stated.
+/// its compiled target: the fixed place, and what each binding's pack stated.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct OpReview {
     pub place: Option<PlaceReview>,
     pub bindings: Vec<(Mode, SurfaceIndex, Statement)>,
 }
 
-/// The summary of a compiled plan.
-pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>) -> ReviewSummary {
+/// The summary of a compiled target.
+pub(crate) fn review_of(
+    compiled_target: &CompiledTarget,
+    reviews: &BTreeMap<OperationName, OpReview>,
+) -> ReviewSummary {
     let surface_names = |indices: &[SurfaceIndex]| -> Vec<SurfaceName> {
         indices
             .iter()
-            .filter_map(|index| plan.surface(*index).map(|surface| surface.name.clone()))
+            .filter_map(|index| {
+                compiled_target
+                    .surface(*index)
+                    .map(|surface| surface.name.clone())
+            })
             .collect()
     };
     // A surface's address in every environment.
     let surface_addresses = |index: SurfaceIndex| -> Vec<String> {
-        let mut addresses: Vec<String> = plan
+        let mut addresses: Vec<String> = compiled_target
             .surface(index)
             .map(|surface| surface.address.clone())
             .into_iter()
             .collect();
-        for environment in &plan.environments {
+        for environment in &compiled_target.environments {
             for address in &environment.addresses {
                 if address.surface == index {
                     addresses.push(address.address.clone());
@@ -660,7 +701,7 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
     };
     // The bindings and the reach of a list of operations, with their
     // permissions' destinations.
-    let reviewed = |operations: &[&a2m_core::OperationPlan]| -> (Vec<BindingReview>, Reach) {
+    let reviewed = |operations: &[&a2m_core::CompiledOperation]| -> (Vec<BindingReview>, Reach) {
         let mut bindings = Vec::new();
         let mut addresses: BTreeSet<String> = BTreeSet::new();
         let mut partly = false;
@@ -671,7 +712,7 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
                 continue;
             };
             for (mode, surface, statement) in &review.bindings {
-                let Some(plan_surface) = plan.surface(*surface) else {
+                let Some(compiled_surface) = compiled_target.surface(*surface) else {
                     continue;
                 };
                 let states = match statement {
@@ -698,8 +739,11 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
                                 .iter()
                                 .map(|run| RunReview {
                                     run: run.clone(),
-                                    notice: matches!(run, ProgramRun::Script { .. })
-                                        .then_some(SCRIPT_NOTICE),
+                                    notice: match run {
+                                        ProgramRun::Script { .. } => Some(SCRIPT_NOTICE),
+                                        ProgramRun::Launcher { .. } => Some(LAUNCHER_NOTICE),
+                                        ProgramRun::Program { .. } => None,
+                                    },
                                 })
                                 .collect(),
                             environment: stated.environment.clone(),
@@ -709,8 +753,8 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
                 bindings.push(BindingReview {
                     operation: operation.name.clone(),
                     mode: mode.clone(),
-                    surface: plan_surface.name.clone(),
-                    surface_programs: plan_surface.programs.clone(),
+                    surface: compiled_surface.name.clone(),
+                    surface_programs: compiled_surface.programs.clone(),
                     states,
                 });
             }
@@ -729,7 +773,7 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
         };
         (bindings, reach)
     };
-    let mut items: Vec<ReviewItem> = plan
+    let mut items: Vec<ReviewItem> = compiled_target
         .operations
         .iter()
         .map(|operation| {
@@ -751,14 +795,14 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
             }
         })
         .collect();
-    for pipeline in &plan.pipelines {
+    for pipeline in &compiled_target.pipelines {
         let mut surfaces = BTreeSet::new();
         let mut destinations = BTreeSet::new();
         let mut uploads = BTreeSet::new();
         let mut downloads = BTreeSet::new();
-        let mut called: Vec<&a2m_core::OperationPlan> = Vec::new();
+        let mut called: Vec<&a2m_core::CompiledOperation> = Vec::new();
         for step in &pipeline.steps {
-            if let Some(operation) = plan.operation(step.operation) {
+            if let Some(operation) = compiled_target.operation(step.operation) {
                 surfaces.extend(operation.manifest.surfaces.iter().copied());
                 destinations.extend(operation.manifest.destinations.iter().cloned());
                 uploads.extend(operation.manifest.uploads.iter().cloned());
@@ -784,12 +828,8 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
             reach,
         });
     }
-    items.sort_by(|a, b| {
-        (b.hazard, b.effect, exposure(b))
-            .cmp(&(a.hazard, a.effect, exposure(a)))
-            .then_with(|| a.tool.cmp(&b.tool))
-    });
-    let mut sign_ins: Vec<SignInReview> = plan
+    in_review_order(&mut items);
+    let mut sign_ins: Vec<SignInReview> = compiled_target
         .auth
         .iter()
         .enumerate()
@@ -807,21 +847,21 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
                 })
                 .collect(),
             probe: match &auth.probe {
-                ProbePlan::Operation { operation, .. } => ProbeReview::Declared {
-                    name: plan
+                CompiledProbe::Operation { operation, .. } => ProbeReview::Declared {
+                    name: compiled_target
                         .operation(*operation)
                         .map(|found| found.name.to_string())
                         .unwrap_or_default(),
                 },
-                ProbePlan::Entry(reference) => ProbeReview::Declared {
+                CompiledProbe::Entry(reference) => ProbeReview::Declared {
                     name: reference.entry.clone(),
                 },
-                ProbePlan::Pending { name } => ProbeReview::Pending {
+                CompiledProbe::Pending { name } => ProbeReview::Pending {
                     name: name.clone(),
                     says: PROBE_PENDING,
                 },
             },
-            sent_to: plan
+            sent_to: compiled_target
                 .environments
                 .iter()
                 .map(|environment| SentToReview {
@@ -833,14 +873,34 @@ pub(crate) fn review_of(plan: &Plan, reviews: &BTreeMap<OperationName, OpReview>
                 .collect(),
         })
         .collect();
-    // A sign-in nobody can check yet first; the rest keep the file's order.
-    sign_ins.sort_by_key(|sign_in| !matches!(sign_in.probe, ProbeReview::Pending { .. }));
+    sign_ins_in_review_order(&mut sign_ins);
     ReviewSummary { items, sign_ins }
+}
+
+/// The tools in the summary's order, the riskiest first: by hazard, then
+/// effect class, then what they expose, then name.
+pub(crate) fn in_review_order(items: &mut [ReviewItem]) {
+    items.sort_by(|a, b| {
+        (b.hazard, b.effect, exposure(b))
+            .cmp(&(a.hazard, a.effect, exposure(a)))
+            .then_with(|| a.tool.cmp(&b.tool))
+    });
+}
+
+/// The sign-ins in the summary's order: one nobody can check yet first,
+/// then the rest, each group in the file's order.
+pub(crate) fn sign_ins_in_review_order(sign_ins: &mut [SignInReview]) {
+    sign_ins.sort_by_key(|sign_in| {
+        (
+            !matches!(sign_in.probe, ProbeReview::Pending { .. }),
+            sign_in.entry,
+        )
+    });
 }
 
 /// What a tool exposes beyond its effect, for the order of the summary:
 /// first where it sends (unknown, then off this machine), then what it
-/// starts (unknown or a script, then a program).
+/// starts (unknown, a script, or a launcher, then a program).
 fn exposure(item: &ReviewItem) -> (u8, u8) {
     let reach = match &item.reach {
         Reach::Partly { .. } => 2,
@@ -858,7 +918,7 @@ fn exposure(item: &ReviewItem) -> (u8, u8) {
             BindingStates::Stated { runs, .. } => runs
                 .iter()
                 .map(|run| match run.run {
-                    ProgramRun::Script { .. } => 2,
+                    ProgramRun::Script { .. } | ProgramRun::Launcher { .. } => 2,
                     ProgramRun::Program { .. } => 1,
                 })
                 .max()

@@ -48,6 +48,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/seen", get(seen))
         .route("/notes", get(crate::forgery::report))
         .route("/cases", get(crate::cases::report))
+        .route("/case-rows", get(crate::own_requests::case_rows_report))
 }
 
 /// Exactly what is stored for an order's delivery details, or `null`, and how many

@@ -1,0 +1,6 @@
+test: example_order_totals_get
+kind: offline
+fixture: order_totals_get
+binding: {mode: page_http}
+inputs: {order_id: "A-100"}
+expect: {lines: 3, total_quantity: 8}

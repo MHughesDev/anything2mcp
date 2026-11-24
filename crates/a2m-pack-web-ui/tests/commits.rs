@@ -31,10 +31,11 @@ async fn scene(name: &str, app: &TestApp, profile: Option<&str>) -> Scene {
         ),
         None => text.to_owned(),
     };
-    let plan = compile_changed_files(&stand.registry, "commits", &[("target.yaml", &target)])
-        .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
-        .plan;
-    Scene::over(stand, plan, &app.url(""))
+    let compiled_target =
+        compile_changed_files(&stand.registry, "commits", &[("target.yaml", &target)])
+            .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)))
+            .compiled_target;
+    Scene::over(stand, compiled_target, &app.url(""))
 }
 
 /// What the application was told, once it has been told at least `count`
@@ -169,14 +170,14 @@ async fn a_controlled_input_under_the_wrong_profile_is_a_named_stop() {
     scene.stand.end().await;
 }
 
-/// A page of a server-rendered forms framework: under `aspnet_webforms`,
+/// A page of a server-rendered forms framework: under `server_postback_forms`,
 /// the change is posted back, the page draws the form again, and the value
 /// is read back from the control drawn anew. The application received the
 /// value once.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_post_back_page_receives_the_change_and_the_value_is_read_from_the_form_drawn_again() {
     let app = TestApp::start().await.unwrap();
-    let scene = scene("commit-postback", &app, Some("aspnet_webforms")).await;
+    let scene = scene("commit-postback", &app, Some("server_postback_forms")).await;
     let (ran, handle, prepared) = write(
         &scene,
         "example_quantity_post",
@@ -197,7 +198,7 @@ async fn a_post_back_page_receives_the_change_and_the_value_is_read_from_the_for
 #[tokio::test(flavor = "multi_thread")]
 async fn a_post_back_that_never_redraws_is_a_named_stop_with_its_fate_unknown() {
     let app = TestApp::start().await.unwrap();
-    let scene = scene("commit-stuck", &app, Some("aspnet_webforms")).await;
+    let scene = scene("commit-stuck", &app, Some("server_postback_forms")).await;
     let (ran, handle, prepared) = write(
         &scene,
         "example_quantity_stuck",

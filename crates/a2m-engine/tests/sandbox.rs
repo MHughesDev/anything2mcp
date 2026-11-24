@@ -84,8 +84,8 @@ async fn a_discoverer_runs_through_the_sandbox_and_its_findings_reach_control() 
 /// port had no driver and every read answered `no_binding`.
 #[tokio::test]
 async fn a_surface_with_no_binding_is_observed_through_its_own_mode() {
-    let scene = Scene::new(ORDER_GET, |plan| {
-        for operation in &mut plan.operations {
+    let scene = Scene::new(ORDER_GET, |compiled_target| {
+        for operation in &mut compiled_target.operations {
             operation.bindings.clear();
         }
     })
@@ -191,7 +191,8 @@ async fn a_discoverer_that_panics_is_named_and_the_job_ends() {
 }
 
 #[tokio::test]
-async fn a_discovery_job_for_a_surface_the_plan_does_not_hold_leaves_the_run_as_it_was() {
+async fn a_discovery_job_for_a_surface_the_compiled_target_does_not_hold_leaves_the_run_as_it_was()
+{
     let scene = Scene::new(ORDER_GET, |_| {}).await;
     let outcome = scene.discover("elsewhere").await;
     let JobOutcome::Left(failure) = &outcome else {
@@ -298,8 +299,8 @@ async fn a_link_out_of_the_sources_folder_is_refused_and_nothing_is_read() {
 
 #[tokio::test]
 async fn a_try_runs_a_draft_read_that_may_not_act_live() {
-    let scene = Scene::new(ORDER_GET, |plan| {
-        for binding in &mut plan.operations[0].bindings {
+    let scene = Scene::new(ORDER_GET, |compiled_target| {
+        for binding in &mut compiled_target.operations[0].bindings {
             binding.status = BindingStatus::Draft;
         }
     })
@@ -328,8 +329,8 @@ async fn a_try_runs_a_draft_read_that_may_not_act_live() {
 
 #[tokio::test]
 async fn a_try_of_a_write_is_refused_before_the_driver_unless_its_record_is_a_test_record() {
-    let scene = Scene::new(ITEM_UPSERT, |plan| {
-        plan.environments[0].test_records = vec![item_key("A-102", "T-1")];
+    let scene = Scene::new(ITEM_UPSERT, |compiled_target| {
+        compiled_target.environments[0].test_records = vec![item_key("A-102", "T-1")];
     })
     .await;
     // A record that is not a declared test record: refused before any
@@ -373,13 +374,13 @@ async fn a_try_of_a_write_is_refused_before_the_driver_unless_its_record_is_a_te
 
 /// An environment that declares one test record, and a drafted step that
 /// changes a record that is not one while it says it commits nothing.
-fn dressed_write(plan: &mut a2m_core::Plan) -> a2m_core::Step {
-    plan.environments[0].test_records = vec![item_key("A-102", "T-1")];
-    let order = expr(plan, "\"A-102\"", ValueType::Text);
-    let other = expr(plan, "\"L-900\"", ValueType::Text);
-    let text = expr(plan, "\"Not a test record\"", ValueType::Text);
-    let one = expr(plan, "1", ValueType::Int);
-    let length = expr(plan, "\"1\"", ValueType::Text);
+fn dressed_write(compiled_target: &mut a2m_core::CompiledTarget) -> a2m_core::Step {
+    compiled_target.environments[0].test_records = vec![item_key("A-102", "T-1")];
+    let order = expr(compiled_target, "\"A-102\"", ValueType::Text);
+    let other = expr(compiled_target, "\"L-900\"", ValueType::Text);
+    let text = expr(compiled_target, "\"Not a test record\"", ValueType::Text);
+    let one = expr(compiled_target, "1", ValueType::Int);
+    let length = expr(compiled_target, "\"1\"", ValueType::Text);
     step(
         "put_item",
         &[
@@ -399,9 +400,9 @@ async fn a_try_of_a_read_keeps_the_drivers_guard_on_where_test_records_are_decla
     // A draft read whose lowering is wrong: its first step changes a
     // record. The environment declares a test record, which says nothing
     // about this job: it writes no record at all.
-    let scene = Scene::new(ORDER_GET, |plan| {
-        let dressed = dressed_write(plan);
-        for binding in &mut plan.operations[0].bindings {
+    let scene = Scene::new(ORDER_GET, |compiled_target| {
+        let dressed = dressed_write(compiled_target);
+        for binding in &mut compiled_target.operations[0].bindings {
             binding.status = BindingStatus::Draft;
             binding.act.insert(0, dressed.clone());
         }
@@ -444,9 +445,9 @@ async fn a_try_of_a_write_runs_its_reads_under_the_guard_and_changes_its_test_re
     // A drafted write to a declared test record. Its read-back, which
     // also looks the record up at the preview, holds a step that changes
     // a record that is not a test record.
-    let scene = Scene::new(ITEM_UPSERT, |plan| {
-        let dressed = dressed_write(plan);
-        let binding = &mut plan.operations[2].bindings[0];
+    let scene = Scene::new(ITEM_UPSERT, |compiled_target| {
+        let dressed = dressed_write(compiled_target);
+        let binding = &mut compiled_target.operations[2].bindings[0];
         binding.status = BindingStatus::Draft;
         binding.read_back.insert(0, dressed);
     })
@@ -469,9 +470,9 @@ async fn a_try_of_a_write_runs_its_reads_under_the_guard_and_changes_its_test_re
     // context the test record is written in, where the kernel has only
     // the token to go by; the pack's guard there lets through the step
     // that commits and nothing else that changes the system.
-    let scene = Scene::new(ITEM_UPSERT, |plan| {
-        let dressed = dressed_write(plan);
-        let binding = &mut plan.operations[2].bindings[0];
+    let scene = Scene::new(ITEM_UPSERT, |compiled_target| {
+        let dressed = dressed_write(compiled_target);
+        let binding = &mut compiled_target.operations[2].bindings[0];
         binding.status = BindingStatus::Draft;
         binding.act.insert(0, dressed);
     })
@@ -505,8 +506,8 @@ async fn a_record_is_read_again_in_the_context_that_writes_it() {
     // with the context it read it in. In a try, the record is looked up
     // in one context and written in another, within one job and well
     // inside the freshness window.
-    let scene = Scene::new(ITEM_UPSERT, |plan| {
-        plan.environments[0].test_records = vec![item_key("A-102", "T-1")];
+    let scene = Scene::new(ITEM_UPSERT, |compiled_target| {
+        compiled_target.environments[0].test_records = vec![item_key("A-102", "T-1")];
     })
     .await;
     let test_record = item("A-102", "T-1", "Trial", 1, "1");
@@ -625,9 +626,9 @@ async fn a_second_look_reports_a_verified_record_that_reads_differently_and_chan
 /// the sandbox write it (audit finding E-6).
 #[tokio::test]
 async fn a_record_keyed_by_its_place_in_the_run_is_never_a_test_record() {
-    let scene = Scene::new(common::SLOT_ADD, |plan| {
-        common::keyless_slot_add(plan);
-        plan.environments[0].test_records = vec![
+    let scene = Scene::new(common::SLOT_ADD, |compiled_target| {
+        common::keyless_slot_add(compiled_target);
+        compiled_target.environments[0].test_records = vec![
             a2m_core::RecordKey::new(vec![
                 a2m_core::Value::from(common::SLOT_ADD),
                 a2m_core::Value::Int(0),
@@ -666,15 +667,15 @@ async fn a_trial_runs_the_binding_it_names_and_never_another_in_its_name() {
     // Two draft bindings: unnamed, a trial runs the first. Named, the
     // second runs, and nothing falls back to the first (audit finding
     // AC-6).
-    let scene = Scene::new(ORDER_GET, |plan| {
-        for binding in &mut plan.operations[0].bindings {
+    let scene = Scene::new(ORDER_GET, |compiled_target| {
+        for binding in &mut compiled_target.operations[0].bindings {
             binding.status = BindingStatus::Draft;
         }
     })
     .await;
-    let operation = scene.control.plan.operations[0].clone();
+    let operation = scene.control.compiled_target.operations[0].clone();
     assert_eq!(a2m_engine::default_binding(&operation), Some(0));
-    let second = a2m_engine::BindingPin::of(&scene.control.plan, &operation, 1).unwrap();
+    let second = a2m_engine::BindingPin::of(&scene.control.compiled_target, &operation, 1).unwrap();
     assert_eq!(second.mode.as_str(), common::SECOND_MODE);
     *scene.binding.lock().unwrap() = Some(second.clone());
     let outcome = scene.work(JobKind::Try, ORDER_GET, order()).await;
@@ -698,18 +699,24 @@ async fn a_trial_runs_the_binding_it_names_and_never_another_in_its_name() {
 
 #[test]
 fn a_tested_binding_is_the_one_that_would_act_live_and_its_digest_ignores_its_status() {
-    let mut plan = common::plan("http://127.0.0.1:1");
-    let operation = &mut plan.operations[0];
+    let mut compiled_target = common::compiled_target("http://127.0.0.1:1");
+    let operation = &mut compiled_target.operations[0];
     operation.bindings[0].status = BindingStatus::Draft;
     operation.bindings[1].status = BindingStatus::Verified;
     assert_eq!(a2m_engine::default_binding(operation), Some(1));
     operation.bindings[1].status = BindingStatus::Retired;
     assert_eq!(a2m_engine::default_binding(operation), Some(0));
-    let before = a2m_engine::binding_digest(&plan, &plan.operations[0].bindings[0]).unwrap();
-    plan.operations[0].bindings[0].status = BindingStatus::Verified;
-    let promoted = a2m_engine::binding_digest(&plan, &plan.operations[0].bindings[0]).unwrap();
+    let before =
+        a2m_engine::binding_digest(&compiled_target, &compiled_target.operations[0].bindings[0])
+            .unwrap();
+    compiled_target.operations[0].bindings[0].status = BindingStatus::Verified;
+    let promoted =
+        a2m_engine::binding_digest(&compiled_target, &compiled_target.operations[0].bindings[0])
+            .unwrap();
     assert_eq!(before, promoted);
-    plan.operations[0].bindings[0].settle_ms += 1;
-    let changed = a2m_engine::binding_digest(&plan, &plan.operations[0].bindings[0]).unwrap();
+    compiled_target.operations[0].bindings[0].settle_ms += 1;
+    let changed =
+        a2m_engine::binding_digest(&compiled_target, &compiled_target.operations[0].bindings[0])
+            .unwrap();
     assert_ne!(before, changed);
 }

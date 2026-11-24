@@ -6,7 +6,8 @@ from the action registry, so a method written from it cannot name an action
 the engine lacks. ``tools/openapi.json`` is a saved copy (see
 ``tools/fetch_openapi.py``). This script reads it and writes
 ``src/anything2mcp/_actions.py``: one method per action, named as the action
-names it with the dot as an underscore (``tool.call`` is ``tool_call``),
+names it with the dot as an underscore (``tool.call`` is ``tool_call``,
+``policy.tools_allowed`` is ``policy_tools_allowed``),
 with keyword-only, typed inputs taken from the request schema and a
 docstring taken from the operation's summary.
 
@@ -24,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import keyword
+import re
 import sys
 import textwrap
 from pathlib import Path
@@ -42,8 +44,20 @@ class GenerateError(Exception):
     than guess what an input is."""
 
 
+#: The form of an action's name: a noun and a verb, each one or more words
+#: of lower-case letters and digits joined by single underscores
+#: (``policy.tools_allowed``). Every name of this form has a method name in
+#: both clients; any other stops the generators (decision 0405).
+ACTION_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*\Z")
+
+
 def method_name(action: str) -> str:
-    """``tool.call`` is ``tool_call``: noun and verb, joined by an underscore."""
+    """``tool.call`` is ``tool_call``: noun and verb, joined by an underscore,
+    and an underscore inside either stays (``policy.tools_allowed`` is
+    ``policy_tools_allowed``). The Node generator joins the same words in
+    camel case (decision 0405)."""
+    if not ACTION_NAME.match(action):
+        raise GenerateError(f"action `{action}` has no valid method name")
     name = action.replace(".", "_")
     if not name.isidentifier() or keyword.iskeyword(name):
         raise GenerateError(f"action `{action}` has no valid method name")
@@ -109,8 +123,9 @@ def request_schema(operation: Dict[str, Any]) -> Tuple[List[Tuple[str, Any]], Li
 
 
 def actions_of(document: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
-    """Every action with its POST operation on ``/api/v1/actions/<action>``,
-    sorted by name. That route is the one the client's ``call`` uses."""
+    """Every action with an SDK method, with its POST operation on
+    ``/api/v1/actions/<action>``, sorted by name. That route is the one the
+    client's ``call`` uses."""
     found: Dict[str, Dict[str, Any]] = {}
     for path, item in document["paths"].items():
         if not path.startswith(ACTION_ROUTE) or "post" not in item:
@@ -119,6 +134,13 @@ def actions_of(document: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
         action = operation.get("x-action")
         if action != path[len(ACTION_ROUTE):]:
             raise GenerateError(f"route {path} names action {action!r}")
+        # `x-sdk` is the action's SDK face: an action without one gets no
+        # method, and a route that does not say stops the generator.
+        sdk = operation.get("x-sdk")
+        if not isinstance(sdk, bool):
+            raise GenerateError(f"route {path} does not say whether `{action}` has an SDK method")
+        if not sdk:
+            continue
         found[action] = operation
     if not found:
         raise GenerateError("the document has no action routes")

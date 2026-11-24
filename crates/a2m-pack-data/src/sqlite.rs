@@ -145,7 +145,7 @@ fn confined(conn: &Connection) -> rusqlite::Result<bool> {
 const CATALOG_SETTINGS: &[&str] = &["table_info", "index_list", "index_info", "foreign_key_list"];
 
 /// Whether a table is one of the engine's own, which no statement of a
-/// plan changes.
+/// compiled target changes.
 fn engines_own(table: &str) -> bool {
     table
         .as_bytes()
@@ -157,10 +157,11 @@ fn engines_own(table: &str) -> bool {
 ///
 /// `own` is set while the pack runs a statement of its own: the three that
 /// begin and end a transaction, and the queries that read the catalog. A
-/// statement of a plan may do none of that. It may read; on a writer it may
-/// also change rows, its own and those a trigger of the store changes. It
-/// may never attach or detach a file, read or change a setting, change the
-/// schema, the temporary one included, or begin or end a transaction.
+/// statement of a compiled target may do none of that. It may read; on a
+/// writer it may also change rows, its own and those a trigger of the store
+/// changes. It may never attach or detach a file, read or change a setting,
+/// change the schema, the temporary one included, or begin or end a
+/// transaction.
 fn guard(
     access: Access,
     own: Arc<AtomicBool>,

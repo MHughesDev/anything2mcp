@@ -24,7 +24,7 @@ Emitting what the engine did: the step trace and its signature, the capture of a
 - The engine's logs: structured, levelled, rotated by size, redacted.
 - The incoming trace context a caller sends. OpenTelemetry export, off unless a person switches it on, is not built.
 
-It must never: store evidence, own a table, or write a blob (`a2m-ledger` does); decide a capture level (the plan and policy do; it applies one); put a value, a snapshot, or a secret in a span or a metric; send anything off the machine unless export is switched on; paint over an image (the pack that took it does, because only it knows where the fields are).
+It must never: store evidence, own a table, or write a blob (`a2m-ledger` does); decide a capture level (the compiled target and policy do; it applies one); put a value, a snapshot, or a secret in a span or a metric; send anything off the machine unless export is switched on; paint over an image (the pack that took it does, because only it knows where the fields are).
 
 ## The split with `a2m-ledger`
 
@@ -63,13 +63,13 @@ impl TraceBuilder {
 }
 
 pub struct TraceIdentity { pub workspace: WorkspaceId, pub run: RunId, pub attempt: u32, pub operation: OperationName,
-                           pub plan: Digest, pub engine: Version, pub registry: Digest }
+                           pub compiled_target: Digest, pub engine: Version, pub registry: Digest }
 pub enum CaptureLevel { Minimal, Standard, Full }      // names as section 217
 impl CaptureLevel { pub const fn keeps(self, kind: ArtifactKind, at: CapturePoint) -> bool; }
 
 pub struct StepRecord {
     pub pass: u32,                        // which turn of the engine loop, from 0
-    pub phase: Phase,                     // Act, Confirm, ReadBack: the list in the plan the step came from
+    pub phase: Phase,                     // Act, Confirm, ReadBack: the list in the compiled target the step came from
     pub step: u32,                        // its position in that list
     pub kind: StepKind,
     pub record: Option<RecordKey>,        // written only as the workspace's keyed digest
@@ -143,15 +143,15 @@ impl Telemetry {
     pub fn step_span(&self, kind: &StepKind, parent: Option<&TraceContext>, attrs: &[Attr]) -> SpanGuard;
     pub fn count(&self, name: &'static str, attrs: &[Attr], by: u64);
     pub fn observe(&self, name: &'static str, attrs: &[Attr], took: Duration);
-    pub fn record_call(&self, tool: &OperationName, plan: &Digest, outcome: CallOutcome, took: Duration);
-    pub fn record_retry(&self, tool: &OperationName, plan: &Digest);
+    pub fn record_call(&self, tool: &OperationName, compiled_target: &Digest, outcome: CallOutcome, took: Duration);
+    pub fn record_retry(&self, tool: &OperationName, compiled_target: &Digest);
     pub fn spans(&self) -> Vec<FinishedSpan>;
     pub fn metrics(&self) -> Metrics;
 }
 impl SpanGuard { pub fn set(&mut self, attr: Attr); pub fn context(&self) -> TraceContext; }   // ends when dropped
 
 /// Attributes come only from this closed set: none takes free text.
-pub enum Attr { Method(McpMethod), Tool(OperationName), Operation(OperationName), Target(TargetName), Plan(Digest),
+pub enum Attr { Method(McpMethod), Tool(OperationName), Operation(OperationName), Target(TargetName), CompiledTarget(Digest),
                 Mode(Mode), StepKind(StepKind), Effect(EffectClass), Level(CaptureLevel), Class(FailureClass),
                 Code(FailureCode), Count(u64) }
 pub enum CallOutcome { Success, Failed(FailureClass) }
@@ -200,7 +200,7 @@ Each record gives one SHA-256 digest, its `sig`, over these entries in this orde
 
 The signature starts from a fixed digest, replaces it with the digest of itself followed by each record's `sig` in order, and closes with the digest of a fixed mark, the last state, and the count of records.
 
-Text enters after redaction and cleaning and before it is cut for size. Left out: every timing; the run, attempt, and workspace; the tool called and the plan's hash; the engine's version, the registry's digest, and the provider chosen; why a binding was chosen; the score; the `measured` details; raw values; artifact references; the capture level; and a volatile field's value.
+Text enters after redaction and cleaning and before it is cut for size. Left out: every timing; the run, attempt, and workspace; the tool called and the compiled target's hash; the engine's version, the registry's digest, and the provider chosen; why a binding was chosen; the score; the `measured` details; raw values; artifact references; the capture level; and a volatile field's value.
 
 ## The trace schema, version 1
 
@@ -215,7 +215,7 @@ The first line:
 | `run` | The run's identifier |
 | `attempt` | Which attempt, from 1 |
 | `operation` | The tool that was called |
-| `plan` | The plan's hash |
+| `compiled_target` | The compiled target's hash |
 | `engine` | The engine's version |
 | `registry` | The digest of the registry of providers |
 | `level` | `minimal`, `standard`, or `full` |
@@ -228,7 +228,7 @@ One line per step:
 | `seq` | The record's number, from 0, counting records that were cut |
 | `pass` | Which turn of the engine loop, from 0 |
 | `phase` | `act`, `confirm`, or `read_back` |
-| `step` | The step's position in its list in the plan |
+| `step` | The step's position in its list in the compiled target |
 | `kind` | The step kind |
 | `record` | Optional. The keyed digest of the record key |
 | `begins` | Optional; on the first record of a pass. `operation`, `mode`, `reason` (`first_in_order`, `earlier_did_not_qualify`, `pinned`, `fell_back`), `driver` (the chosen provider's digest), `queue_us`, `prepare_us` |
@@ -302,7 +302,7 @@ A failure to capture evidence never fails a read. For a write, the engine decide
 | Must always hold | Proven by |
 | --- | --- |
 | Five runs of the same thing have one signature, and it is the same on every operating system | `five_runs_have_one_signature`, on simulated runs whose identifiers, timings, scores, and sizes differ, against a signature written into the test (hypothesis H-16). Real runs through a driver come with package 1.2's engine slice |
-| The signature is blind to the level, the plan's hash, and why a binding was chosen | `the_signature_is_blind_to_what_legitimately_varies` |
+| The signature is blind to the level, the compiled target's hash, and why a binding was chosen | `the_signature_is_blind_to_what_legitimately_varies` |
 | A changed step, value, order, binding, locator, or outcome changes the signature | `a_changed_step_value_or_order_changes_the_signature`, sixteen changes |
 | The same input gives the same bytes, in the schema's order | `the_same_input_gives_the_same_bytes`, against a trace written out in the test |
 | A planted secret appears in no record, span, metric, or log line | `a_planted_secret_appears_in_no_trace`, `a_secret_split_by_markup_is_still_masked`, `a_planted_secret_appears_in_no_log_line`, and the run in `a_started_telemetry_logs_to_its_file_and_nothing_carries_a_planted_secret`. All against a test redactor; the same tests against the vault's, and against the test application's traffic, are package 2.1's |

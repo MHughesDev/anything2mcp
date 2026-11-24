@@ -51,7 +51,7 @@ A caller asks for one order on the `example` target through the tool `example_or
 2. The policy engine decides whether this caller may run this tool on this target. The decision is recorded whether it allows or refuses.
 3. The scheduler admits the run against queues, per-session limits, and budgets, and the run is recorded.
 4. A runner claims the job and starts the engine loop.
-5. The engine fetches the published plan by its hash and checks the hash, guards with the recorded decision, and chooses a binding by its declared order and health.
+5. The engine fetches the published compiled target by its hash and checks the hash, guards with the recorded decision, and chooses a binding by its declared order and health.
 6. The engine asks for a session lease. The session keeper supplies one, or the run stops at `needs_login`.
 7. The engine asks the registry for the driver of the binding's mode, which is pack code, and has it carry out each step: in the web pack, open the order's screen and read its fields; in the HTTP pack, send the matching read request.
 8. The engine normalizes the values with their field types, sends the step trace to be stored, and returns the outcome.

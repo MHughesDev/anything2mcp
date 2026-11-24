@@ -23,8 +23,8 @@ pub enum Attr {
     Operation(OperationName),
     /// The target the operation belongs to.
     Target(TargetName),
-    /// The plan that was run, by its hash: the tool's version.
-    Plan(Digest),
+    /// The compiled target that was run, by its hash: the tool's version.
+    CompiledTarget(Digest),
     /// The mode of the binding in use.
     Mode(Mode),
     /// The kind of step.
@@ -52,7 +52,9 @@ impl Attr {
             Self::Tool(_) => "gen_ai.tool.name",
             Self::Operation(_) => "a2m.operation",
             Self::Target(_) => "a2m.target",
-            Self::Plan(_) => "a2m.plan",
+            // The compiled target keeps its old key, which traces and logs
+            // already written carry (decision 0402).
+            Self::CompiledTarget(_) => "a2m.plan",
             Self::Mode(_) => "a2m.mode",
             Self::StepKind(_) => "a2m.step.kind",
             Self::Effect(_) => "a2m.effect",
@@ -70,7 +72,7 @@ impl Attr {
             Self::Method(method) => method.as_str().to_owned(),
             Self::Tool(name) | Self::Operation(name) => name.as_str().to_owned(),
             Self::Target(name) => name.as_str().to_owned(),
-            Self::Plan(digest) => digest.to_string(),
+            Self::CompiledTarget(digest) => digest.to_string(),
             Self::Mode(mode) => mode.as_str().to_owned(),
             Self::StepKind(kind) => kind.as_str().to_owned(),
             Self::Effect(effect) => effect.as_str().to_owned(),

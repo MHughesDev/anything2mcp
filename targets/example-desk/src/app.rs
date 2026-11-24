@@ -41,7 +41,10 @@ use std::time::Duration;
 
 use zbus::{Connection, OwnedObjectPath, Variant, interface};
 
-use crate::{CUSTOMER_MOST, Fault, FieldSet, LATE, Order, SAVED, SECRET, StandError, Truth};
+use crate::{
+    CUSTOMER_MOST, CUSTOMER_REFUSED, Fault, FieldSet, LATE, Order, SAVED, SECRET, STATUS_REFUSED,
+    STATUSES, StandError, Truth,
+};
 
 /// AT-SPI role numbers, as the interface's enumeration gives them.
 mod role {
@@ -78,12 +81,6 @@ const LABELLED_BY: u32 = 2;
 const ROOT_PATH: &str = "/org/a11y/atspi/accessible/root";
 const EVENT_OBJECT: &str = "org.a11y.atspi.Event.Object";
 
-/// What the application says when a status is not one it knows.
-pub(crate) const STATUS_REFUSED: &str = "Status must be open, held, or closed.";
-/// What the application says when a customer is empty.
-pub(crate) const CUSTOMER_REFUSED: &str = "Customer must not be empty.";
-/// The statuses the application stores.
-const STATUSES: &[&str] = &["open", "held", "closed"];
 /// The title of the dialog a fault raises.
 const DIALOG: &str = crate::DIALOG;
 

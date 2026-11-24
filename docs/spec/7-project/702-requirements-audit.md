@@ -22,7 +22,7 @@ Every stated requirement is covered by the design; five are covered only under c
 | Use the user's own account, usable only by that user and their agents | Covered | Session ownership rule and built-in guardrail (sections 215, 212) | On a server, an agent with its own identity needs the person's explicit delegation |
 | A pip package as the interface for a coding agent | Covered | pip ships the binary and an SDK; the agent builds through commands and files (sections 220, 605) | The pip name must be reserved before another project publishes it |
 | Rust core, other languages where applicable | Covered | Crate layout; language table in section 605 | The browser engine is new work in Rust |
-| Speed as a core metric | Covered by design | Budgets, compiled plans, fastest-verified-mode, CI gates | Budgets are targets until measured in phase 1 |
+| Speed as a core metric | Covered by design | Budgets, compiled targets, fastest-verified-mode, CI gates | Budgets are targets until measured in phase 1 |
 | Easy to use | Covered by design | Seven commands, safe defaults, `doctor`, agent-ready repository | The ten-minute target is unproven until tested with real users |
 | Repeatable, reproducible, deterministic, safe | Covered | Ledger, pinned builds, no AI at run time, policy gate | The target app can still change; the guarantee is a clean stop |
 

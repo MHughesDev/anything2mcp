@@ -2,13 +2,13 @@
 //! its interface as a person uses it.
 //!
 //! The pack owns the `screens/` file kind for surfaces of the kind `web`,
-//! where every locator lives, and compiles each screen into its own
-//! payload in the plan. Its driver, of the mode `ui`, opens one acting tab
-//! for each run in a browser the engine owns, and carries out `goto`,
-//! `wait`, `read`, `set`, and `invoke` steps on it through
-//! `a2m-pack-web-browser`: elements found by role and name, each wait a
-//! named condition, each control set and read by its own rule, and a
-//! saving action not done until the page shows its confirmation.
+//! where every locator lives, and compiles each screen into its own payload
+//! in the compiled target. Its driver, of the mode `ui`, opens one acting tab
+//! for each run in a browser the engine owns, and carries out `goto`, `wait`,
+//! `read`, `set`, and `invoke` steps on it through `a2m-pack-web-browser`:
+//! elements found by role and name, each wait a named condition, each control
+//! set and read by its own rule, and a saving action not done until the page
+//! shows its confirmation.
 //!
 //! The product crate registers the pack with one call, [`add_to`], and
 //! gives it the cell of browsers it also gives the web pack's discoverers,

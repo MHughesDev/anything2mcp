@@ -14,9 +14,9 @@ use a2m_auth::{
     SessionLease, SessionRef, SessionStore, StoredCredentials, Wait,
 };
 use a2m_core::{
-    AccountName, Archetype, BindingPlan, Decimal, DecisionId, Environment, Epoch, FailureClass,
-    Finding, Identity, NoSecrets, PackPayload, Plan, RecordKey, RunId, Secret, TargetName, Value,
-    Values, WorkspaceId,
+    AccountName, Archetype, CompiledBinding, CompiledTarget, Decimal, DecisionId, Environment,
+    Epoch, FailureClass, Finding, Identity, NoSecrets, PackPayload, RecordKey, RunId, Secret,
+    TargetName, Value, Values, WorkspaceId,
 };
 use a2m_files::{Drafter, TargetRoot};
 use a2m_ledger::Fence;
@@ -174,22 +174,27 @@ impl Signed {
 /// at the test's server, and a session that signs in as `user`.
 struct ServerScene {
     registry: Registry,
-    plan: Plan,
+    compiled_target: CompiledTarget,
     surface: SurfaceRef,
     signed: Signed,
     _folder: Folder,
     server: TestServer,
 }
 
-fn compiled(registry: &Registry) -> Plan {
+fn compiled(registry: &Registry) -> CompiledTarget {
     match compile_folder(registry, &fixtures()) {
-        Ok(compiled) => compiled.plan,
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the server fixtures do not compile: {problems:#?}"),
     }
 }
 
-fn surface_at(plan: &Plan, address: &str, port: u16, database: &str) -> SurfaceRef {
-    let mut surface = plan.surfaces[0].clone();
+fn surface_at(
+    compiled_target: &CompiledTarget,
+    address: &str,
+    port: u16,
+    database: &str,
+) -> SurfaceRef {
+    let mut surface = compiled_target.surfaces[0].clone();
     address.clone_into(&mut surface.address);
     surface.payload = PackPayload::encode(&serde_json::json!({
         "store": "postgres",
@@ -198,7 +203,7 @@ fn surface_at(plan: &Plan, address: &str, port: u16, database: &str) -> SurfaceR
     }))
     .unwrap();
     SurfaceRef {
-        target: plan.header.target.clone(),
+        target: compiled_target.header.target.clone(),
         environment: Environment::new("test").unwrap(),
         surface,
     }
@@ -213,16 +218,16 @@ impl ServerScene {
         let server = server()?;
         let folder = Folder::new("server");
         let registry = registry_of(&crate::pack(), &folder, Arc::new(NoSecrets));
-        let plan = compiled(&registry);
+        let compiled_target = compiled(&registry);
         let surface = surface_at(
-            &plan,
+            &compiled_target,
             &server.address().ip().to_string(),
             server.address().port(),
             server.database(),
         );
         Some(Self {
             registry,
-            plan,
+            compiled_target,
             surface,
             signed: Signed::new(user, password).await,
             _folder: folder,
@@ -238,18 +243,18 @@ impl ServerScene {
     /// surface published again with another `database`.
     fn lead_to(&mut self, database: &str) {
         self.surface = surface_at(
-            &self.plan,
+            &self.compiled_target,
             &self.server.address().ip().to_string(),
             self.server.address().port(),
             database,
         );
     }
 
-    /// Changes one statement of the plan's section, as the compiler would
-    /// never make it.
+    /// Changes one statement of the compiled target's section, as the
+    /// compiler would never make it.
     fn alter(&mut self, name: &str, change: impl FnOnce(&mut crate::model::Statement)) {
         let section = self
-            .plan
+            .compiled_target
             .packs
             .iter_mut()
             .find(|section| section.pack == crate::names::PACK)
@@ -259,9 +264,9 @@ impl ServerScene {
         section.payload = PackPayload::encode(&held).unwrap();
     }
 
-    fn binding(&self, operation: &str) -> &BindingPlan {
+    fn binding(&self, operation: &str) -> &CompiledBinding {
         &self
-            .plan
+            .compiled_target
             .operations
             .iter()
             .find(|found| found.name.as_str() == operation)
@@ -282,7 +287,7 @@ impl ServerScene {
             run: fence.run,
             epoch: fence.epoch,
             surface: &self.surface,
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             posture,
             deadline: Deadline::after(Duration::from_secs(30)),
             redact: &NoSecrets,
@@ -297,7 +302,7 @@ impl ServerScene {
         let handle = self.handle();
         let prepared = self.try_prepare(&handle, posture, fence).await.unwrap();
         Run {
-            plan: &self.plan,
+            compiled_target: &self.compiled_target,
             handle,
             prepared: Some(prepared),
             wait: Duration::from_secs(30),
@@ -567,7 +572,7 @@ async fn a_key_the_server_assigns_is_known_before_the_commit() {
     ]);
     let mut assigned = None;
     for step in &binding.act {
-        let args = super::args_of(&scene.plan, step, &wanted);
+        let args = super::args_of(&scene.compiled_target, step, &wanted);
         let outcome = run
             .step_with(step, &args, step.commits.then_some(&write))
             .await
@@ -687,7 +692,7 @@ async fn a_lost_answer_after_the_commit_was_sent_is_a_write_in_doubt_reconciled_
     assert_eq!(scene.server.write_count("order_lines", &LINE).unwrap(), 1);
     // The session sends nothing more.
     for step in binding.act.iter().chain(&binding.read_back) {
-        let args = super::args_of(&scene.plan, step, &wanted);
+        let args = super::args_of(&scene.compiled_target, step, &wanted);
         let again = run
             .step_with(step, &args, step.commits.then_some(&write))
             .await;
@@ -833,7 +838,7 @@ async fn a_wrong_password_is_refused_by_the_server() {
 async fn a_server_off_the_loopback_address_or_with_no_session_is_refused_before_anything_is_sent() {
     let folder = Folder::new("server-link");
     let registry = registry_of(&crate::pack(), &folder, Arc::new(NoSecrets));
-    let plan = compiled(&registry);
+    let compiled_target = compiled(&registry);
     let handle = registry.driver(&super::mode()).unwrap();
     for (address, declared, code) in [
         // Documentation addresses: nothing is ever sent to them.
@@ -845,14 +850,14 @@ async fn a_server_off_the_loopback_address_or_with_no_session_is_refused_before_
         // Not among the run's destinations.
         ("127.0.0.1", false, &codes::SURFACE_NOT_DECLARED),
     ] {
-        let surface = surface_at(&plan, address, 5432, "example");
+        let surface = surface_at(&compiled_target, address, 5432, "example");
         let destinations = Destinations::new(declared.then(|| address.to_owned()));
         let supervisor = handle.supervisor(Vec::new());
         let cx = a2m_provider::PrepareContext {
             run: fence().run,
             epoch: fence().epoch,
             surface: &surface,
-            plan: &plan,
+            compiled_target: &compiled_target,
             posture: Posture::Live,
             deadline: Deadline::after(Duration::from_secs(5)),
             redact: &NoSecrets,
@@ -897,8 +902,8 @@ fn corpus(column: &str) -> Vec<(String, String, String)> {
 /// The verdict of `server_of` for a surface at `address`: `here` when the
 /// address passes and only the missing session stops it, `away` when the
 /// link is refused.
-fn server_verdict(plan: &Plan, address: &str) -> &'static str {
-    let surface = surface_at(plan, address, 5432, "example");
+fn server_verdict(compiled_target: &CompiledTarget, address: &str) -> &'static str {
+    let surface = surface_at(compiled_target, address, 5432, "example");
     let fields: crate::model::SurfaceFields = surface.surface.payload.decode().unwrap();
     match crate::postgres::server_of(&surface.surface, &fields, None) {
         Err(refused) if refused.failure.code() == &codes::LINK_NOT_ENCRYPTED => "away",
@@ -911,9 +916,13 @@ fn server_verdict(plan: &Plan, address: &str) -> &'static str {
 fn every_spelling_of_the_shared_corpus_is_judged_as_it_is_pinned() {
     let folder = Folder::new("server-spellings");
     let registry = registry_of(&crate::pack(), &folder, Arc::new(NoSecrets));
-    let plan = compiled(&registry);
+    let compiled_target = compiled(&registry);
     for (spelling, now, before_then) in corpus("postgres") {
-        assert_eq!(server_verdict(&plan, &spelling), now, "{spelling}");
+        assert_eq!(
+            server_verdict(&compiled_target, &spelling),
+            now,
+            "{spelling}"
+        );
         assert_eq!(before(&spelling), before_then, "{spelling}");
     }
 }
@@ -933,10 +942,14 @@ fn before(address: &str) -> &'static str {
 fn no_spelling_refused_before_the_one_question_is_allowed_after_it() {
     let folder = Folder::new("server-tightening");
     let registry = registry_of(&crate::pack(), &folder, Arc::new(NoSecrets));
-    let plan = compiled(&registry);
+    let compiled_target = compiled(&registry);
     for (spelling, _, _) in corpus("postgres") {
         if before(&spelling) == "away" {
-            assert_eq!(server_verdict(&plan, &spelling), "away", "{spelling}");
+            assert_eq!(
+                server_verdict(&compiled_target, &spelling),
+                "away",
+                "{spelling}"
+            );
         }
     }
 }
@@ -1093,7 +1106,8 @@ async fn a_comment_the_server_ends_at_a_carriage_return_is_refused_before_it_is_
     .await
     .unwrap();
     assert_eq!(columns, ["a", "b"]);
-    // The driver refuses a plan's statement that holds one, unsent.
+    // The driver refuses a compiled target's statement that holds one,
+    // unsent.
     scene.alter("line_item_by_key", |statement| {
         statement.text = "SELECT \"order_id\", \"item_code\" --\r, current_setting('search_path') AS \"description\"\n FROM \"order_lines\" WHERE \"order_id\" = $1 AND \"item_code\" = $2"
             .to_owned();
@@ -1278,7 +1292,8 @@ async fn discovery_reads_the_servers_catalog_and_drafts_reads_only() {
 }
 
 #[tokio::test]
-async fn the_drafted_list_returns_the_servers_rows_column_by_column_through_the_plans_outputs() {
+async fn the_drafted_list_returns_the_servers_rows_column_by_column_through_the_compiled_targets_outputs()
+ {
     let Some(mut scene) = ServerScene::new().await else {
         return;
     };
@@ -1347,12 +1362,18 @@ async fn the_drafted_list_returns_the_servers_rows_column_by_column_through_the_
             text.replace("max_rows: 1000", &format!("max_rows: {max_rows}")),
         )
         .unwrap();
-        scene.plan = compile_folder(&scene.registry, &root).unwrap().plan;
+        scene.compiled_target = compile_folder(&scene.registry, &root)
+            .unwrap()
+            .compiled_target;
         let steps = scene.binding("example_order_lines_list").act.clone();
         let mut run = scene.prepare().await;
         let observed = values(run.steps(&steps, &Values::new(), None).await.unwrap());
         run.release().await;
-        let result = super::outputs_of(&scene.plan, "example_order_lines_list", &observed);
+        let result = super::outputs_of(
+            &scene.compiled_target,
+            "example_order_lines_list",
+            &observed,
+        );
         assert_eq!(result.get("more"), Some(&Value::Bool(more)));
         let read = &stored[..usize::try_from(max_rows).unwrap()];
         let column = |name: &str| result.get(name).and_then(Value::as_list).unwrap().to_vec();
@@ -1444,7 +1465,9 @@ async fn a_table_of_moments_drafts_its_reads_and_a_missing_row_is_found_false() 
     assert!(report.open_questions.is_empty(), "{report:?}");
     assert!(report.held.is_empty(), "{report:?}");
     assert_eq!(report.written.len(), 3, "{report:?}");
-    scene.plan = compile_folder(&scene.registry, &root).unwrap().plan;
+    scene.compiled_target = compile_folder(&scene.registry, &root)
+        .unwrap()
+        .compiled_target;
 
     // What the server holds, as its own client prints it.
     let held = scene
@@ -1472,8 +1495,8 @@ async fn a_table_of_moments_drafts_its_reads_and_a_missing_row_is_found_false() 
     assert_eq!(observed.get("found"), Some(&Value::Bool(true)));
     let taken = observed.get("taken_at").and_then(Value::as_text).unwrap();
     assert!(taken.starts_with("2026-03-03T13:05:00.25"), "{taken}");
-    // The plan's own field types take what the driver gave, whole.
-    let shaped = super::outputs_of(&scene.plan, "example_readings_get", &observed);
+    // The compiled target's own field types take what the driver gave, whole.
+    let shaped = super::outputs_of(&scene.compiled_target, "example_readings_get", &observed);
     assert_eq!(shaped.get("found"), Some(&Value::Bool(true)));
     assert_eq!(
         shaped.get("taken_at"),
@@ -1488,7 +1511,7 @@ async fn a_table_of_moments_drafts_its_reads_and_a_missing_row_is_found_false() 
             .as_deref(),
         Some("0")
     );
-    let result = super::outputs_of(&scene.plan, "example_readings_get", &absent);
+    let result = super::outputs_of(&scene.compiled_target, "example_readings_get", &absent);
     assert_eq!(result.get("found"), Some(&Value::Bool(false)));
     assert_eq!(result.get("note"), Some(&Value::Null));
 }

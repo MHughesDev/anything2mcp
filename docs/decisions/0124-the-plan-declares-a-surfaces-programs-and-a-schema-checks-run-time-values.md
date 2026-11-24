@@ -57,7 +57,7 @@ A kind of surface needs a program per environment with a digest of its own; a pa
 ## Spec sections
 
 - [204. Supervising subsystems](../spec/2-kernel/204-supervising-subsystems.md)
-- [206. The compiler and the plan](../spec/2-kernel/206-the-compiler-and-the-plan.md)
+- [206. The compiler and the plan](../spec/2-kernel/206-the-compiler-and-the-compiled-target.md)
 - [306. The command pack](../spec/3-packs/306-the-command-pack.md)
 - [File formats](../reference/file-formats.md)
 - [`a2m-core`](../architecture/crates/a2m-core.md), [`a2m-files`](../architecture/crates/a2m-files.md), [`a2m-provider`](../architecture/crates/a2m-provider.md)

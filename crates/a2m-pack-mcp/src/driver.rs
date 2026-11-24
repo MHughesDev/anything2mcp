@@ -57,12 +57,12 @@ impl FarEnd {
         let address = cx.surface.surface.address.as_str();
         if let Some(program) = fields.program.as_deref() {
             if address != LOCAL_ADDRESS {
-                return Err(unsent(codes::plan_unreadable(
+                return Err(unsent(codes::compiled_target_unreadable(
                     "a surface with a local server program must have the address `stdio`",
                 )));
             }
-            // The program must be one the run's plan declares for the
-            // surface, with the digest the surface states. The supervisor
+            // The program must be one the run's compiled target declares for
+            // the surface, with the digest the surface states. The supervisor
             // asks the same when it starts a program; this asks it of a
             // program that is running already.
             let pinned = fields.digest.as_deref().and_then(parse_digest);
@@ -71,11 +71,11 @@ impl FarEnd {
             });
             if !declared {
                 return Err(unsent(codes::not_granted(
-                    "The local server program of the surface is not one the published plan declares for it.",
+                    "The local server program of the surface is not one the published compiled target declares for it.",
                 )));
             }
-            // An entry file is started only pinned, and only as the plan
-            // declares it for the surface (decision 0371).
+            // An entry file is started only pinned, and only as the compiled
+            // target declares it for the surface (decision 0371).
             let entry = match (fields.entry.as_deref(), fields.entry_digest.as_deref()) {
                 (None, None) => None,
                 (Some(entry), Some(stated)) => {
@@ -87,24 +87,24 @@ impl FarEnd {
                             });
                     if !declared {
                         return Err(unsent(codes::not_granted(
-                            "The entry file of the surface's local server is not one the published plan declares for it, pinned by its digest.",
+                            "The entry file of the surface's local server is not one the published compiled target declares for it, pinned by its digest.",
                         )));
                     }
                     Some((entry.to_owned(), stated.to_owned()))
                 }
                 _ => {
-                    return Err(unsent(codes::plan_unreadable(
+                    return Err(unsent(codes::compiled_target_unreadable(
                         "a surface names an entry file and no digest for it, or a digest and no entry file",
                     )));
                 }
             };
             if entry.is_none() && !fields.launcher_args.is_empty() {
-                return Err(unsent(codes::plan_unreadable(
+                return Err(unsent(codes::compiled_target_unreadable(
                     "a surface gives a launcher's arguments and names no entry file",
                 )));
             }
-            // Whatever the plan holds, the engine's own variables and
-            // credentials never reach a program through its environment.
+            // Whatever the compiled target holds, the engine's own variables
+            // and credentials never reach a program through its environment.
             if let Some((name, why)) = fields
                 .environment
                 .keys()
@@ -128,7 +128,7 @@ impl FarEnd {
             return Err(unsent(codes::tls_not_enabled()));
         }
         if !address.starts_with("http://") && !address.starts_with("https://") {
-            return Err(unsent(codes::plan_unreadable(
+            return Err(unsent(codes::compiled_target_unreadable(
                 "a surface of the kind `mcp` has an `http://` or `https://` address, or the address `stdio` with a program",
             )));
         }
@@ -138,12 +138,12 @@ impl FarEnd {
         // (decision 0188). A credential comes from a session, never from
         // the address (MC-1, decision 0194).
         let parsed = reqwest::Url::parse(address).map_err(|_| {
-            unsent(codes::plan_unreadable(
+            unsent(codes::compiled_target_unreadable(
                 "the surface's address is not an address",
             ))
         })?;
         if !parsed.username().is_empty() || parsed.password().is_some() {
-            return Err(unsent(codes::plan_unreadable(
+            return Err(unsent(codes::compiled_target_unreadable(
                 "the surface's address holds a user name or a password; a credential comes from a session",
             )));
         }
@@ -160,9 +160,9 @@ impl FarEnd {
 
 /// Which connection: one surface of one target in one environment, for one
 /// session at one epoch of its credentials, to one far end, in one protocol
-/// revision. Two identities never share one, and a plan that names another
-/// address, program, or revision is never served by the connection an
-/// earlier plan opened.
+/// revision. Two identities never share one, and a compiled target that names
+/// another address, program, or revision is never served by the connection an
+/// earlier compiled target opened.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct ConnKey {
     target: String,
@@ -433,7 +433,7 @@ impl McpDriver {
         let mut args: Vec<std::ffi::OsString> = Vec::new();
         if let Some((entry, stated)) = entry {
             let pinned = parse_digest(stated).ok_or_else(|| {
-                unsent(codes::plan_unreadable(
+                unsent(codes::compiled_target_unreadable(
                     "the entry file's digest is not a SHA-256 digest",
                 ))
             })?;
@@ -542,7 +542,7 @@ impl McpDriver {
     /// The connection for `key`, reused while it lives, opened otherwise.
     /// A connection of the same surface and session under another key is
     /// closed, and its program with it: its credentials were replaced, or
-    /// the plan now names another far end or revision.
+    /// the compiled target now names another far end or revision.
     async fn connection(
         &self,
         key: &ConnKey,
@@ -1036,7 +1036,7 @@ impl Driver for McpDriver {
         Box::pin(async move {
             let surface = &cx.surface.surface;
             if surface.kind != names::SURFACE_KIND {
-                return Err(unsent(codes::plan_unreadable(
+                return Err(unsent(codes::compiled_target_unreadable(
                     "the surface is not of the kind `mcp`",
                 )));
             }
@@ -1055,7 +1055,7 @@ impl Driver for McpDriver {
             {
                 return Err(unsent(codes::link_not_encrypted()));
             }
-            let mapping = Section::of(cx.plan)
+            let mapping = Section::of(cx.compiled_target)
                 .map_err(unsent)?
                 .surfaces
                 .remove(surface.name.as_str())
@@ -1091,7 +1091,7 @@ impl Driver for McpDriver {
     ) -> BoxFuture<'a, Result<StepOutcome, StepFailure>> {
         Box::pin(async move {
             let Some(state) = prepared.state::<State>() else {
-                return Err(unsent(codes::plan_unreadable(
+                return Err(unsent(codes::compiled_target_unreadable(
                     "the step was given what another driver prepared",
                 )));
             };

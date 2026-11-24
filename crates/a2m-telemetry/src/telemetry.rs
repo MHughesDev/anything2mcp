@@ -257,31 +257,38 @@ impl Telemetry {
     }
 
     /// Records one call of a tool version: its duration, and a count by
-    /// outcome. A tool version is the tool's name and the hash of its plan.
+    /// outcome. A tool version is the tool's name and the hash of its
+    /// compiled target.
     pub fn record_call(
         &self,
         tool: &OperationName,
-        plan: &Digest,
+        compiled_target: &Digest,
         outcome: CallOutcome,
         took: Duration,
     ) {
-        let version = [Attr::Tool(tool.clone()), Attr::Plan(*plan)];
+        let version = [
+            Attr::Tool(tool.clone()),
+            Attr::CompiledTarget(*compiled_target),
+        ];
         let mut collector = self.collector();
         collector.observe(CALL_DURATION, &version, took);
         match outcome {
             CallOutcome::Success => collector.count(CALL_COUNT, &version, 1),
             CallOutcome::Failed(class) => {
-                let [tool, plan] = version;
-                collector.count(CALL_COUNT, &[tool, plan, Attr::Class(class)], 1);
+                let [tool, compiled_target] = version;
+                collector.count(CALL_COUNT, &[tool, compiled_target, Attr::Class(class)], 1);
             }
         }
     }
 
     /// Records one retry within a call of a tool version.
-    pub fn record_retry(&self, tool: &OperationName, plan: &Digest) {
+    pub fn record_retry(&self, tool: &OperationName, compiled_target: &Digest) {
         self.count(
             CALL_RETRIES,
-            &[Attr::Tool(tool.clone()), Attr::Plan(*plan)],
+            &[
+                Attr::Tool(tool.clone()),
+                Attr::CompiledTarget(*compiled_target),
+            ],
             1,
         );
     }

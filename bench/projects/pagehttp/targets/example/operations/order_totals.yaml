@@ -1,0 +1,17 @@
+operation: example_order_totals_get
+title: Get an order's totals
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number shown in the application"}
+outputs:
+  lines: {type: integer}
+  total_quantity: {type: integer}
+bindings:
+  - mode: page_http
+    verb: read
+    status: verified
+    endpoint: example_order_totals_get
+description: >
+  Reads how many lines and items an order holds, by the request its summary
+  page makes by itself.

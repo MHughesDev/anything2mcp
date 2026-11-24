@@ -1,8 +1,8 @@
-//! Package 9.1, the engine's half (decision 0380): a drift a canary sees
-//! at a step names the pack entry the step refers to; that entry stops
-//! every binding of the plan that refers to it, a write among them, before
-//! anything is sent; a canary is never stopped by a drift, since it is the
-//! check of whether the binding fits again, and its pass vouches for what
+//! Package 9.1, the engine's half (decision 0380): a drift a canary sees at a
+//! step names the pack entry the step refers to; that entry stops every
+//! binding of the compiled target that refers to it, a write among them,
+//! before anything is sent; a canary is never stopped by a drift, since it is
+//! the check of whether the binding fits again, and its pass vouches for what
 //! it relied on; and a mark held to the entry's knowledge does not stop a
 //! version that changed that knowledge, a repair, while it still stops one
 //! that left it as it was.
@@ -21,7 +21,7 @@ use a2m_core::{FailureClass, Mode, OperationName, PackRef, SectionIndex, Surface
 use a2m_engine::{DriftKnowledge, DriftMark, EngineEvent, JobKind, drift_covers};
 use common::{
     FIRST_MODE, ITEM_UPSERT, ITEM_UPSERT_EXACT, ORDER_GET, SCREEN, SECOND_MODE, STOCK_GET, Scene,
-    completed, failed_as, item, plan, screens,
+    compiled_target, completed, failed_as, item, screens,
 };
 
 fn name(text: &str) -> OperationName {
@@ -61,8 +61,8 @@ fn health(scene: &Scene) -> Vec<(String, Option<FailureClass>, Vec<DriftKnowledg
 async fn a_canary_that_drifts_names_the_screen_and_the_screen_stops_the_write_before_anything_is_sent()
  {
     // The system changed under the first mode: every step through it now
-    // finds a shape the plan does not describe.
-    let canary = Scene::new(ORDER_GET, |plan| screens(plan, "v1")).await;
+    // finds a shape the compiled target does not describe.
+    let canary = Scene::new(ORDER_GET, |compiled_target| screens(compiled_target, "v1")).await;
     canary.hooks.first_mode_drifts.store(true, Ordering::SeqCst);
     let outcome = canary
         .work(
@@ -106,8 +106,11 @@ async fn a_canary_that_drifts_names_the_screen_and_the_screen_stops_the_write_be
             entry: entry.clone(),
         },
     };
-    let write = Scene::new(ITEM_UPSERT, |plan| screens(plan, "v1")).await;
-    let mut written = plan(&write.app.url(""));
+    let write = Scene::new(ITEM_UPSERT, |compiled_target| {
+        screens(compiled_target, "v1")
+    })
+    .await;
+    let mut written = compiled_target(&write.app.url(""));
     screens(&mut written, "v1");
     let covered = drift_covers(&written, std::slice::from_ref(&mark));
     assert_eq!(
@@ -135,7 +138,7 @@ async fn a_canary_that_drifts_names_the_screen_and_the_screen_stops_the_write_be
 
 #[tokio::test]
 async fn a_canary_is_never_stopped_by_a_drift_and_a_live_read_is() {
-    let scene = Scene::new(ORDER_GET, |plan| screens(plan, "v1")).await;
+    let scene = Scene::new(ORDER_GET, |compiled_target| screens(compiled_target, "v1")).await;
     scene.conditions.lock().unwrap().drifted = vec![
         (name(ORDER_GET), mode(FIRST_MODE)),
         (name(ORDER_GET), mode(SECOND_MODE)),
@@ -178,7 +181,7 @@ async fn a_canary_is_never_stopped_by_a_drift_and_a_live_read_is() {
 #[test]
 fn a_mark_does_not_stop_a_version_that_changed_its_screen_and_still_stops_one_that_did_not() {
     let address = "http://127.0.0.1:1";
-    let mut before = plan(address);
+    let mut before = compiled_target(address);
     screens(&mut before, "v1");
     let section = a2m_engine::section_digest(
         &before,
@@ -206,7 +209,7 @@ fn a_mark_does_not_stop_a_version_that_changed_its_screen_and_still_stops_one_th
         2
     );
     // The repair: the screen as its model now says it is.
-    let mut repaired = plan(address);
+    let mut repaired = compiled_target(address);
     screens(&mut repaired, "v2");
     assert!(drift_covers(&repaired, std::slice::from_ref(&mark)).is_empty());
 }
@@ -215,7 +218,7 @@ fn a_mark_does_not_stop_a_version_that_changed_its_screen_and_still_stops_one_th
 fn a_drift_no_step_named_stops_every_binding_of_its_mode_on_its_surface_until_its_binding_changes()
 {
     let address = "http://127.0.0.1:1";
-    let before = plan(address);
+    let before = compiled_target(address);
     // The read of stock refers to no entry: its binding is the knowledge.
     let stock = before
         .operations

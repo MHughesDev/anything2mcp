@@ -29,7 +29,8 @@ const MOST_ANSWER: usize = 1024 * 1024;
 /// One tool a page registered, as the browser announced it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SiteTool {
-    /// The tool's name, which is all a plan binds to besides the digest.
+    /// The tool's name, which is all a compiled target binds to besides the
+    /// digest.
     pub name: String,
     /// What the page says it does. The page's word, and untrusted text.
     pub description: String,
@@ -85,8 +86,8 @@ impl SiteTool {
     }
 }
 
-/// The digest a plan holds for a tool: the three texts, each with its
-/// length, so that no two cuts of one text are the same.
+/// The digest a compiled target holds for a tool: the three texts, each with
+/// its length, so that no two cuts of one text are the same.
 #[must_use]
 pub fn digest_of(name: &str, description: &str, input_schema: &str) -> Digest {
     let mut bytes = Vec::new();

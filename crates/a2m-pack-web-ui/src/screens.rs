@@ -1,5 +1,6 @@
 //! The `screens/` file kind for surfaces of the kind `web`: its schema, its
-//! compilation into the screens of the plan, and the lint rules over it.
+//! compilation into the screens of the compiled target, and the lint rules
+//! over it.
 //!
 //! Locators live here and nowhere else. An operation names a screen, a
 //! field, and an action; how each is found on the page is this file kind's
@@ -160,7 +161,8 @@ pub(crate) fn screen_schema() -> JsonSchema {
             "download",
             JsonSchema::object()
                 .required("most_bytes", JsonSchema::int())
-                .optional("into", JsonSchema::name()),
+                .optional("into", JsonSchema::name())
+                .optional("size_into", JsonSchema::name()),
         );
     let rows = JsonSchema::object()
         .required("locate", locate_schema())
@@ -532,9 +534,21 @@ impl Reader {
                     );
                     return None;
                 };
+                let into = stated.text("into").map(str::to_owned);
+                let size_into = stated.text("size_into").map(str::to_owned);
+                if into.is_some() && into == size_into {
+                    self.refuse(
+                        "download_invalid",
+                        &stated.at,
+                        "The download's name and its size are given to the same output.".to_owned(),
+                        "Name one output in `into:` for the file's name and another in `size_into:` for its size.",
+                    );
+                    return None;
+                }
                 Some(DownloadDecl {
                     most_bytes,
-                    into: stated.text("into").map(str::to_owned),
+                    into,
+                    size_into,
                 })
             }
             None => None,

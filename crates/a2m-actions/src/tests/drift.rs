@@ -14,7 +14,9 @@ use a2m_core::Version;
 use a2m_policy::PresenceCheck;
 use serde_json::json;
 
-use super::kernel::engine::{self, ITEM_UPSERT, ORDER_GET, screens};
+use super::kernel::engine::{
+    self, ITEM_UPSERT, ORDER_GET, SCREEN, SHEET_ENTER, STOCK_GET, screens,
+};
 use super::kernel::{Options, World, world};
 use super::runs::{item, status};
 
@@ -36,10 +38,13 @@ impl World {
     /// Publishes a version of the target whose screens are modelled as
     /// `layout`, numbered by `patch`.
     async fn publish_screens(&self, layout: &str, patch: u32) {
-        let mut plan = engine::plan(&self.app.url(""));
-        screens(&mut plan, layout);
-        plan.header.version = Version::new(1, 0, patch);
-        self.kernel.publish_plan(&plan).await.unwrap();
+        let mut compiled_target = engine::compiled_target(&self.app.url(""));
+        screens(&mut compiled_target, layout);
+        compiled_target.header.version = Version::new(1, 0, patch);
+        self.kernel
+            .publish_compiled_target(&compiled_target)
+            .await
+            .unwrap();
     }
 
     /// A canary of the read of an order: a watch of it, confirmed by its
@@ -94,6 +99,22 @@ impl World {
         panic!("the canary never ended");
     }
 
+    /// Each published tool as `tool.search` lists it, and as
+    /// `tool.describe` describes it, by name: both say the same of whether
+    /// it is available.
+    async fn listed(&self) -> std::collections::BTreeMap<String, serde_json::Value> {
+        let found = self.ok("tool.search", json!({})).await;
+        let mut tools = std::collections::BTreeMap::new();
+        for tool in found["tools"].as_array().unwrap() {
+            let name = tool["name"].as_str().unwrap().to_owned();
+            let described = self.ok("tool.describe", json!({"tool": name})).await;
+            assert_eq!(described["available"], tool["available"], "{described}");
+            assert_eq!(described["unavailable"], tool["unavailable"], "{described}");
+            tools.insert(name, tool.clone());
+        }
+        tools
+    }
+
     /// The requests the test application heard for the line item `code`.
     async fn heard_of(&self, code: &str) -> usize {
         self.app
@@ -118,6 +139,26 @@ async fn a_changed_screen_is_caught_by_a_canary_stops_the_write_and_is_repaired_
     assert_eq!(watch["state"], "paused", "{watch}");
     assert_eq!(watch["reason"], "drifted", "{watch}");
 
+    // The read the canary found drifted, through both its bindings, the
+    // write through the same screen, and the pipeline that writes through
+    // it stay listed, marked unavailable with the screen's name and when
+    // the mark was made (decision 0396). The read through no screen is
+    // available.
+    let listed = world.listed().await;
+    for stopped in [ORDER_GET, ITEM_UPSERT, SHEET_ENTER] {
+        let tool = &listed[stopped];
+        assert_eq!(tool["available"], false, "{tool}");
+        assert_eq!(tool["unavailable"]["reason"], "drift", "{tool}");
+        assert_eq!(tool["unavailable"]["knowledge"], SCREEN, "{tool}");
+        assert!(tool["unavailable"]["marked_at"].is_i64(), "{tool}");
+    }
+    assert_eq!(
+        listed[STOCK_GET]["available"], true,
+        "{}",
+        listed[STOCK_GET]
+    );
+    assert!(listed[STOCK_GET].get("unavailable").is_none());
+
     // The write through the same screen is refused before anything is
     // sent: nothing is asked of the person, and the application heard
     // nothing of the line item.
@@ -139,6 +180,11 @@ async fn a_changed_screen_is_caught_by_a_canary_stops_the_write_and_is_repaired_
     // shows now, authored and published as any version is. Nothing was
     // healed in a run.
     world.publish_screens("v2", 1).await;
+    let listed = world.listed().await;
+    assert!(
+        listed.values().all(|tool| tool["available"] == true),
+        "{listed:?}"
+    );
     let rested = world
         .call(
             "tool.call",
@@ -185,8 +231,10 @@ async fn a_canary_that_passes_again_lifts_the_mark_and_a_version_that_kept_the_s
     let watch = world.canary().await;
     assert_eq!(watch["reason"], "drifted", "{watch}");
 
-    // A version that changed nothing of the screen is stopped all the same.
+    // A version that changed nothing of the screen is stopped all the same,
+    // and listed so.
     world.publish_screens("v1", 1).await;
+    assert_eq!(world.listed().await[ITEM_UPSERT]["available"], false);
     let refused = world
         .call(
             "tool.call",
@@ -211,8 +259,61 @@ async fn a_canary_that_passes_again_lifts_the_mark_and_a_version_that_kept_the_s
     *world.hooks.screen_shows.lock().unwrap() = None;
     let watch = world.canary().await;
     assert_eq!(watch["state"], "confirmed", "{watch}");
+    assert_eq!(world.listed().await[ITEM_UPSERT]["available"], true);
     let rested = world.call("run.resume", json!({"run_id": run})).await;
     assert_eq!(rested.exit, ExitClass::PersonNeeded, "{rested:?}");
     assert_eq!(status(&rested), "needs_approval");
     world.kernel.close(CloseReason::Asked).await;
+}
+
+/// Which tools the marks make unavailable, without a run (decision 0396,
+/// point 1): a read with a second binding no mark covers is available; a
+/// write whose one binding a mark covers is not, and names the latest mark
+/// that covers it; a pipeline is unavailable when a step's operation is; a
+/// mark that cannot be read makes every tool unavailable and names nothing.
+#[test]
+fn a_tool_is_unavailable_when_every_binding_of_what_it_runs_is_stopped() {
+    use crate::drift::{Held, Marks, unavailable};
+    use a2m_engine::{DriftKnowledge, DriftMark, section_digest};
+
+    let mut compiled_target = engine::compiled_target("http://127.0.0.1:1");
+    screens(&mut compiled_target, "v1");
+    let get = compiled_target
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == ORDER_GET)
+        .unwrap();
+    let first = &get.bindings[0];
+    let reference = first.act[0].refers_to.clone().unwrap();
+    let mark = |found_at: i64| Held {
+        mark: DriftMark {
+            operation: get.name.clone(),
+            mode: first.mode.clone(),
+            surface: compiled_target.surface(first.surface).unwrap().name.clone(),
+            knowledge: DriftKnowledge::Entry {
+                section: section_digest(&compiled_target, &reference).unwrap(),
+                entry: SCREEN.to_owned(),
+            },
+        },
+        entry: SCREEN.to_owned(),
+        found_at,
+    };
+    let marks = Marks::Read(vec![mark(5), mark(9)]);
+    let stopped = unavailable(&compiled_target, &marks);
+    let name = |text: &str| a2m_core::OperationName::new(text).unwrap();
+    assert!(!stopped.contains_key(&name(ORDER_GET)), "{stopped:?}");
+    assert!(!stopped.contains_key(&name(STOCK_GET)), "{stopped:?}");
+    let write = &stopped[&name(ITEM_UPSERT)];
+    assert_eq!(write.knowledge, SCREEN);
+    assert_eq!(write.marked_at, Some(9));
+    assert_eq!(stopped[&name(SHEET_ENTER)], *write);
+
+    let every = unavailable(&compiled_target, &Marks::Unreadable);
+    for tool in &compiled_target.tools {
+        let why = every.get(&tool.name);
+        assert!(why.is_some(), "{} is listed available", tool.name);
+        assert_eq!(why.unwrap().knowledge, "");
+        assert_eq!(why.unwrap().marked_at, None);
+    }
+    assert!(unavailable(&compiled_target, &Marks::Read(Vec::new())).is_empty());
 }

@@ -405,6 +405,74 @@ async fn a_lost_lease_is_fenced_and_quarantined_before_anyone_else_gets_the_run(
     );
 }
 
+/// Spec section 224 and decision 0416: a runner whose process ended and
+/// that starts again holds nothing. Its leases are declared lost at once,
+/// not when they run out; each run is fenced and stopped, and its reconcile
+/// waits out only the job's longest step, the time a step the ended
+/// process sent can still be in flight. Another runner's lease is kept.
+#[tokio::test]
+async fn the_leases_of_a_runner_whose_process_ended_are_lost_at_once_and_reconciled_after_its_longest_step()
+ {
+    let stand = Stand::new("ended").await;
+    let one = stand.hello(1).await;
+    let two = stand.hello(2).await;
+    let (run, job) = stand.admit(write(1, "w")).await;
+    let lease = stand.claim_one(one).await;
+    assert_eq!(lease.job, job);
+    let fence = lease.fence().unwrap();
+    start_writing(&stand.store, fence, "order-1", true).await;
+    let (other_run, other_job) = stand.admit(read(2, "r")).await;
+    let other = stand.claim_one(two).await;
+    assert_eq!(other.job, other_job);
+
+    // The process that was runner one ends, and starts again: well inside
+    // the lease, which a sweep keeps.
+    let stand = stand.restart().await;
+    stand.advance(1);
+    assert!(stand.sched.sweep().await.unwrap().lost.is_empty());
+    let report = stand.sched.runner_ended(one).await.unwrap();
+    assert_eq!(report.lost, vec![job]);
+    assert_eq!(report.reconcile.len(), 1);
+    let reconcile = report.reconcile[0];
+    assert_eq!(stand.sched.job(job).await.unwrap().state, JobState::Lost);
+    assert_eq!(stand.run_state(run), "stopped");
+    assert_eq!(
+        stand.stored(&format!(
+            "SELECT state_class || '/' || state_code FROM runs WHERE id = '{run}'"
+        )),
+        "possible_commit/runner_lost"
+    );
+    // What the ended process does under its old lease is refused.
+    refused(
+        stand.sched.heartbeat(&lease.lease_ref()).await,
+        &codes::LEASE_SUPERSEDED,
+    );
+    // The other runner's lease is its own still.
+    stand.sched.heartbeat(&other.lease_ref()).await.unwrap();
+    assert_ne!(stand.run_state(other_run), "stopped");
+
+    // The reconcile is handed out after the job's longest step, ten
+    // seconds here, and not the sixty of a runner that may only be frozen.
+    assert_eq!(
+        stand.sched.job(reconcile).await.unwrap().available_at,
+        stand.after(10)
+    );
+    stand.advance(9);
+    assert!(stand.claim(one, 1).await.is_empty());
+    stand.advance(1);
+    let again = stand.claim_one(one).await;
+    assert_eq!(again.job, reconcile);
+    assert_eq!(again.requirements.kind, JobKind::Reconcile);
+    assert!(again.requirements.verify_after_loss);
+    assert!(again.epoch > lease.epoch);
+
+    // Said again, with nothing more held, it changes nothing.
+    let report = stand.sched.runner_ended(two).await.unwrap();
+    assert_eq!(report.lost, vec![other_job]);
+    assert!(report.reconcile.is_empty());
+    assert!(stand.sched.runner_ended(two).await.unwrap().lost.is_empty());
+}
+
 /// Spec section 224: when the machine's clock jumps, leases are unaffected,
 /// because they are measured on a steady clock.
 #[tokio::test]

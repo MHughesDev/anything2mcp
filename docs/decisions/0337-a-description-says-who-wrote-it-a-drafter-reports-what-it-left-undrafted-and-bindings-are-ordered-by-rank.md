@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-23
 
-**Changes:** `a2m-core` (the plan's tool), `a2m-files` (the compiler, the drafter, the compiler set), `a2m-pack-http` (its drafting rule), [file formats](../reference/file-formats.md), [section 206](../spec/2-kernel/206-the-compiler-and-the-plan.md), the designs of `a2m-files` and `a2m-pack-http`. Nothing is decided here about the engine's walk of the plan.
+**Changes:** `a2m-core` (the plan's tool), `a2m-files` (the compiler, the drafter, the compiler set), `a2m-pack-http` (its drafting rule), [file formats](../reference/file-formats.md), [section 206](../spec/2-kernel/206-the-compiler-and-the-compiled-target.md), the designs of `a2m-files` and `a2m-pack-http`. Nothing is decided here about the engine's walk of the plan.
 
 ## Context
 

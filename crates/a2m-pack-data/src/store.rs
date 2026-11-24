@@ -205,7 +205,8 @@ pub(crate) enum Refusal {
     /// The store denied the identity a right.
     Denied,
     /// The statement does not prepare, or takes other parameters than the
-    /// plan says: a table, a column, or the statement's shape changed.
+    /// compiled target says: a table, a column, or the statement's shape
+    /// changed.
     Shape,
     /// The store cannot be opened or reached.
     Unavailable,
@@ -367,14 +368,14 @@ pub(crate) trait Conn: Send {
     /// Whether a transaction is open, as the store reports it.
     fn in_transaction(&self) -> bool;
 
-    /// Prepares a statement of a plan without running it. The connection
-    /// refuses one that is not a plain read or a keyed write, whatever its
-    /// words are.
+    /// Prepares a statement of a compiled target without running it. The
+    /// connection refuses one that is not a plain read or a keyed write,
+    /// whatever its words are.
     fn describe(&mut self, text: &str) -> Result<Shape, Refusal>;
 
-    /// Runs a statement of a plan with bound parameters. A connection the
-    /// store holds read-only runs only a statement that the store says
-    /// changes nothing and that returns columns.
+    /// Runs a statement of a compiled target with bound parameters. A
+    /// connection the store holds read-only runs only a statement that the
+    /// store says changes nothing and that returns columns.
     fn run(&mut self, text: &str, params: &[Bound], limits: &RunLimits) -> Result<Ran, Refusal>;
 
     /// Commits the open transaction.

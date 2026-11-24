@@ -43,7 +43,7 @@ These are examples. Each pack's section defines its own.
 | Driver | Pack code that carries out the steps of one or more modes. Only the engine calls it | The browser interface driver; the HTTP driver |
 | Auth provider | Code for one sign-in method: how a session of one kind is made, checked, renewed, and ended. Only the session keeper calls it | A single sign-on provider |
 | Session | The signed-in state of one identity on one target in one environment, shared by many runs and held on its home runner ([section 215](../2-kernel/215-sessions-and-the-session-keeper.md)) | One person's session on `example` |
-| Plan | The compiled, hashed form of a target version. The engine runs only plans ([section 206](../2-kernel/206-the-compiler-and-the-plan.md)) | The plan of `example@12` |
+| Compiled target | The compiled, hashed form of a target version. The engine runs only compiled targets ([section 206](../2-kernel/206-the-compiler-and-the-compiled-target.md)) | The compiled target of `example@12` |
 | Version | An immutable, tested, published snapshot of a target's files | `example@12` |
 | Run | One call of an operation or pipeline, with its ledger, trace, and result | `r_8f21` |
 | Finding | Something learned about a target, with its subject, an evidence level, its source, and its limitations. A finding never runs ([section 218](../2-kernel/218-discovery-and-findings.md)) | "The surface `api.example.com` publishes a description listing a read of an order" |

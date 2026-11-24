@@ -194,11 +194,11 @@ async fn the_drafted_reads_compile_and_return_what_the_stand_holds() {
             .join("example_order_values_undecided.yaml")
             .is_file()
     );
-    scene.plan = match compile_at(&scene.registry, root.path()) {
-        Ok(compiled) => compiled.plan,
+    scene.compiled_target = match compile_at(&scene.registry, root.path()) {
+        Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the drafts do not compile:\n{}", common::shown(&problems)),
     };
-    scene.surface = common::surface_of(&scene.plan, &scene.program);
+    scene.surface = common::surface_of(&scene.compiled_target, &scene.program);
     let order = Order::example();
     let got = scene
         .read_or_explain("example_example_order_get", Duration::from_secs(10))

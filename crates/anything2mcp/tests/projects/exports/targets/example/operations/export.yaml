@@ -1,0 +1,17 @@
+operation: example_export_file
+title: Download the export
+effect: irreversible
+commit_points: 1
+inputs: {}
+outputs:
+  file: {type: text}
+  size: {type: integer}
+bindings:
+  - mode: ui
+    verb: submit
+    status: verified
+    screen: export
+    action: download
+    read_back: {screen: export}
+description: >
+  Presses the link that offers the export file, which the screen declares as a download of at most a hundred thousand bytes, and gives the file's name and size.

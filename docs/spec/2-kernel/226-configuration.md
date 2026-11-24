@@ -20,7 +20,7 @@ Configurability stops at safety. The rules below are compiled into the binary. M
 
 | # | No configuration can | Held by |
 | --- | --- | --- |
-| 1 | Put a model, or any improvising step, into a run | There is no such key. A run carries out a compiled plan ([section 207](207-the-engine-loop.md)) |
+| 1 | Put a model, or any improvising step, into a run | There is no such key. A run carries out a compiled target ([section 207](207-the-engine-loop.md)) |
 | 2 | Let a write go ahead without an intent recorded first, or count it done without a read-back compared after normalization | The engine loop and the ledger's rules ([section 208](208-runs-the-ledger-and-resume.md)). A write that cannot be read back is `irreversible` |
 | 3 | Let a write run with no ledger, or let anything run when the store or policy cannot be trusted | Fail closed ([section 224](224-when-the-engine-itself-fails.md)) |
 | 4 | Let a secret reach a caller, a log, a trace, a capture, or a fixture | The redactor cannot be switched off, and cookie and authorization values are dropped at every capture level ([section 217](217-traces-evidence-and-repair.md)). No setting removes a redaction rule; one that adds a rule, `evidence.redaction.extra`, is not built |
@@ -34,7 +34,7 @@ Configurability stops at safety. The rules below are compiled into the binary. M
 | 12 | Point the engine at a person's everyday browser profile or another program's sign-in store | The web pack accepts only a profile directory the engine created ([decision 0031](../../decisions/0031-the-browser-always-runs-with-a-profile-the-engine-owns.md)) |
 | 13 | Remove or bypass a kill switch | Checked first on every decision |
 | 14 | Turn a named stop into a guess: a fallback between providers, a best-effort mode, a retry of a class whose rule forbids one | The failure classes decide what happens next ([section 207](207-the-engine-loop.md)) |
-| 15 | Run what was not published, or use a faster binding before it passed shadow and a person promoted it | The registry of hashes ([section 206](206-the-compiler-and-the-plan.md)) |
+| 15 | Run what was not published, or use a faster binding before it passed shadow and a person promoted it | The registry of hashes ([section 206](206-the-compiler-and-the-compiled-target.md)) |
 | 16 | Turn a command into a shell, or accept a statement built from an input | The command and data packs ([section 306](../3-packs/306-the-command-pack.md), [section 307](../3-packs/307-the-data-pack.md)) |
 | 17 | Widen policy from a lower layer | Policy only narrows ([section 212](212-policy-and-approvals.md)) |
 
@@ -101,8 +101,8 @@ A protected setting is never reported as in force when it is not. A policy setti
 | `providers.enabled` | Enabling a provider that starts a process or reaches a network, or whose effects are only `declared` | [Section 203](203-the-provider-contract.md), [section 213](213-effects-hazards-and-consent.md) |
 | `plugins.allow_unsigned` | Allowing an unsigned plug-in, by digest | [Section 202](202-kernel-and-packs.md) |
 | `providers.attach` | Attaching to a process the runtime did not start | Section 213 |
-| `engine.shadow.matches_to_promote` | Lowering the matches a binding needs | [Section 206](206-the-compiler-and-the-plan.md) |
-| `engine.shadow.time_limit_ms` | Raising it | [Section 206](206-the-compiler-and-the-plan.md) |
+| `engine.shadow.matches_to_promote` | Lowering the matches a binding needs | [Section 206](206-the-compiler-and-the-compiled-target.md) |
+| `engine.shadow.time_limit_ms` | Raising it | [Section 206](206-the-compiler-and-the-compiled-target.md) |
 | `network.allowed_hosts`, `network.trust_roots`, `network.proxy` | Adding a destination, a certificate authority, or a proxy | [Section 603](../6-running-it/603-networking.md) |
 | `server.local_http` | Opening a local port on a workstation | [Section 222](222-front-doors-and-the-local-engine.md) |
 | `telemetry.export`, `telemetry.crash_reports`, `updates.check`, `server.webhooks`, `alerts.destinations` | Sending anything off the machine | [Section 605](../6-running-it/605-packaging-and-release.md) |
@@ -148,7 +148,7 @@ Each table gives the key, its type or values, its default on one machine, its sc
 | --- | --- | --- | --- | --- |
 | `store.database` (not built) | A SQLite path, or a Postgres address with a secret reference | One SQLite file in the data directory | I | no |
 | `store.blobs` (not built) | A directory, or an object store address | The data directory | I | no |
-| `store.free_space_floor` (not built) | Bytes | A draft: 1 GiB; below it the kernel is to be `degraded` ([section 224](224-when-the-engine-itself-fails.md)). No free space is checked yet | I | no |
+| `store.free_space_floor` | Bytes | A draft: 1 GiB; with fewer bytes free on the disk that holds the evidence blobs, the kernel is `degraded` with the part `evidence_space`: writes stop and reads keep the lowest capture level ([section 224](224-when-the-engine-itself-fails.md)). Measured on Linux and macOS; not yet on Windows, where no free space is checked | I | no |
 | `vault.backend` | `os_keystore`; `passphrase`, which derives the root key from the passphrase the engine is started with, of at least 16 bytes, in the environment variable `A2M_VAULT_PASSPHRASE`; or an external secrets manager by reference | `os_keystore` where the build has an operating-system key store (Windows, macOS); `passphrase` where it has none (Linux) ([decision 0220](../../decisions/0220-a-first-run-on-linux-needs-no-administrators-file.md)) | I | no |
 | `vault.root_key` (not built) | A key reference | The key store's own | I | no |
 | `files.allowed_roots` | The word `<project>`, which stands for any folder that holds a project file, and full paths of folders | `<project>` | U | yes |
@@ -256,7 +256,7 @@ The order of bindings is not a setting. It is the operation's, or each mode's ra
 
 | Key | Values | Default | Scope | Protected |
 | --- | --- | --- | --- | --- |
-| `network.egress` (not built) | `declared_surfaces`, its one value; the identity provider and a configured control plane are always added. Nothing reads the key: the destination check is the plan's | `declared_surfaces` | I | no |
+| `network.egress` (not built) | `declared_surfaces`, its one value; the identity provider and a configured control plane are always added. Nothing reads the key: the destination check is the compiled target's | `declared_surfaces` | I | no |
 | `network.allowed_hosts` (not built) | Further hosts, such as a monitoring endpoint | None | I | yes |
 | `network.proxy` (not built) | An outbound proxy | None | I | yes |
 | `network.trust_roots` | Further certificate authorities: PEM files, each inside a root of `files.allowed_roots`, read when the engine starts. Checked before the operating system's roots ([decision 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)) | None: the operating system's roots, or the bundled ones on a machine with none | I | yes |

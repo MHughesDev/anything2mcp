@@ -470,9 +470,9 @@ impl Lowering for McpLowering {
                     })
                 }),
         );
-        // A launcher and the entry file it runs are the fixed pair the
-        // review shows for a script: the launcher, its fixed arguments, and
-        // the file with its digest (decision 0371).
+        // A launcher and the entry file it runs are shown as a launcher: the
+        // launcher, its fixed arguments, and the entry file with its digest;
+        // nothing the entry file loads is pinned (decisions 0371, 0398).
         let run = match (
             surface.doc.text(crate::mapping::ENTRY),
             surface
@@ -480,9 +480,9 @@ impl Lowering for McpLowering {
                 .text(crate::mapping::ENTRY_DIGEST)
                 .and_then(parse_digest),
         ) {
-            (Some(entry), Some(script_digest)) => ProgramRun::Script {
-                interpreter: path.to_owned(),
-                interpreter_digests: digests,
+            (Some(entry), Some(entry_digest)) => ProgramRun::Launcher {
+                launcher: path.to_owned(),
+                launcher_digests: digests,
                 arguments: surface
                     .doc
                     .get(crate::mapping::LAUNCHER_ARGS)
@@ -491,8 +491,8 @@ impl Lowering for McpLowering {
                     .iter()
                     .filter_map(|item| item.as_text().map(str::to_owned))
                     .collect(),
-                script: entry.to_owned(),
-                script_digest,
+                entry: entry.to_owned(),
+                entry_digest,
             },
             (Some(_), None) => return Statement::NotStated,
             (None, _) => ProgramRun::Program {
@@ -590,13 +590,13 @@ impl Lowering for McpLowering {
             let text = operation
                 .outputs()
                 .iter()
-                .find(|plan| plan.name == output.key.value)
-                .is_some_and(|plan| holds_text(&plan.ty));
+                .find(|compiled| compiled.name == output.key.value)
+                .is_some_and(|compiled| holds_text(&compiled.ty));
             let marked = output
                 .value
                 .text("type")
                 .and_then(|name| target.field_type(name))
-                .is_some_and(|field_type| field_type.plan.untrusted);
+                .is_some_and(|field_type| field_type.compiled.untrusted);
             if text && !marked {
                 problems.push(Diagnostic::error(
                     names::UNTRUSTED_UNMARKED,

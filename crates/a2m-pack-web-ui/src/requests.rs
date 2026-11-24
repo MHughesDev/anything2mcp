@@ -5,7 +5,12 @@
 //! An entry is written in the form of an entry of the endpoint catalog,
 //! and holds a part of it: the name under `endpoint`, the surface, the
 //! method, the path, the effect, the answers under `responses`, and the
-//! shape of the answer under `response_schema`, in the same closed words.
+//! shape of the answer under `response_schema`, read by the provider
+//! contract's shared shape (`a2m_provider::shape`, decision 0394). A page
+//! request takes, in this version, a part of that shape: an object whose
+//! `properties` each state only a `type`, other than `any`, with `required`
+//! and `additionalProperties`; any other word the shared shape takes is
+//! refused here, where it is written.
 //! It adds one field the catalog has no word for: `page`, the path of the
 //! page that makes the request, whose session it uses.
 //!
@@ -21,87 +26,39 @@
 //! built: such an entry does not compile. A write entry is written by a
 //! person; no drafting rule writes one.
 //!
+//! An asserted read is a request by a method other than `GET` that a person
+//! says changes nothing, such as a search behind `POST`: `effect: read` and
+//! `read_asserted: true`, the word and the meaning of the HTTP pack's key
+//! (decision 0394, point 2). It carries no body, or one whose fields
+//! `request_schema` closes with `additionalProperties: false`, each value a
+//! `type` and, for a string, an `enum`, written as `request_encoding` says.
+//! No mode sends it: the web pack's drivers hand it to an observing tab, so
+//! that the page may send it itself while a tool reads, and only from a
+//! published version (decision 0270). No drafting rule writes the key.
+//!
 //! The entries live here, in a kind this pack owns, because the drafter
 //! lets a pack draft only the kinds it owns, and the catalog is the HTTP
 //! pack's.
 
 use std::collections::BTreeMap;
 
-use a2m_core::{FileKindName, PackPayload, SurfaceKind};
+use a2m_core::{EnvironmentKind, FileKindName, PackPayload, SurfaceKind};
 use a2m_files::{
     CompiledSection, DefinedName, Diagnostics, Doc, ExprSite, FileKind, JsonSchema, KindContext,
     Located, Place, Stage,
 };
+use a2m_pack_web_browser::{SafeRequest, SafeRequests};
+pub(crate) use a2m_provider::shape::Kind;
+use a2m_provider::shape::Shape;
+use a2m_provider::{Posture, PrepareContext, StepFailure};
 use serde::{Deserialize, Serialize};
 
 use crate::codes::shown;
 use crate::model::{PAYLOAD_FORMAT, Segment};
-use crate::screens::{WEB_SURFACE, parse_reach, problem};
+use crate::screens::{PACK, WEB_SURFACE, parse_reach, problem};
 
 /// The name of the file kind.
 pub const REQUEST_KIND: FileKindName = FileKindName::fixed("page_request");
-
-/// The kinds a value of an answer may be declared as, in the words of the
-/// endpoint catalog's shapes.
-const KINDS: &[&str] = &[
-    "string", "integer", "number", "boolean", "null", "object", "array",
-];
-
-/// What one declared value of an answer is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Kind {
-    String,
-    Integer,
-    Number,
-    Boolean,
-    Null,
-    Object,
-    Array,
-}
-
-impl Kind {
-    fn from_word(word: &str) -> Option<Self> {
-        Some(match word {
-            "string" => Self::String,
-            "integer" => Self::Integer,
-            "number" => Self::Number,
-            "boolean" => Self::Boolean,
-            "null" => Self::Null,
-            "object" => Self::Object,
-            "array" => Self::Array,
-            _ => return None,
-        })
-    }
-
-    pub(crate) const fn word(self) -> &'static str {
-        match self {
-            Self::String => "string",
-            Self::Integer => "integer",
-            Self::Number => "number",
-            Self::Boolean => "boolean",
-            Self::Null => "null",
-            Self::Object => "object",
-            Self::Array => "array",
-        }
-    }
-
-    /// Whether a JSON value is of this kind. An integer is a number with
-    /// no fraction that fits in 64 bits.
-    pub(crate) fn fits(self, value: &serde_json::Value) -> bool {
-        use serde_json::Value as Json;
-        match (self, value) {
-            (Self::String, Json::String(_))
-            | (Self::Boolean, Json::Bool(_))
-            | (Self::Null, Json::Null)
-            | (Self::Object, Json::Object(_))
-            | (Self::Array, Json::Array(_))
-            | (Self::Number, Json::Number(_)) => true,
-            (Self::Integer, Json::Number(number)) => number.is_i64(),
-            _ => false,
-        }
-    }
-}
 
 /// One answer an entry declares: a status, and the top-level fields of its
 /// JSON body that must hold exactly these texts.
@@ -156,6 +113,64 @@ pub(crate) struct WriteForm {
     pub refused: Vec<Answer>,
 }
 
+/// One field of an asserted read's body: its kind, and for a string the
+/// texts it may be, any when empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct AssertedField {
+    pub kind: Kind,
+    #[serde(default)]
+    pub one_of: Vec<String>,
+}
+
+/// The body of an asserted read: how it is written, and its fields, which
+/// are all it may hold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct AssertedBody {
+    /// `json` or `form`.
+    pub encoding: String,
+    pub fields: BTreeMap<String, AssertedField>,
+    pub required: Vec<String>,
+}
+
+/// What a read by a method other than `GET`, asserted to change nothing,
+/// lets the page send (decision 0394, point 2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct AssertedRead {
+    /// The method, such as `POST`.
+    pub method: String,
+    /// The body; `None` for a request that carries none.
+    pub body: Option<AssertedBody>,
+}
+
+impl AssertedRead {
+    /// The body as the browser engine matches it.
+    pub(crate) fn safe_body(&self) -> a2m_pack_web_browser::SafeBody {
+        let Some(body) = &self.body else {
+            return a2m_pack_web_browser::SafeBody::None;
+        };
+        let mut shape = Shape::of(Kind::Object);
+        shape.closed = true;
+        shape.required.clone_from(&body.required);
+        shape.properties = body
+            .fields
+            .iter()
+            .map(|(name, field)| {
+                let mut value = Shape::of(field.kind);
+                value.one_of.clone_from(&field.one_of);
+                (name.clone(), value)
+            })
+            .collect();
+        a2m_pack_web_browser::SafeBody::Shaped {
+            encoding: if body.encoding == "form" {
+                a2m_pack_web_browser::BodyEncoding::Form
+            } else {
+                a2m_pack_web_browser::BodyEncoding::Json
+            },
+            shape,
+        }
+    }
+}
+
 /// One compiled entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PageRequest {
@@ -182,9 +197,27 @@ pub(crate) struct PageRequest {
     /// What a write sends; `None` for a read.
     #[serde(default)]
     pub write: Option<WriteForm>,
+    /// For a read by a method other than `GET`, what a person asserted it
+    /// sends; `None` for a read by `GET` and for a write.
+    #[serde(default)]
+    pub asserted: Option<AssertedRead>,
 }
 
 impl PageRequest {
+    /// The shape of the answer, as the shared shape checks it: an object
+    /// whose declared values are each of one kind.
+    pub(crate) fn answer(&self) -> Shape {
+        let mut shape = Shape::of(Kind::Object);
+        shape.properties = self
+            .properties
+            .iter()
+            .map(|(name, kind)| (name.clone(), Shape::of(*kind)))
+            .collect();
+        shape.required.clone_from(&self.required);
+        shape.closed = self.closed;
+        shape
+    }
+
     /// Whether an answer's status is one that is the record.
     pub(crate) fn is_ok(&self, status: u16) -> bool {
         if self.ok.is_empty() {
@@ -228,15 +261,6 @@ fn answer_schema() -> JsonSchema {
         .optional("when", JsonSchema::map_of(JsonSchema::text()))
 }
 
-fn shape_schema() -> JsonSchema {
-    let value = JsonSchema::object().required("type", JsonSchema::words(KINDS));
-    JsonSchema::object()
-        .required("type", JsonSchema::words(&["object"]))
-        .required("properties", JsonSchema::map_of(value))
-        .optional("required", JsonSchema::list(JsonSchema::text()))
-        .optional("additionalProperties", JsonSchema::bool())
-}
-
 fn schema() -> JsonSchema {
     let place = |words: &[&str]| {
         let mut either = Vec::new();
@@ -262,8 +286,9 @@ fn schema() -> JsonSchema {
             "anti_forgery",
             JsonSchema::either(vec![JsonSchema::words(&["none"]), token]),
         )
-        .optional("request_schema", shape_schema())
+        .optional("request_schema", JsonSchema::any())
         .optional("request_encoding", JsonSchema::words(&["json", "form"]))
+        .optional("read_asserted", JsonSchema::bool())
         .optional(
             "responses",
             JsonSchema::object()
@@ -271,7 +296,7 @@ fn schema() -> JsonSchema {
                 .optional("absent", statuses)
                 .optional("refused", JsonSchema::list(answer_schema())),
         )
-        .required("response_schema", shape_schema())
+        .required("response_schema", JsonSchema::any())
 }
 
 /// The file kind.
@@ -289,55 +314,87 @@ impl RequestKind {
     }
 }
 
-/// A shape, as `response_schema` and `request_schema` write it: the
-/// declared names and their kinds, the names required, and whether it is
-/// closed.
-struct Shape {
-    properties: BTreeMap<String, Kind>,
-    required: Vec<String>,
-    closed: bool,
-}
+/// The words a page request's shape takes at its top, and in each of its
+/// properties, in this version.
+const TOP_WORDS: &[&str] = &["type", "properties", "required", "additionalProperties"];
 
-fn shape_of(shape: &Located<Doc>, problems: &mut Diagnostics) -> Option<Shape> {
-    let mut properties = BTreeMap::new();
-    for property in shape
+/// A shape, as `response_schema` and `request_schema` write it: read by the
+/// shared shape, then held to the part of it a page request takes, in which
+/// a property may also state an `enum` when `with_enum` says so (the body of
+/// an asserted read). Each problem is pushed at its place.
+fn shape_of(written: &Located<Doc>, with_enum: bool, problems: &mut Diagnostics) -> Option<Shape> {
+    let mut refuse = |at: &Place, message: String, fix: &str| {
+        problems.push(problem(
+            "request_shape_invalid",
+            Stage::Resolve,
+            at,
+            message,
+            fix,
+        ));
+    };
+    let shape = match Shape::from_doc(written) {
+        Ok(shape) => shape,
+        Err(why) => {
+            refuse(
+                &why.at,
+                why.message,
+                "Write the shape with `type: object`, `properties` that each state a `type`, `required`, and `additionalProperties` only.",
+            );
+            return None;
+        }
+    };
+    let mut usable = true;
+    if shape.kind != Kind::Object || written.get("properties").is_none() {
+        refuse(
+            &written.at,
+            "A page request's shape is an object that lists its `properties`.".to_owned(),
+            "Write `type: object` and `properties:` with each value the body or the answer holds.",
+        );
+        usable = false;
+    }
+    for entry in written.entries() {
+        if !TOP_WORDS.contains(&entry.key.value.as_str()) {
+            refuse(
+                &entry.key.at,
+                format!(
+                    "A page request's shape does not take `{}` in this version.",
+                    shown(&entry.key.value)
+                ),
+                "Remove it.",
+            );
+            usable = false;
+        }
+    }
+    for property in written
         .get("properties")
         .map(Located::entries)
         .unwrap_or_default()
     {
-        let kind = property.value.text("type").and_then(Kind::from_word)?;
-        properties.insert(property.key.value.clone(), kind);
-    }
-    let mut required = Vec::new();
-    for item in shape
-        .get("required")
-        .map(Located::items)
-        .unwrap_or_default()
-    {
-        let name = item.as_text()?;
-        if !properties.contains_key(name) {
-            problems.push(problem(
-                "request_shape_invalid",
-                Stage::Resolve,
-                &item.at,
-                format!(
-                    "The shape requires `{}`, which it does not list under `properties`.",
-                    shown(name)
-                ),
-                "List it under `properties`, or take it out of `required`.",
-            ));
+        let flat = property
+            .value
+            .entries()
+            .iter()
+            .all(|word| word.key.value == "type" || (with_enum && word.key.value == "enum"));
+        if !flat || property.value.text("type") == Some("any") {
+            refuse(
+                &property.value.at,
+                if with_enum {
+                    format!(
+                        "The value `{}` of an asserted read's body states only its `type`, which is not `any`, and for a string any `enum`.",
+                        shown(&property.key.value)
+                    )
+                } else {
+                    format!(
+                        "The value `{}` of a page request's shape states only its `type`, which is not `any`, in this version.",
+                        shown(&property.key.value)
+                    )
+                },
+                "Write the value as `{type: string}`, or as another kind other than `any`.",
+            );
+            usable = false;
         }
-        required.push(name.to_owned());
     }
-    let closed = shape
-        .get("additionalProperties")
-        .and_then(Located::as_bool)
-        .is_some_and(|open| !open);
-    Some(Shape {
-        properties,
-        required,
-        closed,
-    })
+    usable.then_some(shape)
 }
 
 fn statuses(doc: Option<&Located<Doc>>) -> Vec<u16> {
@@ -413,12 +470,17 @@ fn write_form(
         );
         return None;
     };
-    let shape = shape_of(request, problems)?;
+    let shape = shape_of(request, false, problems)?;
     let mut refuse = |rule: &'static str, at: &Place, message: String, fix: &str| {
         problems.push(problem(rule, Stage::Analyze, at, message, fix));
     };
     let mut usable = true;
-    for (name, kind) in &shape.properties {
+    let fields: BTreeMap<String, Kind> = shape
+        .properties
+        .iter()
+        .map(|(name, value)| (name.clone(), value.kind))
+        .collect();
+    for (name, kind) in &fields {
         if !a2m_pack_web_browser::plain_write_name(name) {
             refuse(
                 "request_shape_invalid",
@@ -481,7 +543,7 @@ fn write_form(
                 }
                 (None, Some(field))
                     if a2m_pack_web_browser::plain_write_name(field)
-                        && !shape.properties.contains_key(field) =>
+                        && !fields.contains_key(field) =>
                 {
                     Some(("field".to_owned(), field.to_owned()))
                 }
@@ -532,10 +594,86 @@ fn write_form(
     usable.then(|| WriteForm {
         method: method.to_owned(),
         encoding: doc.text("request_encoding").unwrap_or("json").to_owned(),
-        fields: shape.properties,
+        fields,
         required: shape.required,
         token,
         refused,
+    })
+}
+
+/// What an asserted read lets the page send, checked: no body, or one whose
+/// `request_schema` closes its top level, in the declared encoding. `None`
+/// with a problem for each part that cannot be matched.
+fn asserted_read(
+    doc: &Located<Doc>,
+    method: &str,
+    problems: &mut Diagnostics,
+) -> Option<AssertedRead> {
+    let encoding = doc.text("request_encoding");
+    let Some(request) = doc.get("request_schema") else {
+        if let Some(stray) = doc.get("request_encoding") {
+            problems.push(problem(
+                "read_sends",
+                Stage::Analyze,
+                &stray.at,
+                "An asserted read with no `request_schema` carries no body, and the entry states how one is written.".to_owned(),
+                "Remove `request_encoding`, or declare the body under `request_schema`.",
+            ));
+            return None;
+        }
+        return Some(AssertedRead {
+            method: method.to_owned(),
+            body: None,
+        });
+    };
+    let shape = shape_of(request, true, problems)?;
+    let mut usable = true;
+    if !shape.closed {
+        problems.push(problem(
+            "request_shape_invalid",
+            Stage::Analyze,
+            &request.at,
+            "An asserted read's `request_schema` closes its top level with `additionalProperties: false`: a body holds only the fields a person asserted (decision 0394).".to_owned(),
+            "Add `additionalProperties: false`, with every field the page sends listed under `properties`.",
+        ));
+        usable = false;
+    }
+    let form = encoding == Some("form");
+    for (name, value) in &shape.properties {
+        if form && value.kind != Kind::String {
+            problems.push(problem(
+                "request_shape_invalid",
+                Stage::Analyze,
+                &request.at,
+                format!(
+                    "The body's field `{}` is a `{}`, and every value of a form is text.",
+                    shown(name),
+                    value.kind.word()
+                ),
+                "Declare the field as `{type: string}`, with an `enum` if its texts are few.",
+            ));
+            usable = false;
+        }
+    }
+    usable.then(|| AssertedRead {
+        method: method.to_owned(),
+        body: Some(AssertedBody {
+            encoding: encoding.unwrap_or("json").to_owned(),
+            fields: shape
+                .properties
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        AssertedField {
+                            kind: value.kind,
+                            one_of: value.one_of.clone(),
+                        },
+                    )
+                })
+                .collect(),
+            required: shape.required,
+        }),
     })
 }
 
@@ -576,32 +714,56 @@ fn entry(doc: &Located<Doc>, surface: &str, problems: &mut Diagnostics) -> Optio
     let responses = doc.get("responses");
     let ok = statuses(responses.and_then(|r| r.get("ok")));
     let absent = statuses(responses.and_then(|r| r.get("absent")));
-    // A read is a GET, and a GET only reads.
-    if writes == (method == "GET") {
+    // A read is a GET, and a GET only reads; a read by another method is one
+    // a person asserts changes nothing (decision 0394, point 2).
+    let get = method == "GET";
+    let asserted_key = doc.get("read_asserted");
+    if let Some(stray) = asserted_key.filter(|_| writes || get) {
+        problems.push(problem(
+            "request_effect_mismatch",
+            Stage::Analyze,
+            &stray.at,
+            "`read_asserted` belongs only to a page request marked `effect: read` whose method is not `GET`: it is a person's word that such a request changes nothing.".to_owned(),
+            "Remove `read_asserted`.",
+        ));
+        return None;
+    }
+    let asserts = !writes && !get && asserted_key.and_then(Located::as_bool) == Some(true);
+    if !asserts && writes == get {
         problems.push(problem(
             "request_effect_mismatch",
             Stage::Analyze,
             &doc.at,
             format!(
-                "A page request with `{}` is marked `effect: {}`: a GET only reads, and every other method writes.",
+                "A page request with `{}` is marked `effect: {}`: a GET only reads, and every other method writes unless the entry says with `read_asserted: true` that it only reads.",
                 shown(method),
                 if writes { "write" } else { "read" }
             ),
-            "Write a read with `method: GET` and `effect: read`, and a write with `method: PUT` and `effect: write`.",
+            "Write a read with `method: GET` and `effect: read`, and a write with `method: PUT` and `effect: write`; or, once the system's owner confirms that the request changes nothing, add `read_asserted: true` to the read.",
         ));
         return None;
     }
+    let mut asserted = None;
     let write = if writes {
         Some(write_form(doc, method, &ok, problems))
     } else {
-        for key in ["anti_forgery", "request_schema", "request_encoding"] {
+        let sends: &[&str] = if asserts {
+            &["anti_forgery"]
+        } else {
+            &["anti_forgery", "request_schema", "request_encoding"]
+        };
+        for key in sends {
             if let Some(stray) = doc.get(key) {
                 problems.push(problem(
                     "read_sends",
                     Stage::Analyze,
                     &stray.at,
                     format!("A read sends no body and no token, and the entry states `{key}`."),
-                    "Remove it, or write the entry as a write.",
+                    if asserts {
+                        "Remove it: an asserted read carries no token."
+                    } else {
+                        "Remove it, or write the entry as a write."
+                    },
                 ));
             }
         }
@@ -614,20 +776,31 @@ fn entry(doc: &Located<Doc>, surface: &str, problems: &mut Diagnostics) -> Optio
                 "Remove it.",
             ));
         }
+        if asserts {
+            asserted = Some(asserted_read(doc, method, problems));
+        }
         None
     };
-    let shape = shape_of(doc.get("response_schema")?, problems)?;
+    let answer = shape_of(doc.get("response_schema")?, false, problems)?;
     Some(PageRequest {
         surface: surface.to_owned(),
         path: path?,
         page: page?,
-        properties: shape.properties,
-        required: shape.required,
-        closed: shape.closed,
+        properties: answer
+            .properties
+            .iter()
+            .map(|(name, value)| (name.clone(), value.kind))
+            .collect(),
+        required: answer.required,
+        closed: answer.closed,
         ok,
         absent,
         write: match write {
             Some(form) => Some(form?),
+            None => None,
+        },
+        asserted: match asserted {
+            Some(read) => Some(read?),
             None => None,
         },
     })
@@ -650,11 +823,14 @@ impl FileKind for RequestKind {
         &self.schema
     }
 
-    /// An entry describes a write unless it is plainly a read: `GET` and
-    /// `effect: read`. A drafting rule may draft only one that is (decision
-    /// 0206): a write entry is written by a person.
+    /// An entry describes a write unless it is plainly a read: `GET`,
+    /// `effect: read`, and no `read_asserted`. A drafting rule may draft only
+    /// one that is (decision 0206): a write entry, and an asserted read, are
+    /// written by a person (decision 0394, point 2).
     fn writes(&self, doc: &Located<Doc>) -> bool {
-        !(doc.text("method") == Some("GET") && doc.text("effect") == Some("read"))
+        !(doc.text("method") == Some("GET")
+            && doc.text("effect") == Some("read")
+            && doc.get("read_asserted").is_none())
     }
 
     fn names(&self, doc: &Located<Doc>) -> Vec<Located<DefinedName>> {
@@ -713,5 +889,124 @@ impl FileKind for RequestKind {
                     "Report this to the web pack's author.",
                 ))
             })
+    }
+}
+
+/// The asserted reads of the surface a run is prepared for, and whether the
+/// run hands them to its observing tab (decision 0394, point 4).
+///
+/// They are handed under decision 0270's rule: only from a published
+/// version, whose plan's version is not the draft version, and only in a
+/// live run or, in a try or a shadow, in an environment of kind `test`.
+/// Never under the drafts, and never in discovery.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AssertedReads {
+    /// Each asserted read of the surface: its entry's name, its path, and
+    /// what it lets through.
+    entries: Vec<(String, Vec<Segment>, AssertedRead)>,
+    /// Whether the run hands them to the tab.
+    handed: bool,
+}
+
+impl AssertedReads {
+    /// The asserted reads of the run's surface, read from the compiled
+    /// target's page requests.
+    pub(crate) fn of(cx: &PrepareContext<'_>) -> Result<Self, StepFailure> {
+        let surface = &cx.surface.surface;
+        let mut entries = Vec::new();
+        for section in &cx.compiled_target.packs {
+            let own = section.pack == PACK
+                && section.kind == REQUEST_KIND
+                && section.surface_kind == surface.kind;
+            if !own {
+                continue;
+            }
+            if section.format != PAYLOAD_FORMAT {
+                return Err(crate::codes::not_usable(format!(
+                    "its page requests are in format {}, and this pack reads format {PAYLOAD_FORMAT}",
+                    section.format
+                )));
+            }
+            let decoded = section
+                .payload
+                .decode::<RequestSection>()
+                .map_err(|_| crate::codes::not_usable("its page requests do not decode"))?;
+            for (name, entry) in decoded {
+                if entry.surface != surface.name.as_str() {
+                    continue;
+                }
+                if let Some(asserted) = entry.asserted {
+                    entries.push((name, entry.path, asserted));
+                }
+            }
+        }
+        let published = cx.compiled_target.header.version != a2m_files::DRAFT_VERSION;
+        let in_test = || {
+            cx.compiled_target
+                .environment_named(&cx.surface.environment)
+                .is_some_and(|environment| environment.kind == EnvironmentKind::Test)
+        };
+        let handed = published
+            && match cx.posture {
+                Posture::Live => true,
+                Posture::Sandbox { .. } => in_test(),
+                Posture::Discovery => false,
+            };
+        Ok(Self { entries, handed })
+    }
+
+    /// What the observing tab lets through on the surface at `origin`: the
+    /// asserted reads when they are handed, and nothing otherwise.
+    pub(crate) fn safe_requests(&self, origin: &str) -> SafeRequests {
+        if !self.handed {
+            return SafeRequests::default();
+        }
+        SafeRequests {
+            allowed: self
+                .entries
+                .iter()
+                .map(|(_, path, asserted)| SafeRequest {
+                    method: asserted.method.clone(),
+                    origin: origin.to_owned(),
+                    path: pattern(path),
+                    body: asserted.safe_body(),
+                })
+                .collect(),
+        }
+    }
+
+    /// The next step of a stop on a request the tab failed by `method` at
+    /// `path`, when an asserted read of the surface names that method and
+    /// that path; `None` when none does.
+    pub(crate) fn next_step(&self, method: &str, path: &str) -> Option<String> {
+        let sent: Vec<&str> = path
+            .split(['?', '#'])
+            .next()
+            .unwrap_or_default()
+            .trim_start_matches('/')
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        let (name, _, _) = self.entries.iter().find(|(_, template, asserted)| {
+            asserted.method == method
+                && template.len() == sent.len()
+                && template
+                    .iter()
+                    .zip(&sent)
+                    .all(|(part, segment)| match part {
+                        Segment::Literal(text) => text == segment,
+                        Segment::Hole(_) => true,
+                    })
+        })?;
+        let name = shown(name);
+        Some(if self.handed {
+            format!(
+                "The page request `{name}` asserts a read by this method at this path, and the request the page sent did not fit it: its body, its media type, a query, or a header that overrides its method. Look at what the page sends; widen the entry only if the system's owner confirms that what it sends changes nothing."
+            )
+        } else {
+            format!(
+                "The page request `{name}` asserts that this request only reads, and an observing tab lets it through only from a published version: in a live run, or in a try or a shadow in an environment of kind `test`; never under the drafts, and never in discovery. Publish the target, and run the tool from the published version."
+            )
+        })
     }
 }

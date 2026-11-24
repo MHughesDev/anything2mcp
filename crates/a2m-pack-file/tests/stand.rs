@@ -10,7 +10,7 @@
 
 mod common;
 
-use a2m_core::BindingPlan;
+use a2m_core::CompiledBinding;
 use a2m_core::{Decimal, Digest, FailureClass, Value, Values};
 use a2m_ledger::Store;
 use a2m_provider::{Access, DriverHandle, Posture, Prepared, Sent, StepFailure, StepOutcome};
@@ -102,7 +102,7 @@ async fn write(
 /// The test decides what happens before the save, and before the confirm.
 struct Begun<'a> {
     scene: &'a Scene,
-    binding: &'a BindingPlan,
+    binding: &'a CompiledBinding,
     handle: DriverHandle,
     prepared: Prepared,
     grant: Granted,
@@ -1762,20 +1762,24 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
     for file in &questioned {
         assert!(folder.join(file).is_file(), "{file}");
     }
-    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+    scene.compiled_target = common::compile(&folder, scene.registry.compiler_set())
         .unwrap_or_else(|problems| panic!("{problems:?}"))
-        .plan;
+        .compiled_target;
     let untrusted = scene
-        .plan
+        .compiled_target
         .field_types
         .iter()
         .position(|field_type| field_type.name == a2m_files::UNTRUSTED_TEXT)
         .unwrap();
-    assert!(scene.plan.field_types[untrusted].untrusted);
+    assert!(scene.compiled_target.field_types[untrusted].untrusted);
     let normalizer = a2m_expr::Normalizer::load(
         scene
-            .plan
-            .expression(scene.plan.field_types[untrusted].normalizer.unwrap())
+            .compiled_target
+            .expression(
+                scene.compiled_target.field_types[untrusted]
+                    .normalizer
+                    .unwrap(),
+            )
             .unwrap(),
     )
     .unwrap();
@@ -1787,18 +1791,18 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
             .read_operation(operation, &Values::new())
             .await
             .unwrap();
-        let result = common::outputs_of(&scene.plan, operation, last_values(&observed));
-        let plan = scene
-            .plan
+        let result = common::outputs_of(&scene.compiled_target, operation, last_values(&observed));
+        let compiled = scene
+            .compiled_target
             .operations
             .iter()
             .find(|found| found.name.as_str() == operation)
             .unwrap();
         // Each output is marked untrusted, but whether more rows were left.
-        for output in &plan.outputs {
+        for output in &compiled.outputs {
             let marked = output
                 .field_type
-                .is_some_and(|index| scene.plan.field_types[index.get()].untrusted);
+                .is_some_and(|index| scene.compiled_target.field_types[index.get()].untrusted);
             assert_eq!(marked, output.name != "truncated", "{}", output.name);
         }
         assert_eq!(result.get("truncated"), Some(&Value::Bool(false)));
@@ -1826,7 +1830,7 @@ async fn the_drafted_list_reads_every_row_as_marked_text_and_a_write_waits_for_t
         .await
         .unwrap();
     let result = common::outputs_of(
-        &scene.plan,
+        &scene.compiled_target,
         "example_adjustments_list",
         last_values(&observed),
     );
@@ -1915,17 +1919,24 @@ async fn the_drafted_document_names_the_surface_its_file_was_observed_on() {
     for question in &report.open_questions {
         let _ = std::fs::remove_file(folder.join(question.file.as_str()));
     }
-    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+    scene.compiled_target = common::compile(&folder, scene.registry.compiler_set())
         .unwrap_or_else(|problems| panic!("{problems:?}"))
-        .plan;
-    assert_eq!(scene.plan.surfaces[0].name.as_str(), "config_files");
+        .compiled_target;
+    assert_eq!(
+        scene.compiled_target.surfaces[0].name.as_str(),
+        "config_files"
+    );
     let (_, surface) = scene.binding("example_stock_list");
     assert_eq!(surface.surface.name.as_str(), "price_files");
     let observed = scene
         .read_operation("example_stock_list", &Values::new())
         .await
         .unwrap();
-    let result = common::outputs_of(&scene.plan, "example_stock_list", last_values(&observed));
+    let result = common::outputs_of(
+        &scene.compiled_target,
+        "example_stock_list",
+        last_values(&observed),
+    );
     let stored = scene.stand.stored_rows(seed::STOCK_CSV, ',').unwrap();
     let codes = result.get("item_code").and_then(Value::as_list).unwrap();
     assert_eq!(codes.len(), stored.len() - 1);
@@ -2095,15 +2106,15 @@ async fn a_folder_is_discovered_to_its_depth_and_its_drafted_reads_list_what_the
     );
 
     // The drafted list gives what the stand holds.
-    scene.plan = common::compile(&dir, scene.registry.compiler_set())
+    scene.compiled_target = common::compile(&dir, scene.registry.compiler_set())
         .unwrap_or_else(|problems| panic!("{problems:?}"))
-        .plan;
+        .compiled_target;
     let observed = scene
         .read_operation("example_inbox_files_list", &Values::new())
         .await
         .unwrap();
     let result = common::outputs_of(
-        &scene.plan,
+        &scene.compiled_target,
         "example_inbox_files_list",
         last_values(&observed),
     );
@@ -2129,7 +2140,11 @@ async fn a_folder_is_discovered_to_its_depth_and_its_drafted_reads_list_what_the
         )
         .await
         .unwrap();
-    let one = common::outputs_of(&scene.plan, "example_inbox_files_get", last_values(&one));
+    let one = common::outputs_of(
+        &scene.compiled_target,
+        "example_inbox_files_get",
+        last_values(&one),
+    );
     let stored = scene.stand.bytes(seed::INBOX_DEEP).unwrap().unwrap();
     assert_eq!(
         one.get("size"),
@@ -2399,9 +2414,9 @@ async fn settings_files_are_discovered_by_key_and_shape_drafted_as_reads_and_no_
     for question in &drafted.open_questions {
         let _ = std::fs::remove_file(dir.join(question.file.as_str()));
     }
-    scene.plan = common::compile(&dir, scene.registry.compiler_set())
+    scene.compiled_target = common::compile(&dir, scene.registry.compiler_set())
         .unwrap_or_else(|problems| panic!("{problems:?}"))
-        .plan;
+        .compiled_target;
     let read = |operation: &'static str| {
         let scene = &scene;
         async move {
@@ -2409,7 +2424,7 @@ async fn settings_files_are_discovered_by_key_and_shape_drafted_as_reads_and_no_
                 .read_operation(operation, &Values::new())
                 .await
                 .unwrap();
-            common::outputs_of(&scene.plan, operation, last_values(&observed))
+            common::outputs_of(&scene.compiled_target, operation, last_values(&observed))
         }
     };
     let stored =
@@ -2475,14 +2490,18 @@ async fn a_growing_file_is_discovered_drafted_and_read_from_the_start_through_th
         "{written:?}"
     );
     assert!(drafted.refused.is_empty() && drafted.open_questions.is_empty());
-    scene.plan = common::compile(&dir, scene.registry.compiler_set())
+    scene.compiled_target = common::compile(&dir, scene.registry.compiler_set())
         .unwrap_or_else(|problems| panic!("{problems:?}"))
-        .plan;
+        .compiled_target;
     let observed = scene
         .read_operation("example_orders_read", &Values::new())
         .await
         .unwrap();
-    let first = common::outputs_of(&scene.plan, "example_orders_read", last_values(&observed));
+    let first = common::outputs_of(
+        &scene.compiled_target,
+        "example_orders_read",
+        last_values(&observed),
+    );
     // The complete lines the stand holds, by its own bytes.
     let stored = scene.stand.bytes(seed::ORDERS_LOG).unwrap().unwrap();
     let mut lines: Vec<&[u8]> = stored.split(|byte| *byte == b'\n').collect();
@@ -2503,7 +2522,11 @@ async fn a_growing_file_is_discovered_drafted_and_read_from_the_start_through_th
         .read_operation("example_orders_read", &inputs(&[("position", position)]))
         .await
         .unwrap();
-    let next = common::outputs_of(&scene.plan, "example_orders_read", last_values(&observed));
+    let next = common::outputs_of(
+        &scene.compiled_target,
+        "example_orders_read",
+        last_values(&observed),
+    );
     assert_eq!(
         next.get("lines")
             .and_then(Value::as_list)
@@ -2663,7 +2686,7 @@ async fn the_driver_itself_refuses_a_save_where_nothing_may_be_written_or_that_i
             run: grant.fence.run,
             epoch: grant.fence.epoch,
             surface: &surface,
-            plan: &scene.plan,
+            compiled_target: &scene.compiled_target,
             posture,
             deadline: Deadline::after(std::time::Duration::from_secs(30)),
             redact: &a2m_core::NoSecrets,
@@ -2945,12 +2968,12 @@ async fn a_drafted_workbook_list_reads_each_cell_as_stored_and_a_formula_as_its_
     for question in &report.open_questions {
         let _ = std::fs::remove_file(folder.join(question.file.as_str()));
     }
-    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+    scene.compiled_target = common::compile(&folder, scene.registry.compiler_set())
         .unwrap_or_else(|problems| panic!("{problems:?}"))
-        .plan;
+        .compiled_target;
     let list = "example_price_list_price_table_list";
     let observed = scene.read_operation(list, &Values::new()).await.unwrap();
-    let result = common::outputs_of(&scene.plan, list, last_values(&observed));
+    let result = common::outputs_of(&scene.compiled_target, list, last_values(&observed));
     let column = |name: &str| result.get(name).and_then(Value::as_list).unwrap().to_vec();
     assert_eq!(
         column("item_code"),
@@ -3036,14 +3059,18 @@ async fn a_column_named_as_a_secret_is_never_drafted_as_a_field_or_an_output() {
     for question in &report.open_questions {
         let _ = std::fs::remove_file(folder.join(question.file.as_str()));
     }
-    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+    scene.compiled_target = common::compile(&folder, scene.registry.compiler_set())
         .unwrap_or_else(|problems| panic!("{problems:?}"))
-        .plan;
+        .compiled_target;
     let observed = scene
         .read_operation("example_accounts_list", &Values::new())
         .await
         .unwrap();
-    let result = common::outputs_of(&scene.plan, "example_accounts_list", last_values(&observed));
+    let result = common::outputs_of(
+        &scene.compiled_target,
+        "example_accounts_list",
+        last_values(&observed),
+    );
     assert!(result.get("client_secret").is_none() && result.get("passwordhint").is_none());
     assert_eq!(
         result.get("label").and_then(Value::as_list).unwrap().len(),
@@ -3069,12 +3096,12 @@ async fn a_drafted_list_of_delimited_text_ends_at_the_end_of_the_data_not_at_an_
     for question in &report.open_questions {
         let _ = std::fs::remove_file(folder.join(question.file.as_str()));
     }
-    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+    scene.compiled_target = common::compile(&folder, scene.registry.compiler_set())
         .unwrap_or_else(|problems| panic!("{problems:?}"))
-        .plan;
+        .compiled_target;
     let list = "example_gaps_list";
     let observed = scene.read_operation(list, &Values::new()).await.unwrap();
-    let result = common::outputs_of(&scene.plan, list, last_values(&observed));
+    let result = common::outputs_of(&scene.compiled_target, list, last_values(&observed));
     // The data, read by the stand's own reader, row by row.
     let stored = scene.stand.stored_rows(FILE, ',').unwrap();
     let (headers, rows) = stored.split_first().unwrap();
@@ -3092,13 +3119,13 @@ async fn a_drafted_list_of_delimited_text_ends_at_the_end_of_the_data_not_at_an_
         }
     }
     assert_eq!(result.get("truncated"), Some(&Value::Bool(false)));
-    let plan = scene
-        .plan
+    let compiled_target = scene
+        .compiled_target
         .operations
         .iter()
         .find(|found| found.name.as_str() == list)
         .unwrap();
-    for output in &plan.outputs {
+    for output in &compiled_target.outputs {
         assert_eq!(
             output.may_be_absent,
             output.name != "truncated",
@@ -3148,12 +3175,12 @@ async fn a_workbook_saved_with_no_table_is_drafted_as_the_rows_under_its_header_
     for question in &report.open_questions {
         let _ = std::fs::remove_file(folder.join(question.file.as_str()));
     }
-    scene.plan = common::compile(&folder, scene.registry.compiler_set())
+    scene.compiled_target = common::compile(&folder, scene.registry.compiler_set())
         .unwrap_or_else(|problems| panic!("{problems:?}"))
-        .plan;
+        .compiled_target;
     let list = "example_office_parts_list";
     let observed = scene.read_operation(list, &Values::new()).await.unwrap();
-    let result = common::outputs_of(&scene.plan, list, last_values(&observed));
+    let result = common::outputs_of(&scene.compiled_target, list, last_values(&observed));
     let column = |name: &str| result.get(name).and_then(Value::as_list).unwrap().to_vec();
     // What was written into the package, row by row: an unwritten cell is
     // no value, and every row up to the last is read.

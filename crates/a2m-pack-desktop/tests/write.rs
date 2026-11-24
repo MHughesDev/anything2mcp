@@ -1,9 +1,13 @@
 //! Writes through the desktop driver against the stand, on a session of
-//! the test's own (Linux), through the registry's driver handle, with real
+//! the test's own (Linux) or the stand's window in a process of its own
+//! (Windows and macOS), through the registry's driver handle, with real
 //! intent tokens from a real store. Every test asks the stand what it
 //! stored, how many times Save stored, and every value set into each
-//! field; none proves a write by the pack's own read alone. On every other
-//! system a write stops before anything is sent.
+//! field; none proves a write by the pack's own read alone. The faults of
+//! an application that exits after Save, a late confirmation, and a second
+//! window are the Linux stand's only, so those tests run on Linux; the
+//! others run on all three systems (decision 0399). On every other system
+//! a write stops before anything is sent.
 
 #![allow(
     clippy::unwrap_used,
@@ -15,8 +19,8 @@ mod common;
 
 const UPDATE: &str = "example_order_update";
 
-#[cfg(target_os = "linux")]
-mod on_linux {
+#[cfg(any(target_os = "linux", windows, target_os = "macos"))]
+mod on_each_system {
     use std::time::Duration;
 
     use a2m_core::{FailureClass, Value, Values};
@@ -69,7 +73,7 @@ mod on_linux {
     /// the write intended: the engine's question on resume.
     fn landed(scene: &Scene, back: &Values, values: &Values) -> bool {
         ["customer", "status"].iter().all(|output| {
-            let rule = normalizer(&scene.plan, UPDATE, output);
+            let rule = normalizer(&scene.compiled_target, UPDATE, output);
             rule.normalize(back.get(output).unwrap())
                 .unwrap()
                 .agrees_with(&rule.normalize(values.get(output).unwrap()).unwrap())
@@ -174,6 +178,7 @@ mod on_linux {
         assert_eq!(scene.desk().truth().writes, 1);
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test(flavor = "multi_thread")]
     async fn a_write_in_doubt_is_reconciled_by_reading_before_writing_again() {
         // Save stores, then the application exits before it confirms.
@@ -267,6 +272,7 @@ mod on_linux {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test(flavor = "multi_thread")]
     async fn a_late_confirmation_ends_the_wait_by_its_event() {
         let Some(scene) = Scene::start("late-save").await else {
@@ -374,6 +380,38 @@ mod on_linux {
         assert_eq!(scene.desk().truth().secret_reads, 0);
     }
 
+    /// On Windows and macOS, where the stand's application does not exit
+    /// after Save: Save stores nothing and says nothing; the resume reads
+    /// the window afresh, finds the write did not land, and writes once.
+    #[cfg(any(windows, target_os = "macos"))]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_silent_save_is_in_doubt_and_the_resume_writes_once() {
+        let Some(scene) = Scene::start("silent").await else {
+            return;
+        };
+        let values = inputs("Example Traders", "held");
+        scene.desk().fault(&Fault::SaveSilently).unwrap();
+        let doubt = act(&scene, &values, Duration::from_millis(1500))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            stopped(&doubt),
+            (
+                FailureClass::PossibleCommit,
+                "no_confirmation",
+                Sent::Unknown
+            )
+        );
+        assert_eq!(scene.desk().truth().stores, 0);
+        let back = read_back(&scene, &values).await;
+        assert!(!landed(&scene, &back, &values), "{back:?}");
+        act(&scene, &values, WITHIN).await.unwrap();
+        let truth = scene.desk().truth();
+        assert_eq!((truth.writes, truth.stores), (2, 1));
+        assert!(landed(&scene, &read_back(&scene, &values).await, &values));
+    }
+
+    #[cfg(target_os = "linux")]
     #[tokio::test(flavor = "multi_thread")]
     async fn a_second_window_with_the_same_field_is_never_written() {
         // Of the same title: no window can be told apart, and nothing is
@@ -453,6 +491,9 @@ mod on_linux {
         let truth = scene.desk().truth();
         assert!(truth.sets.is_empty() && truth.writes == 0, "{truth:?}");
 
+        // On Windows and macOS a test process has one desktop at a time,
+        // which the scene above holds until it is gone.
+        drop(scene);
         let Some(scene) = Scene::start("dialog").await else {
             return;
         };
@@ -500,8 +541,9 @@ mod on_linux {
     }
 }
 
-/// On every system but Linux, a write stops before anything is sent.
-#[cfg(not(target_os = "linux"))]
+/// On every system but Linux, Windows, and macOS, a write stops before
+/// anything is sent.
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_write_stops_before_anything_is_sent_where_it_is_not_built() {
     use a2m_core::{FailureClass, Values};

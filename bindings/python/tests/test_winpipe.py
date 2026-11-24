@@ -267,6 +267,8 @@ class RealPipeTests(unittest.TestCase):
             finally:
                 engine.terminate()
                 engine.wait(timeout=30)
+                if engine.stderr is not None:
+                    engine.stderr.close()
 
 
 if __name__ == "__main__":

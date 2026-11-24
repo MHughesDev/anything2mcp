@@ -1,9 +1,9 @@
 //! Type checking: every expression is checked once, against the names its
-//! place declares, before it can go into a plan.
+//! place declares, before it can go into a compiled target.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use a2m_core::{Decimal, FieldOf, PlanExpr, ValueType};
+use a2m_core::{CompiledExpr, Decimal, FieldOf, ValueType};
 
 use crate::error::{ExprError, Span};
 use crate::functions;
@@ -13,7 +13,7 @@ use crate::syntax::{self, BinaryOp, Kind, MacroKind, Node, UnaryOp};
 
 /// The type of an expression or of a name: one of `a2m-core`'s value types,
 /// or not known. An unknown type is allowed while drafting; it cannot go into
-/// a plan.
+/// a compiled target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Checked {
     /// A stated type.
@@ -31,8 +31,8 @@ use Checked::{Dyn, Known};
 pub struct TypeEnv {
     names: BTreeMap<String, Checked>,
     library: LibraryVersion,
-    /// True only when a plan's expression is read back: every name is then
-    /// taken as declared, with a type not known.
+    /// True only when a compiled target's expression is read back: every name
+    /// is then taken as declared, with a type not known.
     open: bool,
 }
 
@@ -76,7 +76,8 @@ impl TypeEnv {
     }
 
     /// Declares a name whose type is not known yet. An expression that reads
-    /// it may compile to an unknown type, which cannot go into a plan.
+    /// it may compile to an unknown type, which cannot go into a compiled
+    /// target.
     ///
     /// # Errors
     ///
@@ -107,7 +108,7 @@ impl TypeEnv {
 }
 
 /// A checked expression, in memory, for the compiler's use. Never stored as
-/// it is: the plan holds [`Compiled::to_plan_expr`].
+/// it is: the compiled target holds [`Compiled::to_compiled_expr`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Compiled {
     source: String,
@@ -149,21 +150,22 @@ impl Compiled {
         self.library
     }
 
-    /// The plan's form: the canonical text, the type, and the library version.
+    /// The compiled target's form: the canonical text, the type, and the
+    /// library version.
     ///
     /// # Errors
     ///
     /// `expression_type_error` when the result's type is not known, so that
-    /// nothing unknown reaches a plan.
-    pub fn to_plan_expr(&self) -> Result<PlanExpr, ExprError> {
+    /// nothing unknown reaches a compiled target.
+    pub fn to_compiled_expr(&self) -> Result<CompiledExpr, ExprError> {
         match &self.result {
-            Known(result) => Ok(PlanExpr {
+            Known(result) => Ok(CompiledExpr {
                 source: self.source.clone(),
                 result: result.clone(),
                 library: self.library.get(),
             }),
             Dyn => Err(ExprError::type_error(
-                "the expression's type is not known, so it cannot go into a plan",
+                "the expression's type is not known, so it cannot go into a compiled target",
                 Span::new(0, u32::try_from(self.source.len()).unwrap_or(u32::MAX)),
             )
             .with_fix("State the type of every name the expression reads.")),

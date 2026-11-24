@@ -1,6 +1,6 @@
 //! Shared types for Anything2MCP: the vocabularies, checked names,
 //! identifiers, values, failures and the tables that declare their codes, findings, the secret wrapper, and the
-//! compiled plan as data.
+//! compiled target as data.
 //!
 //! Everything here is the same whatever kind of system is being integrated.
 //! A word with a fixed set of values is an enum whose names are the ones the
@@ -23,6 +23,7 @@ mod vocabulary;
 mod canonical;
 mod code_book;
 pub mod codes;
+mod compiled_target;
 mod decimal;
 mod digest;
 mod effect;
@@ -32,7 +33,6 @@ mod finding;
 mod ident;
 mod kind;
 mod notice;
-mod plan;
 mod redact;
 mod scope;
 mod secret;
@@ -54,6 +54,19 @@ pub mod __name {
 
 pub use canonical::{CanonicalJson, PackPayload};
 pub use code_book::{CodeBook, CodeEntry, Passes, ThenAction};
+pub use compiled_target::{
+    AddressOverride, ApproveWrites, AuthSetting, COMPILED_TARGET_FORMAT, CaptureLevel, Checkpoint,
+    CodeLabel, CompiledAuth, CompiledBinding, CompiledEnvironment, CompiledExpr, CompiledFieldType,
+    CompiledIdentity, CompiledInput, CompiledOperation, CompiledOutput, CompiledPipeline,
+    CompiledProbe, CompiledRate, CompiledSource, CompiledSurface, CompiledTarget,
+    CompiledTargetHeader, CompiledTest, CompiledTool, CredentialUse, DecimalMark, DecisionPoint,
+    DeclaredProgram, DescriptionBy, DriftRisk, EncodedCompiledTarget, EnvironmentIndex,
+    EnvironmentKind, ExprIndex, FailsAs, FieldBase, FieldFormat, FieldTypeIndex, IdentityStrategy,
+    InputIndex, OperationIndex, PackRef, PackSection, PermissionManifest, PipelineIndex,
+    PipelineLimits, PipelineStep, SectionIndex, Sensitivity, SignInMode, Stands, Step, StepArg,
+    SurfaceIndex, TargetSection, TestKind, ToolAnnotations, ToolIndex, ToolRuns, WhitespaceRule,
+    ZoneRule, acknowledgement_may_stand,
+};
 pub use decimal::{Decimal, Rounding};
 pub use digest::{Digest, FieldHasher, InvalidDigest};
 pub use effect::{EffectClass, Hazard};
@@ -75,18 +88,6 @@ pub use ident::{
 pub use kind::{Archetype, Mode};
 pub use name::{InvalidName, UnknownName};
 pub use notice::SurfaceNotice;
-pub use plan::{
-    AddressOverride, ApproveWrites, AuthPlan, AuthSetting, BindingPlan, CaptureLevel, Checkpoint,
-    CodeLabel, CredentialUse, DecimalMark, DecisionPoint, DeclaredProgram, DescriptionBy,
-    DriftRisk, EncodedPlan, EnvironmentIndex, EnvironmentKind, EnvironmentPlan, ExprIndex, FailsAs,
-    FieldBase, FieldFormat, FieldTypeIndex, FieldTypePlan, IdentityPlan, IdentityStrategy,
-    InputIndex, InputPlan, OperationIndex, OperationPlan, OutputPlan, PLAN_FORMAT, PackRef,
-    PackSection, PermissionManifest, PipelineIndex, PipelineLimits, PipelinePlan, PipelineStep,
-    Plan, PlanExpr, PlanHeader, ProbePlan, RatePlan, SectionIndex, Sensitivity, SignInMode,
-    SourcePlan, Stands, Step, StepArg, SurfaceIndex, SurfacePlan, TargetPlan, TestKind, TestPlan,
-    ToolAnnotations, ToolIndex, ToolPlan, ToolRuns, WhitespaceRule, ZoneRule,
-    acknowledgement_may_stand,
-};
 pub use redact::{
     DigestPurpose, KeyedDigest, NoSecrets, REDACTED, Redact, hmac_sha256, keyed_digest_under,
 };

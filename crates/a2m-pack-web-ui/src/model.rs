@@ -1,13 +1,14 @@
-//! What the pack writes into a plan and its driver reads back: compiled
-//! screens, and the payload of each step. The kernel stores and hashes
-//! these and never decodes them.
+//! What the pack writes into a compiled target and its driver reads back:
+//! compiled screens, and the payload of each step. The kernel stores and
+//! hashes these and never decodes them.
 
 use std::collections::BTreeMap;
 
 use a2m_pack_web_browser::{By, Primitive, Query, ReadWhat, TextMatch};
 use serde::{Deserialize, Serialize};
 
-/// The version of the shapes below. A plan written in another is refused.
+/// The version of the shapes below. A compiled target written in another is
+/// refused.
 pub(crate) const PAYLOAD_FORMAT: u16 = 1;
 
 /// Every screen of the target's web surfaces, by name.
@@ -346,6 +347,17 @@ pub(crate) struct DownloadDecl {
     pub most_bytes: u64,
     /// The output that takes the name of the file the engine made.
     pub into: Option<String>,
+    /// The output that takes the size of the file, in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_into: Option<String>,
+}
+
+impl DownloadDecl {
+    /// The outputs the download fills: values of the engine's own making,
+    /// which no read of the page can give (the download record).
+    pub(crate) fn outputs(&self) -> impl Iterator<Item = &str> {
+        self.into.iter().chain(&self.size_into).map(String::as_str)
+    }
 }
 
 /// A dialog of the browser, such as a confirmation before saving, that an

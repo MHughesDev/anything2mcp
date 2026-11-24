@@ -109,7 +109,7 @@ impl World {
             settings,
             paths: Paths::under(folder.path()),
             place: StorePlace::Memory,
-            key_store: Arc::new(MemoryKeyStore::with_random(Counted::new())),
+            key_store: Arc::new(MemoryKeyStore::with_random(Counted::apart())),
             clock: Arc::clone(&clock),
             random: Counted::new(),
             os_user: USER.to_owned(),
@@ -142,7 +142,7 @@ impl World {
             kernel.start_runner_loop(4).await.unwrap();
         }
         kernel
-            .publish_plan(&engine::plan(&app.url("")))
+            .publish_compiled_target(&engine::compiled_target(&app.url("")))
             .await
             .unwrap();
         Self {

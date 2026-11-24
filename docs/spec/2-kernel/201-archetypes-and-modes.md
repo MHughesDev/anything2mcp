@@ -79,7 +79,7 @@ Discovery itself is [section 218](218-discovery-and-findings.md).
 
 ## Steps each archetype adds
 
-Steps are the fixed instructions a plan is made of ([steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md)). The existing kinds stay. Each archetype beyond interface and request adds a small set, registered by its first pack as step kinds of its mode and fixed in the phase that builds that pack.
+Steps are the fixed instructions a compiled target is made of ([steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md)). The existing kinds stay. Each archetype beyond interface and request adds a small set, registered by its first pack as step kinds of its mode and fixed in the phase that builds that pack.
 
 | Archetype | Steps |
 | --- | --- |
@@ -144,14 +144,14 @@ Five further packs are designed and not built. Each proposes one mode, which bec
 
 ## How the runtime chooses a binding
 
-The engine takes the plan's bindings in their declared order and picks the first that qualifies ([decision 0006](../../decisions/0006-the-runtime-picks-the-fastest-verified-binding.md)). A binding qualifies when:
+The engine takes the compiled target's bindings in their declared order and picks the first that qualifies ([decision 0006](../../decisions/0006-the-runtime-picks-the-fastest-verified-binding.md)). A binding qualifies when:
 
 - its status is `verified`;
 - the registry has a driver for its mode whose health is ready;
 - its surface has not drifted and has no edge block;
 - its session is valid, or its surface needs none.
 
-**The order is data.** An operation can list its bindings in any order. Where it states none, the compiler sets the order from each mode's `rank` in its provider's manifest ([section 206](206-the-compiler-and-the-plan.md)). Ranks put the cheapest way first: a published API before direct requests, direct requests before requests from inside the page, and those before driving the interface. The engine walks the plan's order and never knows which mode is cheap.
+**The order is data.** An operation can list its bindings in any order. Where it states none, the compiler sets the order from each mode's `rank` in its provider's manifest ([section 206](206-the-compiler-and-the-compiled-target.md)). Ranks put the cheapest way first: a published API before direct requests, direct requests before requests from inside the page, and those before driving the interface. The engine walks the compiled target's order and never knows which mode is cheap.
 
 The choice, the reason, and the provider that serves the mode are recorded in the trace. If no binding qualifies, the run stops with the class of the best reason any candidate failed: `session_expired` before `edge_blocked` before `drift` before `busy`.
 

@@ -1,12 +1,12 @@
 //! A target's offline tests, run through the engine against a replay of
 //! their fixtures' recorded answers (decisions 0177 and 0180).
 //!
-//! Each test names a tool of the draft plan, an input, a fixture folder,
-//! and the result it must give. The tool runs through the engine with
+//! Each test names a tool of the draft compiled target, an input, a fixture
+//! folder, and the result it must give. The tool runs through the engine with
 //! every binding handed a [`Replay`] of the fixture in place of its
 //! provider's driver, under a control plane of its own that holds nothing
-//! beyond the test: no session is asked for, no person is asked, and
-//! nothing of the test reaches the installation's store.
+//! beyond the test: no session is asked for, no person is asked, and nothing
+//! of the test reaches the installation's store.
 //!
 //! A test of a read runs in the sandbox's posture, and its control plane
 //! stores nothing at all. A test of a write runs as a run of a ledger of its
@@ -28,8 +28,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use a2m_auth::{ExpirySign, SessionLease};
 use a2m_core::{
-    Digest, EffectClass, Epoch, Failure, FailureClass, Identity, Plan, PrincipalId, RunId,
-    RunState, TestKind, TestPlan, ToolRuns, Value, Values, WorkspaceId,
+    CompiledTarget, CompiledTest, Digest, EffectClass, Epoch, Failure, FailureClass, Identity,
+    PrincipalId, RunId, RunState, TestKind, ToolRuns, Value, Values, WorkspaceId,
 };
 use a2m_engine::{
     BindingPin, BoxFuture, Clearance, Conditions, Control, Engine, EngineEvent, Evidence,
@@ -146,7 +146,7 @@ pub(crate) struct Fixture {
     files: Vec<String>,
     /// Every file of the folder that was read, by name, with its bytes:
     /// read once, and what the test runs on. The gate holds each to the
-    /// digest the compiled plan names (audit finding AC-3), and a source a
+    /// digest the compiled target names (audit finding AC-3), and a source a
     /// test names is taken from here, never read again.
     pub(crate) held: Vec<(String, Vec<u8>)>,
 }
@@ -159,11 +159,11 @@ struct OfflineLedger {
     owner: OwnerRef,
 }
 
-/// The control plane of one offline test: the plan, the result, and, for a
-/// write, the test's own ledger. Everything else that would store, lease,
-/// or clear something is refused.
+/// The control plane of one offline test: the compiled target, the result,
+/// and, for a write, the test's own ledger. Everything else that would store,
+/// lease, or clear something is refused.
 struct OfflineControl {
-    plan: Arc<Plan>,
+    compiled_target: Arc<CompiledTarget>,
     tool: a2m_core::OperationName,
     workspace: WorkspaceId,
     result: Mutex<Option<Values>>,
@@ -186,8 +186,11 @@ impl OfflineControl {
 }
 
 impl Control for OfflineControl {
-    fn plan<'a>(&'a self, _hash: &'a Digest) -> BoxFuture<'a, Result<Arc<Plan>, Failure>> {
-        Box::pin(async move { Ok(Arc::clone(&self.plan)) })
+    fn compiled_target<'a>(
+        &'a self,
+        _hash: &'a Digest,
+    ) -> BoxFuture<'a, Result<Arc<CompiledTarget>, Failure>> {
+        Box::pin(async move { Ok(Arc::clone(&self.compiled_target)) })
     }
 
     fn decide<'a>(&'a self, question: &'a GuardQuestion) -> BoxFuture<'a, Result<(), Failure>> {
@@ -698,13 +701,13 @@ fn request_differences(recorded: &[(String, Json)], sent: &[(String, Values)]) -
 }
 
 /// Whether the tool a test runs writes.
-fn writes(plan: &Plan, test: &TestPlan) -> bool {
-    let Some(tool) = plan.tools.get(test.tool.get()) else {
+fn writes(compiled_target: &CompiledTarget, test: &CompiledTest) -> bool {
+    let Some(tool) = compiled_target.tools.get(test.tool.get()) else {
         return false;
     };
     let effect = match tool.runs {
-        ToolRuns::Operation(index) => plan.operation(index).map(|found| found.effect),
-        ToolRuns::Pipeline(index) => plan.pipeline(index).map(|found| found.effect),
+        ToolRuns::Operation(index) => compiled_target.operation(index).map(|found| found.effect),
+        ToolRuns::Pipeline(index) => compiled_target.pipeline(index).map(|found| found.effect),
     };
     effect.is_none_or(|effect| effect != EffectClass::Read)
 }
@@ -717,15 +720,15 @@ type SourceBytes = Arc<Vec<u8>>;
 /// input `source`: a name inside the fixture folder, read through the
 /// checked paths, so that no test reads a file outside its target.
 fn source_of(
-    plan: &Plan,
-    test: &TestPlan,
+    compiled_target: &CompiledTarget,
+    test: &CompiledTest,
     fixture: &Fixture,
 ) -> Result<(Values, Option<SourceBytes>), Json> {
-    let pipeline_source = plan
+    let pipeline_source = compiled_target
         .tools
         .get(test.tool.get())
         .and_then(|tool| match tool.runs {
-            ToolRuns::Pipeline(index) => plan.pipeline(index),
+            ToolRuns::Pipeline(index) => compiled_target.pipeline(index),
             ToolRuns::Operation(_) => None,
         })
         .is_some_and(|pipeline| pipeline.source.is_some());
@@ -756,10 +759,10 @@ fn source_of(
 
 /// Opens the throwaway ledger of one test of a write, and the run it holds.
 async fn open_ledger(
-    plan: &Plan,
-    plan_hash: Digest,
-    test: &TestPlan,
-    tool: &a2m_core::ToolPlan,
+    compiled_target: &CompiledTarget,
+    compiled_target_hash: Digest,
+    test: &CompiledTest,
+    tool: &a2m_core::CompiledTool,
     world: &OfflineWorld,
 ) -> Result<OfflineLedger, Failure> {
     let vault = world.vault.clone().ok_or_else(|| {
@@ -771,19 +774,19 @@ async fn open_ledger(
     })?;
     let store = Store::open(StoreConfig::throwaway()).await?;
     store.attach(vault).await?;
-    let environment = plan
+    let environment = compiled_target
         .default_environment()
         .map(|environment| environment.name.clone())
         .ok_or_else(|| {
             codes::input(
                 codes::SCHEMA_INVALID,
-                "The plan's default environment is not in the plan.",
+                "The compiled target's default environment is not in the compiled target.",
                 "Declare a default environment in `target.yaml`.",
             )
         })?;
     let effect = match tool.runs {
-        ToolRuns::Operation(index) => plan.operation(index).map(|found| found.effect),
-        ToolRuns::Pipeline(index) => plan.pipeline(index).map(|found| found.effect),
+        ToolRuns::Operation(index) => compiled_target.operation(index).map(|found| found.effect),
+        ToolRuns::Pipeline(index) => compiled_target.pipeline(index).map(|found| found.effect),
     }
     .unwrap_or(EffectClass::Irreversible);
     let new = NewRun {
@@ -795,8 +798,8 @@ async fn open_ledger(
             ToolRuns::Operation(_) => ToolKind::Operation,
             ToolRuns::Pipeline(_) => ToolKind::Pipeline,
         },
-        target: plan.header.target.clone(),
-        target_version: plan_hash,
+        target: compiled_target.header.target.clone(),
+        target_version: compiled_target_hash,
         environment,
         identity: None,
         effect,
@@ -847,45 +850,68 @@ async fn run_facts(outcome: &JobOutcome, ledger: Option<&OfflineLedger>, sent: u
     facts
 }
 
-/// Runs one offline test of the draft plan through the engine, with its
-/// fixture as [`read_fixture`] read it.
+/// Runs one offline test of the draft compiled target through the engine,
+/// with its fixture as [`read_fixture`] read it.
 pub(crate) async fn run_test(
     engine: &Engine,
-    plan: &Arc<Plan>,
-    plan_hash: Digest,
+    compiled_target: &Arc<CompiledTarget>,
+    compiled_target_hash: Digest,
     world: &OfflineWorld,
-    tested: (&TestPlan, Option<BindingPin>),
+    tested: (&CompiledTest, Option<BindingPin>),
     fixture: Option<Result<Fixture, Json>>,
 ) -> TestOutcome {
-    run_test_with_result(engine, plan, plan_hash, world, tested, fixture)
-        .await
-        .0
+    run_test_with_result(
+        engine,
+        compiled_target,
+        compiled_target_hash,
+        world,
+        tested,
+        fixture,
+    )
+    .await
+    .0
 }
 
 /// As [`run_test`], with the tool's result against the fixture, as plain
 /// JSON: what `fixture.record` writes as a recorded test's expectation.
 pub(crate) async fn run_test_with_result(
     engine: &Engine,
-    plan: &Arc<Plan>,
-    plan_hash: Digest,
+    compiled_target: &Arc<CompiledTarget>,
+    compiled_target_hash: Digest,
     world: &OfflineWorld,
-    tested: (&TestPlan, Option<BindingPin>),
+    tested: (&CompiledTest, Option<BindingPin>),
     fixture: Option<Result<Fixture, Json>>,
 ) -> (TestOutcome, Json) {
-    let outcome = run_one(engine, plan, plan_hash, world, tested, fixture).await;
+    let outcome = run_one(
+        engine,
+        compiled_target,
+        compiled_target_hash,
+        world,
+        tested,
+        fixture,
+    )
+    .await;
     (outcome.0, outcome.1.unwrap_or(Json::Null))
 }
 
 async fn run_one(
     engine: &Engine,
-    plan: &Arc<Plan>,
-    plan_hash: Digest,
+    compiled_target: &Arc<CompiledTarget>,
+    compiled_target_hash: Digest,
     world: &OfflineWorld,
-    tested: (&TestPlan, Option<BindingPin>),
+    tested: (&CompiledTest, Option<BindingPin>),
     fixture: Option<Result<Fixture, Json>>,
 ) -> (TestOutcome, Option<Json>) {
     let shown = tested.1.as_ref().map(BindingPin::to_json);
-    let outcome = run_body(engine, plan, plan_hash, world, tested, fixture).await;
+    let outcome = run_body(
+        engine,
+        compiled_target,
+        compiled_target_hash,
+        world,
+        tested,
+        fixture,
+    )
+    .await;
     // Every outcome names the binding that ran, and the digest of what it
     // does: evidence names its binding (audit finding AC-6).
     let (mut outcome, got) = match outcome {
@@ -914,16 +940,16 @@ pub(crate) struct Promoting {
 /// for a test of a pipeline, whose operations are chosen for as live, and
 /// where the operation has no binding that may run.
 pub(crate) fn test_pin(
-    plan: &Plan,
-    test: &TestPlan,
+    compiled_target: &CompiledTarget,
+    test: &CompiledTest,
     named: Option<usize>,
     promoting: Option<&Promoting>,
 ) -> Option<BindingPin> {
-    let tool = plan.tools.get(test.tool.get())?;
+    let tool = compiled_target.tools.get(test.tool.get())?;
     let ToolRuns::Operation(index) = tool.runs else {
         return None;
     };
-    let operation = plan.operation(index)?;
+    let operation = compiled_target.operation(index)?;
     let position = named
         .or_else(|| {
             promoting
@@ -931,20 +957,20 @@ pub(crate) fn test_pin(
                 .map(|promoting| promoting.position)
         })
         .or_else(|| a2m_engine::default_binding(operation))?;
-    BindingPin::of(plan, operation, position)
+    BindingPin::of(compiled_target, operation, position)
 }
 
 async fn run_body(
     engine: &Engine,
-    plan: &Arc<Plan>,
-    plan_hash: Digest,
+    compiled_target: &Arc<CompiledTarget>,
+    compiled_target_hash: Digest,
     world: &OfflineWorld,
-    (test, binding): (&TestPlan, Option<BindingPin>),
+    (test, binding): (&CompiledTest, Option<BindingPin>),
     fixture: Option<Result<Fixture, Json>>,
 ) -> Result<(TestOutcome, Json), TestOutcome> {
-    let Some(tool) = plan.tools.get(test.tool.get()) else {
+    let Some(tool) = compiled_target.tools.get(test.tool.get()) else {
         return Err(TestOutcome::failed(
-            json!({"reason": "The test names a tool the plan does not hold."}),
+            json!({"reason": "The test names a tool the compiled target does not hold."}),
         ));
     };
     if test.kind != TestKind::Offline {
@@ -966,7 +992,7 @@ async fn run_body(
             ));
         }
     };
-    let (input, source) = match source_of(plan, test, &fixture) {
+    let (input, source) = match source_of(compiled_target, test, &fixture) {
         Ok(found) => found,
         Err(wrong) => {
             return Err(TestOutcome::failed(
@@ -974,7 +1000,7 @@ async fn run_body(
             ));
         }
     };
-    let write = writes(plan, test);
+    let write = writes(compiled_target, test);
     let expected = test.expect.decode::<Json>().unwrap_or(Json::Null);
     // A test of a write proves its save only against a recorded request
     // (decision 0196): without one it is not run, unless it says that it
@@ -989,7 +1015,7 @@ async fn run_body(
         });
     }
     let ledger = if write {
-        match open_ledger(plan, plan_hash, test, tool, world).await {
+        match open_ledger(compiled_target, compiled_target_hash, test, tool, world).await {
             Ok(ledger) => Some(ledger),
             Err(failure) => {
                 return Err(TestOutcome::failed(json!({
@@ -1012,7 +1038,7 @@ async fn run_body(
         }
     };
     let control = OfflineControl {
-        plan: Arc::clone(plan),
+        compiled_target: Arc::clone(compiled_target),
         tool: tool.name.clone(),
         workspace: world.workspace,
         result: Mutex::new(None),
@@ -1030,7 +1056,7 @@ async fn run_body(
         } else {
             JobKind::Try
         },
-        plan: plan_hash,
+        compiled_target: compiled_target_hash,
         tool: ToolRef::Tool(tool.name.clone()),
         environment: None,
         identity: None,
@@ -1202,14 +1228,14 @@ pub(crate) struct GateRun {
     /// The offline tests that did not pass, each with its state and what
     /// to do about it.
     pub(crate) missing: Vec<Json>,
-    /// The plan the gates ran on, and the digest of every file of the
-    /// target it was compiled from, fixtures included: the bytes tested.
-    pub(crate) plan: Digest,
-    /// See `plan`.
+    /// The compiled target the gates ran on, and the digest of every file of
+    /// the target it was compiled from, fixtures included: the bytes tested.
+    pub(crate) compiled_target: Digest,
+    /// See `compiled_target`.
     pub(crate) sources: Digest,
-    /// Each fixture folder the tests name, by the path the plan gives it,
-    /// with the digest of the bytes the gate read there; `None` for a
-    /// folder that could not be read.
+    /// Each fixture folder the tests name, by the path the compiled target
+    /// gives it, with the digest of the bytes the gate read there; `None` for
+    /// a folder that could not be read.
     pub(crate) fixtures: Vec<(String, Option<Digest>)>,
 }
 
@@ -1222,7 +1248,7 @@ impl GateRun {
             "not_run": gates_not_built(),
             "table": self.table_json(),
             "passed": self.passed,
-            "plan": self.plan.to_string(),
+            "plan": self.compiled_target.to_string(),
             "sources": self.sources.to_string(),
         })
     }
@@ -1375,10 +1401,10 @@ pub(crate) fn publish_refusal(
 type HeldFixture<'a> = (Option<&'a str>, &'a Option<Result<Fixture, Json>>);
 
 /// Whether every byte the tests are about to run on is the byte of the
-/// compiled plan: the load made after the fixtures were read gives the
-/// digest the plan names for the target's files, and each file a fixture
-/// holds has, read as the compiler reads it, the digest that load found for
-/// it (audit finding AC-3).
+/// compiled target: the load made after the fixtures were read gives the
+/// digest the compiled target names for the target's files, and each file a
+/// fixture holds has, read as the compiler reads it, the digest that load
+/// found for it (audit finding AC-3).
 fn tested_as_compiled(
     held: &[HeldFixture<'_>],
     loaded: &a2m_files::Sources,
@@ -1439,7 +1465,7 @@ pub(crate) fn fixture_folder(target: &CheckedPath, fixture: &str) -> Result<Chec
 /// passing test of any binding that sent the save is asked for, as before
 /// (decision 0196). Each lack is named by its tool and its binding.
 fn untested_bindings(
-    plan: &Plan,
+    compiled_target: &CompiledTarget,
     results: &[Json],
     missing: &[Json],
     promoting: Option<&Promoting>,
@@ -1448,11 +1474,11 @@ fn untested_bindings(
 ) -> Vec<Json> {
     let mut lacks = Vec::new();
     let next = json!({"action": "test.run", "input": {"target": target.as_str()}});
-    for tool in &plan.tools {
+    for tool in &compiled_target.tools {
         let ToolRuns::Operation(index) = tool.runs else {
             continue;
         };
-        let Some(operation) = plan.operation(index) else {
+        let Some(operation) = compiled_target.operation(index) else {
             continue;
         };
         let name = tool.name.as_str();
@@ -1499,20 +1525,20 @@ fn untested_bindings(
             }
             continue;
         }
-        let plan_modes: Vec<&str> = operation
+        let compiled_modes: Vec<&str> = operation
             .bindings
             .iter()
             .map(|binding| binding.mode.as_str())
             .collect();
         for position in acting {
-            let Some(pin) = BindingPin::of(plan, operation, position) else {
+            let Some(pin) = BindingPin::of(compiled_target, operation, position) else {
                 continue;
             };
             // What a person is told to write counts the bindings as the
             // operation's file lists them (package 4.6).
             let shown = file_modes
                 .get(name)
-                .and_then(|modes| crate::places::file_place(&plan_modes, modes, position))
+                .and_then(|modes| crate::places::file_place(&compiled_modes, modes, position))
                 .unwrap_or(position)
                 + 1;
             let (state, reason) = if !tested(Some(position), false) {
@@ -1549,7 +1575,7 @@ fn untested_bindings(
 
 /// Runs the publish gates this build has on a compiled target: the schema
 /// and lint gate, which compiling for publishing passed, and every offline
-/// test of the plan against its fixture.
+/// test of the compiled target against its fixture.
 ///
 /// # Errors
 ///
@@ -1563,11 +1589,11 @@ pub(crate) async fn run_gates(
     world: OfflineWorld,
     promoting: Option<Promoting>,
 ) -> Result<GateRun, Failure> {
-    let sources = compiled.plan.header.sources;
+    let sources = compiled.compiled_target.header.sources;
     use crate::handlers::build::{off_thread, problems_json, target_folder};
-    let plan = Arc::new(compiled.plan.clone());
-    let (named, tests) = (target.clone(), plan.tests.clone());
-    let plan_tools: Vec<String> = plan
+    let compiled_target = Arc::new(compiled.compiled_target.clone());
+    let (named, tests) = (target.clone(), compiled_target.tests.clone());
+    let compiled_tools: Vec<String> = compiled_target
         .tools
         .iter()
         .map(|tool| tool.name.as_str().to_owned())
@@ -1578,7 +1604,7 @@ pub(crate) async fn run_gates(
     // its folder inside the target's, `fixtures/<name>`. Then the target's
     // files are loaded once more, after that read: every byte a test runs
     // on must be the byte the load found, and the load's digest of every
-    // file the digest the compiled plan names (audit finding AC-3), so a
+    // file the digest the compiled target names (audit finding AC-3), so a
     // file changed between the compile and the tests is never published
     // under evidence it did not earn.
     let (fixtures, tied, file_modes) = off_thread(move || {
@@ -1602,7 +1628,7 @@ pub(crate) async fn run_gates(
         let file_modes: std::collections::BTreeMap<String, Vec<String>> = loaded
             .as_ref()
             .map(|loaded| {
-                plan_tools
+                compiled_tools
                     .iter()
                     .filter_map(|name| {
                         crate::places::file_modes(loaded, name).map(|modes| (name.clone(), modes))
@@ -1624,7 +1650,7 @@ pub(crate) async fn run_gates(
     // The digest of each fixture folder as read, before the tests take the
     // bytes.
     let mut read_digests: Vec<(String, Option<Digest>)> = Vec::new();
-    for (test, fixture) in plan.tests.iter().zip(&fixtures) {
+    for (test, fixture) in compiled_target.tests.iter().zip(&fixtures) {
         let Some(folder) = &test.fixture else {
             continue;
         };
@@ -1641,24 +1667,34 @@ pub(crate) async fn run_gates(
     // The engine's future is not `Send`: a driver's prepared state is held
     // across its waits. So the tests run on a thread of their own, driven
     // by this same runtime, as the runner loop runs a job.
-    let (runs_plan, hash) = (Arc::clone(&plan), compiled.encoded.hash);
+    let (runs_compiled_target, hash) = (Arc::clone(&compiled_target), compiled.encoded.hash);
     // Each test runs the binding it is evidence for (audit finding AC-6).
-    let pins: Vec<Option<BindingPin>> = plan
+    let pins: Vec<Option<BindingPin>> = compiled_target
         .tests
         .iter()
         .enumerate()
         .map(|(at, test)| {
             let named = compiled.test_bindings.get(at).copied().flatten();
-            test_pin(&plan, test, named, promoting.as_ref())
+            test_pin(&compiled_target, test, named, promoting.as_ref())
         })
         .collect();
     let runtime = tokio::runtime::Handle::current();
     let outcomes = tokio::task::spawn_blocking(move || {
         runtime.block_on(async move {
             let mut outcomes = Vec::new();
-            for ((test, fixture), pin) in runs_plan.tests.iter().zip(fixtures).zip(pins) {
-                outcomes
-                    .push(run_test(&engine, &runs_plan, hash, &world, (test, pin), fixture).await);
+            for ((test, fixture), pin) in runs_compiled_target.tests.iter().zip(fixtures).zip(pins)
+            {
+                outcomes.push(
+                    run_test(
+                        &engine,
+                        &runs_compiled_target,
+                        hash,
+                        &world,
+                        (test, pin),
+                        fixture,
+                    )
+                    .await,
+                );
             }
             outcomes
         })
@@ -1673,8 +1709,8 @@ pub(crate) async fn run_gates(
     })?;
     let mut results = Vec::new();
     let mut missing = Vec::new();
-    for (test, outcome) in plan.tests.iter().zip(outcomes) {
-        let tool = plan
+    for (test, outcome) in compiled_target.tests.iter().zip(outcomes) {
+        let tool = compiled_target
             .tools
             .get(test.tool.get())
             .map(|tool| tool.name.to_string())
@@ -1703,7 +1739,7 @@ pub(crate) async fn run_gates(
         results.push(shown);
     }
     missing.extend(untested_bindings(
-        &plan,
+        &compiled_target,
         &results,
         &missing,
         promoting.as_ref(),
@@ -1726,7 +1762,7 @@ pub(crate) async fn run_gates(
             {"gate": "schema_and_lint", "state": "passed", "problems": problems_json(&compiled.warnings)},
             {"gate": "offline_replay", "state": replay_state, "tests": results},
         ]),
-        plan: compiled.encoded.hash,
+        compiled_target: compiled.encoded.hash,
         sources,
         passed: missing.is_empty(),
         missing,
@@ -1746,9 +1782,9 @@ mod tests {
 
     /// A fixture changed after the compile, whether or not it is put back
     /// before the gate's own load, is never tested under the compiled
-    /// plan's digest (audit finding AC-3).
+    /// compiled target's digest (audit finding AC-3).
     #[test]
-    fn the_bytes_a_gate_tests_are_the_bytes_the_plan_was_compiled_from() {
+    fn the_bytes_a_gate_tests_are_the_bytes_the_compiled_target_was_compiled_from() {
         let folder = std::env::temp_dir().join(format!("a2m-gate-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&folder);
         write(&folder, "target.yaml", "title: Example\n");
@@ -1777,7 +1813,7 @@ mod tests {
         // As compiled: tied.
         assert!(check(&fixture_of()));
         // Changed before the read and left changed: the load's digest is
-        // not the plan's.
+        // not the compiled target's.
         write(
             &folder,
             "fixtures/one/order_get.json",

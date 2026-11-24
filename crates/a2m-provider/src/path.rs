@@ -1667,9 +1667,9 @@ impl HeldFolder {
     }
 }
 
-/// Every file a run may touch, each already checked, by the name the plan
-/// gives it, and the project folder of the request that started the run. A
-/// driver resolves none itself.
+/// Every file a run may touch, each already checked, by the name the compiled
+/// target gives it, and the project folder of the request that started the
+/// run. A driver resolves none itself.
 #[derive(Debug, Clone, Default)]
 pub struct CheckedPaths {
     paths: BTreeMap<String, CheckedPath>,

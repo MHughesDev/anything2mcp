@@ -35,6 +35,8 @@
 mod child;
 #[cfg(target_os = "macos")]
 mod mac;
+#[cfg(any(windows, target_os = "macos", test))]
+mod seat;
 #[cfg(not(any(windows, target_os = "macos")))]
 mod session;
 #[cfg(windows)]
@@ -120,6 +122,16 @@ pub const CUSTOMER_MOST: usize = 24;
 pub const SAVED: &str = "Saved.";
 /// The title of the dialog [`Fault::DialogAfterRead`] raises.
 pub const DIALOG: &str = "Example notice";
+/// What the application says when a status is not one it knows.
+#[cfg(any(target_os = "linux", windows, target_os = "macos"))]
+pub(crate) const STATUS_REFUSED: &str = "Status must be open, held, or closed.";
+/// What the application says when a customer is empty.
+#[cfg(any(target_os = "linux", windows, target_os = "macos"))]
+pub(crate) const CUSTOMER_REFUSED: &str = "Customer must not be empty.";
+/// The statuses the application stores.
+#[cfg(any(target_os = "linux", windows, target_os = "macos"))]
+pub(crate) const STATUSES: &[&str] = &["open", "held", "closed"];
+
 /// The variable that makes a missing program a failure rather than a skip,
 /// for the machine that must run these tests.
 pub const REQUIRE_ENV: &str = "A2M_REQUIRE_DESKTOP";
@@ -435,19 +447,21 @@ impl Desk {
     /// # Errors
     ///
     /// When no field has the label a [`Fault::ReadOnly`] or a
-    /// [`Fault::Disabled`] names; on any
-    /// system but Linux, always: the write half of the stand is built for
-    /// Linux only.
+    /// [`Fault::Disabled`] names; on Windows and macOS, for
+    /// [`Fault::ExitAfterSave`] and [`Fault::ConfirmLate`], which are built
+    /// for Linux only, and when the stand's process does not answer; on
+    /// any other system, always.
     pub fn fault(&self, fault: &Fault) -> Result<(), StandError> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
         {
             self.inner.fault(fault)
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
         {
             let _ = fault;
             Err(StandError(
-                "the stand's faults of a write are built for Linux only".to_owned(),
+                "the stand's faults of a write are built for Linux, Windows, and macOS only"
+                    .to_owned(),
             ))
         }
     }

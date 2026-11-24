@@ -19,8 +19,8 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use a2m_core::{
-    BindingStatus, Digest, Environment, FailureClass, Mode, OperationName, Plan, RatePlan, Value,
-    Values,
+    BindingStatus, CompiledRate, CompiledTarget, Digest, Environment, FailureClass, Mode,
+    OperationName, Value, Values,
 };
 use a2m_engine::{JobKind, binding_digest};
 use a2m_ledger::{
@@ -36,8 +36,8 @@ fn order(id: &str) -> Values {
 }
 
 /// The read of an order with its second binding in shadow.
-fn in_shadow(plan: &mut Plan) {
-    plan.operations[0].bindings[1].status = BindingStatus::Shadow;
+fn in_shadow(compiled_target: &mut CompiledTarget) {
+    compiled_target.operations[0].bindings[1].status = BindingStatus::Shadow;
 }
 
 async fn shadow_scene() -> Scene {
@@ -47,8 +47,8 @@ async fn shadow_scene() -> Scene {
 }
 
 fn shadow_digest(scene: &Scene) -> Digest {
-    let plan = &scene.control.plan;
-    binding_digest(plan, &plan.operations[0].bindings[1]).unwrap()
+    let compiled_target = &scene.control.compiled_target;
+    binding_digest(compiled_target, &compiled_target.operations[0].bindings[1]).unwrap()
 }
 
 async fn standing(scene: &Scene) -> Option<ShadowStanding> {
@@ -76,12 +76,12 @@ const THRESHOLD: ShadowThreshold = ShadowThreshold { read: 3, write: 20 };
 const ORDERS: [&str; 3] = ["A-100", "A-101", "A-102"];
 
 async fn promotable(scene: &Scene) -> Promotable {
-    let plan = std::sync::Arc::clone(&scene.control.plan);
+    let compiled_target = std::sync::Arc::clone(&scene.control.compiled_target);
     let binding = shadow_digest(scene);
-    let against = a2m_engine::verified_binding(&plan, &plan.operations[0])
+    let against = a2m_engine::verified_binding(&compiled_target, &compiled_target.operations[0])
         .unwrap()
         .digest;
-    let environments = a2m_engine::shadow_evidence_environments(&plan);
+    let environments = a2m_engine::shadow_evidence_environments(&compiled_target);
     scene
         .control
         .store
@@ -344,10 +344,10 @@ async fn every_shadow_of_a_call_shares_one_budget_and_its_keeping_never_holds_th
 
 #[tokio::test]
 async fn a_shadow_never_takes_what_a_callers_read_needs_of_the_rate_budget() {
-    let scene = Scene::new(ORDER_GET, |plan| {
-        in_shadow(plan);
-        for surface in &mut plan.surfaces {
-            surface.rate = Some(RatePlan {
+    let scene = Scene::new(ORDER_GET, |compiled_target| {
+        in_shadow(compiled_target);
+        for surface in &mut compiled_target.surfaces {
+            surface.rate = Some(CompiledRate {
                 requests: 10,
                 per_ms: 1000,
             });
@@ -392,8 +392,9 @@ async fn nothing_runs_in_shadow_in_a_try_an_offline_test_a_pinned_call_or_a_name
     assert!(completed(&outcome), "{outcome:?}");
     *scene.pin.lock().unwrap() = None;
     scene.another_run(ORDER_GET).await;
-    let plan = std::sync::Arc::clone(&scene.control.plan);
-    *scene.binding.lock().unwrap() = a2m_engine::BindingPin::of(&plan, &plan.operations[0], 0);
+    let compiled_target = std::sync::Arc::clone(&scene.control.compiled_target);
+    *scene.binding.lock().unwrap() =
+        a2m_engine::BindingPin::of(&compiled_target, &compiled_target.operations[0], 0);
     let outcome = scene
         .work(JobKind::Execute, ORDER_GET, order("A-100"))
         .await;
@@ -427,8 +428,8 @@ async fn nothing_runs_in_shadow_in_a_try_an_offline_test_a_pinned_call_or_a_name
 #[tokio::test]
 async fn a_write_never_runs_its_shadow_binding_and_goes_through_the_approved_one() {
     // The write has a second binding, in shadow, beside its verified one.
-    let scene = Scene::new(ITEM_UPSERT, |plan| {
-        let operation = &mut plan.operations[2];
+    let scene = Scene::new(ITEM_UPSERT, |compiled_target| {
+        let operation = &mut compiled_target.operations[2];
         let mut spare = operation.bindings[0].clone();
         spare.mode = Mode::new(SECOND_MODE).unwrap();
         spare.status = BindingStatus::Shadow;
@@ -447,8 +448,9 @@ async fn a_write_never_runs_its_shadow_binding_and_goes_through_the_approved_one
     assert_eq!(scene.hooks.steps_of(SECOND_MODE), 0);
     assert!(scene.control.shadows.lock().unwrap().is_empty());
     // Such a binding is never promotable through shadow.
-    let plan = std::sync::Arc::clone(&scene.control.plan);
-    let binding = binding_digest(&plan, &plan.operations[2].bindings[1]).unwrap();
+    let compiled_target = std::sync::Arc::clone(&scene.control.compiled_target);
+    let binding =
+        binding_digest(&compiled_target, &compiled_target.operations[2].bindings[1]).unwrap();
     let answer = scene
         .control
         .store
@@ -475,9 +477,9 @@ async fn a_write_never_runs_its_shadow_binding_and_goes_through_the_approved_one
 async fn a_shadow_never_asks_for_a_session_the_call_does_not_hold() {
     // The binding in shadow reads through the surface that needs a sign-in;
     // the verified one through the surface that needs none.
-    let scene = Scene::new(ORDER_GET, |plan| {
-        in_shadow(plan);
-        plan.operations[0].bindings[1].surface = a2m_core::SurfaceIndex::new(1);
+    let scene = Scene::new(ORDER_GET, |compiled_target| {
+        in_shadow(compiled_target);
+        compiled_target.operations[0].bindings[1].surface = a2m_core::SurfaceIndex::new(1);
     })
     .await;
     scene.control.keeps_shadow.store(true, Ordering::SeqCst);

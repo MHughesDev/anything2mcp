@@ -8,10 +8,10 @@ use example_app::harness::TestApp;
 use crate::error::BenchError;
 use crate::harness::{Clock, Plan, Scenario, ScenarioResult, run_scenario};
 use crate::measure::{
-    COLD_BROWSER_START, HTTP_OPERATION, HttpOperation, IDLE_MEMORY, LIST_TOOLS, ListTools,
-    MOST_BROWSER_ITERATIONS, PROGRAM_SIZE, START_TO_READY, START_TO_READY_VAULT_CLOSED, UI_STEP,
-    UiStep, cold_browser_start, idle_memory, program_size, start_to_ready,
-    start_to_ready_vault_closed,
+    API_OPERATION, ApiOperation, COLD_BROWSER_START, HTTP_OPERATION, HttpOperation, IDLE_MEMORY,
+    LIST_TOOLS, ListTools, MOST_BROWSER_ITERATIONS, PAGE_HTTP_OPERATION, PROGRAM_SIZE,
+    PageHttpOperation, START_TO_READY, START_TO_READY_VAULT_CLOSED, UI_STEP, UiStep,
+    cold_browser_start, idle_memory, program_size, start_to_ready, start_to_ready_vault_closed,
 };
 use crate::promotion::{MOST_ITERATIONS, PROMOTION_SPEEDUP, PromotionSpeedup};
 
@@ -23,6 +23,8 @@ pub const NAMES: &[&str] = &[
     DIRECT_READ,
     LIST_TOOLS,
     HTTP_OPERATION,
+    API_OPERATION,
+    PAGE_HTTP_OPERATION,
     UI_STEP,
     COLD_BROWSER_START,
     START_TO_READY,
@@ -154,6 +156,10 @@ pub async fn run_named(
             }
             LIST_TOOLS => run_scenario(&ListTools, plan, clock).await?,
             HTTP_OPERATION => run_scenario(&HttpOperation, plan, clock).await?,
+            API_OPERATION => run_scenario(&ApiOperation, plan, clock).await?,
+            PAGE_HTTP_OPERATION => {
+                run_scenario(&PageHttpOperation, &browser_plan(plan), clock).await?
+            }
             UI_STEP => run_scenario(&UiStep, &browser_plan(plan), clock).await?,
             COLD_BROWSER_START => cold_browser_start(&browser_plan(plan), clock).await?,
             START_TO_READY | START_TO_READY_VAULT_CLOSED | IDLE_MEMORY | PROGRAM_SIZE => {
