@@ -14,6 +14,13 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # A build in CI is never built again in the same folder, so incremental
+  # files are only cost; and the debug and test builds keep line tables, which
+  # a backtrace needs, without the full debug information, which made most of
+  # the link time and of the folder, above all on Windows. What is compiled
+  # and what is checked are the same (decision 0372).
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   rust:
@@ -33,6 +40,22 @@ jobs:
           persist-credentials: false
       - name: Install the toolchain pinned in rust-toolchain.toml
         run: rustup toolchain install
+      # The dependencies compiled in the last run with the same lock file and
+      # toolchain, restored before anything is built (decision 0372). Only what
+      # was compiled is restored; every step below still builds and runs all
+      # of its own crates.
+      # Pinned by commit; this is v6.1.0.
+      - name: Restore the compiled dependencies
+        id: deps
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: deps-${{ runner.os }}-
       - name: Show versions
         run: cargo --version && rustc --version
       - name: Format
@@ -45,6 +68,24 @@ jobs:
       # shows every failure on this operating system.
       - name: Test
         run: cargo test --workspace --locked --no-fail-fast
+      # The compiled dependencies are stored when this lock file and toolchain
+      # had none stored, before the release builds below: the workspace's own
+      # crates are taken out first, since they change with every commit.
+      - name: Take the workspace's own crates out of what is stored
+        if: ${{ !cancelled() && steps.deps.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: python3 tools/ci_cache.py prune target/debug
+      # Pinned by commit; this is v6.1.0.
+      - name: Store the compiled dependencies
+        if: ${{ !cancelled() && steps.deps.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
       # The vault's root key in the operating system's own key store, which
       # no other test touches (package 2.2). On macOS the keychain is a
       # throwaway one, created and unlocked here, so that no prompt can
@@ -347,6 +388,21 @@ jobs:
           persist-credentials: false
       - name: Install the toolchain pinned in rust-toolchain.toml
         run: rustup toolchain install
+      # The dependencies compiled in the last run with the same lock file and
+      # toolchain, restored before anything is built (decision 0372). Only what
+      # was compiled is restored; every step below still builds and runs all
+      # of its own crates.
+      # Pinned by commit; this is v6.1.0.
+      - name: Restore the compiled dependencies
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: deps-${{ runner.os }}-
       # HTTPS is in the default build, which the job above tests. This job
       # holds the build without it, which `--no-default-features` gives.
       - name: Lint with TLS off
@@ -475,6 +531,21 @@ jobs:
           persist-credentials: false
       - name: Install the toolchain pinned in rust-toolchain.toml
         run: rustup toolchain install
+      # The dependencies compiled in the last run with the same lock file and
+      # toolchain, restored before anything is built (decision 0372). Only what
+      # was compiled is restored; every step below still builds and runs all
+      # of its own crates.
+      # Pinned by commit; this is v6.1.0.
+      - name: Restore the compiled dependencies
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: deps-${{ runner.os }}-
       # The test starts a display server of its own and gives the browser
       # its number; nothing is shown to anyone.
       - name: Install the virtual display server
