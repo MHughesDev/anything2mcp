@@ -828,11 +828,7 @@ pub(crate) fn review_of(
             reach,
         });
     }
-    items.sort_by(|a, b| {
-        (b.hazard, b.effect, exposure(b))
-            .cmp(&(a.hazard, a.effect, exposure(a)))
-            .then_with(|| a.tool.cmp(&b.tool))
-    });
+    in_review_order(&mut items);
     let mut sign_ins: Vec<SignInReview> = compiled_target
         .auth
         .iter()
@@ -877,9 +873,29 @@ pub(crate) fn review_of(
                 .collect(),
         })
         .collect();
-    // A sign-in nobody can check yet first; the rest keep the file's order.
-    sign_ins.sort_by_key(|sign_in| !matches!(sign_in.probe, ProbeReview::Pending { .. }));
+    sign_ins_in_review_order(&mut sign_ins);
     ReviewSummary { items, sign_ins }
+}
+
+/// The tools in the summary's order, the riskiest first: by hazard, then
+/// effect class, then what they expose, then name.
+pub(crate) fn in_review_order(items: &mut [ReviewItem]) {
+    items.sort_by(|a, b| {
+        (b.hazard, b.effect, exposure(b))
+            .cmp(&(a.hazard, a.effect, exposure(a)))
+            .then_with(|| a.tool.cmp(&b.tool))
+    });
+}
+
+/// The sign-ins in the summary's order: one nobody can check yet first,
+/// then the rest, each group in the file's order.
+pub(crate) fn sign_ins_in_review_order(sign_ins: &mut [SignInReview]) {
+    sign_ins.sort_by_key(|sign_in| {
+        (
+            !matches!(sign_in.probe, ProbeReview::Pending { .. }),
+            sign_in.entry,
+        )
+    });
 }
 
 /// What a tool exposes beyond its effect, for the order of the summary:
