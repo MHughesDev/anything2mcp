@@ -1,4 +1,4 @@
-# 0399. The doors say who wrote a description, the scout report lists what it did not draft, and a person counts bindings by the file
+# 0340. The doors say who wrote a description, the scout report lists what it did not draft, and a person counts bindings by the file
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged.
 
