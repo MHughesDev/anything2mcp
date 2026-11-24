@@ -24,11 +24,12 @@
 //! users ([`ProgramRole::Folder`]), and a file the engine wrote there, such
 //! as the copy of a script a target keeps ([`ProgramRole::Script`]).
 //!
-//! Two more closed lists live here, because every pack that starts a
-//! program needs them: [`interpreter_form`], the one form in which each
-//! interpreter the product starts reads a script file and takes the
-//! elements after it as data; and [`redirects_loading`], the variables that
-//! make a program load code other than its own.
+//! Three more closed lists live here, beside the name list they qualify:
+//! [`interpreter_form`], the one form in which each interpreter the product
+//! starts reads a script file and takes the elements after it as data;
+//! [`runs_its_own_code`], the commands of programs on the name list that
+//! run no code but the program's own; and [`redirects_loading`], the
+//! variables that make a program load code other than its own.
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -78,6 +79,14 @@ pub enum ProgramRole {
     /// refused by name ([`reads_its_line_as_code`]). Every other check
     /// holds. Its arguments are held to [`interpreter_form`] apart.
     Interpreter,
+    /// A program on the closed list of programs that start what their
+    /// arguments name and have commands that run no code but their own
+    /// ([`runs_its_own_code`], decision 0299, step one). The name list
+    /// does not refuse it when its declared name, and the name of the file
+    /// the path leads to, are both on that list; every other check holds.
+    /// The caller holds every argument list it gives the program to one of
+    /// the list's forms.
+    OwnCode,
     /// A file the engine wrote, such as the copy of a kept script: it and
     /// every folder on the way are closed to other users. Its name, its
     /// first bytes, and whether it can be run are not looked at.
@@ -148,6 +157,7 @@ pub fn check_program(
         match role {
             ProgramRole::Program => is_shell_or_interpreter(&text),
             ProgramRole::Interpreter => reads_its_line_as_code(&text),
+            ProgramRole::OwnCode => runs_its_own_code(&text).is_none(),
             ProgramRole::Script | ProgramRole::Folder => false,
         }
     };
@@ -550,9 +560,16 @@ struct Form {
 /// The closed table of interpreters and their forms (decision 0250). An
 /// interpreter is in it only where a test on a system that has it gives a
 /// script values that hold the syntax of shells and interpreters and reads
-/// back, byte for byte, what the script received: the POSIX shell and
-/// Python on Linux and macOS, AppleScript on macOS, and Windows PowerShell.
-/// Every other interpreter is refused until such a test proves its form.
+/// back, byte for byte, what the script received: the POSIX shell on Linux
+/// and macOS, Python on Linux and macOS and on Windows where it is installed
+/// in a folder the check accepts, the JavaScript runtime on all three
+/// systems, AppleScript on macOS, and Windows PowerShell. Every other interpreter is
+/// refused until such a test proves its form.
+///
+/// Python and the JavaScript runtime are also the launchers most local MCP
+/// servers are started through: a launcher given the file it loads, pinned
+/// by digest at every start, is the same fixed pair (decision 0299, step
+/// two). The digest pins that file and nothing it loads.
 ///
 /// - The shell reads the file it is given and hands the rest to it as its
 ///   positional parameters. It takes no option: an option before the
@@ -564,6 +581,13 @@ struct Form {
 ///   values; without it the rest of the line is a command.
 /// - AppleScript's `osascript` reads the file and hands the rest to the
 ///   script's `run` handler.
+/// - The JavaScript runtime reads its options up to the first element that
+///   is not one, takes that as the file to run, and hands every element
+///   after it, `--` among them, to the script as data. It takes no option:
+///   `-e`, `-p`, and `-r` run or load code they name, and its variables
+///   that do (`NODE_OPTIONS`, `NODE_PATH`) are refused by
+///   [`redirects_loading`]. The path given is the engine's copy, which is
+///   absolute, so it never begins with `-`.
 const FORMS: &[Form] = &[
     Form {
         names: &["sh", "dash", "bash"],
@@ -585,6 +609,10 @@ const FORMS: &[Form] = &[
     },
     Form {
         names: &["osascript"],
+        args: &[],
+    },
+    Form {
+        names: &["node", "nodejs"],
         args: &[],
     },
 ];
@@ -627,6 +655,156 @@ pub fn interpreter_form(path: &str, fixed: &[String]) -> Result<(), InterpreterR
     } else {
         Err(InterpreterRefused::NotItsForm(form.args))
     }
+}
+
+/// What kind of program, of those the name list refuses, a row of
+/// [`runs_its_own_code`] is (decision 0299).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnCodeKind {
+    /// A language launcher or runtime: given a file, it runs the file.
+    Launcher,
+    /// A version manager: it starts the version of a tool it chooses.
+    VersionManager,
+    /// A container runner: it starts the image its arguments name.
+    ContainerRunner,
+}
+
+/// One command of a program that runs no code but the program's own: the
+/// exact elements it is given, and whether names may follow them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OwnCodeForm {
+    /// The elements, element for element, from the first.
+    pub args: &'static [&'static str],
+    /// Whether the elements may be followed by the end-of-options marker
+    /// `--` and one or more values, each one element of data, such as the
+    /// names of the containers to inspect. Nothing else may follow.
+    pub names: bool,
+}
+
+/// One program of the closed list, by the names it is known by, and the
+/// commands of it that run no code but its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OwnCode {
+    /// Its kind.
+    pub kind: OwnCodeKind,
+    /// The names it is known by, as [`stems`] gives them; a version of
+    /// digits and dots may follow a name, as `python3.12` follows `python`.
+    pub names: &'static [&'static str],
+    /// Its commands that run no code but its own. No other command of it
+    /// is started.
+    pub forms: &'static [OwnCodeForm],
+}
+
+/// A form of the elements alone, with nothing after them.
+const fn only(args: &'static [&'static str]) -> OwnCodeForm {
+    OwnCodeForm { args, names: false }
+}
+
+/// The closed list of the programs the name list refuses whose listed
+/// commands run no code but the program's own (decision 0299, step one).
+///
+/// A command is on it only where the program, started as the supervisor
+/// starts it (no variable but those named, in a fresh folder of its own),
+/// was traced on a machine that had it and, given exactly those elements,
+/// started no other program. A command that would run more is left off,
+/// and some that look like reads are off for that reason:
+///
+/// - the version manager of Rust's toolchains, asked its own `--version`,
+///   starts the compiler to report the compiler's version too; its listing
+///   of toolchains and its home folder start nothing;
+/// - the Python package manager's listing of interpreters starts each
+///   interpreter it finds to ask what it is; its `--version` starts nothing;
+/// - the container runner's help starts each of its plug-ins to ask what
+///   it is, and its commands follow the context its user's files name,
+///   which may reach the engine over a remote shell. Each listed command of
+///   it names the context `default` first, which uses the local engine, and
+///   asks for JSON by the word `json`, not by a template.
+///
+/// A program's own configuration, in its user's folders, can still make it
+/// run more than this says (a container runner's plug-in hooks, for one).
+/// The list holds for the program as it ships; the review shows the command.
+const OWN_CODE: &[OwnCode] = &[
+    OwnCode {
+        kind: OwnCodeKind::Launcher,
+        names: &["python"],
+        forms: &[only(&["--version"]), only(&["-V"])],
+    },
+    OwnCode {
+        kind: OwnCodeKind::Launcher,
+        names: &["node", "nodejs"],
+        forms: &[only(&["--version"]), only(&["-v"])],
+    },
+    OwnCode {
+        kind: OwnCodeKind::Launcher,
+        names: &["bun"],
+        forms: &[only(&["--version"])],
+    },
+    OwnCode {
+        kind: OwnCodeKind::VersionManager,
+        names: &["uv"],
+        forms: &[only(&["--version"])],
+    },
+    OwnCode {
+        kind: OwnCodeKind::VersionManager,
+        names: &["rustup"],
+        forms: &[only(&["toolchain", "list"]), only(&["show", "home"])],
+    },
+    OwnCode {
+        kind: OwnCodeKind::ContainerRunner,
+        names: &["docker"],
+        forms: &[
+            only(&["--version"]),
+            only(&["--context", "default", "version", "--format", "json"]),
+            only(&[
+                "--context",
+                "default",
+                "ps",
+                "--all",
+                "--no-trunc",
+                "--format",
+                "json",
+            ]),
+            only(&[
+                "--context",
+                "default",
+                "images",
+                "--no-trunc",
+                "--format",
+                "json",
+            ]),
+            OwnCodeForm {
+                args: &["--context", "default", "container", "inspect"],
+                names: true,
+            },
+            OwnCodeForm {
+                args: &["--context", "default", "image", "inspect"],
+                names: true,
+            },
+        ],
+    },
+];
+
+/// The row of the closed list of programs whose listed commands run no
+/// code but their own, for the program at `path`, by its file name: one of
+/// the row's names, alone or followed by a version of digits and dots
+/// (`python3`, `python3.12`), without a `.exe` or `.com` suffix and without
+/// regard to case. A batch file, a file named with any other suffix, and
+/// every other name have none.
+#[must_use]
+pub fn runs_its_own_code(path: &str) -> Option<&'static OwnCode> {
+    if reads_its_line_as_code(path) {
+        return None;
+    }
+    let (_, stem, _) = stems(path);
+    OWN_CODE.iter().find(|row| {
+        row.names.iter().any(|name| {
+            stem.strip_prefix(name).is_some_and(|rest| {
+                rest.chars().all(|c| c.is_ascii_digit() || c == '.')
+                    && !rest.starts_with('.')
+                    && !rest.ends_with('.')
+            })
+        })
+    })
 }
 
 /// Names of variables that make a program load code other than its own, or

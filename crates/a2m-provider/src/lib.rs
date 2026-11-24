@@ -75,8 +75,9 @@ pub use registry::{
 pub use replay::{Recorded, RecordedAnswer, Replay, answer_name, answers_to};
 pub use supervisor::{
     Cleanup, ConnFailure, EnvAllowlist, Exit, Finished, ForeignLink, ForeignPipe,
-    InterpreterRefused, LaunchSpec, Leftover, LinkKind, OWNER_MARK_VARIABLE, OneShot, ProgramRef,
-    ProgramRefused, ProgramRole, ProgramTrust, Ran, ScopedSupervisor, SubsystemId,
-    SubsystemListing, Supervisor, SupervisorLimits, check_program, interpreter_form,
-    is_engine_variable, is_shell_or_interpreter, reads_its_line_as_code, redirects_loading,
+    InterpreterRefused, LaunchSpec, Leftover, LinkKind, OWNER_MARK_VARIABLE, OneShot, OwnCode,
+    OwnCodeForm, OwnCodeKind, ProgramRef, ProgramRefused, ProgramRole, ProgramTrust, Ran,
+    ScopedSupervisor, SubsystemId, SubsystemListing, Supervisor, SupervisorLimits, check_program,
+    interpreter_form, is_engine_variable, is_shell_or_interpreter, reads_its_line_as_code,
+    redirects_loading, runs_its_own_code,
 };

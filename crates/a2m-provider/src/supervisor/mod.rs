@@ -53,8 +53,9 @@ use windows as os;
 #[cfg(windows)]
 pub(crate) use program::keep_folder_private;
 pub use program::{
-    InterpreterRefused, ProgramRefused, ProgramRole, ProgramTrust, check_program, interpreter_form,
-    is_shell_or_interpreter, reads_its_line_as_code, redirects_loading,
+    InterpreterRefused, OwnCode, OwnCodeForm, OwnCodeKind, ProgramRefused, ProgramRole,
+    ProgramTrust, check_program, interpreter_form, is_shell_or_interpreter, reads_its_line_as_code,
+    redirects_loading, runs_its_own_code,
 };
 
 /// The variable that carries the owner mark into a child's environment.

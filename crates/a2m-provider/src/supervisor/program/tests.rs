@@ -291,6 +291,21 @@ fn only_an_interpreter_of_the_closed_table_in_its_own_form_is_started() {
         Ok(())
     );
     assert_eq!(interpreter_form("/usr/bin/osascript", &given(&[])), Ok(()));
+    // The JavaScript runtime, a launcher, given its file and no option
+    // (decision 0299, step two): an option that runs or loads the code it
+    // names is not its form.
+    for path in ["/usr/local/bin/node", r"C:\Program Files\nodejs\node.exe"] {
+        assert_eq!(interpreter_form(path, &given(&[])), Ok(()), "{path}");
+        for flag in ["-e", "-p", "-r", "--import", "--require", "-i"] {
+            assert!(
+                matches!(
+                    interpreter_form(path, &given(&[flag])),
+                    Err(InterpreterRefused::NotItsForm([]))
+                ),
+                "{path} {flag}"
+            );
+        }
+    }
     // An empty list is no safer than another: Python without `-I` loads
     // what its variables and the script's folder name, and PowerShell
     // without `-File` reads the rest of its line as a command.
@@ -338,7 +353,8 @@ fn only_an_interpreter_of_the_closed_table_in_its_own_form_is_started() {
     // Every other interpreter, and a program that is none, until a test
     // proves its form.
     for path in [
-        "/usr/bin/node",
+        "/usr/bin/deno",
+        "/usr/bin/bun",
         "/usr/bin/perl",
         "/usr/bin/zsh",
         "/usr/bin/pwsh",
@@ -659,4 +675,100 @@ fn the_variables_the_interpreters_and_their_runtimes_load_code_from_are_known() 
     ] {
         assert!(!redirects_loading(name), "{name}");
     }
+}
+
+/// Decision 0299, step one: the programs of the closed list are known by
+/// their names, with a version of digits and dots after a name, and by no
+/// other name; a shell, a batch file, and a script by its suffix never are.
+#[test]
+fn the_programs_whose_listed_commands_run_their_own_code_are_known_by_name() {
+    use super::{OwnCodeKind, runs_its_own_code};
+    for (path, kind) in [
+        ("/usr/bin/python3", OwnCodeKind::Launcher),
+        ("/usr/bin/python3.12", OwnCodeKind::Launcher),
+        (r"C:\Program Files\nodejs\node.exe", OwnCodeKind::Launcher),
+        ("/opt/example/bin/NODE", OwnCodeKind::Launcher),
+        ("/usr/local/bin/uv", OwnCodeKind::VersionManager),
+        (
+            "/opt/example/.cargo/bin/rustup",
+            OwnCodeKind::VersionManager,
+        ),
+        ("/usr/bin/docker", OwnCodeKind::ContainerRunner),
+        (
+            r"C:\Program Files\Example\docker.exe",
+            OwnCodeKind::ContainerRunner,
+        ),
+    ] {
+        assert_eq!(
+            runs_its_own_code(path).map(|row| row.kind),
+            Some(kind),
+            "{path}"
+        );
+    }
+    for path in [
+        "/bin/sh",
+        "/usr/bin/bash",
+        r"C:\Windows\System32\cmd.exe",
+        "/usr/bin/python3-dbg",
+        "/usr/bin/python3.12-config",
+        "/usr/bin/python.",
+        "/opt/example/docker.sh",
+        r"C:\tools\docker.bat",
+        r"C:\tools\docker.cmd",
+        "/opt/example/docker-compose",
+        "/usr/local/bin/uvx",
+        "/usr/local/bin/npx",
+        "/usr/bin/podman",
+        "/opt/example/bin/example-tool",
+    ] {
+        assert!(runs_its_own_code(path).is_none(), "{path}");
+    }
+    // Every listed program is one the name list refuses, so that the list
+    // only lets through what would otherwise be refused, and every form
+    // names its elements.
+    for row in super::OWN_CODE {
+        for name in row.names {
+            assert!(super::is_shell_or_interpreter(name), "{name}");
+        }
+        for form in row.forms {
+            assert!(!form.args.is_empty(), "{:?}", row.names);
+        }
+    }
+}
+
+/// The role of such a program: the name list does not refuse a program
+/// of the closed list, and refuses every other name it holds; a program
+/// of the list is refused as a program, as before.
+#[cfg(unix)]
+#[test]
+fn a_program_of_the_closed_list_passes_the_check_only_in_its_own_role() {
+    let place = Place::new("own-code");
+    let real = place.0.join("real");
+    for name in ["docker", "node", "python3.12", "uv", "sh", "make"] {
+        let program = real.join(name);
+        std::fs::write(&program, HEAD).unwrap();
+        Place::mode(&program, 0o755);
+        let own = super::check_program(&program, &Trust::default(), Role::OwnCode);
+        let listed = super::runs_its_own_code(name).is_some();
+        assert_eq!(own.is_ok(), listed, "{name}: {own:?}");
+        if !listed {
+            assert_eq!(own, Err(Refused::Script), "{name}");
+        }
+        assert_eq!(check(&program), Err(Refused::Script), "{name}");
+    }
+    // A listed name that leads to a file of another name is refused: both
+    // names must be on the list.
+    let docker = place.0.join("docker");
+    std::os::unix::fs::symlink(real.join("make"), &docker).unwrap();
+    assert_eq!(
+        super::check_program(&docker, &Trust::default(), Role::OwnCode),
+        Err(Refused::Script)
+    );
+    // A script with a listed name is refused by its first bytes.
+    let script = real.join("node");
+    std::fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
+    assert_eq!(
+        super::check_program(&script, &Trust::default(), Role::OwnCode),
+        Err(Refused::Script)
+    );
 }
