@@ -316,9 +316,9 @@ The product is run against existing software that the project runs itself, while
 
 | # | Package | Crates | Needs | Proof | State |
 | --- | --- | --- | --- | --- | --- |
-| L1 | The commands of a launcher, a version manager, and a container runner that run no code but the program's own, by a closed list for each kind | `a2m-pack-command`, `a2m-provider` | D3 | A listed subcommand runs against the stand; one not listed is refused by name | held |
-| L2 | A launcher with the file it loads pinned by digest, as rows of the table of interpreter forms | `a2m-pack-command`, `a2m-provider` | L1 | A changed file is refused at start; each row has its test on three operating systems | held |
-| L3 | The MCP pack starts a local server through a launcher of the table with its entry file pinned; a package runner is refused with what to do instead; the publish review names the code nothing pins | `a2m-pack-mcp`, `a2m-actions` | L2 | The stand's server, started through a launcher, is wrapped and a write through it is verified; a server named by a package runner is refused | held |
+| L1 | The commands of a launcher, a version manager, and a container runner that run no code but the program's own, by a closed list for each kind | `a2m-pack-command`, `a2m-provider` | D3 | A listed subcommand runs against the stand; one not listed is refused by name | done ([decision 0399](../decisions/0399-the-two-steps-of-decision-0299-as-built-a-closed-list-of-commands-and-the-javascript-runtime-as-a-launcher.md)): `runs_its_own_code` and `ProgramRole::OwnCode` in `a2m-provider`; `crates/a2m-pack-command/tests/own_code.rs` |
+| L2 | A launcher with the file it loads pinned by digest, as rows of the table of interpreter forms | `a2m-pack-command`, `a2m-provider` | L1 | A changed file is refused at start; each row has its test on three operating systems | done (decision 0399): the JavaScript runtime is a row; `crates/a2m-pack-command/tests/script.rs` runs it on three systems and Python on Windows where its folder is closed. The launcher's file runs as a copy alone; files beside it do not load |
+| L3 | The MCP pack starts a local server through a launcher of the table with its entry file pinned; a package runner is refused with what to do instead; the publish review names the code nothing pins | `a2m-pack-mcp`, `a2m-actions` | L2 | The stand's server, started through a launcher, is wrapped and a write through it is verified; a server named by a package runner is refused | ready |
 
 ### The short path (decision 0296)
 
@@ -349,7 +349,7 @@ Lanes that do not share a crate. Within a lane, packages run in order.
 | Packs | One agent per pack, once the package it needs is done | Each pack is its own crates |
 | Design | Design review rounds; a pack's section before its crates | Documents only; indexes are edited last and in small edits |
 
-Right now, the packages marked `ready` are 3.3, 3.10, 9.1, W2d, FT5, and FT9: six. Of the work added after the plan, N1, N2a, W1, W2a, W2b, W2c, X4a, X4b, X6, P1, P3, FC1, and FC2 are done. E6 is withdrawn. Several held rows carry a note of what is built so far: the crate exists, and the row's proof waits on crates above it. Package 1.5 no longer waits on 0.5.
+Right now, the packages marked `ready` are 3.3, 3.10, 9.1, W2d, FT5, FT9, and L3: seven. Of the work added after the plan, N1, N2a, W1, W2a, W2b, W2c, X4a, X4b, X6, P1, P3, FC1, and FC2 are done. E6 is withdrawn. Several held rows carry a note of what is built so far: the crate exists, and the row's proof waits on crates above it. Package 1.5 no longer waits on 0.5.
 
 ## Rules for changing this document
 
