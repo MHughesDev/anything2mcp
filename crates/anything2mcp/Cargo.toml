@@ -68,6 +68,12 @@ example-db = { path = "../../targets/example-db" }
 example-device = { path = "../../targets/example-device" }
 example-files = { path = "../../targets/example-files" }
 example-mcp = { path = "../../targets/example-mcp" }
+# A second connection to the store's file, to change a published version's
+# bytes behind the store, as a program that can write the file could
+# (`tests/faults.rs`, package 9.3k), and the store's name for its file.
+# Tests only.
+a2m-ledger = { path = "../a2m-ledger" }
+rusqlite.workspace = true
 
 [lints]
 workspace = true

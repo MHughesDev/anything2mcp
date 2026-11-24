@@ -385,7 +385,7 @@ The `Response` is the same structure for every face: `ok`, `action`, `result`, `
 | Vault | `a2m-vault` | No session can be restored or saved; no evidence can be sealed, so nothing can be marked verified | `degraded` |
 | Evidence space | `a2m-actions` (`space.rs`) | Fewer bytes free on the disk that holds the evidence blobs than `store.free_space_floor`, measured at every `recheck` through a `FreeSpace` (the volume's own count on Linux and macOS; not measured on Windows yet). Writes stop and a run's capture level is `minimal`, whatever the settings say; the reason's code is the store's `storage_full` | `degraded` |
 | Policy set | `a2m-policy` | The previous valid version stays in force; with none at all every decision denies | `stopped` if none |
-| Compiled targets | `a2m-ledger` | A compiled target that fails its hash check is unavailable alone | `ok` |
+| Compiled targets | `a2m-ledger` | A compiled target that fails its hash check is unavailable alone: a call to one of its tools answers the load's failure, `busy`/`store_corrupt`, before a run is made, and `tool.search` leaves its tools out with a warning (`a_compiled_target_that_fails_its_hash_check_makes_its_tools_unavailable_and_no_other`) | `ok` |
 | Keeper, scheduler, engine | `a2m-auth`, `a2m-sched`, `a2m-engine` | Not expected to fail; a failure is `stopped` | |
 
 The kernel is always returned, so that the front door can answer `engine.status` and `doctor.run` with the reason instead of failing to start. Opening is two calls, `prepare` and `open`, because the provider registry is built between them from the redactor and telemetry the first one makes. The state is re-evaluated whenever a part reports a change, and a move to a lower state is an event in the audit log.

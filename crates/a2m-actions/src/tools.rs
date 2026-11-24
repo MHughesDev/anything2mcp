@@ -132,7 +132,8 @@ impl Kernel {
     }
 
     /// The current version of every published target, in order of target.
-    /// A target whose compiled target cannot be read is left out, and named.
+    /// A target whose compiled target cannot be read is left out, and named
+    /// with why: a hash check it failed, `busy`/`store_corrupt`.
     ///
     /// # Errors
     ///
@@ -142,7 +143,7 @@ impl Kernel {
     ) -> Result<
         (
             Vec<(TargetName, Digest, Arc<CompiledTarget>)>,
-            Vec<TargetName>,
+            Vec<(TargetName, Failure)>,
         ),
         Failure,
     > {
@@ -164,7 +165,7 @@ impl Kernel {
         for (target, hash) in current {
             match self.compiled_target_by_hash(&target, &hash).await {
                 Ok(compiled_target) => compiled_targets.push((target, hash, compiled_target)),
-                Err(_) => unreadable.push(target),
+                Err(failure) => unreadable.push((target, failure)),
             }
         }
         Ok((compiled_targets, unreadable))
@@ -196,9 +197,13 @@ impl Kernel {
     ///
     /// # Errors
     ///
-    /// `input`/`not_found` when no current version holds such a tool.
+    /// `input`/`not_found` when no current version holds such a tool; why
+    /// the compiled target of the target the name belongs to cannot be
+    /// read, such as `busy`/`store_corrupt` for one that fails its hash
+    /// check (spec section 224): that target's tools are unavailable, and
+    /// no other target's.
     pub(crate) async fn find_tool(&self, name: &OperationName) -> Result<FoundTool, Failure> {
-        let (compiled_targets, _) = self.current_compiled_targets().await?;
+        let (compiled_targets, unreadable) = self.current_compiled_targets().await?;
         for (target, compiled_target_hash, compiled_target) in compiled_targets {
             if !name.belongs_to(&target) {
                 continue;
@@ -211,6 +216,12 @@ impl Kernel {
                     compiled_target,
                 });
             }
+        }
+        if let Some((_, failure)) = unreadable
+            .into_iter()
+            .find(|(target, _)| name.belongs_to(target))
+        {
+            return Err(failure);
         }
         Err(codes::input(
             codes::NOT_FOUND,
