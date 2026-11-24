@@ -52,6 +52,9 @@ handler!(
             {
                 continue;
             }
+            // A tool a drift stopped stays in the list, marked (decision
+            // 0396).
+            let unavailable = kernel.unavailable_tools(target, compiled_target).await?;
             for tool in &compiled_target.tools {
                 if call
                     .text("module")
@@ -89,6 +92,7 @@ handler!(
                     "effect": effect.map_or_else(|| "unknown".to_owned(), |effect| effect.to_string()),
                     "description": tool.description,
                 });
+                mark(&mut listed, unavailable.get(&tool.name));
                 // In full, each tool is what `tool.describe` gives for it,
                 // so that a tool list costs one decided step and not one
                 // for each tool.
@@ -134,7 +138,12 @@ handler!(
     |kernel, call| {
         let name = OperationName::new(call.required("tool")?)?;
         let found = kernel.find_tool(&name).await?;
-        Ok(Output::ok(described(&found)).then(Next::new(
+        let unavailable = kernel
+            .unavailable_tools(&found.target, &found.compiled_target)
+            .await?;
+        let mut out = described(&found);
+        mark(&mut out, unavailable.get(&found.tool.name));
+        Ok(Output::ok(out).then(Next::new(
             "tool.call",
             json!({"tool": found.tool.name.as_str(), "input": {}}),
             "to call it",
@@ -486,6 +495,17 @@ pub(crate) fn files_by_surface(
 
 /// One published tool in full, as `tool.describe` returns it and as
 /// `tool.search` lists it when asked for everything.
+/// Marks a listed or described tool `available`, and, when a drift stopped
+/// it, why it is not (decision 0396).
+fn mark(tool: &mut Json, unavailable: Option<&crate::drift::Unavailable>) {
+    if let Json::Object(map) = tool {
+        map.insert("available".to_owned(), json!(unavailable.is_none()));
+        if let Some(why) = unavailable {
+            map.insert("unavailable".to_owned(), why.json());
+        }
+    }
+}
+
 fn described(found: &FoundTool) -> Json {
     let (effect, hazard) = found.effect();
     // A schema is a map. A compiled target that carries none for a tool says

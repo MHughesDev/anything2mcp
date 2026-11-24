@@ -1,5 +1,6 @@
 //! Published tools: found by name, with the compiled target that holds them.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use a2m_core::{
@@ -8,6 +9,7 @@ use a2m_core::{
 };
 
 use crate::codes;
+use crate::drift::Unavailable;
 use crate::kernel::{Kernel, published_targets};
 
 /// A published tool, with the compiled target it is in.
@@ -166,6 +168,27 @@ impl Kernel {
             }
         }
         Ok((compiled_targets, unreadable))
+    }
+
+    /// Which tools of `compiled_target`, published for `target`, the drift
+    /// marks of the target make unavailable now (decision 0396), each with
+    /// why. Read when tools are listed or described.
+    ///
+    /// # Errors
+    ///
+    /// The store's failures.
+    pub(crate) async fn unavailable_tools(
+        &self,
+        target: &TargetName,
+        compiled_target: &CompiledTarget,
+    ) -> Result<BTreeMap<OperationName, Unavailable>, Failure> {
+        let workspace = self.installation()?.workspace;
+        let wanted = target.clone();
+        let marks = self
+            .store()?
+            .read(move |tx| crate::drift::marks(tx, workspace, wanted.as_str()))
+            .await?;
+        Ok(crate::drift::unavailable(compiled_target, &marks))
     }
 
     /// The published tool of that name, in the current version of the
