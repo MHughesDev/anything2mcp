@@ -9,7 +9,8 @@
 //! through which alone the engine reaches a driver ([`DriverHandle`]), file
 //! access for packs ([`Roots`], [`CheckedPath`]), and the supervisor that
 //! starts and stops every outside process ([`Supervisor`],
-//! [`ScopedSupervisor`]). It knows no kind of system itself.
+//! [`ScopedSupervisor`]), and the closed shape of a body that packs read and
+//! check ([`shape`]). It knows no kind of system itself.
 //!
 //! Every async method of every trait here returns a [`BoxFuture`], so that
 //! each trait can be used as a trait object; an implementation writes
@@ -37,6 +38,7 @@ mod place;
 mod reach;
 mod registry;
 mod replay;
+pub mod shape;
 mod supervisor;
 
 /// The boxed future every async trait method of this crate returns. It is

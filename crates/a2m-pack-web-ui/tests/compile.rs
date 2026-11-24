@@ -418,3 +418,55 @@ fn the_review_states_that_a_web_tool_sends_to_its_surface_and_its_declared_desti
         assert_eq!(addresses, expected, "{}", item.tool);
     }
 }
+
+/// Decision 0404: a page request's shapes are read by the provider
+/// contract's shared shape, and a page request takes a part of it in this
+/// version. What the file kind's own schema refused before is still
+/// refused, now under `web.request_shape_invalid` at the word or value; and
+/// what the shared shape refuses that this pack also refused stays refused.
+#[test]
+fn a_page_requests_shape_takes_only_flat_typed_properties_of_the_shared_shape() {
+    let stand = stand("shape");
+    let entry = "page_requests/order_totals.yaml";
+    compile_changed(&stand.registry, "secure", entry, str::to_owned)
+        .unwrap_or_else(|problems| panic!("{}", shown(&problems)));
+    for (from, to) in [
+        (
+            "order_id: {type: string}",
+            "order_id: {type: string, nullable: true}",
+        ),
+        (
+            "order_id: {type: string}",
+            "order_id: {type: string, enum: [a]}",
+        ),
+        ("order_id: {type: string}", "order_id: {type: any}"),
+        (
+            "order_id: {type: string}",
+            "order_id: {type: object, properties: {a: {type: string}}}",
+        ),
+        ("order_id: {type: string}", "order_id: {type: text}"),
+        ("  type: object\n", "  type: object\n  nullable: true\n"),
+        ("  type: object\n", "  type: array\n"),
+        (
+            "  required: [order_id, total_quantity]\n",
+            "  required: order_id\n",
+        ),
+        (
+            "  required: [order_id, total_quantity]\n",
+            "  required: [order_id, total_quantity, other]\n",
+        ),
+        ("  type: object\n", "  type: object\n  pattern: x\n"),
+    ] {
+        let problems = compile_changed(&stand.registry, "secure", entry, |text| {
+            assert!(text.contains(from), "{from}");
+            text.replacen(from, to, 1)
+        })
+        .err()
+        .unwrap_or_else(|| panic!("`{to}` compiled"));
+        let found = problems
+            .find("web.request_shape_invalid")
+            .unwrap_or_else(|| panic!("`{to}`:\n{}", shown(&problems)));
+        assert_eq!(found.at.file.as_str(), entry, "{to}");
+        assert!(found.at.line > 1, "{to}: {found:?}");
+    }
+}

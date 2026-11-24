@@ -5,7 +5,12 @@
 //! An entry is written in the form of an entry of the endpoint catalog,
 //! and holds a part of it: the name under `endpoint`, the surface, the
 //! method, the path, the effect, the answers under `responses`, and the
-//! shape of the answer under `response_schema`, in the same closed words.
+//! shape of the answer under `response_schema`, read by the provider
+//! contract's shared shape (`a2m_provider::shape`, decision 0394). A page
+//! request takes, in this version, a part of that shape: an object whose
+//! `properties` each state only a `type`, other than `any`, with `required`
+//! and `additionalProperties`; any other word the shared shape takes is
+//! refused here, where it is written.
 //! It adds one field the catalog has no word for: `page`, the path of the
 //! page that makes the request, whose session it uses.
 //!
@@ -32,6 +37,8 @@ use a2m_files::{
     CompiledSection, DefinedName, Diagnostics, Doc, ExprSite, FileKind, JsonSchema, KindContext,
     Located, Place, Stage,
 };
+pub(crate) use a2m_provider::shape::Kind;
+use a2m_provider::shape::Shape;
 use serde::{Deserialize, Serialize};
 
 use crate::codes::shown;
@@ -40,68 +47,6 @@ use crate::screens::{WEB_SURFACE, parse_reach, problem};
 
 /// The name of the file kind.
 pub const REQUEST_KIND: FileKindName = FileKindName::fixed("page_request");
-
-/// The kinds a value of an answer may be declared as, in the words of the
-/// endpoint catalog's shapes.
-const KINDS: &[&str] = &[
-    "string", "integer", "number", "boolean", "null", "object", "array",
-];
-
-/// What one declared value of an answer is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Kind {
-    String,
-    Integer,
-    Number,
-    Boolean,
-    Null,
-    Object,
-    Array,
-}
-
-impl Kind {
-    fn from_word(word: &str) -> Option<Self> {
-        Some(match word {
-            "string" => Self::String,
-            "integer" => Self::Integer,
-            "number" => Self::Number,
-            "boolean" => Self::Boolean,
-            "null" => Self::Null,
-            "object" => Self::Object,
-            "array" => Self::Array,
-            _ => return None,
-        })
-    }
-
-    pub(crate) const fn word(self) -> &'static str {
-        match self {
-            Self::String => "string",
-            Self::Integer => "integer",
-            Self::Number => "number",
-            Self::Boolean => "boolean",
-            Self::Null => "null",
-            Self::Object => "object",
-            Self::Array => "array",
-        }
-    }
-
-    /// Whether a JSON value is of this kind. An integer is a number with
-    /// no fraction that fits in 64 bits.
-    pub(crate) fn fits(self, value: &serde_json::Value) -> bool {
-        use serde_json::Value as Json;
-        match (self, value) {
-            (Self::String, Json::String(_))
-            | (Self::Boolean, Json::Bool(_))
-            | (Self::Null, Json::Null)
-            | (Self::Object, Json::Object(_))
-            | (Self::Array, Json::Array(_))
-            | (Self::Number, Json::Number(_)) => true,
-            (Self::Integer, Json::Number(number)) => number.is_i64(),
-            _ => false,
-        }
-    }
-}
 
 /// One answer an entry declares: a status, and the top-level fields of its
 /// JSON body that must hold exactly these texts.
@@ -185,6 +130,20 @@ pub(crate) struct PageRequest {
 }
 
 impl PageRequest {
+    /// The shape of the answer, as the shared shape checks it: an object
+    /// whose declared values are each of one kind.
+    pub(crate) fn answer(&self) -> Shape {
+        let mut shape = Shape::of(Kind::Object);
+        shape.properties = self
+            .properties
+            .iter()
+            .map(|(name, kind)| (name.clone(), Shape::of(*kind)))
+            .collect();
+        shape.required.clone_from(&self.required);
+        shape.closed = self.closed;
+        shape
+    }
+
     /// Whether an answer's status is one that is the record.
     pub(crate) fn is_ok(&self, status: u16) -> bool {
         if self.ok.is_empty() {
@@ -228,15 +187,6 @@ fn answer_schema() -> JsonSchema {
         .optional("when", JsonSchema::map_of(JsonSchema::text()))
 }
 
-fn shape_schema() -> JsonSchema {
-    let value = JsonSchema::object().required("type", JsonSchema::words(KINDS));
-    JsonSchema::object()
-        .required("type", JsonSchema::words(&["object"]))
-        .required("properties", JsonSchema::map_of(value))
-        .optional("required", JsonSchema::list(JsonSchema::text()))
-        .optional("additionalProperties", JsonSchema::bool())
-}
-
 fn schema() -> JsonSchema {
     let place = |words: &[&str]| {
         let mut either = Vec::new();
@@ -262,7 +212,7 @@ fn schema() -> JsonSchema {
             "anti_forgery",
             JsonSchema::either(vec![JsonSchema::words(&["none"]), token]),
         )
-        .optional("request_schema", shape_schema())
+        .optional("request_schema", JsonSchema::any())
         .optional("request_encoding", JsonSchema::words(&["json", "form"]))
         .optional(
             "responses",
@@ -271,7 +221,7 @@ fn schema() -> JsonSchema {
                 .optional("absent", statuses)
                 .optional("refused", JsonSchema::list(answer_schema())),
         )
-        .required("response_schema", shape_schema())
+        .required("response_schema", JsonSchema::any())
 }
 
 /// The file kind.
@@ -289,55 +239,79 @@ impl RequestKind {
     }
 }
 
-/// A shape, as `response_schema` and `request_schema` write it: the
-/// declared names and their kinds, the names required, and whether it is
-/// closed.
-struct Shape {
-    properties: BTreeMap<String, Kind>,
-    required: Vec<String>,
-    closed: bool,
-}
+/// The words a page request's shape takes at its top, and in each of its
+/// properties, in this version.
+const TOP_WORDS: &[&str] = &["type", "properties", "required", "additionalProperties"];
 
-fn shape_of(shape: &Located<Doc>, problems: &mut Diagnostics) -> Option<Shape> {
-    let mut properties = BTreeMap::new();
-    for property in shape
+/// A shape, as `response_schema` and `request_schema` write it: read by the
+/// shared shape, then held to the part of it a page request takes. Each
+/// problem is pushed at its place.
+fn shape_of(written: &Located<Doc>, problems: &mut Diagnostics) -> Option<Shape> {
+    let mut refuse = |at: &Place, message: String, fix: &str| {
+        problems.push(problem(
+            "request_shape_invalid",
+            Stage::Resolve,
+            at,
+            message,
+            fix,
+        ));
+    };
+    let shape = match Shape::from_doc(written) {
+        Ok(shape) => shape,
+        Err(why) => {
+            refuse(
+                &why.at,
+                why.message,
+                "Write the shape with `type: object`, `properties` that each state a `type`, `required`, and `additionalProperties` only.",
+            );
+            return None;
+        }
+    };
+    let mut usable = true;
+    if shape.kind != Kind::Object || written.get("properties").is_none() {
+        refuse(
+            &written.at,
+            "A page request's shape is an object that lists its `properties`.".to_owned(),
+            "Write `type: object` and `properties:` with each value the body or the answer holds.",
+        );
+        usable = false;
+    }
+    for entry in written.entries() {
+        if !TOP_WORDS.contains(&entry.key.value.as_str()) {
+            refuse(
+                &entry.key.at,
+                format!(
+                    "A page request's shape does not take `{}` in this version.",
+                    shown(&entry.key.value)
+                ),
+                "Remove it.",
+            );
+            usable = false;
+        }
+    }
+    for property in written
         .get("properties")
         .map(Located::entries)
         .unwrap_or_default()
     {
-        let kind = property.value.text("type").and_then(Kind::from_word)?;
-        properties.insert(property.key.value.clone(), kind);
-    }
-    let mut required = Vec::new();
-    for item in shape
-        .get("required")
-        .map(Located::items)
-        .unwrap_or_default()
-    {
-        let name = item.as_text()?;
-        if !properties.contains_key(name) {
-            problems.push(problem(
-                "request_shape_invalid",
-                Stage::Resolve,
-                &item.at,
+        let flat = property
+            .value
+            .entries()
+            .iter()
+            .all(|word| word.key.value == "type");
+        if !flat || property.value.text("type") == Some("any") {
+            refuse(
+                &property.value.at,
                 format!(
-                    "The shape requires `{}`, which it does not list under `properties`.",
-                    shown(name)
+                    "The value `{}` of a page request's shape states only its `type`, which is not `any`, in this version.",
+                    shown(&property.key.value)
                 ),
-                "List it under `properties`, or take it out of `required`.",
-            ));
+                "Write the value as `{type: string}`, or as another kind other than `any`.",
+            );
+            usable = false;
         }
-        required.push(name.to_owned());
     }
-    let closed = shape
-        .get("additionalProperties")
-        .and_then(Located::as_bool)
-        .is_some_and(|open| !open);
-    Some(Shape {
-        properties,
-        required,
-        closed,
-    })
+    usable.then_some(shape)
 }
 
 fn statuses(doc: Option<&Located<Doc>>) -> Vec<u16> {
@@ -418,7 +392,12 @@ fn write_form(
         problems.push(problem(rule, Stage::Analyze, at, message, fix));
     };
     let mut usable = true;
-    for (name, kind) in &shape.properties {
+    let fields: BTreeMap<String, Kind> = shape
+        .properties
+        .iter()
+        .map(|(name, value)| (name.clone(), value.kind))
+        .collect();
+    for (name, kind) in &fields {
         if !a2m_pack_web_browser::plain_write_name(name) {
             refuse(
                 "request_shape_invalid",
@@ -481,7 +460,7 @@ fn write_form(
                 }
                 (None, Some(field))
                     if a2m_pack_web_browser::plain_write_name(field)
-                        && !shape.properties.contains_key(field) =>
+                        && !fields.contains_key(field) =>
                 {
                     Some(("field".to_owned(), field.to_owned()))
                 }
@@ -532,7 +511,7 @@ fn write_form(
     usable.then(|| WriteForm {
         method: method.to_owned(),
         encoding: doc.text("request_encoding").unwrap_or("json").to_owned(),
-        fields: shape.properties,
+        fields,
         required: shape.required,
         token,
         refused,
@@ -616,14 +595,18 @@ fn entry(doc: &Located<Doc>, surface: &str, problems: &mut Diagnostics) -> Optio
         }
         None
     };
-    let shape = shape_of(doc.get("response_schema")?, problems)?;
+    let answer = shape_of(doc.get("response_schema")?, problems)?;
     Some(PageRequest {
         surface: surface.to_owned(),
         path: path?,
         page: page?,
-        properties: shape.properties,
-        required: shape.required,
-        closed: shape.closed,
+        properties: answer
+            .properties
+            .iter()
+            .map(|(name, value)| (name.clone(), value.kind))
+            .collect(),
+        required: answer.required,
+        closed: answer.closed,
         ok,
         absent,
         write: match write {

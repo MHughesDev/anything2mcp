@@ -31,7 +31,7 @@ use crate::forms::{AnswerSpec, Charset, Form, Unread, ascii_if_said, refused_con
 use crate::json::Json;
 use crate::link;
 use crate::lower::{CALL, EXTRACT, PROBE, REQUEST, TOKEN, VALIDATE};
-use crate::shape::Shape;
+use crate::shape::{Misfit, MisfitKind, Shape};
 use crate::template::{
     Auth, Built, EndpointSection, EndpointTemplate, ExtractStep, Extras, Method, PAYLOAD_FORMAT,
     ProbeStep, RequestStep, Take, TokenSink, VersionSource, build, build_token_page,
@@ -1504,7 +1504,29 @@ fn read_body(
             })
         })
     };
-    Read::Accepted(record.and_then(|json| shape.check(&json).map(|()| json).map_err(Unread::Shape)))
+    Read::Accepted(record.and_then(|json| {
+        shape
+            .check(&json)
+            .map(|()| json)
+            .map_err(|misfit| Unread::Shape(misfit_said(&misfit)))
+    }))
+}
+
+/// Where an answer does not fit the endpoint's shape, in this pack's words.
+/// It names a place and kinds, never a value.
+fn misfit_said(misfit: &Misfit) -> String {
+    let path = misfit.path_from("the body");
+    match &misfit.kind {
+        MisfitKind::Kind { found, declared } => format!(
+            "{path} is a {found}, and the endpoint declares a {}",
+            declared.word()
+        ),
+        MisfitKind::NotOneOf => format!("{path} is not one of the texts the endpoint declares"),
+        MisfitKind::Lacks(missing) => {
+            format!("{path} lacks `{missing}`, which the endpoint declares as required")
+        }
+        MisfitKind::Undeclared => format!("{path} holds a property the endpoint does not declare"),
+    }
 }
 
 /// How work handed to a blocking thread ended.
