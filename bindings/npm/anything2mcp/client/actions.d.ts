@@ -258,6 +258,10 @@ export interface GrantAddInput {
   max_effect: "read" | "write" | "irreversible";
   scope: string;
   who: string;
+  drafted_by?: string;
+  identity_mode?: "per_user_token" | "per_user_session" | "per_user_device" | "service_account";
+  reviewer?: string;
+  tests?: Record<string, unknown>[];
 }
 
 /**
@@ -271,6 +275,10 @@ export type GrantListInput = Record<string, never>;
 export interface GrantRemoveInput {
   scope: string;
   who: string;
+  drafted_by?: string;
+  max_effect?: "read" | "write" | "irreversible";
+  reviewer?: string;
+  tests?: Record<string, unknown>[];
 }
 
 /**
@@ -281,6 +289,11 @@ export interface KillswitchSetInput {
   scope: "everything" | "workspace" | "target";
   target?: string;
 }
+
+/**
+ * The input of `net.current`.
+ */
+export type NetCurrentInput = Record<string, never>;
 
 /**
  * The input of `net.interfaces`.
@@ -341,6 +354,8 @@ export interface PolicyExplainInput {
  */
 export interface PolicyPublishInput {
   file: string;
+  drafted_by?: string;
+  reviewer?: string;
 }
 
 /**
@@ -348,6 +363,28 @@ export interface PolicyPublishInput {
  */
 export interface PolicyTestInput {
   file: string;
+}
+
+/**
+ * The input of `policy.tools_allowed`.
+ */
+export interface PolicyToolsAllowedInput {
+  principal: string;
+  toolset?: string;
+}
+
+/**
+ * The input of `policy.versions`.
+ */
+export type PolicyVersionsInput = Record<string, never>;
+
+/**
+ * The input of `policy.who_can`.
+ */
+export interface PolicyWhoCanInput {
+  candidates: string[];
+  tool: string;
+  toolset?: string;
 }
 
 /**
@@ -382,6 +419,27 @@ export type ProviderListInput = Record<string, never>;
 export interface PublishRequestInput {
   target: string;
   version?: string;
+}
+
+/**
+ * The input of `reach.list`.
+ */
+export type ReachListInput = Record<string, never>;
+
+/**
+ * The input of `reach.name`.
+ */
+export interface ReachNameInput {
+  label: string;
+  look?: string[];
+  send?: string[];
+}
+
+/**
+ * The input of `reach.withdraw`.
+ */
+export interface ReachWithdrawInput {
+  label: string;
 }
 
 /**
@@ -465,7 +523,7 @@ export interface ScoutReportInput {
   target: string;
   limit?: number;
   offset?: number;
-  part?: "surfaces" | "found" | "compared.differs" | "compared.would_draft" | "compared.not_covered" | "drafted.written" | "drafted.held_back" | "drafted.conflicts" | "drafted.refused" | "checked.problems" | "checked.tools" | "tried.tools" | "tried.left_out" | "open" | "not_looked_at";
+  part?: "surfaces" | "found" | "compared.differs" | "compared.would_draft" | "compared.not_covered" | "drafted.written" | "drafted.held_back" | "drafted.not_drafted" | "drafted.conflicts" | "drafted.refused" | "checked.problems" | "checked.tools" | "tried.tools" | "tried.left_out" | "open" | "not_looked_at";
 }
 
 /**
@@ -562,6 +620,7 @@ export interface SpecImportInput {
 export interface TargetAddInput {
   name: string;
   address?: string;
+  fields?: Record<string, unknown>;
   kind?: string;
 }
 
@@ -637,21 +696,47 @@ export interface ToolSearchInput {
  * The input of `toolset.create`.
  */
 export interface ToolsetCreateInput {
+  max_effect: "read" | "write" | "irreversible";
   name: string;
   tools: string[];
+  who: string[];
+  drafted_by?: string;
+  identity_mode?: "per_user_token" | "per_user_session" | "per_user_device" | "service_account";
+  reviewer?: string;
+  tests?: Record<string, unknown>[];
+  writes_without_person?: boolean;
 }
 
 /**
  * The input of `toolset.list`.
  */
-export type ToolsetListInput = Record<string, never>;
+export interface ToolsetListInput {
+  name?: string;
+}
+
+/**
+ * The input of `toolset.remove`.
+ */
+export interface ToolsetRemoveInput {
+  name: string;
+  drafted_by?: string;
+  reviewer?: string;
+  tests?: Record<string, unknown>[];
+}
 
 /**
  * The input of `toolset.update`.
  */
 export interface ToolsetUpdateInput {
   name: string;
+  drafted_by?: string;
+  identity_mode?: "per_user_token" | "per_user_session" | "per_user_device" | "service_account";
+  max_effect?: "read" | "write" | "irreversible";
+  reviewer?: string;
+  tests?: Record<string, unknown>[];
   tools?: string[];
+  who?: string[];
+  writes_without_person?: boolean;
 }
 
 /**
@@ -1012,18 +1097,21 @@ export declare abstract class Actions {
   fixtureRecord(input: FixtureRecordInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Grant a principal or a group the use of tools up to an effect class. The engine
-   * action is `grant.add`.
+   * Grant a principal or a group the use of tools up to an effect class. A person's
+   * act, published as a new version of the policy set. The engine action is
+   * `grant.add`.
    */
   grantAdd(input: GrantAddInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * The grants of the workspace. The engine action is `grant.list`.
+   * The grants, the grants of roles, and who holds which role, in the set in force. The
+   * engine action is `grant.list`.
    */
   grantList(input?: GrantListInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Remove a grant. The engine action is `grant.remove`.
+   * Remove a grant. A person's act, published as a new version of the policy set. The
+   * engine action is `grant.remove`.
    */
   grantRemove(input: GrantRemoveInput, options?: CallOptions): Promise<Response>;
 
@@ -1032,6 +1120,13 @@ export declare abstract class Actions {
    * person present. The engine action is `killswitch.set`.
    */
   killswitchSet(input: KillswitchSetInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Which facts of the network this machine is on were read, to recognize it again, and
+   * which were left out and why. Shows no digest and no address. Sends nothing. The
+   * engine action is `net.current`.
+   */
+  netCurrent(input?: NetCurrentInput, options?: CallOptions): Promise<Response>;
 
   /**
    * This machine's network interfaces and their addresses, read from the operating
@@ -1093,21 +1188,41 @@ export declare abstract class Actions {
 
   /**
    * Why a past call was allowed or denied: the decision, the policy version, and the
-   * rules that made it. The engine action is `policy.explain`.
+   * rules that made it. For an auditor or an administrator. The engine action is
+   * `policy.explain`.
    */
   policyExplain(input: PolicyExplainInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Publish a policy set after its own tests pass. The engine action is
-   * `policy.publish`.
+   * Publish a policy file after its own tests pass. A person's act; where the set in
+   * force asks for a second administrator, the reviewer proves presence of their own.
+   * The engine action is `policy.publish`.
    */
   policyPublish(input: PolicyPublishInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Run a policy set's decision table and report each failure. The engine action is
-   * `policy.test`.
+   * Run a policy file's decision table against its own layers and report each failure.
+   * Publishes nothing. The engine action is `policy.test`.
    */
   policyTest(input: PolicyTestInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Which published tools a principal may use, through a toolset where one is named.
+   * Records no decision. The engine action is `policy.tools_allowed`.
+   */
+  policyToolsAllowed(input: PolicyToolsAllowedInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The history of published policy versions, oldest first, and which is in force. The
+   * engine action is `policy.versions`.
+   */
+  policyVersions(input?: PolicyVersionsInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Which of the principals named may use one published tool, through a toolset where
+   * one is named. Records no decision. The engine action is `policy.who_can`.
+   */
+  policyWhoCan(input: PolicyWhoCanInput, options?: CallOptions): Promise<Response>;
 
   /**
    * One provider's manifest: what it supplies, its effects, its requirements, and its
@@ -1137,6 +1252,26 @@ export declare abstract class Actions {
    * act. The engine action is `publish.request`.
    */
   publishRequest(input: PublishRequestInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The reaches a person has named: each label, the names of the facts it states,
+   * whether it is in force on the network this machine is on now, and the entries the
+   * person wrote. Shows no digest. The engine action is `reach.list`.
+   */
+  reachList(input?: ReachListInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * A person names the network this machine is on now, with the destinations that may
+   * be looked at and sent to, and the gateway names the person chooses. The network is
+   * read from the machine, never taken from the input. A person's act, never an
+   * agent's. The engine action is `reach.name`.
+   */
+  reachName(input: ReachNameInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * A person forgets one reach by its label. The engine action is `reach.withdraw`.
+   */
+  reachWithdraw(input: ReachWithdrawInput, options?: CallOptions): Promise<Response>;
 
   /**
    * Stop a running or waiting run. Says what was completed before it stopped. The
@@ -1329,24 +1464,34 @@ export declare abstract class Actions {
 
   /**
    * Find operations and pipelines of the published targets by words or module. Returns
-   * names, one-line descriptions, and effects; call tool.describe for a schema. The
-   * engine action is `tool.search`.
+   * names, one-line descriptions, effects, and whether each can be called now; call
+   * tool.describe for a schema. The engine action is `tool.search`.
    */
   toolSearch(input?: ToolSearchInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Create a toolset: which tools, which version, which identity mode. The engine
-   * action is `toolset.create`.
+   * Create a toolset: who may connect, which tools it selects, the highest effect class
+   * and the identity mode of its runs. A toolset only narrows what grants allow. A
+   * person's act, published as a new version of the policy set. The engine action is
+   * `toolset.create`.
    */
   toolsetCreate(input: ToolsetCreateInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * The toolsets of the workspace. The engine action is `toolset.list`.
+   * The toolsets in force, each with the published tools it selects. The engine action
+   * is `toolset.list`.
    */
   toolsetList(input?: ToolsetListInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Change a toolset. The engine action is `toolset.update`.
+   * Remove a toolset. A person's act, published as a new version of the policy set. The
+   * engine action is `toolset.remove`.
+   */
+  toolsetRemove(input: ToolsetRemoveInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Change the fields given of a toolset. A person's act, published as a new version of
+   * the policy set. The engine action is `toolset.update`.
    */
   toolsetUpdate(input: ToolsetUpdateInput, options?: CallOptions): Promise<Response>;
 

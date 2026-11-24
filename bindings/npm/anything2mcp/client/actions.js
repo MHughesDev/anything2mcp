@@ -44,6 +44,7 @@ const ACTIONS = Object.freeze([
   "grant.list",
   "grant.remove",
   "killswitch.set",
+  "net.current",
   "net.interfaces",
   "net.listeners",
   "net.neighbours",
@@ -56,11 +57,17 @@ const ACTIONS = Object.freeze([
   "policy.explain",
   "policy.publish",
   "policy.test",
+  "policy.tools_allowed",
+  "policy.versions",
+  "policy.who_can",
   "provider.describe",
   "provider.disable",
   "provider.enable",
   "provider.list",
   "publish.request",
+  "reach.list",
+  "reach.name",
+  "reach.withdraw",
   "run.cancel",
   "run.get",
   "run.list",
@@ -94,6 +101,7 @@ const ACTIONS = Object.freeze([
   "tool.search",
   "toolset.create",
   "toolset.list",
+  "toolset.remove",
   "toolset.update",
   "trace.export",
   "trace.show",
@@ -376,22 +384,25 @@ class Actions {
   }
 
   /**
-   * Grant a principal or a group the use of tools up to an effect class. The engine
-   * action is `grant.add`.
+   * Grant a principal or a group the use of tools up to an effect class. A person's
+   * act, published as a new version of the policy set. The engine action is
+   * `grant.add`.
    */
   grantAdd(input, options = {}) {
     return this.call("grant.add", input, options);
   }
 
   /**
-   * The grants of the workspace. The engine action is `grant.list`.
+   * The grants, the grants of roles, and who holds which role, in the set in force. The
+   * engine action is `grant.list`.
    */
   grantList(input = {}, options = {}) {
     return this.call("grant.list", input, options);
   }
 
   /**
-   * Remove a grant. The engine action is `grant.remove`.
+   * Remove a grant. A person's act, published as a new version of the policy set. The
+   * engine action is `grant.remove`.
    */
   grantRemove(input, options = {}) {
     return this.call("grant.remove", input, options);
@@ -403,6 +414,15 @@ class Actions {
    */
   killswitchSet(input, options = {}) {
     return this.call("killswitch.set", input, options);
+  }
+
+  /**
+   * Which facts of the network this machine is on were read, to recognize it again, and
+   * which were left out and why. Shows no digest and no address. Sends nothing. The
+   * engine action is `net.current`.
+   */
+  netCurrent(input = {}, options = {}) {
+    return this.call("net.current", input, options);
   }
 
   /**
@@ -483,26 +503,52 @@ class Actions {
 
   /**
    * Why a past call was allowed or denied: the decision, the policy version, and the
-   * rules that made it. The engine action is `policy.explain`.
+   * rules that made it. For an auditor or an administrator. The engine action is
+   * `policy.explain`.
    */
   policyExplain(input, options = {}) {
     return this.call("policy.explain", input, options);
   }
 
   /**
-   * Publish a policy set after its own tests pass. The engine action is
-   * `policy.publish`.
+   * Publish a policy file after its own tests pass. A person's act; where the set in
+   * force asks for a second administrator, the reviewer proves presence of their own.
+   * The engine action is `policy.publish`.
    */
   policyPublish(input, options = {}) {
     return this.call("policy.publish", input, options);
   }
 
   /**
-   * Run a policy set's decision table and report each failure. The engine action is
-   * `policy.test`.
+   * Run a policy file's decision table against its own layers and report each failure.
+   * Publishes nothing. The engine action is `policy.test`.
    */
   policyTest(input, options = {}) {
     return this.call("policy.test", input, options);
+  }
+
+  /**
+   * Which published tools a principal may use, through a toolset where one is named.
+   * Records no decision. The engine action is `policy.tools_allowed`.
+   */
+  policyToolsAllowed(input, options = {}) {
+    return this.call("policy.tools_allowed", input, options);
+  }
+
+  /**
+   * The history of published policy versions, oldest first, and which is in force. The
+   * engine action is `policy.versions`.
+   */
+  policyVersions(input = {}, options = {}) {
+    return this.call("policy.versions", input, options);
+  }
+
+  /**
+   * Which of the principals named may use one published tool, through a toolset where
+   * one is named. Records no decision. The engine action is `policy.who_can`.
+   */
+  policyWhoCan(input, options = {}) {
+    return this.call("policy.who_can", input, options);
   }
 
   /**
@@ -542,6 +588,32 @@ class Actions {
    */
   publishRequest(input, options = {}) {
     return this.call("publish.request", input, options);
+  }
+
+  /**
+   * The reaches a person has named: each label, the names of the facts it states,
+   * whether it is in force on the network this machine is on now, and the entries the
+   * person wrote. Shows no digest. The engine action is `reach.list`.
+   */
+  reachList(input = {}, options = {}) {
+    return this.call("reach.list", input, options);
+  }
+
+  /**
+   * A person names the network this machine is on now, with the destinations that may
+   * be looked at and sent to, and the gateway names the person chooses. The network is
+   * read from the machine, never taken from the input. A person's act, never an
+   * agent's. The engine action is `reach.name`.
+   */
+  reachName(input, options = {}) {
+    return this.call("reach.name", input, options);
+  }
+
+  /**
+   * A person forgets one reach by its label. The engine action is `reach.withdraw`.
+   */
+  reachWithdraw(input, options = {}) {
+    return this.call("reach.withdraw", input, options);
   }
 
   /**
@@ -795,30 +867,42 @@ class Actions {
 
   /**
    * Find operations and pipelines of the published targets by words or module. Returns
-   * names, one-line descriptions, and effects; call tool.describe for a schema. The
-   * engine action is `tool.search`.
+   * names, one-line descriptions, effects, and whether each can be called now; call
+   * tool.describe for a schema. The engine action is `tool.search`.
    */
   toolSearch(input = {}, options = {}) {
     return this.call("tool.search", input, options);
   }
 
   /**
-   * Create a toolset: which tools, which version, which identity mode. The engine
-   * action is `toolset.create`.
+   * Create a toolset: who may connect, which tools it selects, the highest effect class
+   * and the identity mode of its runs. A toolset only narrows what grants allow. A
+   * person's act, published as a new version of the policy set. The engine action is
+   * `toolset.create`.
    */
   toolsetCreate(input, options = {}) {
     return this.call("toolset.create", input, options);
   }
 
   /**
-   * The toolsets of the workspace. The engine action is `toolset.list`.
+   * The toolsets in force, each with the published tools it selects. The engine action
+   * is `toolset.list`.
    */
   toolsetList(input = {}, options = {}) {
     return this.call("toolset.list", input, options);
   }
 
   /**
-   * Change a toolset. The engine action is `toolset.update`.
+   * Remove a toolset. A person's act, published as a new version of the policy set. The
+   * engine action is `toolset.remove`.
+   */
+  toolsetRemove(input, options = {}) {
+    return this.call("toolset.remove", input, options);
+  }
+
+  /**
+   * Change the fields given of a toolset. A person's act, published as a new version of
+   * the policy set. The engine action is `toolset.update`.
    */
   toolsetUpdate(input, options = {}) {
     return this.call("toolset.update", input, options);
