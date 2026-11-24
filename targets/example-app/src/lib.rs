@@ -5,7 +5,8 @@
 //! interface that reports what it actually stored. `docs/plan/test-application.md`
 //! lists the cases; this crate covers cases 1 to 5, and the parts its README names
 //! of cases 10, 11, 13 to 15, 17, 23, and 29 to 34, and the pages of cases 6 to 12 and
-//! 22 to 27 under `/cases`.
+//! 22 to 27 under `/cases`, with the pages of the input commits of platform
+//! profiles under `/cases/commit`.
 //!
 //! It is test equipment, not part of the product, so it sits outside the crate
 //! layering. A product crate may use it in tests only.
@@ -14,6 +15,7 @@ pub mod answers;
 mod api;
 pub mod auth;
 pub mod cases;
+mod commits;
 mod connection;
 mod control;
 pub mod details;
@@ -127,6 +129,7 @@ pub(crate) fn router_over(state: AppState) -> Router {
         .merge(escapes::routes())
         .merge(leaving::routes())
         .merge(cases::routes())
+        .merge(commits::routes())
         .merge(later::routes())
         .merge(own_requests::routes())
         .merge(forgery::routes())
