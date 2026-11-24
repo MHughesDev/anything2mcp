@@ -295,7 +295,7 @@ struct Session {
 }
 
 /// What opens the observing tab again, in a new browser started from the
-/// same profile, when the browser it was in is lost (decision 0999): the
+/// same profile, when the browser it was in is lost (decision 0424): the
 /// browsers, and the tab's setup, with the session's state, which is placed
 /// again into the new browser. Nothing here signs in: the state is the one
 /// the run's lease handed over.
@@ -731,7 +731,7 @@ impl Session {
     /// that tab: places the session's state into a new browser started from
     /// the same profile, opens the observing tab there, and, for a step that
     /// is not a `goto`, brings its page back where it was by the `goto` and
-    /// the `wait` steps that brought it there, done again (decision 0999).
+    /// the `wait` steps that brought it there, done again (decision 0424).
     /// The tab can only read, so doing them again changes nothing in the
     /// system. Nothing here signs in: the state placed is the one the run's
     /// lease handed over, and a page that shows a declared sign of expiry
@@ -2605,7 +2605,7 @@ impl Driver for UiDriver {
                 return Err(StepFailure::not_sent(failure));
             }
             // A read goes on in a new browser of the same profile when the
-            // observing tab's browser was lost (decision 0999).
+            // observing tab's browser was lost (decision 0424).
             session.recover(step, input).await?;
             let done = if step.kind == GOTO {
                 session.goto(step, input).await

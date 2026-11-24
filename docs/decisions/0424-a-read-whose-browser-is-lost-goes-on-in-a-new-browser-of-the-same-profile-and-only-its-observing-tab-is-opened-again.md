@@ -1,4 +1,4 @@
-# 0999. A read whose browser is lost goes on in a new browser of the same profile, and only its observing tab is opened again
+# 0424. A read whose browser is lost goes on in a new browser of the same profile, and only its observing tab is opened again
 
 **Status:** Accepted. Design decision, made by the worker on package 9.3e under the lead's brief. The owner had not read this record when it was written. It changes what the `ui` driver does at the start of a step; it adds `ObserveTab::browser_lost` to the browser engine; no public contract changes.
 
