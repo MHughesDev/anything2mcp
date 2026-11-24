@@ -436,8 +436,13 @@ async fn a_column_that_takes_a_null_is_drafted_nullable_and_its_outputs_may_be_a
         ("name".to_owned(), false),
         ("notes".to_owned(), true),
     ];
-    // The read by key takes the key as its input, and returns the rest.
-    assert_eq!(flags("example_customers_get"), expected[1..]);
+    // The read by key takes the key as its input, and returns the rest. A
+    // row that is not there is answered with `found: false`, so every one
+    // of its outputs may be absent (decision 0399).
+    assert_eq!(
+        flags("example_customers_get"),
+        [("name".to_owned(), true), ("notes".to_owned(), true)]
+    );
     assert_eq!(flags("example_customers_list"), expected);
 
     // The list of every customer gives `null` for the one with no notes,
@@ -755,4 +760,54 @@ async fn a_column_named_as_a_secret_is_never_drafted_as_a_field_or_an_output() {
     );
     // The target compiles.
     compile_folder(&scene.registry, &root).unwrap();
+}
+
+#[tokio::test]
+async fn a_drafted_read_by_key_answers_a_row_that_is_not_there_with_found_false() {
+    let mut scene = Scene::new();
+    scene.db.set_write_log(false).unwrap();
+    let (_folder, plan) = drafted_plan(&scene, 1000).await;
+    scene.plan = plan;
+    let operation = scene
+        .plan
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_customers_get")
+        .unwrap();
+    assert!(
+        operation
+            .outputs
+            .iter()
+            .any(|output| output.name == "found")
+    );
+    let steps = operation.bindings[0].act.clone();
+    // The store holds the first customer and not the second.
+    let stored = scene.db.stored_rows(Table::Customers).unwrap();
+    let holds = |id: &str| {
+        stored
+            .iter()
+            .any(|row| row.get("customer_id") == Some(&example_db::rows::Value::from(id)))
+    };
+    assert!(holds("C-001") && !holds("C-999"));
+    let mut run = scene.prepare(a2m_provider::Posture::Live).await;
+    let present = super::values(
+        run.steps(&steps, &super::inputs(&[("customer_id", "C-001")]), None)
+            .await
+            .unwrap(),
+    );
+    let missing = super::values(
+        run.steps(&steps, &super::inputs(&[("customer_id", "C-999")]), None)
+            .await
+            .unwrap(),
+    );
+    run.release().await;
+    let got = super::outputs_of(&scene.plan, "example_customers_get", &present);
+    assert_eq!(got.get("found"), Some(&a2m_core::Value::Bool(true)));
+    assert!(got.get("name").and_then(a2m_core::Value::as_text).is_some());
+    // A missing row is an answer: `found: false`, and every other output
+    // absent, as `null`.
+    let none = super::outputs_of(&scene.plan, "example_customers_get", &missing);
+    assert_eq!(none.get("found"), Some(&a2m_core::Value::Bool(false)));
+    assert_eq!(none.get("name"), Some(&a2m_core::Value::Null));
+    assert_eq!(none.get("notes"), Some(&a2m_core::Value::Null));
 }

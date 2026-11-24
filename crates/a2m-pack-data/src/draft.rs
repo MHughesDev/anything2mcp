@@ -181,6 +181,14 @@ fn field_type(column: &ColumnFound, store: &str) -> Option<&'static str> {
         Some("date")
     } else if declared == "TIMESTAMP" || declared == "DATETIME" {
         Some("datetime")
+    } else if declared == "TIMESTAMP WITH TIME ZONE" || declared == "TIMESTAMP WITHOUT TIME ZONE" {
+        // A server's moment is read as exact text: a moment with its zone as
+        // the same moment in UTC, to the microsecond, and a wall time as the
+        // figures it holds with no zone added. The built-in `datetime` reads
+        // whole seconds in one fixed form, so it would refuse or round them;
+        // `text` keeps every figure, and a person may give the field a type
+        // with a format and a zone later (field finding 19).
+        Some("text")
     } else {
         None
     }
@@ -386,20 +394,25 @@ impl DraftingRule for TableToReads {
                 )
             })
             .collect();
+        // A row that is not there is an answer, `found: false`, with every
+        // other output absent (decision 0399).
+        let mut get_outputs: Vec<(String, DraftValue)> = (0..table.columns.len())
+            .filter(|position| !shaped.key.contains(position))
+            .map(|position| field(position, false))
+            .collect();
+        let says_found = !shaped.names.iter().any(|name| name == crate::model::FOUND);
+        if says_found {
+            get_outputs.push((
+                crate::model::FOUND.to_owned(),
+                DraftValue::map(vec![("type", DraftValue::text("boolean"))]),
+            ));
+        }
         let get = DraftValue::map(vec![
             ("operation", DraftValue::text(&get_name)),
             ("effect", DraftValue::text("read")),
             ("key", DraftValue::List(key)),
             ("inputs", DraftValue::Map(inputs)),
-            (
-                "outputs",
-                DraftValue::Map(
-                    (0..table.columns.len())
-                        .filter(|position| !shaped.key.contains(position))
-                        .map(|position| field(position, false))
-                        .collect(),
-                ),
-            ),
+            ("outputs", DraftValue::Map(get_outputs)),
             (
                 "bindings",
                 DraftValue::List(vec![DraftValue::map(vec![

@@ -380,8 +380,28 @@ async fn numbers_and_moments_are_read_exactly_and_a_type_with_no_rule_stops() {
     );
     run.release().await;
 
-    // A moment with no zone, and a float: no rule reads either.
-    for operation in ["example_order_entered", "example_order_discount"] {
+    // A wall time, with no zone, arrives as the digits the server holds and
+    // no zone is added (field finding 19). The server's own client says
+    // what it holds.
+    let mut run = scene.prepare().await;
+    let entered = scene.binding("example_order_entered");
+    let got = values(
+        run.steps(&entered.act, &inputs(&[("order_id", "A-100")]), None)
+            .await
+            .unwrap(),
+    );
+    let held = scene
+        .server
+        .value(
+            r#"SELECT to_char(entered_at, 'YYYY-MM-DD"T"HH24:MI:SS') FROM orders WHERE order_id = 'A-100'"#,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.get("entered_at"), Some(&Value::from(held.as_str())));
+    run.release().await;
+
+    // A float: no rule reads it.
+    for operation in ["example_order_discount"] {
         let mut run = scene.prepare().await;
         let binding = scene.binding(operation);
         let refused = run
@@ -1359,6 +1379,118 @@ async fn the_drafted_list_returns_the_servers_rows_column_by_column_through_the_
         assert_eq!(column("unit_price"), prices);
     }
     assert!(scene.server.writes().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_table_of_moments_drafts_its_reads_and_a_missing_row_is_found_false() {
+    let Some(mut scene) = ServerScene::new().await else {
+        return;
+    };
+    // The one thing this table has that holds a table back is a moment with
+    // its zone and a moment with none (field finding 19).
+    scene
+        .server
+        .execute(&format!(
+            "CREATE TABLE readings (reading_id text PRIMARY KEY, taken_at timestamptz NOT NULL, \
+             wall_at timestamp NOT NULL, note text); \
+             INSERT INTO readings VALUES ('R-1', '2026-03-03 13:05:00.25+00', '2026-03-03 08:00:00', 'first'); \
+             GRANT SELECT ON readings TO {APP_ROLE};"
+        ))
+        .unwrap();
+    let description = SurfaceDescription {
+        kind: DATABASE_SERVER,
+        archetype: Archetype::Request,
+        address: scene.surface.surface.address.clone(),
+        facts: Values::new(),
+    };
+    let discoverer = scene.registry.discoverers_for(&description).remove(0);
+    let handle = scene.handle();
+    let prepared = scene
+        .try_prepare(&handle, Posture::Discovery, fence())
+        .await
+        .unwrap();
+    let port = ReadOnlyPort::new(handle, prepared);
+    let focus = Values::new();
+    let scope = DiscoveryScope {
+        surface: &scene.surface,
+        bounds: discoverer.declared().bounds,
+        deadline: Deadline::after(Duration::from_secs(30)),
+        paths: &CheckedPaths::none(),
+        redact: &NoSecrets,
+        focus: &focus,
+    };
+    let mut kept = Kept(Vec::new());
+    discoverer.discover(&port, &scope, &mut kept).await.unwrap();
+    let (handle, prepared) = port.into_parts();
+    handle.release(prepared, false).await;
+    let readings = kept
+        .0
+        .into_iter()
+        .find(|finding| {
+            serde_json::from_str::<TableFound>(finding.found())
+                .unwrap()
+                .table
+                == "readings"
+        })
+        .unwrap();
+    let folder = Folder::new("server-moments");
+    let root = folder.path().join("example");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(fixtures().join("target.yaml"), root.join("target.yaml")).unwrap();
+    let report = Drafter::new(scene.registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(std::slice::from_ref(&readings))
+        .unwrap();
+    // No question: both columns have a type, so the table is not held.
+    assert!(report.open_questions.is_empty(), "{report:?}");
+    assert!(report.held.is_empty(), "{report:?}");
+    assert_eq!(report.written.len(), 3, "{report:?}");
+    scene.plan = compile_folder(&scene.registry, &root).unwrap().plan;
+
+    // What the server holds, as its own client prints it.
+    let held = scene
+        .server
+        .query(
+            r#"SELECT to_char(wall_at, 'YYYY-MM-DD"T"HH24:MI:SS') FROM readings WHERE reading_id = 'R-1'"#,
+        )
+        .unwrap();
+    assert_eq!(held.len(), 1);
+    let steps = scene.binding("example_readings_get").act.clone();
+    let mut run = scene.prepare().await;
+    let observed = values(
+        run.steps(&steps, &inputs(&[("reading_id", "R-1")]), None)
+            .await
+            .unwrap(),
+    );
+    let absent = values(
+        run.steps(&steps, &inputs(&[("reading_id", "R-9")]), None)
+            .await
+            .unwrap(),
+    );
+    run.release().await;
+    let wall = held[0][0].as_deref().unwrap();
+    assert_eq!(observed.get("wall_at"), Some(&Value::from(wall)));
+    assert_eq!(observed.get("found"), Some(&Value::Bool(true)));
+    let taken = observed.get("taken_at").and_then(Value::as_text).unwrap();
+    assert!(taken.starts_with("2026-03-03T13:05:00.25"), "{taken}");
+    // The plan's own field types take what the driver gave, whole.
+    let shaped = super::outputs_of(&scene.plan, "example_readings_get", &observed);
+    assert_eq!(shaped.get("found"), Some(&Value::Bool(true)));
+    assert_eq!(
+        shaped.get("taken_at"),
+        Some(&Value::from("2026-03-03T13:05:00.25Z"))
+    );
+    // A row the server does not hold is an answer, not an unknown variant.
+    assert_eq!(
+        scene
+            .server
+            .value("SELECT count(*)::text FROM readings WHERE reading_id = 'R-9'")
+            .unwrap()
+            .as_deref(),
+        Some("0")
+    );
+    let result = super::outputs_of(&scene.plan, "example_readings_get", &absent);
+    assert_eq!(result.get("found"), Some(&Value::Bool(false)));
+    assert_eq!(result.get("note"), Some(&Value::Null));
 }
 
 /// The review needs no server: it is read from the target's files.

@@ -339,3 +339,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0345 | [A drafter leaves out a name that perhaps names a secret](0345-a-drafter-leaves-out-a-name-that-perhaps-names-a-secret.md) | Accepted (design decision) |
 | 0346 | [The file drafter reads a sheet with no table and types a JSON field by its values, and the committing step carries what it writes](0346-a-drafter-reads-a-sheet-with-no-table-and-types-json-by-its-values-and-a-committing-step-carries-what-it-writes.md) | Accepted (design decision) |
 | 0347 | [The check after a lost runner is the last part of its reconcile](0347-the-check-after-a-lost-runner-is-the-last-part-of-its-reconcile.md) | Accepted (design decision) |
+| 0399 | [A read by key of a row that is not there answers `found: false`](0399-a-read-by-key-of-a-row-that-is-not-there-answers-found-false.md) | Accepted (design decision) |

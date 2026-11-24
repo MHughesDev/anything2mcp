@@ -25,7 +25,7 @@
 //!   that the server's own input function reads: a decimal reaches a
 //!   `numeric` column exactly, never through a float. Every value comes back
 //!   in the binary form and is turned into exact text here: `numeric` digit
-//!   by digit, a date as `YYYY-MM-DD`, a moment with its zone as UTC. A type
+//!   by digit, a date as `YYYY-MM-DD`, a moment with its zone as UTC, a wall time as its digits. A type
 //!   with no rule is refused.
 //!
 //! Every method blocks: the driver calls it on a blocking thread, and it waits
@@ -428,12 +428,19 @@ fn cell(ty: &Type, raw: &[u8]) -> Cell {
             .map(i64::from_be_bytes)
             .and_then(moment_text)
             .map(Cell::Text)
+    } else if is(&Type::TIMESTAMP) {
+        // A wall time states no zone: it is read as the digits it holds, with
+        // no zone added (field finding 19).
+        whole::<8>(raw)
+            .map(i64::from_be_bytes)
+            .and_then(wall_time_text)
+            .map(Cell::Text)
     } else if is(&Type::FLOAT4) || is(&Type::FLOAT8) {
         Some(Cell::Float)
     } else if is(&Type::BYTEA) {
         Some(Cell::Bytes)
     } else {
-        // A moment with no zone, a time, an interval, a list, a document,
+        // A time, an interval, a list, a document,
         // and every other type: no rule reads them.
         Some(Cell::Unsupported)
     };
@@ -518,6 +525,15 @@ fn date_text(days: i32) -> Option<String> {
 /// Microseconds since 2000-01-01 00:00 UTC as an RFC 3339 moment in UTC, with
 /// as many digits of the second as it has.
 fn moment_text(micros: i64) -> Option<String> {
+    wall_time_text(micros).map(|mut text| {
+        text.push('Z');
+        text
+    })
+}
+
+/// Microseconds since 2000-01-01 00:00 as the date and time those digits
+/// read, with no zone, and as many digits of the second as it has.
+fn wall_time_text(micros: i64) -> Option<String> {
     let seconds = micros.div_euclid(1_000_000);
     let fraction = micros.rem_euclid(1_000_000);
     let days = seconds.div_euclid(86_400);
@@ -534,7 +550,6 @@ fn moment_text(micros: i64) -> Option<String> {
         text.push('.');
         text.push_str(digits.trim_end_matches('0'));
     }
-    text.push('Z');
     Some(text)
 }
 

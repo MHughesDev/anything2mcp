@@ -225,4 +225,13 @@ pub(crate) struct StepDetail {
     /// lowering reports as outputs that may be absent (decision 0305).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nullable: Vec<String>,
+    /// `fetch` of a read by key: a row the store does not hold is answered,
+    /// not absent. The result states `found: false`, and every field is
+    /// absent (decision 0399).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub answers_missing: bool,
 }
+
+/// The name of the output of a read by key that says whether the row is
+/// there (decision 0399).
+pub(crate) const FOUND: &str = "found";

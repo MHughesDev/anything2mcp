@@ -16,7 +16,7 @@ use a2m_files::{
     StepChanges, StepCommits,
 };
 
-use crate::model::{Access, Does, Returns, Section, Statement, StepDetail};
+use crate::model::{Access, Does, FOUND, Returns, Section, Statement, StepDetail};
 use crate::names::{
     BEGIN, COMMIT, CREATE, DATABASE, DELETE, EXECUTE, EXPECT_ROWS, FETCH, LIST, READ, SEARCH,
     STATEMENT, UPDATE, codes, lint,
@@ -177,6 +177,19 @@ impl Lower<'_, '_> {
         assigned: bool,
         problems: &mut Diagnostics,
     ) -> Option<Vec<Step>> {
+        // A read by key whose operation declares an output `found` answers a
+        // row that is not there with `found: false` (decision 0399). The
+        // read-back of a write keeps `absent`, which reconcile needs.
+        let answers = !assigned
+            && statement.access == Access::ReadOnly
+            && statement.returns == Returns::OneOrNone
+            && !statement.columns.iter().any(|column| column.field == FOUND)
+            && self
+                .cx
+                .operation()
+                .outputs()
+                .iter()
+                .any(|o| o.name == FOUND);
         let drift = || fails(&codes::row::SCHEMA_CHANGED);
         let begin = self.step(
             BEGIN,
@@ -187,6 +200,7 @@ impl Lower<'_, '_> {
                 isolation: Some(statement.isolation),
                 rows: None,
                 nullable: Vec::new(),
+                answers_missing: false,
             },
             fails(&codes::row::STORE_LOCKED),
         )?;
@@ -198,13 +212,14 @@ impl Lower<'_, '_> {
             nullable: statement
                 .columns
                 .iter()
-                .filter(|column| column.nullable)
+                .filter(|column| column.nullable || answers)
                 .map(|column| column.field.clone())
                 .collect(),
+            answers_missing: answers,
             ..StepDetail::default()
         };
         let mut fetch = self.step(FETCH, name, statement, &fetched, drift())?;
-        fetch.lookup = statement.returns == Returns::OneOrNone;
+        fetch.lookup = statement.returns == Returns::OneOrNone && !answers;
         Some(vec![begin, execute, fetch])
     }
 
@@ -225,6 +240,7 @@ impl Lower<'_, '_> {
                 isolation: Some(statement.isolation),
                 rows: None,
                 nullable: Vec::new(),
+                answers_missing: false,
             },
             fails(&codes::row::STORE_LOCKED),
         )?;
@@ -251,9 +267,14 @@ impl Lower<'_, '_> {
                 isolation: None,
                 rows: Some(1),
                 nullable: Vec::new(),
+                answers_missing: false,
             },
             none_changed,
         )?;
+        // The values the write sends, which the commit point carries too, so
+        // that an offline test can hold them (field finding 22). The driver
+        // reads them at `execute`, and `commit` ignores them.
+        let sent = execute.args.clone();
         let mut steps = vec![begin, execute, expect];
         if statement.returns == Returns::AssignedKey {
             steps.push(self.step(
@@ -272,6 +293,7 @@ impl Lower<'_, '_> {
             fails(&a2m_provider::codes::row::NO_CONFIRMATION),
         )?;
         commit.commits = true;
+        commit.args = sent;
         steps.push(commit);
         Some(steps)
     }
