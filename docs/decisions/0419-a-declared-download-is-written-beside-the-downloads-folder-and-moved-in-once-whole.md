@@ -1,4 +1,4 @@
-# 0999. A declared download is written beside the downloads folder, and moved in once whole
+# 0419. A declared download is written beside the downloads folder, and moved in once whole
 
 **Status:** Accepted. Design decision, made by the worker who found the fault, under the lead's brief. The owner had not read this record when it was written. It amends point 4 of [decision 0362](0362-a-step-that-declares-a-download-lifts-the-refusal-of-downloads-for-itself-alone-into-a-folder-of-the-profile.md) and changes no public interface.
 
