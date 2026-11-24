@@ -52,8 +52,9 @@ pub use capture::{
     is_captured_word, kept_by_structure, take_capture,
 };
 pub use discover::{
-    DescribeForm, Describer, Description, Discoverer, DiscovererHandle, DiscoveryReport,
-    DiscoveryScope, FindingSink, SandboxPort, SurfaceDescription,
+    CAPTURE_END_GRACE, CaptureEnd, CaptureStop, DescribeForm, Describer, Description, Discoverer,
+    DiscovererHandle, DiscoveryReport, DiscoveryScope, FindingSink, SandboxPort,
+    SurfaceDescription,
 };
 pub use driver::{
     Authority, Capture, ChoiceReason, Deadline, Destinations, Driver, DriverHandle, DriverHealth,
@@ -62,8 +63,8 @@ pub use driver::{
 };
 pub use entry_point::{ENTRY_POINT_GROUP, EntryPointSearch, PythonProvider, find_python_providers};
 pub use manifest::{
-    ActionDecl, Bounds, CONTRACT, DiscovererDecl, DraftingRuleDecl, Effects, EvidenceDecl,
-    Exclusive, FailureCodeDecl, FileKindDecl, FindingKindDecl, KindOf, LintRuleDecl,
+    ActionDecl, Bounds, CONTRACT, DiscovererDecl, DraftingRuleDecl, DrivenBy, Effects,
+    EvidenceDecl, Exclusive, FailureCodeDecl, FileKindDecl, FindingKindDecl, KindOf, LintRuleDecl,
     MANIFEST_FILE_NAME, MANIFEST_FORMAT, Manifest, ModeDecl, ModeDefaults, NetworkEffect, Points,
     ProgramDecl, ProviderKind, ProviderSection, ReadDecl, Requirement, RunSection, SettingDecl,
     SettingScope, SettingType, SurfaceKindDecl,

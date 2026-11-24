@@ -23,9 +23,9 @@ use a2m_telemetry::Telemetry;
 use crate::action::ProviderAction;
 use crate::capture::CaptureHandle;
 use crate::codes;
-use crate::discover::{DiscovererHandle, SurfaceDescription};
+use crate::discover::{CaptureStop, DiscovererHandle, SurfaceDescription};
 use crate::driver::{ChoiceReason, Driver, DriverHandle, HandleFacts, ProviderChoice};
-use crate::manifest::{KindOf, Manifest, ModeDecl, ModeDefaults, ProviderKind};
+use crate::manifest::{DrivenBy, KindOf, Manifest, ModeDecl, ModeDefaults, ProviderKind};
 use crate::name::{ActionName, ProviderName};
 use crate::pack::{Collected, Pack, PackContext, Registrar};
 use crate::path::Roots;
@@ -1164,16 +1164,38 @@ impl Registry {
         self.inner.readers.values().cloned().collect()
     }
 
-    /// The discoverers that apply to a surface, in order of provider and
-    /// name.
+    /// The discoverers the engine drives that apply to a surface, in order
+    /// of provider and name: what a scout or `discover.run` may start. A
+    /// discoverer a person drives is never among them (decision 0392,
+    /// point 2).
     #[must_use]
     pub fn discoverers_for(&self, surface: &SurfaceDescription) -> Vec<DiscovererHandle> {
+        self.driven_for(surface, DrivenBy::Engine)
+    }
+
+    /// The discoverers a person drives that apply to a surface, in order of
+    /// provider and name: what a capture job may start, by
+    /// [`DiscovererHandle::watch`] alone (decision 0395).
+    #[must_use]
+    pub fn capture_discoverers_for(&self, surface: &SurfaceDescription) -> Vec<DiscovererHandle> {
+        self.driven_for(surface, DrivenBy::Person)
+    }
+
+    fn driven_for(&self, surface: &SurfaceDescription, by: DrivenBy) -> Vec<DiscovererHandle> {
         self.inner
             .discoverers
             .iter()
-            .filter(|handle| handle.suits(surface))
+            .filter(|handle| handle.decl.driven_by == by && handle.suits(surface))
             .cloned()
             .collect()
+    }
+
+    /// A new capture's stop, not yet set, and through it the
+    /// [`crate::CaptureEnd`] a capture job hands to
+    /// [`DiscovererHandle::watch`].
+    #[must_use]
+    pub fn capture_stop(&self) -> CaptureStop {
+        CaptureStop::new()
     }
 
     /// The traffic captures offered for a kind of surface, in order of
@@ -1193,14 +1215,13 @@ impl Registry {
     /// The names under which the discoverers that apply to a surface read
     /// files a person hands a discovery, each once: what a discovery of the
     /// surface may be handed, and nothing else (decision 0263). Empty when
-    /// no discoverer of the surface reads a file.
+    /// no discoverer of the surface reads a file. Only the discoverers of
+    /// [`Self::discoverers_for`] count, since only they run in a discovery.
     #[must_use]
     pub fn files_taken(&self, surface: &SurfaceDescription) -> BTreeSet<String> {
-        self.inner
-            .discoverers
-            .iter()
-            .filter(|handle| handle.suits(surface))
-            .flat_map(|handle| handle.decl.files.iter().cloned())
+        self.discoverers_for(surface)
+            .into_iter()
+            .flat_map(|handle| handle.decl.files)
             .collect()
     }
 

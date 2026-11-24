@@ -384,6 +384,39 @@ struct RawDiscoverer {
     bounds: Bounds,
     #[serde(default)]
     files: Vec<String>,
+    #[serde(default)]
+    driven_by: DrivenBy,
+}
+
+/// Who drives a discoverer: the engine, or a person whose use of a system
+/// it watches (decision 0392, point 2, as decision 0395 builds it). The
+/// manifest says which, and the [`crate::DiscovererHandle`] calls it only
+/// by the method that matches: `discover` for the engine, `watch` for a
+/// person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DrivenBy {
+    /// The engine starts it, for a scout or `discover.run`, and it reaches
+    /// the system through the sandbox's port. The default, when the
+    /// manifest leaves `driven_by` out.
+    #[default]
+    Engine,
+    /// A person drives what it watches: it is started only as a capture
+    /// job, reads a recording of its pack's traffic capture, and returns
+    /// when the capture ends. Only a pack that declares
+    /// `points.traffic_capture` may declare one.
+    Person,
+}
+
+impl DrivenBy {
+    /// The word the manifest uses.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Engine => "engine",
+            Self::Person => "person",
+        }
+    }
 }
 
 /// How far a discoverer may go.
@@ -423,6 +456,10 @@ pub struct DiscovererDecl {
     /// lowercase letters, digits, and underscores. Empty, the default: it
     /// reads no file it is handed.
     pub files: Vec<String>,
+    /// Who drives it: `engine` when the manifest leaves it out. A
+    /// discoverer a person drives belongs to a pack that declares
+    /// `points.traffic_capture`, or the manifest is refused.
+    pub driven_by: DrivenBy,
 }
 
 /// The longest name a discoverer may read a file under.
@@ -1149,10 +1186,19 @@ impl Manifest {
                 max_level: found.max_level,
                 bounds: found.bounds,
                 files: found.files,
+                driven_by: found.driven_by,
             });
         }
         if !unique(discoverers.iter().map(|d| &d.name)) {
             return Err(invalid("discoverers", "a discoverer is listed twice"));
+        }
+        if raw.points.traffic_capture.is_empty()
+            && let Some(person) = discoverers.iter().find(|d| d.driven_by == DrivenBy::Person)
+        {
+            return Err(undeclared(format!(
+                "The discoverer `{}` of `{}` is driven by a person, and the manifest declares no `points.traffic_capture` for it to watch.",
+                person.name, provider.name
+            )));
         }
         let mut point_discoverers = BTreeSet::new();
         for name in &raw.points.discoverer {
