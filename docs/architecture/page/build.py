@@ -39,6 +39,47 @@ for nid, n in nodes.items():
             if (e[0], e[1]) not in pairs and (e[1], e[0]) not in pairs:
                 bad.append(f'{nid}: a step lights {e[0]} to {e[1]}, which is no arrow of this view')
 
+# 1b. Where an arrow lands. An arrow whose end is a module with inner parts says, in an object at the end of the
+#     arrow, which inner part it reaches: {"module": "inner part"} or {"module": ["inner part", ...]}, and on down
+#     for an inner part that has parts of its own, in both directions (into the target, out of the source). The page
+#     re-points the arrow to the deepest opened part it reaches. An end whose inner part the evidence cannot name is
+#     listed in `landsUnknown` with its reason, and the arrow stays on the module's edge.
+unknown = set()
+for u in data.get('landsUnknown', []):
+    if not u.get('why'):
+        bad.append(f'landsUnknown: {u} gives no reason')
+    unknown.add((u.get('view'), u.get('from'), u.get('to'), u.get('at')))
+landed = notknown = 0
+for nid, n in nodes.items():
+    for e in n.get('edges', []):
+        lands = e[-1] if e and isinstance(e[-1], dict) else {}
+        reached, todo = set(), [i for i in e[:2] if i in nodes]
+        while todo:
+            m = todo.pop()
+            if not nodes[m].get('rows'):
+                continue
+            if m not in lands:
+                if (nid, e[0], e[1], m) in unknown:
+                    notknown += 1
+                else:
+                    bad.append(f'{nid}: arrow {e[0]} to {e[1]} meets {m}, which has inner parts, and says neither where it lands nor that this is not known')
+                continue
+            reached.add(m)
+            to = lands[m] if isinstance(lands[m], list) else [lands[m]]
+            if not to or len(set(to)) != len(to):
+                bad.append(f'{nid}: arrow {e[0]} to {e[1]} lands in {m} on an empty or repeated list')
+            for t in to:
+                if t not in parts_of(nodes[m]):
+                    bad.append(f'{nid}: arrow {e[0]} to {e[1]} lands on {t}, which is not an inner part of {m}')
+                else:
+                    todo.append(t)
+            landed += 1
+        for m in sorted(set(lands) - reached):
+            bad.append(f'{nid}: arrow {e[0]} to {e[1]} names {m} in lands, which neither of its ends reaches')
+for v, a, b, m in sorted(unknown, key=str):
+    if not any(e[0] == a and e[1] == b for e in nodes.get(v, {}).get('edges', [])):
+        bad.append(f'landsUnknown: {v} has no arrow {a} to {b}')
+
 # 2. The outline: the first screen's stations and shelves. Every part of the root view is in
 #    exactly one of them, so the short first screen leaves nothing out and shows nothing twice.
 RESERVED = {'settings', 'sidebar', 'customize', 'upgrade', 'downloads', 'overview'}
@@ -137,3 +178,5 @@ page = template.replace('/*DATA*/null/*END*/', json.dumps(data, ensure_ascii=Fal
 open(sys.argv[1] if len(sys.argv) > 1 else 'A2MArchitecture.html', 'w', encoding='utf-8').write(page)
 print('stations:', len(outline['stations']), 'shelves:', len(outline['shelves']),
       'views:', sum(1 for n in nodes.values() if n.get('rows')), 'parts:', len(nodes), 'bytes:', len(page))
+print('arrows that land on an inner part:', sum(1 for n in nodes.values() for e in n.get('edges', []) if isinstance(e[-1], dict)),
+      'landings:', landed, 'not known:', notknown)

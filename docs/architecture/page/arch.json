@@ -1,6 +1,7 @@
 {
  "root": "system",
  "updated": "24 Nov 2026",
+ "landsUnknown": [],
  "nodes": {
   "ai-agent": {
    "name": "AI Agent",
@@ -667,50 +668,74 @@
      "reg-dispatch",
      "the same request from any face",
      "path",
-     3
+     3,
+     {
+      "reg-dispatch": "reg-d-find"
+     }
     ],
     [
      "reg-dispatch",
      "reg-use",
      "a tool call or a run read",
-     "use"
+     "use",
+     {
+      "reg-dispatch": "reg-d-run"
+     }
     ],
     [
      "reg-dispatch",
      "reg-build",
      "a build action and its input",
-     "use"
+     "use",
+     {
+      "reg-dispatch": "reg-d-run"
+     }
     ],
     [
      "reg-dispatch",
      "reg-providers",
      "a pack or discovery action",
-     "use"
+     "use",
+     {
+      "reg-dispatch": "reg-d-run"
+     }
     ],
     [
      "reg-dispatch",
      "reg-publish",
      "a publish or version action",
-     "use"
+     "use",
+     {
+      "reg-dispatch": "reg-d-run"
+     }
     ],
     [
      "reg-dispatch",
      "reg-admin",
      "an administration action",
-     "use"
+     "use",
+     {
+      "reg-dispatch": "reg-d-run"
+     }
     ],
     [
      "reg-dispatch",
      "reg-machine",
      "a control or settings action",
-     "use"
+     "use",
+     {
+      "reg-dispatch": "reg-d-run"
+     }
     ],
     [
      "reg-dispatch",
      "reg-kernel",
      "the handler's calls into the kernel",
      "path",
-     4
+     4,
+     {
+      "reg-dispatch": "reg-d-run"
+     }
     ]
    ],
    "steps": [
@@ -1331,43 +1356,77 @@
      "engine-prepare",
      "engine-preview",
      "a write call to preview",
-     "use"
+     "use",
+     {
+      "engine-preview": "engine-pre-source"
+     }
     ],
     [
      "engine-preview",
      "engine-approval",
      "the diff and its hash",
-     "use"
+     "use",
+     {
+      "engine-preview": "engine-pre-route"
+     }
     ],
     [
      "engine-approval",
      "engine-write",
      "the approval, used once",
-     "use"
+     "use",
+     {
+      "engine-write": "engine-w-lock"
+     }
     ],
     [
      "engine-write",
      "engine-resume",
      "a run that stopped in doubt",
-     "use"
+     "use",
+     {
+      "engine-write": [
+       "engine-w-intent",
+       "engine-w-acted"
+      ],
+      "engine-resume": "engine-r-lock"
+     }
     ],
     [
      "engine-write",
      "engine-normalize",
      "intended and read values",
-     "use"
+     "use",
+     {
+      "engine-write": "engine-w-compare"
+     }
     ],
     [
      "engine-write",
      "engine-failures",
      "a step that failed",
-     "use"
+     "use",
+     {
+      "engine-write": [
+       "engine-w-lock",
+       "engine-w-fresh",
+       "engine-w-act",
+       "engine-w-compare"
+      ]
+     }
     ],
     [
      "engine-write",
      "engine-control",
      "intent, acted, verified",
-     "store"
+     "store",
+     {
+      "engine-write": [
+       "engine-w-intent",
+       "engine-w-acted",
+       "engine-w-compare"
+      ]
+     }
     ]
    ],
    "steps": [
@@ -1837,7 +1896,10 @@
      "scout-try",
      "scout-ladder",
      "a read that earns executed",
-     "use"
+     "use",
+     {
+      "scout-ladder": "ladder-executed"
+     }
     ],
     [
      "scout-report",
@@ -2347,20 +2409,40 @@
      "web-ui",
      "screens seen, for the drafter",
      "path",
-     1
+     1,
+     {
+      "web-probe": "probe-snapshot",
+      "web-ui": "webui-screens"
+     }
     ],
     [
      "web-ui",
      "web-browser",
      "acts and reads in a tab",
      "path",
-     2
+     2,
+     {
+      "web-ui": [
+       "webui-ui",
+       "webui-page-http",
+       "webui-site-tools"
+      ],
+      "web-browser": "wb-tabs"
+     }
     ],
     [
      "web-probe",
      "web-browser",
      "an observing tab, or a watching tab",
-     "use"
+     "use",
+     {
+      "web-probe": [
+       "probe-identify",
+       "probe-capture",
+       "probe-site-tools"
+      ],
+      "web-browser": "wb-tabs"
+     }
     ]
    ],
    "steps": [
@@ -2551,28 +2633,41 @@
      "http-draft",
      "findings, one per operation",
      "path",
-     1
+     1,
+     {
+      "http-description": "hd-findings",
+      "http-draft": "hdr-safe"
+     }
     ],
     [
      "http-draft",
      "http-catalog",
      "endpoint entries",
      "path",
-     2
+     2,
+     {
+      "http-draft": "hdr-endpoint"
+     }
     ],
     [
      "http-catalog",
      "http-driver",
      "request templates",
      "path",
-     3
+     3,
+     {
+      "http-driver": "hdrv-request"
+     }
     ],
     [
      "http-shape",
      "http-driver",
      "the declared shape of an answer",
      "path",
-     4
+     4,
+     {
+      "http-driver": "hdrv-validate"
+     }
     ],
     [
      "http-forms",
@@ -2584,7 +2679,10 @@
      "http-signin",
      "http-driver",
      "the scheme's round trips",
-     "use"
+     "use",
+     {
+      "http-driver": "hdrv-prepare"
+     }
     ]
    ],
    "steps": [
@@ -4221,7 +4319,13 @@
      "ledger-rules",
      "what the nine rules check",
      "path",
-     4
+     4,
+     {
+      "ledger-rules": [
+       "ledger-rule-1",
+       "ledger-rule-4"
+      ]
+     }
     ],
     [
      "ledger-runs",
@@ -5374,12 +5478,18 @@
      "bridge",
      "a tool call",
      "path",
-     1
+     1,
+     {
+      "bridge": "bridge-stdio"
+     }
     ],
     [
      "developer",
      "command-line",
-     "a typed command"
+     "a typed command",
+     {
+      "command-line": "cli-tree"
+     }
     ],
     [
      "program",
@@ -5391,202 +5501,430 @@
      "mcp-face",
      "MCP messages",
      "path",
-     2
+     2,
+     {
+      "bridge": "bridge-link",
+      "mcp-face": "mcp-endpoint"
+     }
     ],
     [
      "command-line",
      "rest-face",
-     "one action and its input"
+     "one action and its input",
+     {
+      "command-line": "cli-client",
+      "rest-face": "rest-actions"
+     }
     ],
     [
      "client",
      "rest-face",
-     "one action and its input"
+     "one action and its input",
+     {
+      "rest-face": "rest-actions"
+     }
     ],
     [
      "person",
      "pages",
-     "an approval, a sign-in, or a publish"
+     "an approval, a sign-in, or a publish",
+     {
+      "pages": [
+       "pages-approval",
+       "pages-act",
+       "pages-signin"
+      ]
+     }
     ],
     [
      "mcp-face",
      "registry",
      "the call, and who is calling",
      "path",
-     3
+     3,
+     {
+      "mcp-face": "mcp-call",
+      "registry": "reg-dispatch",
+      "reg-dispatch": "reg-d-find"
+     }
     ],
     [
      "rest-face",
      "registry",
-     "the call, and who is calling"
+     "the call, and who is calling",
+     {
+      "rest-face": "rest-actions",
+      "registry": "reg-dispatch",
+      "reg-dispatch": "reg-d-find"
+     }
     ],
     [
      "pages",
      "registry",
-     "the person's decision"
+     "the person's decision",
+     {
+      "pages": "pages-desk",
+      "registry": "reg-dispatch",
+      "reg-dispatch": "reg-d-person"
+     }
     ],
     [
      "registry",
      "policy",
      "may this caller do this?",
      "path",
-     4
+     4,
+     {
+      "registry": "reg-dispatch",
+      "reg-dispatch": "reg-d-decide",
+      "policy": "policy-kill"
+     }
     ],
     [
      "registry",
      "scheduler",
      "a run to admit",
      "path",
-     5
+     5,
+     {
+      "registry": "reg-dispatch",
+      "reg-dispatch": "reg-d-run",
+      "scheduler": "sched-admission"
+     }
     ],
     [
      "scheduler",
      "engine-loop",
      "a job to run",
      "path",
-     6
+     6,
+     {
+      "scheduler": "sched-leases",
+      "engine-loop": "engine-guard"
+     }
     ],
     [
      "registry",
      "scout",
-     "a request to discover and draft"
+     "a request to discover and draft",
+     {
+      "registry": "reg-providers",
+      "scout": "scout-identify"
+     }
     ],
     [
      "session-keeper",
      "engine-loop",
-     "a lease on a signed-in session"
+     "a lease on a signed-in session",
+     {
+      "session-keeper": "keeper-lease",
+      "engine-loop": "engine-prepare"
+     }
     ],
     [
      "engine-loop",
      "contract",
      "one step of the compiled target",
      "path",
-     8
+     8,
+     {
+      "engine-loop": [
+       "engine-prepare",
+       "engine-read-act",
+       "engine-preview",
+       "engine-write",
+       "engine-resume"
+      ],
+      "engine-preview": [
+       "engine-pre-reads",
+       "engine-pre-classify"
+      ],
+      "engine-write": [
+       "engine-w-act",
+       "engine-w-readback"
+      ],
+      "engine-resume": "engine-r-read",
+      "contract": "con-handle"
+     }
     ],
     [
      "contract",
      "pack-web",
-     "steps for that kind of system"
+     "steps for that kind of system",
+     {
+      "contract": "con-handle",
+      "pack-web": "web-ui",
+      "web-ui": [
+       "webui-ui",
+       "webui-page-http",
+       "webui-site-tools"
+      ]
+     }
     ],
     [
      "contract",
      "pack-http",
      "steps for that kind of system",
      "path",
-     9
+     9,
+     {
+      "contract": "con-handle",
+      "pack-http": "http-driver",
+      "http-driver": [
+       "hdrv-prepare",
+       "hdrv-request",
+       "hdrv-readback"
+      ]
+     }
     ],
     [
      "contract",
      "pack-mcp",
-     "steps for that kind of system"
+     "steps for that kind of system",
+     {
+      "contract": "con-handle",
+      "pack-mcp": "mcp-p-call"
+     }
     ],
     [
      "contract",
      "pack-desktop",
-     "steps for that kind of system"
+     "steps for that kind of system",
+     {
+      "contract": "con-handle",
+      "pack-desktop": [
+       "desk-window",
+       "desk-set",
+       "desk-wait"
+      ]
+     }
     ],
     [
      "contract",
      "pack-command",
-     "steps for that kind of system"
+     "steps for that kind of system",
+     {
+      "contract": "con-handle",
+      "pack-command": [
+       "cmd-start",
+       "cmd-readback"
+      ]
+     }
     ],
     [
      "contract",
      "pack-data",
-     "steps for that kind of system"
+     "steps for that kind of system",
+     {
+      "contract": "con-handle",
+      "pack-data": [
+       "data-readonly",
+       "data-transaction",
+       "data-readback"
+      ]
+     }
     ],
     [
      "contract",
      "pack-file",
-     "steps for that kind of system"
+     "steps for that kind of system",
+     {
+      "contract": "con-handle",
+      "pack-file": [
+       "file-path",
+       "file-locate",
+       "file-patch",
+       "file-save",
+       "file-readback"
+      ]
+     }
     ],
     [
      "contract",
      "pack-stream",
-     "steps for that kind of system"
+     "steps for that kind of system",
+     {
+      "contract": "con-handle",
+      "pack-stream": [
+       "stream-latest",
+       "stream-await",
+       "stream-list",
+       "stream-publish",
+       "stream-take"
+      ]
+     }
     ],
     [
      "contract",
      "pack-device",
-     "steps for that kind of system"
+     "steps for that kind of system",
+     {
+      "contract": "con-handle",
+      "pack-device": [
+       "dev-identify",
+       "dev-frame",
+       "dev-readback"
+      ]
+     }
     ],
     [
      "pack-web",
      "t-web",
-     "the act, then the read-back"
+     "the act, then the read-back",
+     {
+      "pack-web": "web-browser",
+      "web-browser": [
+       "wb-act",
+       "wb-requests"
+      ]
+     }
     ],
     [
      "pack-http",
      "t-http",
      "the act, then the read-back",
      "path",
-     10
+     10,
+     {
+      "pack-http": "http-driver",
+      "http-driver": [
+       "hdrv-request",
+       "hdrv-readback"
+      ]
+     }
     ],
     [
      "pack-mcp",
      "t-mcp",
-     "the act, then the read-back"
+     "the act, then the read-back",
+     {
+      "pack-mcp": [
+       "mcp-p-call",
+       "mcp-p-readback"
+      ]
+     }
     ],
     [
      "pack-desktop",
      "t-desktop",
-     "the act, then the read-back"
+     "the act, then the read-back",
+     {
+      "pack-desktop": "desk-backend"
+     }
     ],
     [
      "pack-command",
      "t-command",
-     "the act, then the read-back"
+     "the act, then the read-back",
+     {
+      "pack-command": [
+       "cmd-start",
+       "cmd-readback"
+      ]
+     }
     ],
     [
      "pack-data",
      "t-data",
-     "the act, then the read-back"
+     "the act, then the read-back",
+     {
+      "pack-data": [
+       "data-transaction",
+       "data-readback"
+      ]
+     }
     ],
     [
      "pack-file",
      "t-file",
-     "the act, then the read-back"
+     "the act, then the read-back",
+     {
+      "pack-file": [
+       "file-save",
+       "file-readback"
+      ]
+     }
     ],
     [
      "pack-stream",
      "t-stream",
-     "the act, then the read-back"
+     "the act, then the read-back",
+     {
+      "pack-stream": [
+       "stream-publish",
+       "stream-readback"
+      ]
+     }
     ],
     [
      "pack-device",
      "t-device",
-     "the act, then the read-back"
+     "the act, then the read-back",
+     {
+      "pack-device": [
+       "dev-frame",
+       "dev-readback"
+      ]
+     }
     ],
     [
      "project",
      "compiled-target",
      "target files, compiled whole",
-     "store"
+     "store",
+     {
+      "project": [
+       "proj-target",
+       "proj-auth",
+       "proj-types",
+       "proj-operations",
+       "proj-pipelines",
+       "proj-pack-files",
+       "proj-source-defs"
+      ],
+      "compiled-target": "compiled-target-parse"
+     }
     ],
     [
      "compiled-target",
      "engine-loop",
      "the compiled target, checked by its hash",
-     "store"
+     "store",
+     {
+      "compiled-target": "compiled-target-hash",
+      "engine-loop": "engine-guard"
+     }
     ],
     [
      "engine-loop",
      "ledger",
      "the intent before the act; verified after",
      "path",
-     7
+     7,
+     {
+      "engine-loop": "engine-control",
+      "ledger": "ledger-records"
+     }
     ],
     [
      "session-keeper",
      "vault",
      "asks for a stored secret",
-     "store"
+     "store",
+     {
+      "session-keeper": "keeper-providers",
+      "vault": "vault-layers"
+     }
     ],
     [
      "pack-web",
      "browser",
      "drives its own browser",
-     "store"
+     "store",
+     {
+      "pack-web": "web-browser",
+      "web-browser": "wb-launch"
+     }
     ]
    ],
    "decided": [
