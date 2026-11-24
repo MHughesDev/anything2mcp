@@ -4407,14 +4407,18 @@ fn secret_key_word(key: &str) -> bool {
     SECRET_WORDS.iter().any(|word| key.contains(word))
 }
 
-/// Whether the compiler takes `name` for a certain secret's: a key that
-/// holds one of the words of a password, a private key, a secret, or an
-/// access token. It is the test the compiler's refusal of a secret in a
-/// file (`kernel.credential_in_file`) uses, so a drafter that asks it
-/// cannot write a key the compiler would refuse (decision 0302).
+/// Whether a drafter leaves `name` out because it may name a secret: a key
+/// the compiler takes for a certain secret's (one of the words of a
+/// password, a private key, a secret, or an access token), or one with a
+/// word that perhaps names one (`token`, `cookie`, `pin`, `bearer`,
+/// `authorization`, in any case and at any place, so `api_token` and
+/// `accessToken` are both left out). A drafter that asks it cannot write a
+/// key the compiler would refuse, and leaves out more than the compiler
+/// refuses, because a field left out of a draft costs a person one line and
+/// a secret drafted as an output is never taken back (decisions 0302, 0345).
 #[must_use]
 pub fn names_a_secret(name: &str) -> bool {
-    secret_key_word(&name.to_ascii_lowercase().replace('-', "_"))
+    key_names(name).is_some()
 }
 
 /// The sentence that ends a drafted description when inputs, outputs,
@@ -4729,6 +4733,9 @@ mod secret_names {
     /// shared: the certain words, the perhaps words, and ordinary names.
     #[test]
     fn the_shared_test_gives_the_answers_the_compiler_always_gave() {
+        // A drafter leaves out the perhaps words too (decision 0345).
+        assert!(names_a_secret("api_token"));
+        assert!(names_a_secret("accessToken"));
         let table: [(&str, Option<(bool, bool)>); 20] = [
             ("password", Some((true, true))),
             ("client_secret", Some((true, true))),
@@ -4754,11 +4761,7 @@ mod secret_names {
         for (key, want) in table {
             let got = key_names(key).map(|(kind, exact)| (kind == KeyNames::Secret, exact));
             assert_eq!(got, want, "{key:?}");
-            assert_eq!(
-                names_a_secret(key),
-                matches!(want, Some((true, _))),
-                "{key:?}"
-            );
+            assert_eq!(names_a_secret(key), want.is_some(), "{key:?}");
         }
     }
 

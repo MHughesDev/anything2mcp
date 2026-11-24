@@ -224,6 +224,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 A safety review read each crate against its design and the ten rules, and every finding was confirmed with a test. These are the ones a user would see.
 
+- A drafter leaves out a field whose name perhaps names a secret (`api_token`, `accessToken`), not only one it names for certain.
 - The vault: a passphrase of fewer than 16 bytes is refused (`vault_passphrase_too_short`). Two engines starting together on a fresh installation make one root key. A session that was revoked cannot be brought back by a restore that arrives late ([decision 0138](docs/decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md)).
 - The redactor finds a secret across the pieces of a stream, in hexadecimal in either letter case, in base64 with line breaks, in character references, and as a number. A number that holds a secret is shown as `[redacted]`.
 - The engine: a write that was sent stays in doubt until it is read back, whatever failed after it, and is reconciled and never sent again. A value that holds the redaction mark is never sent (`argument_masked`), and a write whose values hold a registered secret is refused. The lease is checked at the commit point ([decision 0147](docs/decisions/0147-the-engine-after-its-safety-audit.md)).
