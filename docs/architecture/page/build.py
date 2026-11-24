@@ -23,10 +23,21 @@ for nid, n in nodes.items():
         for i in e[:2]:
             if i not in ids:
                 bad.append(f'{nid}: edge names {i}, not in this view')
+    # The graph view draws every arrow as a link between two parts, and lights a step's arrows by their ends.
+    pairs = set()
+    for e in n.get('edges', []):
+        if len(e) < 2 or e[0] not in nodes or e[1] not in nodes or e[0] == e[1]:
+            bad.append(f'{nid}: arrow {e[:2]} does not join two different existing parts')
+        elif len(e) > 2 and not isinstance(e[2], str):
+            bad.append(f'{nid}: arrow {e[:2]} says what it carries in something other than text')
+        pairs.add((e[0], e[1]) if len(e) >= 2 else None)
     for s in n.get('steps', []) + [x for w in n.get('walks', []) for x in w['steps']]:
         for i in s.get('at', []):
             if i not in ids:
                 bad.append(f'{nid}: step names {i}, not in this view')
+        for e in s.get('edges', []):
+            if (e[0], e[1]) not in pairs and (e[1], e[0]) not in pairs:
+                bad.append(f'{nid}: a step lights {e[0]} to {e[1]}, which is no arrow of this view')
 
 # 2. The outline: the first screen's stations and shelves. Every part of the root view is in
 #    exactly one of them, so the short first screen leaves nothing out and shows nothing twice.
