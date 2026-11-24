@@ -1,4 +1,4 @@
-# 0455. A capture ends as a scout does
+# 0400. A capture ends as a scout does
 
 **Status:** Accepted. Design decision, made by the design architect. The owner had not read this record when it was merged. Nothing in it is built.
 
@@ -16,7 +16,7 @@
 2. **`capture.stop` answers with the report's reference,** and `scout.report` reads it. No second kind of report exists.
 3. **The try stage tries what a scout may try.** A read drafted from a `GET` is tried in the sandbox. A held draft is not tried and is listed with its question, as decision 0298 says. An asserted read cannot be tried under the drafts ([decision 0394](0394-an-asserted-read-of-a-web-surface-is-a-page-request-matched-by-one-shared-shape-and-shown-at-publish.md), point 4), and the report says so of each, with the step that comes next.
 4. **The report says it came from a capture,** with how long it ran, how many screens and requests it saw, and each bound it hit. Its coverage is `partial`: it says nothing of what the person did not use.
-5. **E5 no longer waits on E3.** The comparison stage and the scout's own budget are after the first release ([decision 0453](0453-what-the-first-release-needs-of-the-packages-left-and-what-waits-until-after-it.md)).
+5. **E5 no longer waits on E3.** The comparison stage and the scout's own budget are after the first release ([decision 0397](0397-what-the-first-release-needs-of-the-packages-left-and-what-waits-until-after-it.md)).
 
 ## Alternatives
 

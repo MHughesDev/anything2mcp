@@ -1,4 +1,4 @@
-# 0454. The review shows a launched program as a launcher, and says what nothing pins
+# 0398. The review shows a launched program as a launcher, and says what nothing pins
 
 **Status:** Accepted. Design decision, made by the design architect. The owner had not read this record when it was merged. Nothing in it is built. It changes the review summary, which a front door serves, by addition.
 

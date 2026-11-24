@@ -387,7 +387,7 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0393 | [A bet is settled only by a named test or a measured number, and a part settled is marked `partly`](0393-a-bet-is-settled-only-by-a-named-test-or-a-measured-number-and-a-part-settled-is-marked-partly.md) | Accepted (design decision) |
 | 0394 | [An asserted read of a web surface is a page request, matched by one shared shape and shown at publish](0394-an-asserted-read-of-a-web-surface-is-a-page-request-matched-by-one-shared-shape-and-shown-at-publish.md) | Accepted (design decision) |
 | 0395 | [A person-driven discoverer is called through a method of its own, and the scope is left as it is](0395-a-person-driven-discoverer-is-called-through-a-method-of-its-own-and-the-scope-is-left-as-it-is.md) | Accepted (design decision) |
-| 0452 | [A tool stopped by a drift is listed and marked, never left out](0452-a-tool-stopped-by-a-drift-is-listed-and-marked-never-left-out.md) | Accepted (design decision) |
-| 0453 | [What the first release needs of the packages left, and what waits until after it](0453-what-the-first-release-needs-of-the-packages-left-and-what-waits-until-after-it.md) | Accepted (design decision) |
-| 0454 | [The review shows a launched program as a launcher, and says what nothing pins](0454-the-review-shows-a-launched-program-as-a-launcher-and-says-what-nothing-pins.md) | Accepted (design decision) |
-| 0455 | [A capture ends as a scout does](0455-a-capture-ends-as-a-scout-does.md) | Accepted (design decision) |
+| 0396 | [A tool stopped by a drift is listed and marked, never left out](0396-a-tool-stopped-by-a-drift-is-listed-and-marked-never-left-out.md) | Accepted (design decision) |
+| 0397 | [What the first release needs of the packages left, and what waits until after it](0397-what-the-first-release-needs-of-the-packages-left-and-what-waits-until-after-it.md) | Accepted (design decision) |
+| 0398 | [The review shows a launched program as a launcher, and says what nothing pins](0398-the-review-shows-a-launched-program-as-a-launcher-and-says-what-nothing-pins.md) | Accepted (design decision) |
+| 0400 | [A capture ends as a scout does](0400-a-capture-ends-as-a-scout-does.md) | Accepted (design decision) |

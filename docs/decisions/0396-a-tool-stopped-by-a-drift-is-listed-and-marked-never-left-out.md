@@ -1,4 +1,4 @@
-# 0452. A tool stopped by a drift is listed and marked, never left out
+# 0396. A tool stopped by a drift is listed and marked, never left out
 
 **Status:** Accepted. Design decision, made by the design architect. The owner had not read this record when it was merged. Nothing in it is built.
 

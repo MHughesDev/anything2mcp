@@ -1,4 +1,4 @@
-# 0453. What the first release needs of the packages left, and what waits until after it
+# 0397. What the first release needs of the packages left, and what waits until after it
 
 **Status:** Accepted. Design decision, made by the design architect at the lead's asking. The owner had not read this record when it was merged. It moves packages; it changes nothing in the product. Supersedes, of [decision 0390](0390-the-open-questions-of-2026-11-24-are-settled-by-the-lead-and-the-first-release-is-what-progress-counts-toward.md), the half of point 8 that puts package 9.1b before the first release.
 
@@ -35,10 +35,10 @@ When the line was drawn, twelve of the packages left needed design. This close t
 | 5.3 | A test: each step of the first hour is named in the guidance file, and every page the guidance file or a failure's next step points to is one `docs.get` serves |
 | 5.4 | The Python client's test against a real engine, run in CI's Windows job |
 | 5.6a, new | The number H-18 has never had: an agent with no knowledge of this repository, given the installed program and the test application's address, timed from the first command to a published read it calls, three times. The lead runs it; the person's press is the field harness's prompt |
-| E5 | A capture ends as a scout does ([decision 0455](0455-a-capture-ends-as-a-scout-does.md)) |
+| E5 | A capture ends as a scout does ([decision 0400](0400-a-capture-ends-as-a-scout-does.md)) |
 | 9.2a, new | One machine's half of 9.2: a store written by the version before opens, and a data folder copied while the engine is stopped and put back resumes a stopped run with no duplicate. No new action |
 | 9.3a and 9.3b, new | A map, written by a reader, of every failure of section 224 and every attack of section 502 that one machine can meet, to the test that exists for it; each one without a test becomes a row of its own. Documents and new rows only |
-| L4, new | The review's run for a launcher ([decision 0454](0454-the-review-shows-a-launched-program-as-a-launcher-and-says-what-nothing-pins.md)) |
+| L4, new | The review's run for a launcher ([decision 0398](0398-the-review-shows-a-launched-program-as-a-launcher-and-says-what-nothing-pins.md)) |
 
 ### Limits the lead set
 
