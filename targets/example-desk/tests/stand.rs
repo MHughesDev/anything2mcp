@@ -597,6 +597,11 @@ mod on_macos {
             "Tracking",
             "Reference",
             "Access code",
+            "New customer",
+            "New status",
+            // Not editable, and a text field all the same, as the read-only
+            // entries of the other stands are (decision 0999).
+            "Message",
         ] {
             assert!(
                 titled

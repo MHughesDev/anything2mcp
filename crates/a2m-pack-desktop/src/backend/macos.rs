@@ -2093,6 +2093,14 @@ mod tests {
             assert_eq!(has("entry", name), 1, "entry {name}:\n{said}");
         }
         assert_eq!(has("entry", "Reference"), 2, "{said}");
+        // What the application says after Save is a field that is not
+        // editable, an entry as on the other systems, which the screen
+        // model's confirmation names; the problem's field is hidden, and
+        // listed only while the application refuses a value (decision 0999).
+        for name in ["New customer", "New status", "Message"] {
+            assert_eq!(has("entry", name), 1, "entry {name}:\n{said}");
+        }
+        assert_eq!(has("entry", "Problem"), 0, "{said}");
         assert_eq!(has("entry", ""), 1, "the unnamed field:\n{said}");
         assert_eq!(has("password_text", "Access code"), 1, "{said}");
         assert!(
