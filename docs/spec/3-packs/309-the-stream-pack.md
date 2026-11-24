@@ -81,7 +81,7 @@ The steps are those [section 201](../2-kernel/201-archetypes-and-modes.md) lists
 
 | Verb | Effect class | Lowers to | Returns |
 | --- | --- | --- | --- |
-| `read` | `read` | `latest` for the key | The value, or absent |
+| `read` | `read` | `latest` for the key | The value, or absent; where the operation declares an output `found`, a key with no message is the result `found: false` ([decision 0429](../../decisions/0429-a-read-of-a-retained-key-that-declares-found-answers-a-key-with-no-message-as-found-false.md)) |
 | `list` | `read` | `browse` up to `browse_count` | Messages held now, with coverage |
 | `await` | `read` | `subscribe` from a recorded position, `await` a match | The message, or nothing within the limit |
 | `publish` | By the table under "Read-back" | `publish`, then the read-back steps | The broker's acknowledgement and position |

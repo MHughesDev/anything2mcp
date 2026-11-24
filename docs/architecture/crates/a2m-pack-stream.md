@@ -41,7 +41,7 @@ It must never: choose a channel from a step argument; keep a subscription open a
 
 | Verb | Steps | Needs | Returns |
 | --- | --- | --- | --- |
-| `read` | `latest`, a lookup | A retained channel and its key | The body's fields and `message_meta`, or absent |
+| `read` | `latest`, a lookup unless the operation declares an output `found` | A retained channel and its key | The body's fields and `message_meta`, or absent; with `found`, `found: true` beside them, or `found: false` alone for a key with no message ([decision 0429](../../decisions/0429-a-read-of-a-retained-key-that-declares-found-answers-a-key-with-no-message-as-found-false.md)) |
 | `list` | `browse` | `read_through` lists `browse`; on a log, an optional `from` | `messages`, `count`, `more`, `coverage`, `next` |
 | `await` | `subscribe`, `await` | `read_through` lists `own_subscription`; not a queue; a wait within the channel's longest and the settings' ceiling | `arrived` and `message`; or `arrived: false`, `waited_ms`, `examined`, `coverage`, `limitation` |
 | `publish` | `publish`, which commits; read back by `latest` on a retained channel, by `scan` on a log that declares an idempotency header, after a `position` step that records where the log ends; none elsewhere, and its evidence is then `acknowledged` | The effect and hazard the channel requires | `message_id`, `position`, `duplicate` |
@@ -73,7 +73,7 @@ The first seven are raised where a file is compiled or a binding lowered; the la
 | From a finding about | The drafter writes | Left to the developer |
 | --- | --- | --- |
 | A channel the broker lists | A channel file: address, shape, the key field, the idempotency header, and its duplicate window where the broker states them, `read_through: browse` where a look worked | `role`, left out (a publish asks it); the key of a retained channel whose key field the broker does not name, as an open question; `consumers`, `ownership`, every correlation field, every subscription name |
-| The same finding | One operation that reads: `read` of a retained key the broker states, whose outputs are the plain fields the broker's schema states but the key (`string` as `untrusted_text`, `integer`, `number` as `decimal`, `boolean`), carried in the channel finding as `schema_fields` because a rule sees one finding; with no schema the pack reads, its outputs are an open question. Else `list` where a look worked, whose outputs are each plain field the schema states, or else each a look saw with one JSON type, as a list (`list: true`), then `count` and `more`. The description names the channel | Every other operation |
+| The same finding | One operation that reads: `read` of a retained key the broker states, whose outputs are the plain fields the broker's schema states but the key, and `found` unless the schema states a field of that name (decision 0429) (`string` as `untrusted_text`, `integer`, `number` as `decimal`, `boolean`), carried in the channel finding as `schema_fields` because a rule sees one finding; with no schema the pack reads, its outputs are an open question. Else `list` where a look worked, whose outputs are each plain field the schema states, or else each a look saw with one JSON type, as a list (`list: true`), then `count` and `more`. The description names the channel | Every other operation |
 | A schema the broker holds | A schema file, whole when the schema is within what the pack checks; else its fields as an open question | Confirming it |
 
 No rule writes a publish, a `take`, or a subscription's name.

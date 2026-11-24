@@ -325,6 +325,20 @@ fn read_outputs(found: &Found, key: &str, cx: &DraftContext<'_>) -> DraftValue {
             found.channel
         ))
     } else {
+        // A key with no message is answered `found: false`, unless a
+        // message has a field of that name (decision 0429).
+        let mut fields = fields;
+        let has_found = found
+            .json
+            .get("schema_fields")
+            .and_then(Json::as_object)
+            .is_some_and(|all| all.contains_key(crate::lower::FOUND));
+        if !has_found {
+            fields.push((
+                crate::lower::FOUND.to_owned(),
+                DraftValue::map(vec![("type", DraftValue::text("boolean"))]),
+            ));
+        }
         DraftValue::Map(fields)
     }
 }
