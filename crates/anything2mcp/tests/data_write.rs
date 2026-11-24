@@ -36,6 +36,8 @@ use serde_json::Value as Json;
 
 const UPDATE: &str = "example_line_item_update";
 const GET: &str = "example_line_item_get";
+/// The update guarded by the line's version (decision 0399).
+const REPRICE: &str = "example_line_item_reprice";
 const LINE: [&str; 2] = ["A-100", "L-101"];
 /// How long a test waits for something that should come at once. Only a
 /// failure waits this long.
@@ -280,9 +282,12 @@ async fn approve(world: &World, run: &str) {
 
 /// A write that rested for approval, and the person approved it.
 async fn approved(world: &World, input: &str) -> String {
-    let rested = world
-        .agent(&["tool", "call", UPDATE, "--input", input])
-        .await;
+    approved_of(world, UPDATE, input).await
+}
+
+/// A write of `tool` that rested for approval, and the person approved it.
+async fn approved_of(world: &World, tool: &str, input: &str) -> String {
+    let rested = world.agent(&["tool", "call", tool, "--input", input]).await;
     assert_eq!(
         rested.result()["status"],
         "needs_approval",
@@ -512,6 +517,59 @@ async fn a_stale_approval_writes_nothing(rig: Rig) {
     world.close().await;
 }
 
+/// The input of the guarded write: the line, its new price, and the
+/// version the caller read it at.
+fn reprice(price: &str, seen_version: i64) -> String {
+    format!(
+        r#"{{"order_id": "{}", "item_code": "{}", "unit_price": "{price}", "seen_version": {seen_version}}}"#,
+        LINE[0], LINE[1]
+    )
+}
+
+/// A write guarded by the record's version: the version is a precondition
+/// of the write, sent with it and checked by the store, and never compared
+/// with what is read back, which holds the version the store raised
+/// (decision 0399). A second write sent with the version the line no longer
+/// has is refused by the store's own guard, and nothing is written.
+async fn a_guarded_write_is_verified_and_a_changed_version_writes_nothing(rig: Rig) {
+    let world = published(&rig).await;
+    let stand = &rig.stand;
+    assert_seed(stand);
+
+    let run = approved_of(&world, REPRICE, &reprice("13.10", 1)).await;
+    assert_eq!(stand.writes_of_the_line(), 0, "{}", stand.name());
+    let done = world.agent(&["run", "resume", &run]).await;
+    assert_eq!(done.result()["status"], "completed", "{}", done.json);
+    assert_eq!(stand.writes_of_the_line(), 1, "{}", stand.name());
+    let held = stand.held();
+    assert!(same_number(&held.price, "13.10"), "{}", held.price);
+    assert!(same_number(&held.length, SEED_LENGTH), "{}", held.length);
+    assert_eq!(held.version, 2);
+    let trace = world.ok(&["trace", "show", &run]).await;
+    assert!(kinds(&trace).contains(&"verified"), "{trace}");
+
+    // The same caller writes again with the version it read before its own
+    // write: the line has changed since, and the store's guard refuses it.
+    let again = approved_of(&world, REPRICE, &reprice("14.00", 1)).await;
+    let refused = world.agent(&["run", "resume", &again]).await;
+    assert_ne!(refused.result()["status"], "completed", "{}", refused.json);
+    assert_eq!(refused.error()["class"], "stale", "{}", refused.json);
+    assert_eq!(stand.writes_of_the_line(), 1, "{}", stand.name());
+    let held = stand.held();
+    assert!(same_number(&held.price, "13.10"), "{}", held.price);
+    assert_eq!(held.version, 2);
+
+    // With the version the line has now, the write is made and verified.
+    let current = approved_of(&world, REPRICE, &reprice("14.00", 2)).await;
+    let done = world.agent(&["run", "resume", &current]).await;
+    assert_eq!(done.result()["status"], "completed", "{}", done.json);
+    assert_eq!(stand.writes_of_the_line(), 2, "{}", stand.name());
+    let held = stand.held();
+    assert!(same_number(&held.price, "14.00"), "{}", held.price);
+    assert_eq!(held.version, 3);
+    world.close().await;
+}
+
 async fn bad_input_starts_nothing(rig: Rig) {
     let world = published(&rig).await;
     let stand = &rig.stand;
@@ -611,7 +669,19 @@ async fn file_bad_input_starts_nothing() {
     bad_input_starts_nothing(Rig::file().on_disk()).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn file_a_guarded_write_is_verified_and_a_changed_version_writes_nothing() {
+    a_guarded_write_is_verified_and_a_changed_version_writes_nothing(Rig::file().on_disk()).await;
+}
+
 // ---- on a PostgreSQL server ----
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn server_a_guarded_write_is_verified_and_a_changed_version_writes_nothing() {
+    if let Some(rig) = Rig::server() {
+        a_guarded_write_is_verified_and_a_changed_version_writes_nothing(rig.on_disk()).await;
+    }
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn server_an_approved_write_is_made_once_and_read_back() {

@@ -1348,6 +1348,7 @@ fn input(name: &str, field_type: u32, ty: ValueType, required: bool) -> InputPla
         required,
         default: None,
         description: String::new(),
+        precondition: false,
     }
 }
 

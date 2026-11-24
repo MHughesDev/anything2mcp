@@ -22,7 +22,7 @@ use a2m_telemetry::Phase;
 use crate::codes;
 use crate::compare::{self, Field};
 use crate::control::{Clearance, EngineEvent, Evidence, GuardQuestion, Preview};
-use crate::diff::{Diff, DiffAction, DiffBinding, DiffField, DiffRecord};
+use crate::diff::{Diff, DiffAction, DiffBinding, DiffField, DiffPrecondition, DiffRecord};
 use crate::job::{JobKind, RecordSnapshot};
 use crate::loaded::{Loaded, Scope};
 use crate::run::{Candidate, RecordCx, Run, StepCx, Stop, masked, merge, operation};
@@ -1950,6 +1950,16 @@ async fn preview_record(
             evidence,
             binding,
             could_take,
+            preconditions: compare::precondition_fields(loaded, found)
+                .iter()
+                .filter_map(|field| {
+                    let value = record.inputs.get(&field.name)?;
+                    Some(DiffPrecondition {
+                        name: field.name.clone(),
+                        value: kept_value(run, &compare::guarded(field, value.clone())),
+                    })
+                })
+                .collect(),
         },
         PlannedRecord {
             step_seq: record.record.step_seq,

@@ -302,6 +302,16 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
+            // A part of the key is what the record is, never a
+            // precondition of writing it.
+            "kernel.precondition_invalid",
+            Case::Edit(
+                UPSERT,
+                "order_id: {type: identifier, description",
+                "order_id: {type: identifier, precondition: true, description",
+            ),
+        ),
+        (
             // The upsert's call is filled by its inputs: not one place.
             "kernel.place_not_fixed",
             Case::Edit(

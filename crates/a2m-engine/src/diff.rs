@@ -101,6 +101,23 @@ pub struct DiffRecord {
     /// names it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub could_take: Vec<DiffBinding>,
+    /// The values the write is sent with as its preconditions, such as the
+    /// version a guard compares, each normalized, or its hash when
+    /// restricted (decision 0399). They are what was approved and are in
+    /// the hash, but they are no field of the record: the system checks
+    /// them, and nothing compares them with a read. In the hash only when
+    /// there are any, so a diff of before this field hashes the same.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preconditions: Vec<DiffPrecondition>,
+}
+
+/// One precondition of a record's write, as a diff shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffPrecondition {
+    /// The input's name.
+    pub name: String,
+    /// Its value after normalization, or its hash when restricted.
+    pub value: Value,
 }
 
 /// One binding of an operation, as a diff names it for a record.
@@ -293,6 +310,16 @@ impl Diff {
                 hasher.field("current", &value_bytes(field.current.as_ref()));
                 hasher.field("proposed", &value_bytes(Some(&field.proposed)));
             }
+            if !record.preconditions.is_empty() {
+                let mut preconditions: Vec<&DiffPrecondition> =
+                    record.preconditions.iter().collect();
+                preconditions.sort_by(|left, right| left.name.cmp(&right.name));
+                hasher.field("preconditions", &(preconditions.len() as u64).to_le_bytes());
+                for precondition in preconditions {
+                    hasher.field("name", precondition.name.as_bytes());
+                    hasher.field("value", &value_bytes(Some(&precondition.value)));
+                }
+            }
         }
         hasher.finish()
     }
@@ -378,6 +405,7 @@ mod tests {
             evidence: WriteEvidence::ReadBack,
             binding: None,
             could_take: Vec::new(),
+            preconditions: Vec::new(),
         }
     }
 

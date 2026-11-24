@@ -212,6 +212,7 @@ The binding that writes a record is checked for its one committing step where it
 
 - The plan holds each field type's normalizer as compiled host-function calls. The engine evaluates them through `a2m-expr` on both sides: the intended value and the value read back.
 - Values are compared field by field in the record's declared order, as `Value`. There is no float anywhere in a comparison; a decimal compares exactly after its type's rounding rule.
+- The record's fields are its operation's inputs that are not part of its key and not marked `precondition` (`InputPlan::precondition`). A precondition, such as the version a guard compares, is sent with the write and checked by the system; no read gives it back as it was sent, so it is never compared, at the preview, the freshness check, the read-back, or reconcile. The diff shows each one, normalized, in `DiffRecord::preconditions`, and its hash covers them when there are any, so the approval binds the value the write is sent with ([decision 0399](../../decisions/0399-an-input-marked-precondition-is-sent-with-a-write-and-never-compared-with-its-read-back.md)).
 - A field labelled restricted is compared, and stored, as a hash of its normalized value.
 - A comparison returns `Equal` or `Differs` with the names of the differing fields. Values go to evidence, never into the failure's message.
 - `Absent` compares equal only to an absent `before`. A record that is absent after a write is a `mismatch`.

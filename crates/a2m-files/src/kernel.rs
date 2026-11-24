@@ -92,7 +92,8 @@ fn inputs() -> JsonSchema {
             .required("type", JsonSchema::field_type())
             .optional("description", JsonSchema::text())
             .optional("required", JsonSchema::bool())
-            .optional("default", JsonSchema::scalar()),
+            .optional("default", JsonSchema::scalar())
+            .optional("precondition", JsonSchema::bool()),
     )
 }
 

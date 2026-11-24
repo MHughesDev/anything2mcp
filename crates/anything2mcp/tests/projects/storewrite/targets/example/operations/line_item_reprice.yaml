@@ -1,0 +1,23 @@
+operation: example_line_item_reprice
+title: Reprice a line item
+effect: irreversible
+hazard: data_elsewhere
+key: [order_id, item_code]
+commit_points: 1
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+  item_code: {type: identifier, description: "Item code, such as L-101"}
+  unit_price: {type: price, description: "Price of one unit"}
+  seen_version: {type: integer, precondition: true, description: "The version of the line as it was read; the write is refused if the line has changed since"}
+outputs:
+  unit_price: {type: price}
+bindings:
+  - mode: sql
+    status: verified
+    verb: update
+    statement: line_item_reprice
+    read_back: line_item_by_key
+    params: {version: input.seen_version}
+description: >
+  Changes the price of one line item by its key, only if the line still has the version it was read at, and reads it back.
+  Prefer example_line_item_update to change the length as well.

@@ -44,7 +44,8 @@ pub use control::{
     SessionWant, ShadowCompared,
 };
 pub use diff::{
-    Diff, DiffAction, DiffBinding, DiffCounts, DiffField, DiffRecord, NOW_CANNOT_BE_READ,
+    Diff, DiffAction, DiffBinding, DiffCounts, DiffField, DiffPrecondition, DiffRecord,
+    NOW_CANNOT_BE_READ,
 };
 pub use engine::{Engine, EngineDeps, EngineSettings, ExclusiveNeed};
 pub use job::{

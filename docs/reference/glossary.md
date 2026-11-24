@@ -110,6 +110,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Plan | The old name of the compiled target, kept in the code until roadmap package N0 renames it ([decision 0329](../decisions/0329-the-compiled-file-the-engine-runs-is-the-compiled-target.md)) |
 | Policy set | The versioned rules the policy engine evaluates |
 | Pre-approval rule | A rule in a policy set under which a write may proceed without a person, for one run and one diff. It can never cover an `irreversible` operation or a hazard other than `none` |
+| Precondition | An input of a writing operation that the write is sent with and the system checks, and that is no field of the record, such as the version a guard compares. Declared `precondition: true` on the input; shown in the diff and bound by the approval, never compared with a read-back ([decision 0399](../decisions/0399-an-input-marked-precondition-is-sent-with-a-write-and-never-compared-with-its-read-back.md)) |
 | Preset | A named bundle of settings a person picks instead of setting each one. A preset may only tighten |
 | Principal | Anyone or anything that calls Anything2MCP |
 | Proper name | The one name of a part: a noun or a short noun phrase from this glossary, from the code, or coined. A description is not a name ([decision 0301](../decisions/0301-every-part-has-a-proper-name.md)) |

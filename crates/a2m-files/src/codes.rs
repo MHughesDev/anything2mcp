@@ -64,6 +64,7 @@ kernel_codes! {
     WRITE_WITHOUT_IDENTITY = "write_without_identity": "A write operation declares how its record is found again.",
     IDENTITY_NOT_POSSIBLE = "identity_not_possible": "An operation's identity strategy is possible in each of its bindings.",
     IDENTITY_INVALID = "identity_invalid": "An identity names inputs of the operation, and fits the operation's effect.",
+    PRECONDITION_INVALID = "precondition_invalid": "An input marked `precondition` belongs to an operation that writes and is not part of its key.",
     PLACE_NOT_FIXED = "place_not_fixed": "An operation whose record is one fixed place takes no identity input, and every binding names the same place, which its file kind declares fixed on the binding's surface.",
     WRITE_WITHOUT_READ_BACK = "write_without_read_back": "A write binding reads the record back.",
     ACKNOWLEDGED_WHERE_READ_BACK = "acknowledged_where_read_back": "A binding that reads its record back by its key is verified by that read, never ended on an acknowledgement.",

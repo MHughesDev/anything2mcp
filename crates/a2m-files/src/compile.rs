@@ -1809,11 +1809,54 @@ impl<'a> Compiler<'a> {
                         .text("description")
                         .unwrap_or_default()
                         .to_owned(),
+                    precondition: entry
+                        .value
+                        .get("precondition")
+                        .and_then(Located::as_bool)
+                        .unwrap_or(false),
                 },
                 at: entry.key.at.clone(),
             });
         }
         inputs
+    }
+
+    /// Holds every input marked `precondition` to what it may be
+    /// (decision 0399): an input of an operation that writes, not part of
+    /// its key. A pipeline's inputs are never one: a pipeline writes
+    /// through its operations, whose own inputs say it.
+    fn preconditions(
+        &mut self,
+        inputs: &[InputInfo],
+        effect: EffectClass,
+        key: &[String],
+        pipeline: Option<&str>,
+    ) {
+        for input in inputs.iter().filter(|input| input.plan.precondition) {
+            let name = &input.plan.name;
+            let why = if let Some(pipeline) = pipeline {
+                format!(
+                    "The input `{name}` of the pipeline `{pipeline}` is marked `precondition`, and a pipeline's input is never one."
+                )
+            } else if effect == EffectClass::Read {
+                format!(
+                    "The input `{name}` is marked `precondition`, and the operation only reads."
+                )
+            } else if key.iter().any(|part| part == name) {
+                format!(
+                    "The input `{name}` is marked `precondition`, and it is part of the record's key."
+                )
+            } else {
+                continue;
+            };
+            self.error(
+                codes::PRECONDITION_INVALID,
+                Stage::Validate,
+                &input.at,
+                why,
+                "Mark `precondition` only on an input of a write that the system checks and no read gives back, such as the version a guard compares.".to_owned(),
+            );
+        }
     }
 
     fn identity(
@@ -2074,6 +2117,7 @@ impl<'a> Compiler<'a> {
                 });
             }
             let (strategy, key, fixed) = self.identity(doc, effect, &inputs);
+            self.preconditions(&inputs, effect, &key, None);
             let info = OpInfo {
                 name,
                 doc: doc.clone(),
@@ -3299,6 +3343,7 @@ impl<'a> Compiler<'a> {
     fn pipeline(&mut self, doc: &Located<Doc>, name: OperationName) -> Option<PipelinePlan> {
         let mut fine = true;
         let mut inputs = self.inputs(doc);
+        self.preconditions(&inputs, EffectClass::Write, &[], Some(name.as_str()));
         let declared_inputs = input_type(&inputs);
         let mut source = None;
         let mut row_type = None;
@@ -3328,6 +3373,7 @@ impl<'a> Compiler<'a> {
                                     required: true,
                                     default: None,
                                     description: format!("The file to read, in the form of the source template `{text}`."),
+                                    precondition: false,
                                 },
                                 at: template.at.clone(),
                             });

@@ -733,6 +733,16 @@ pub struct InputPlan {
     pub default: Option<Value>,
     /// What it means, for the caller.
     pub description: String,
+    /// Whether it is a precondition of the write and not a field of the
+    /// record (decision 0399): a value the write is sent with and the
+    /// system checks, such as the version a guard compares, which no read
+    /// gives back as it was sent. The engine leaves it out of the record's
+    /// fields, so it is never compared with a read-back; it stays in the
+    /// diff a person approves. Only an input of an operation that writes,
+    /// and not of its key, may be one. Left out of the encoded plan when
+    /// false, so a plan that declares none is the bytes it was before.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub precondition: bool,
 }
 
 /// One field of what an operation returns.
@@ -1662,6 +1672,7 @@ mod tests {
             required: true,
             default: None,
             description: format!("The {name} of the order."),
+            precondition: false,
         }
     }
 
