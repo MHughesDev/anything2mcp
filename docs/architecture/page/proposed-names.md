@@ -627,3 +627,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Safe Request Match | part | web-browser | coined | The base's `SafeRequest` list and its match by method, origin, path template, and body (decision 0394). |
 | Unavailable Mark | part | mcp-face | coined | What the MCP door's list carries for a tool stopped by a drift: the fixed sentence and `anything2mcp/unavailable` (decision 0396). |
 | Capture Job | part | scout | decision 0392 | The job `capture.start` asks for, which its person begins and ends, and whose findings enter the scout at the draft stage (decisions 0392, 0400). |
+| Module Map | page | (the page itself) | coined | The middle panel of the page: stations and subsystems drawn as containers with their parts nested inside as modules. |
+| The Seam | page | contract | coined | How the Module Map draws the Provider Contract: a band between the kernel and the packs, with the contract's extension points on it. |
+| Process Map | page | (the page itself) | coined | One layer or walk drawn alone, its parts laid out along the flow of its arrows and numbered by step. |
+| Reading Panel | page | (the page itself) | coined | The right panel of the page, which reads the chosen part in depth. |
