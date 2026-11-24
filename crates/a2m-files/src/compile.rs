@@ -620,13 +620,17 @@ impl<'a> Compiler<'a> {
         {
             match TargetName::new(text) {
                 Ok(target) => self.model.target = Some(target),
-                Err(_) => self.error(
+                Err(error) => self.error(
                     codes::NAME_MALFORMED,
                     Stage::Validate,
                     &name.at,
-                    format!("`{}` is not a target name.", shown(text)),
-                    "Write one lowercase name of at most 32 characters, such as `example`."
-                        .to_owned(),
+                    format!("{error}."),
+                    if error.kept_for_a_device().is_some() {
+                        error.next_step()
+                    } else {
+                        "Write one lowercase name of at most 32 characters, such as `example`."
+                            .to_owned()
+                    },
                 ),
             }
         }
@@ -1008,15 +1012,22 @@ impl<'a> Compiler<'a> {
         let mut names = BTreeSet::new();
         if let Some(environments) = doc.get("environments") {
             for entry in environments.entries() {
-                let Ok(name) = Environment::new(&entry.key.value) else {
-                    self.error(
-                        codes::NAME_MALFORMED,
-                        Stage::Validate,
-                        &entry.key.at,
-                        format!("`{}` is not an environment name.", shown(&entry.key.value)),
-                        "Write one lowercase name, such as `test`.".to_owned(),
-                    );
-                    continue;
+                let name = match Environment::new(&entry.key.value) {
+                    Ok(name) => name,
+                    Err(error) => {
+                        self.error(
+                            codes::NAME_MALFORMED,
+                            Stage::Validate,
+                            &entry.key.at,
+                            format!("{error}."),
+                            if error.kept_for_a_device().is_some() {
+                                error.next_step()
+                            } else {
+                                "Write one lowercase name, such as `test`.".to_owned()
+                            },
+                        );
+                        continue;
+                    }
                 };
                 let Some(kind) = entry
                     .value

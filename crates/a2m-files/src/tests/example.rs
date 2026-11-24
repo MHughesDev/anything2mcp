@@ -790,6 +790,40 @@ fn a_broken_file_fails_with_a_file_a_line_a_column_a_code_and_a_fix() {
     );
 }
 
+/// Decision 0431: a target or an environment named for a Windows device
+/// fails to compile on every system, saying why and what to do.
+#[test]
+fn a_target_or_environment_named_for_a_windows_device_does_not_compile() {
+    for (find, replace, named) in [
+        (
+            "target: example",
+            "target: con",
+            "`con` is not a valid target name",
+        ),
+        (
+            "  test:\n    kind: test",
+            "  aux:\n    kind: test",
+            "`aux` is not a valid environment name",
+        ),
+    ] {
+        let problems = problems_of(&Case::Edit("target.yaml", find, replace));
+        assert!(problems.has_errors());
+        let problem = problems
+            .iter()
+            .find(|problem| {
+                problem.code.as_str() == "kernel.name_malformed" && problem.message.contains(named)
+            })
+            .unwrap_or_else(|| panic!("{problems}"));
+        assert_eq!(problem.at.file.as_str(), "target.yaml");
+        assert!(
+            problem.message.contains("Windows keeps"),
+            "{}",
+            problem.message
+        );
+        assert!(problem.fix.contains("_main`"), "{}", problem.fix);
+    }
+}
+
 #[test]
 fn an_expression_with_a_type_error_is_reported_at_its_place_in_the_file() {
     let problems = problems_of(&Case::Edit(

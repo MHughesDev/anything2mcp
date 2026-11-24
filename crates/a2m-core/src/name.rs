@@ -61,6 +61,9 @@ pub struct InvalidName {
     name: String,
     longest: usize,
     shape: Shape,
+    /// The part of the name that Windows keeps for a device, when that is
+    /// the only thing wrong with it (decision 0431).
+    device: Option<String>,
 }
 
 /// Which shape a name was held to.
@@ -81,8 +84,33 @@ impl InvalidName {
         self.kind
     }
 
+    /// The part of the name that Windows keeps for a device, such as `con`,
+    /// when that is the only thing wrong with it (decision 0431).
+    #[must_use]
+    pub fn kept_for_a_device(&self) -> Option<&str> {
+        self.device.as_deref()
+    }
+
     /// What to do about it.
-    pub(crate) fn next_step(&self) -> String {
+    #[must_use]
+    pub fn next_step(&self) -> String {
+        if let Some(device) = &self.device {
+            let rename = |part: &str| {
+                if part == device {
+                    format!("{part}_main")
+                } else {
+                    part.to_owned()
+                }
+            };
+            let instead = match self.name.split_once('.') {
+                Some((owner, rule)) => format!("{}.{}", rename(owner), rename(rule)),
+                None => rename(&self.name),
+            };
+            return format!(
+                "Give the {} a name Windows does not keep for a device, such as `{instead}`.",
+                self.kind
+            );
+        }
         match self.shape {
             Shape::Name => format!(
                 "Write the {} name in lowercase, such as `page_http`.",
@@ -110,6 +138,20 @@ impl fmt::Display for InvalidName {
                 "this is not a valid {}; it is `vault://` and one to four parts of lowercase \
                  letters, digits, `_`, `-`, and `.`, joined by `/`, each part at most {} characters",
                 self.kind, self.longest
+            );
+        }
+        if let Some(device) = &self.device {
+            return write!(
+                f,
+                "`{}` is not a valid {}{}; Windows keeps `{device}` for a device, so a file or \
+                 folder of that name cannot be made there, and the name is refused on every system",
+                self.name,
+                self.kind,
+                if self.shape == Shape::Name {
+                    " name"
+                } else {
+                    ""
+                }
             );
         }
         if self.shape == Shape::Dotted {
@@ -140,6 +182,12 @@ pub const fn is_name(text: &str, longest: usize) -> bool {
 }
 
 const fn is_name_bytes(bytes: &[u8], longest: usize) -> bool {
+    has_name_shape(bytes, longest) && !is_device_bytes(bytes)
+}
+
+/// Whether `bytes` is `[a-z][a-z0-9_]*`, at most `longest` characters,
+/// whatever Windows keeps.
+const fn has_name_shape(bytes: &[u8], longest: usize) -> bool {
     if bytes.is_empty() || bytes.len() > longest || !bytes[0].is_ascii_lowercase() {
         return false;
     }
@@ -152,6 +200,44 @@ const fn is_name_bytes(bytes: &[u8], longest: usize) -> bool {
         i += 1;
     }
     true
+}
+
+/// Whether `bytes` is a name Windows keeps for a device: `con`, `prn`,
+/// `aux`, `nul`, or `com` or `lpt` and one digit (decision 0431). A path
+/// whose last part is one of them names the device on Windows 10, so such a
+/// name is refused as a registered name on every system. Only lowercase is
+/// tested, because a name with any other letter is refused by its shape.
+const fn is_device_bytes(bytes: &[u8]) -> bool {
+    match bytes {
+        b"con" | b"prn" | b"aux" | b"nul" => true,
+        [b'c', b'o', b'm', digit] | [b'l', b'p', b't', digit] => digit.is_ascii_digit(),
+        _ => false,
+    }
+}
+
+/// The part of a name that Windows keeps for a device, when that is the
+/// only thing wrong with it: the whole of a name, or one side of a dotted
+/// name whose other side and length are right.
+fn device_part(text: &str, shape: Shape, longest: usize) -> Option<String> {
+    let parts: Vec<&str> = match shape {
+        Shape::Name => vec![text],
+        Shape::Dotted if text.len() <= longest => match text.split_once('.') {
+            Some((owner, rule)) => vec![owner, rule],
+            None => return None,
+        },
+        Shape::Dotted | Shape::Reference => return None,
+    };
+    let shaped = parts
+        .iter()
+        .all(|part| has_name_shape(part.as_bytes(), longest));
+    shaped
+        .then(|| {
+            parts
+                .into_iter()
+                .find(|part| is_device_bytes(part.as_bytes()))
+        })
+        .flatten()
+        .map(str::to_owned)
 }
 
 /// Whether `text` is two names joined by one dot, such as
@@ -194,6 +280,7 @@ pub fn check_name(kind: &'static str, text: &str, longest: usize) -> Result<(), 
             name: shorten(text),
             longest,
             shape: Shape::Name,
+            device: device_part(text, Shape::Name, longest),
         })
     }
 }
@@ -218,6 +305,7 @@ pub fn check_dotted_name(
             name: shorten(text),
             longest,
             shape: Shape::Dotted,
+            device: device_part(text, Shape::Dotted, longest),
         })
     }
 }
@@ -255,6 +343,7 @@ pub(crate) fn check_reference(
             name: String::new(),
             longest: REFERENCE_PART,
             shape: Shape::Reference,
+            device: None,
         })
     }
 }
@@ -401,7 +490,7 @@ fn shorten(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_name, is_name, shorten};
+    use super::{check_dotted_name, check_name, is_dotted_name, is_name, shorten};
 
     #[test]
     fn a_name_is_lowercase_letters_digits_and_underscores() {
@@ -444,5 +533,73 @@ mod tests {
         assert_eq!(shown.chars().count(), 65);
         assert!(shown.ends_with('…'));
         assert!(check_name("mode", &long, 32).unwrap_err().to_string().len() < 400);
+    }
+
+    /// Decision 0431: the names Windows keeps for a device are refused on
+    /// every system, alone or as a part of a dotted name.
+    #[test]
+    fn a_name_windows_keeps_for_a_device_is_refused_with_the_reason() {
+        let mut kept = vec![
+            "con".to_owned(),
+            "prn".to_owned(),
+            "aux".to_owned(),
+            "nul".to_owned(),
+        ];
+        for digit in 0..=9 {
+            kept.push(format!("com{digit}"));
+            kept.push(format!("lpt{digit}"));
+        }
+        for name in &kept {
+            assert!(!is_name(name, 32), "{name}");
+            let error = check_name("target", name, 32).unwrap_err();
+            let text = error.to_string();
+            assert!(text.contains(&format!("`{name}`")), "{text}");
+            assert!(text.contains("Windows keeps"), "{text}");
+            assert!(text.contains("every system"), "{text}");
+            assert_eq!(error.kept_for_a_device(), Some(name.as_str()));
+            let fix = error.next_step();
+            assert!(fix.contains(&format!("`{name}_")), "{fix}");
+            for dotted in [format!("{name}.rule"), format!("owner.{name}")] {
+                assert!(!is_dotted_name(&dotted, 64), "{dotted}");
+                let text = check_dotted_name("lint code", &dotted, 64)
+                    .unwrap_err()
+                    .to_string();
+                assert!(text.contains(&format!("`{name}`")), "{text}");
+                assert!(text.contains("Windows keeps"), "{text}");
+            }
+            let fix = check_dotted_name("lint code", &format!("{name}x.{name}"), 64)
+                .unwrap_err()
+                .next_step();
+            assert!(fix.contains(&format!("`{name}x.{name}_main`")), "{fix}");
+        }
+        for name in [
+            "console",
+            "nulls",
+            "com10",
+            "lpt10",
+            "auxiliary",
+            "con_main",
+            "prn2",
+        ] {
+            assert!(is_name(name, 32), "{name}");
+        }
+        assert!(is_dotted_name("console.rule", 64));
+        // A name that is wrong in its shape says so, and not the device rule.
+        for wrong in ["Con", "con.rule", "con-1"] {
+            let text = check_name("target", wrong, 32).unwrap_err().to_string();
+            assert!(!text.contains("Windows"), "{text}");
+            assert!(
+                check_name("target", wrong, 32)
+                    .unwrap_err()
+                    .kept_for_a_device()
+                    .is_none()
+            );
+        }
+        for wrong in ["con.Rule", "con.rule.x", "con"] {
+            let text = check_dotted_name("lint code", wrong, 64)
+                .unwrap_err()
+                .to_string();
+            assert!(!text.contains("Windows"), "{text}");
+        }
     }
 }
