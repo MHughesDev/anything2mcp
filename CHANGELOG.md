@@ -10,6 +10,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Added
 
+- Section 604 now says how a person backs up one machine: stop the engine, copy the whole data folder, and to restore, put the copy back whole with the engine stopped. A run the copy shows stopped mid-write is reconciled on resume, so a write made after the copy was taken is found and not sent again; this, and that a store written by the version before opens and migrates, are now tested.
 - The local HTTP door now refuses a request that carries an `Origin` other than its own (`http://` and a loopback name with the port the request was sent to), with status 403 before the request is read or its credential checked, so a web page in the person's browser cannot send a request to it; `null` and a malformed `Origin` are refused too, and a request with no `Origin` is checked as before.
 
 - The publish page shows a server started through a launcher as a launcher: the launcher, the entry file's path and digest, and a sentence that says what nothing pins, the packages the entry file loads and whatever those start. It is no longer called a script the target keeps.

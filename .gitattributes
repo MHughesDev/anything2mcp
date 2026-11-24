@@ -3,3 +3,5 @@
 *.png binary
 # A binary property list is bytes, whatever its content looks like.
 crates/a2m-pack-desktop/tests/fixtures/bundles/binary/** binary
+# A store kept as a release wrote it is bytes: a database, a salt, and sealed blobs.
+crates/a2m-ledger/tests/fixtures/** binary
