@@ -1,4 +1,4 @@
-# 0451. A bet is settled only by a named test or a measured number, and a part settled is marked `partly`
+# 0393. A bet is settled only by a named test or a measured number, and a part settled is marked `partly`
 
 **Status:** Accepted. Design decision, made by the design architect with the lead. The owner had not read this record when it was merged.
 
