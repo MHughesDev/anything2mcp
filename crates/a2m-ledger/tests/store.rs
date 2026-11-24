@@ -16,9 +16,9 @@ use a2m_core::{
     RecordState, RunState, Source, Subject, Timestamp, UnknownReason, Version,
 };
 use a2m_ledger::{
-    Acted, AuditEntry, BlobKind, BlobRef, ChainCheck, Durability, NewBlob, NewUnknown, Owner,
-    PublishedVersion, ReadBack, RetentionClass, Settlement, Store, StoreConfig, UnknownStatus,
-    codes, migrations, replay, table_owner,
+    Acted, AuditEntry, BlobKind, BlobRef, ChainCheck, Durability, Fence, NewBlob, NewUnknown,
+    Opened, Owner, PublishedVersion, ReadBack, RetentionClass, Settlement, Store, StoreConfig,
+    UnknownStatus, codes, migrations, replay, table_owner,
 };
 use a2m_vault::{Generation, KeyId, KeyRecord, KeyRecords, KeyRef, Layer, OwnerRef, Wrapped};
 use common::*;
@@ -1331,4 +1331,88 @@ async fn a_second_open_of_one_data_folder_is_refused_while_the_first_is_open() {
     drop(clone);
     let again = Store::open(StoreConfig::in_dir(folder.path())).await;
     assert!(again.is_ok(), "{:?}", again.err());
+}
+
+// ---- the idempotency token ----
+
+/// A write run with one record of the key `line` planned with these
+/// intended values, at `needs_approval`.
+async fn planned_line(store: &Store, input: &'static str, values: &'static str) -> Fence {
+    store
+        .write(Durability::Synced, move |tx| {
+            let mut ledger = tx.ledger();
+            let Opened::New(opened) = ledger.open_run(new_run(EffectClass::Write, 1, input))?
+            else {
+                panic!("the run exists already");
+            };
+            let fence = ledger.new_epoch(opened.run)?;
+            ledger.set_state(&fence, RunState::Validating, None)?;
+            let mut record = planned(0, "line");
+            record.intended = intended(values);
+            ledger.plan_records(&fence, &[record])?;
+            ledger.store_diff(&fence, diff_hash(), None)?;
+            ledger.set_state(&fence, RunState::NeedsApproval, None)?;
+            Ok(fence)
+        })
+        .await
+        .unwrap()
+}
+
+/// Decision 0324, point 6: a token is never reused for changed intended
+/// values. Within a run the intended values of a commit point are fixed:
+/// planning it again with others is refused, and so is an intent for
+/// others, which is given no token. Changed values are a new run, whose
+/// token for the same record is another.
+#[tokio::test]
+async fn a_token_is_never_reused_for_changed_intended_values() {
+    let store = memory().await;
+    let fence = planned_line(&store, "first", "first").await;
+
+    // The commit point cannot be planned again with changed values.
+    let replanned = store
+        .write(Durability::Synced, move |tx| {
+            let mut record = planned(0, "line");
+            record.intended = intended("second");
+            tx.ledger().plan_records(&fence, &[record])
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(replanned.code(), &codes::LEDGER_STATE_UNEXPECTED);
+
+    store
+        .write(Durability::Synced, move |tx| {
+            let approval = record_approval(tx, fence.run, &diff_hash())?;
+            let clearance = consume(tx, approval)?;
+            tx.ledger().begin_writes(&fence, clearance)
+        })
+        .await
+        .unwrap();
+    lock(&store, fence, 0).await.unwrap();
+
+    // An intent for changed values is refused, and no token is given.
+    let changed = intent(&store, fence, 0, "second").await.unwrap_err();
+    assert_eq!(changed.code(), &codes::LEDGER_STATE_UNEXPECTED);
+    assert_eq!(state_of(&store, fence, 0).await, RecordState::Planned);
+
+    // The planned values are given the record's one token.
+    let token = intent(&store, fence, 0, "first").await.unwrap();
+    let first = token.idempotency_token().to_owned();
+    let records = store
+        .read(move |tx| tx.ledger().records(fence.run))
+        .await
+        .unwrap();
+    assert_eq!(records[0].idempotency_token, first);
+    assert_eq!(records[0].intended, intended("first"));
+    drop(token);
+
+    // The same record with changed values is a new run, with a new token.
+    let again = planned_line(&store, "second", "second").await;
+    assert_ne!(again.run, fence.run);
+    let records = store
+        .read(move |tx| tx.ledger().records(again.run))
+        .await
+        .unwrap();
+    assert_eq!(records[0].key, key("line"));
+    assert_eq!(records[0].intended, intended("second"));
+    assert_ne!(records[0].idempotency_token, first);
 }
