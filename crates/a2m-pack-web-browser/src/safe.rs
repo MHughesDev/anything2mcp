@@ -61,6 +61,13 @@ const METHOD_OVERRIDES: &[&str] = &[
     "x-method-override",
 ];
 
+/// The names of the query entries that override a request's method,
+/// compared without regard to letter case and after percent-decoding
+/// (decision 0270, point 2). A request whose address carries one, in any
+/// position, repeated, with a value or with none, is failed, whatever its
+/// method and whatever it names, `GET` too.
+const QUERY_METHOD_OVERRIDES: &[&str] = &["_method"];
+
 /// The body a safe request carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SafeBody {
@@ -117,7 +124,7 @@ impl SafeRequests {
         headers: &Map<String, Value>,
         body: &HeldBody,
     ) -> bool {
-        if overrides_method(headers) {
+        if overrides_method(headers) || query_overrides_method(address) {
             return false;
         }
         if matches!(method, "GET" | "HEAD" | "OPTIONS") {
@@ -236,6 +243,49 @@ fn overrides_method(headers: &Map<String, Value>) -> bool {
     headers
         .keys()
         .any(|name| METHOD_OVERRIDES.contains(&name.to_ascii_lowercase().as_str()))
+}
+
+/// Whether the address's query carries an entry overriding the request's
+/// method: one whose name, percent-decoded, is in `QUERY_METHOD_OVERRIDES`.
+/// An entry is what lies between `&` or `;`, its name what lies before the
+/// first `=`; the fragment is not part of the query.
+fn query_overrides_method(address: &str) -> bool {
+    let Some((_, rest)) = address.split_once('?') else {
+        return false;
+    };
+    let query = rest.split('#').next().unwrap_or_default();
+    query.split(['&', ';']).any(|entry| {
+        let name = entry.split('=').next().unwrap_or_default();
+        let decoded = percent_decode(name);
+        QUERY_METHOD_OVERRIDES
+            .iter()
+            .any(|wanted| decoded.eq_ignore_ascii_case(wanted))
+    })
+}
+
+/// A query name read as a server reads it: `+` is a space and `%XX` a byte;
+/// a `%` not followed by two hexadecimal digits stays as written.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let hex = |byte: Option<&u8>| byte.and_then(|b| char::from(*b).to_digit(16));
+        match bytes[at] {
+            b'%' => {
+                if let (Some(high), Some(low)) = (hex(bytes.get(at + 1)), hex(bytes.get(at + 2))) {
+                    out.push((high * 16 + low) as u8);
+                    at += 3;
+                    continue;
+                }
+                out.push(b'%');
+            }
+            b'+' => out.push(b' '),
+            other => out.push(other),
+        }
+        at += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Whether the request's one `Content-Type` names the encoding's media type,
@@ -824,5 +874,47 @@ mod tests {
         for bad in ["YWJ", "Y===", "YQ==YWJj", "YW J", "YWJ-"] {
             assert!(!decode_base64(bad, &mut Vec::new()), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_read_whose_query_carries_a_method_override_is_failed() {
+        let nothing = SafeRequests::default();
+        let read = |method: &str, url: &str| allows(&nothing, &sent(method, url, None, None));
+        // Plain queries and a name that only looks alike pass.
+        for plain in [
+            "https://app.example.com/items/7",
+            "https://app.example.com/items?page=2",
+            "https://app.example.com/items?method=x",
+            "https://app.example.com/items?a_method=DELETE&_methods=1&x=_method",
+            "https://app.example.com/items?page=2#_method=DELETE",
+            "https://app.example.com/items?",
+        ] {
+            assert!(read("GET", plain), "{plain}");
+        }
+        // The name, in either case, encoded, in any position, with any
+        // value or none, and on every read method.
+        for name in ["_method", "_METHOD", "_Method", "%5Fmethod", "%5f%4DETHOD"] {
+            for query in [
+                format!("{name}=DELETE"),
+                format!("{name}=GET"),
+                format!("{name}="),
+                name.to_owned(),
+                format!("page=2&{name}=PUT"),
+                format!("{name}=GET&{name}=DELETE"),
+                format!("a=1&b=2&{name}"),
+                format!("a=1;{name}=DELETE"),
+            ] {
+                for method in ["GET", "HEAD", "OPTIONS"] {
+                    let url = format!("https://app.example.com/items/7?{query}");
+                    assert!(!read(method, &url), "{method} {url}");
+                }
+            }
+        }
+        // A request marked safe has no query at all, so it never passes one.
+        let safe = one("/api/cases/rows/search", SafeBody::None);
+        assert!(!allows(
+            &safe,
+            &sent("POST", &format!("{SEARCH}?_method=DELETE"), None, None)
+        ));
     }
 }

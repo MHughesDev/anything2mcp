@@ -815,6 +815,14 @@ async fn an_observing_tab_lets_through_a_safe_request_only_on_method_origin_temp
             "an OPTIONS that says POST",
             overridden(&app, "OPTIONS", "X-Method-Override", "POST"),
         ),
+        // The same, said in the address's query, whatever method it names.
+        (
+            "a GET whose query says DELETE",
+            format!(
+                "fetch({:?}).then((r) => 'sent:' + r.status, () => 'failed')",
+                app.url(&format!("{OVERRIDDEN}/query?_method=DELETE"))
+            ),
+        ),
     ];
     for (why, script) in &refused {
         assert_eq!(
@@ -835,6 +843,13 @@ async fn an_observing_tab_lets_through_a_safe_request_only_on_method_origin_temp
             "{method}: {blocked:?}"
         );
     }
+    // A refusal is reported cut at the query.
+    assert!(
+        blocked.iter().any(
+            |one| one.method == "GET" && one.address == app.url(&format!("{OVERRIDDEN}/query"))
+        ),
+        "{blocked:?}"
+    );
     let seen = app.seen().await.unwrap();
     assert!(
         !seen.iter().any(|line| line.contains(OVERRIDDEN)),
