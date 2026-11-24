@@ -879,9 +879,13 @@ impl Control for InProcessControl {
                     mode,
                     surface,
                     failure,
+                    knowledge,
                 } => {
-                    // The health of a binding is the engine's own table,
-                    // which is not built; the sign is kept as a run event.
+                    // The sign is kept as a run event, and the knowledge it
+                    // names as a drift mark of the target: kept after a
+                    // drift, lifted after a canary's pass (decision 0399).
+                    // Both in one transaction, synced, so a drift that was
+                    // seen is never lost before the next job is filled.
                     let payload = json!({
                         "binding_health": true,
                         "operation": operation.as_str(),
@@ -890,11 +894,31 @@ impl Control for InProcessControl {
                         "class": failure.as_ref().map(|(class, _)| class.as_str()),
                         "code": failure.as_ref().map(|(_, code)| code.as_str()),
                     });
+                    let workspace = self.run.workspace;
+                    let target = self.plan.header.target.as_str().to_owned();
                     store
-                        .write(Durability::Relaxed, move |tx| {
+                        .write(Durability::Synced, move |tx| {
                             tx.ledger()
-                                .append_event(&fence, EventKind::Need, &payload, None)
-                                .map(|_| ())
+                                .append_event(&fence, EventKind::Need, &payload, None)?;
+                            match &failure {
+                                Some((FailureClass::Drift, code)) => crate::drift::keep(
+                                    tx,
+                                    &crate::drift::Found {
+                                        workspace,
+                                        target: &target,
+                                        run,
+                                        operation: &operation,
+                                        mode: &mode,
+                                        surface: &surface,
+                                        code,
+                                    },
+                                    &knowledge,
+                                ),
+                                Some(_) => Ok(()),
+                                None => crate::drift::lift(
+                                    tx, workspace, &target, &surface, &mode, &knowledge,
+                                ),
+                            }
                         })
                         .await
                 }

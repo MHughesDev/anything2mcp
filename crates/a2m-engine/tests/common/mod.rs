@@ -10,6 +10,7 @@
     reason = "each test binary uses some of these helpers and not others"
 )]
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -187,6 +188,10 @@ class = "drift"
 code = "example_shape_changed"
 
 [[failure_codes]]
+class = "drift"
+code = "example_screen_changed"
+
+[[failure_codes]]
 class = "unknown_variant"
 code = "example_unexpected"
 
@@ -245,6 +250,12 @@ pub struct Hooks {
     pub fail_unsent: AtomicBool,
     /// Every step of the first mode fails as drift.
     pub first_mode_drifts: AtomicBool,
+    /// The layout the test application's screens show, once a test has
+    /// changed it on purpose: a step that refers to a screen the plan
+    /// models with another layout finds no element its model names, and
+    /// fails as drift with nothing sent (package 9.1). `None`: every
+    /// screen looks as its model says.
+    pub screen_shows: Mutex<Option<String>>,
     /// Every step is refused as it would be when the session has ended.
     pub session_ended: AtomicBool,
     /// The driver's health says every surface is unavailable, with this
@@ -384,6 +395,30 @@ struct AppState {
     http: reqwest::Client,
     /// The posture the context was prepared in.
     posture: Posture,
+    /// The layout each screen of the plan is modelled with, by its section
+    /// and its name: a section of the kind `screen` maps each screen's name
+    /// to its layout.
+    screens: BTreeMap<(usize, String), String>,
+}
+
+/// The layout of every screen the plan models, from its sections of the
+/// kind `screen`.
+fn modelled_screens(plan: &Plan) -> BTreeMap<(usize, String), String> {
+    let mut screens = BTreeMap::new();
+    for (at, section) in plan.packs.iter().enumerate() {
+        if section.kind.as_str() != "screen" {
+            continue;
+        }
+        let Ok(models) = section.payload.decode::<Values>() else {
+            continue;
+        };
+        for (name, layout) in models.iter() {
+            if let Some(layout) = layout.as_text() {
+                screens.insert((at, name.to_owned()), layout.to_owned());
+            }
+        }
+    }
+    screens
 }
 
 impl AppState {
@@ -579,6 +614,20 @@ impl AppDriver {
                     a2m_auth::codes::NEEDS_LOGIN,
                     "The application asked for a sign-in.",
                     "Sign in again.",
+                )));
+            }
+            let shown = hooks.screen_shows.lock().unwrap().clone();
+            if let (Some(shown), Some(reference), Some(state)) =
+                (shown, step.refers_to.as_ref(), prepared.state::<AppState>())
+                && state
+                    .screens
+                    .get(&(reference.section.get(), reference.entry.clone()))
+                    .is_some_and(|modelled| *modelled != shown)
+            {
+                return Err(StepFailure::not_sent(failure(
+                    FailureClass::Drift,
+                    "example_screen_changed",
+                    "The screen no longer shows what its model names.",
                 )));
             }
             if hooks.first_mode_drifts.load(Ordering::SeqCst) && self.mode.as_str() == FIRST_MODE {
@@ -1055,6 +1104,7 @@ impl Driver for AppDriver {
                     .build()
                     .unwrap(),
                 posture: cx.posture,
+                screens: modelled_screens(cx.plan),
             }))
         })
     }
@@ -1406,6 +1456,44 @@ pub fn sheet(rows: &[(&str, &str, &str, &str)]) -> Vec<u8> {
         text.push_str(&format!("{code},{description},{quantity},{length}\n"));
     }
     text.into_bytes()
+}
+
+/// The entry of the screen both the read of an order and the write of a
+/// line item go through.
+pub const SCREEN: &str = "order_screen";
+
+/// A pack section of screens, as a pack would compile one, and every step
+/// of the read of an order and of the first write of a line item referring
+/// to the one screen in it. `layout` stands for what the screen model
+/// says of the screen: a repair changes it.
+pub fn screens(plan: &mut Plan, layout: &str) {
+    let section = a2m_core::SectionIndex::new(u32::try_from(plan.packs.len()).unwrap());
+    plan.packs.push(a2m_core::PackSection {
+        pack: "example_app".to_owned(),
+        kind: a2m_core::FileKindName::new("screen").unwrap(),
+        surface_kind: SurfaceKind::new("json_app").unwrap(),
+        format: 1,
+        payload: PackPayload::encode(&Values::new().with(SCREEN, layout)).unwrap(),
+    });
+    for operation in &mut plan.operations {
+        if ![ORDER_GET, ITEM_UPSERT].contains(&operation.name.as_str()) {
+            continue;
+        }
+        for binding in &mut operation.bindings {
+            for step in binding
+                .act
+                .iter_mut()
+                .chain(&mut binding.confirm)
+                .chain(&mut binding.read_back)
+                .chain(&mut binding.lookup)
+            {
+                step.refers_to = Some(a2m_core::PackRef {
+                    section,
+                    entry: SCREEN.to_owned(),
+                });
+            }
+        }
+    }
 }
 
 /// The plan of the imaginary `example` target, over the test application

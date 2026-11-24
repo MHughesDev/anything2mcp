@@ -23,6 +23,7 @@ pub mod codes;
 mod compare;
 mod control;
 mod diff;
+mod drift;
 mod engine;
 mod guard;
 mod job;
@@ -46,6 +47,9 @@ pub use control::{
 pub use diff::{
     Diff, DiffAction, DiffBinding, DiffCounts, DiffField, DiffPrecondition, DiffRecord,
     NOW_CANNOT_BE_READ,
+};
+pub use drift::{
+    DriftKnowledge, DriftMark, drift_covers, drifted_knowledge, knowledge_of, section_digest,
 };
 pub use engine::{Engine, EngineDeps, EngineSettings, ExclusiveNeed};
 pub use job::{

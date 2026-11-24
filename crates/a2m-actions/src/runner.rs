@@ -877,6 +877,15 @@ impl Kernel {
         };
         let health = self.health();
         let sessions = self.session_conditions(&row, &plan).await;
+        // The bindings a drift mark of the target stops (decision 0399). A
+        // store that cannot say ends the job here: nothing is run on a
+        // guess that nothing drifted.
+        let drifted = {
+            let (workspace, plan) = (row.workspace, Arc::clone(&plan));
+            store
+                .read(move |tx| crate::drift::stopped(tx, workspace, &plan))
+                .await?
+        };
         let capture = |key: &str| match self.settings().text(key) {
             Some("full") => CaptureLevel::Full,
             Some("standard") => CaptureLevel::Standard,
@@ -909,6 +918,7 @@ impl Kernel {
                     ),
                 },
                 sessions,
+                drifted,
                 ..Conditions::default()
             },
             pin: None,

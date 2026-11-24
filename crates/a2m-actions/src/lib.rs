@@ -25,6 +25,7 @@ pub mod codes;
 mod control;
 mod def;
 mod dispatch;
+mod drift;
 mod events;
 mod evidence;
 mod faces;
@@ -97,6 +98,7 @@ mod tests {
     mod access;
     mod audit;
     mod authoring;
+    mod drift;
     mod guard;
     mod kernel;
     mod keys;

@@ -174,6 +174,9 @@ pub(crate) struct Run<'a> {
     /// The rate budget's units this job was granted, one per step, on
     /// every surface: what a shadow read's cost is counted from.
     pub granted: std::sync::atomic::AtomicU64,
+    /// The step the last `drift` of this job was seen at, until the pass
+    /// that saw it reports it (decision 0399).
+    pub drift_step: Option<Step>,
 }
 
 /// Whether a binding of this status may be chosen in this posture.
@@ -263,6 +266,7 @@ impl<'a> Run<'a> {
             shadow_compared: Vec::new(),
             shadow_reading: false,
             granted: std::sync::atomic::AtomicU64::new(0),
+            drift_step: None,
             loaded,
         }
     }
@@ -527,10 +531,13 @@ impl<'a> Run<'a> {
                 "Wait for the block to end; the engine does not go around it.",
             )));
         }
-        if conditions
-            .drifted
-            .iter()
-            .any(|(name, mode)| name == &operation.name && mode == &binding.mode)
+        // A canary is the check of whether a drifted binding fits again,
+        // and it never writes, so it is the one job drift does not stop.
+        if self.job.kind != JobKind::Canary
+            && conditions
+                .drifted
+                .iter()
+                .any(|(name, mode)| name == &operation.name && mode == &binding.mode)
         {
             return Ok(Err(codes::fail(
                 &codes::row::BINDING_DRIFTED,
@@ -1056,6 +1063,13 @@ impl<'a> Run<'a> {
             }
             let artifacts = self.keep_captures(&cx, &result).await;
             self.traced(&cx, &result, took, artifacts);
+            // The step a drift was seen at names the knowledge that no
+            // longer fits (decision 0399).
+            if let Err(failure) = &result
+                && failure.failure.class() == FailureClass::Drift
+            {
+                self.drift_step = Some(cx.step.clone());
+            }
             match result {
                 Err(failure)
                     if failure.failure.class() == FailureClass::Transient

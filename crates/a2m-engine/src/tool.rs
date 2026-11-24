@@ -904,6 +904,14 @@ async fn read_steps_of(
     Ok(())
 }
 
+/// The name of the surface `binding` acts on.
+fn surface_name(run: &Run<'_>, loaded: &Loaded, binding: &BindingPlan) -> a2m_core::SurfaceName {
+    loaded
+        .plan
+        .surface(binding.surface)
+        .map_or_else(|| run.surface_of(0), |surface| surface.name.clone())
+}
+
 /// One read through the loop: choose, prepare, act, confirm, and record the
 /// result. Falls to the next qualifying binding after `drift` or a
 /// `transient` failure that outlasted its retries.
@@ -922,6 +930,7 @@ async fn read_operation(
         run.chosen(&found.name, candidate, &passed_over).await;
         let binding = &found.bindings[candidate.binding];
         let mut asked_again = false;
+        run.drift_step = None;
         let failure = loop {
             match read_pass(
                 run,
@@ -936,6 +945,18 @@ async fn read_operation(
             .await
             {
                 Ok(values) => {
+                    // A canary's pass vouches again for everything the
+                    // binding relied on (decision 0399).
+                    if run.job.kind == JobKind::Canary {
+                        run.tell(EngineEvent::BindingHealth {
+                            operation: found.name.clone(),
+                            mode: binding.mode.clone(),
+                            surface: surface_name(run, loaded, binding),
+                            failure: None,
+                            knowledge: crate::drift::knowledge_of(&loaded.plan, binding),
+                        })
+                        .await;
+                    }
                     // A binding in shadow runs beside it, within its bound,
                     // and changes nothing the caller is given.
                     crate::shadow::beside(
@@ -973,14 +994,16 @@ async fn read_operation(
             FailureClass::Drift | FailureClass::Transient
         );
         if failure.class() == FailureClass::Drift {
+            let step = run.drift_step.take();
+            let knowledge = crate::drift::drifted_knowledge(&loaded.plan, binding, step.as_ref())
+                .into_iter()
+                .collect();
             run.tell(EngineEvent::BindingHealth {
                 operation: found.name.clone(),
                 mode: binding.mode.clone(),
-                surface: loaded
-                    .plan
-                    .surface(binding.surface)
-                    .map_or_else(|| run.surface_of(0), |surface| surface.name.clone()),
+                surface: surface_name(run, loaded, binding),
                 failure: Some((failure.class(), failure.code().clone())),
+                knowledge,
             })
             .await;
         }
