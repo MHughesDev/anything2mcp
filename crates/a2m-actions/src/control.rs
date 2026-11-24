@@ -580,7 +580,7 @@ impl Control for InProcessControl {
                         // The run's approval is expired, used, revoked, or
                         // for another diff: it clears nothing, and the run
                         // waits for a person to approve its diff again
-                        // (decision 0399). The refusal is named in the
+                        // (decision 0388). The refusal is named in the
                         // run's own events, beside the need it leaves.
                         Err(stale) if *stale.code() == a2m_policy::APPROVAL_STALE => {
                             tx.ledger().append_event(

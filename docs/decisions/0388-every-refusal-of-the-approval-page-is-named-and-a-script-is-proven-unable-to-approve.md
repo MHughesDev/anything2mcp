@@ -1,4 +1,4 @@
-# 0399. Every refusal of the approval page is named, and a script is proven unable to approve
+# 0388. Every refusal of the approval page is named, and a script is proven unable to approve
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged.
 

@@ -2199,7 +2199,7 @@ impl PersonSurface for LocalSurface {
             // A run is looked at after its answer too, before it is
             // resumed: a declined change gets no second page. An approved
             // one is asked about again only when its approval cleared
-            // nothing, because it expired or was revoked (decision 0399):
+            // nothing, because it expired or was revoked (decision 0388):
             // until it is used, the kernel itself says the run is approved
             // and asks no surface. That ask gets a new page.
             let answered = state

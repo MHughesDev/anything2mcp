@@ -379,4 +379,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0385 | [The set step commits a text control as the surface's platform profile says](0385-the-set-step-commits-a-text-control-as-the-surfaces-platform-profile-says.md) | Accepted (design decision) |
 | 0386 | [A read's run is committed without a disk sync of its own](0386-a-reads-run-is-committed-without-a-disk-sync-of-its-own.md) | Accepted (design decision) |
 | 0387 | [The command pack drafts an operation only once a person has declared the command's effect](0387-the-command-pack-drafts-an-operation-only-once-a-person-has-declared-the-commands-effect.md) | Accepted (design decision) |
-| 0399 | [Every refusal of the approval page is named, and a script is proven unable to approve](0399-every-refusal-of-the-approval-page-is-named-and-a-script-is-proven-unable-to-approve.md) | Accepted (design decision) |
+| 0388 | [Every refusal of the approval page is named, and a script is proven unable to approve](0388-every-refusal-of-the-approval-page-is-named-and-a-script-is-proven-unable-to-approve.md) | Accepted (design decision) |
