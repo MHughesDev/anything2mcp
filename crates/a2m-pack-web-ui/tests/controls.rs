@@ -340,7 +340,7 @@ async fn a_grid_cell_is_edited_and_read_by_the_key_of_its_row() {
 /// Case 9, in the `ui` driver: a cell of the virtualized grid, read by the
 /// key of its row, in the row the page holds. A row the page does not hold,
 /// which only its finder brings in, is a stop; that grid is read through
-/// the network (decision 0399).
+/// the network (decision 0351).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_virtualized_grid_is_read_by_row_key_where_the_page_holds_the_row() {
     let app = TestApp::start().await.unwrap();
