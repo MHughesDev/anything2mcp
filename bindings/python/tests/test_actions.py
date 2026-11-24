@@ -112,7 +112,7 @@ class MethodShapeTests(unittest.TestCase):
 
 
 class MethodNameTests(unittest.TestCase):
-    """The rule both generators apply (decision 0999)."""
+    """The rule both generators apply (decision 0405)."""
 
     def test_an_underscore_in_a_noun_or_a_verb_stays_and_the_dot_becomes_one(self) -> None:
         self.assertEqual(generator.method_name("tool.call"), "tool_call")

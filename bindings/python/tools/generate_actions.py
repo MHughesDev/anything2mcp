@@ -47,7 +47,7 @@ class GenerateError(Exception):
 #: The form of an action's name: a noun and a verb, each one or more words
 #: of lower-case letters and digits joined by single underscores
 #: (``policy.tools_allowed``). Every name of this form has a method name in
-#: both clients; any other stops the generators (decision 0999).
+#: both clients; any other stops the generators (decision 0405).
 ACTION_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*\Z")
 
 
@@ -55,7 +55,7 @@ def method_name(action: str) -> str:
     """``tool.call`` is ``tool_call``: noun and verb, joined by an underscore,
     and an underscore inside either stays (``policy.tools_allowed`` is
     ``policy_tools_allowed``). The Node generator joins the same words in
-    camel case (decision 0999)."""
+    camel case (decision 0405)."""
     if not ACTION_NAME.match(action):
         raise GenerateError(f"action `{action}` has no valid method name")
     name = action.replace(".", "_")

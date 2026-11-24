@@ -355,7 +355,7 @@ test("a generator that does not understand the document stops", () => {
   assert.strictEqual(generator.methodName("run.get"), "runGet");
 });
 
-test("an underscore in a noun or a verb starts a word, as the dot does (decision 0999)", () => {
+test("an underscore in a noun or a verb starts a word, as the dot does (decision 0405)", () => {
   assert.strictEqual(generator.methodName("policy.tools_allowed"), "policyToolsAllowed");
   assert.strictEqual(generator.methodName("spec.import"), "specImport");
   for (const action of ["tool", "a.b.c", "Tool.call", "tool.Call", "a._b", "a.b_", "a.b__c", "a-b.c", "1a.b", ""]) {

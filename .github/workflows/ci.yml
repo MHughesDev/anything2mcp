@@ -291,7 +291,7 @@ jobs:
           node bindings/npm/scripts/generate-actions.js --check
       # The generators read a saved copy of the engine's OpenAPI document;
       # this holds the copy to what the program built here serves, so it
-      # cannot drift from the product (decision 0999). On Linux and macOS,
+      # cannot drift from the product (decision 0405). On Linux and macOS,
       # where the clients' tests already start a real engine.
       - name: Check the saved OpenAPI document is the one the built engine serves
         if: runner.os != 'Windows'

@@ -1,4 +1,4 @@
-# 0999. A method name is the action's words, joined in each language's way
+# 0405. A method name is the action's words, joined in each language's way
 
 **Status:** Accepted. Design decision, made by the design architect. The owner had not read this record when it was merged. Built in `bindings/python/tools/generate_actions.py` (`method_name`), `bindings/npm/scripts/generate-actions.js` (`methodName`), and `bindings/python/tools/fetch_openapi.py` (`--check`).
 

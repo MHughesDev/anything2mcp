@@ -35,13 +35,13 @@ class GenerateError extends Error {}
 // The form of an action's name: a noun and a verb, each one or more words of
 // lower-case letters and digits joined by single underscores
 // (`policy.tools_allowed`). Every name of this form has a method name in both
-// clients; any other stops the generators (decision 0999).
+// clients; any other stops the generators (decision 0405).
 const ACTION_NAME = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*\.[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 
 // `tool.call` is `toolCall`: every word of the noun and the verb, split at a
 // dot or an underscore, in camel case (`policy.tools_allowed` is
 // `policyToolsAllowed`). The Python generator joins the same words with
-// underscores (decision 0999).
+// underscores (decision 0405).
 function methodName(action) {
   if (typeof action !== "string" || !ACTION_NAME.test(action)) {
     throw new GenerateError(`action \`${action}\` has no valid method name`);
