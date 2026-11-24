@@ -704,6 +704,13 @@ async fn the_openapi_document_describes_every_route_and_nothing_else() {
         };
         assert_eq!(status, 400, "{method} {path}: {body}");
         assert_eq!(body["action"], op["x-action"], "{method} {path}");
+        // The clients' generators write a method only where this is true.
+        let def = world
+            .kernel
+            .actions()
+            .find(op["x-action"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(op["x-sdk"], Json::Bool(def.faces.sdk), "{method} {path}");
         assert_eq!(body["error"]["class"], "input", "{method} {path}: {body}");
     }
     world.close().await;

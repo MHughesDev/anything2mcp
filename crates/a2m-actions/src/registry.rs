@@ -132,6 +132,14 @@ impl ActionRegistry {
                     def.name
                 )));
             }
+            if def.faces.sdk && !def.faces.rest {
+                // A client's method calls the action's REST route, and the
+                // clients are generated from the routes' description.
+                return Err(invalid(format!(
+                    "The action `{}` has an SDK method but no REST route.",
+                    def.name
+                )));
+            }
         }
         Ok(Self {
             defs: Arc::new(defs),
@@ -370,5 +378,30 @@ impl CatalogEntry {
                 .map(|alias| (alias.method.to_owned(), alias.path.to_owned())),
             built: def.built(),
         }
+    }
+}
+
+#[cfg(test)]
+mod faces_tests {
+    #![allow(clippy::unwrap_used, reason = "tests")]
+
+    use super::{ActionRegistry, kernel_definitions};
+
+    #[test]
+    fn the_kernels_actions_make_a_registry() {
+        assert!(ActionRegistry::from_definitions(kernel_definitions()).is_ok());
+    }
+
+    /// A client's method calls the action's REST route, so an SDK face
+    /// without a REST face is refused (decision 0999).
+    #[test]
+    fn an_action_with_an_sdk_method_and_no_rest_route_is_refused() {
+        let mut defs = kernel_definitions();
+        defs[0].faces.rest = false;
+        let name = defs[0].name.to_string();
+        let refused = ActionRegistry::from_definitions(defs.clone()).unwrap_err();
+        assert!(refused.message().contains(&name), "{}", refused.message());
+        defs[0].faces.sdk = false;
+        assert!(ActionRegistry::from_definitions(defs).is_ok());
     }
 }

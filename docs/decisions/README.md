@@ -409,3 +409,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0415 | [A request whose answer is being read is closed by the read alone](0415-a-request-whose-answer-is-being-read-is-closed-by-the-read-alone.md) | Accepted (design decision) |
 | 0416 | [A runner that starts again holds nothing, and its earlier leases are lost at once](0416-a-runner-that-starts-again-holds-nothing-and-its-earlier-leases-are-lost-at-once.md) | Accepted (design decision) |
 | 0417 | [The key a local person's runs are sealed under is opened at the start and held for the life of the process](0417-the-key-a-local-persons-runs-are-sealed-under-is-opened-at-the-start-and-held-for-the-life-of-the-process.md) | Accepted (design decision) |
+| 0999 | [The API description says which actions have a client method](0999-the-api-description-says-which-actions-have-a-client-method.md) | Accepted (design decision) |
