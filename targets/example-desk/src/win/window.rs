@@ -13,8 +13,18 @@
 //!   static "Reference"     edit "R-2"
 //!   static "Access code"   edit, password style, holding SECRET
 //!   static "Line items"    list view "Line items", report style: three columns, one row a line
-//!   button "Save"                             (a click is counted as a write)
+//!   button "Save"                             (a click is counted as a write; it stores what the edit fields hold when the application takes it)
+//!   static "New customer"  edit ""            (holds at most CUSTOMER_MOST characters, and cuts the rest)
+//!   static "New status"    edit ""
+//!   static "Message"       edit, read-only    ("Saved." once Save stored)
+//!   static "Problem"       edit, read-only    (shown only while the application refuses a value)
 //! ```
+//!
+//! What a client sets into an edit (`WM_SETTEXT`, which UI Automation's
+//! value pattern sends) is kept in the book with its window and its label,
+//! and is not stored until Save; the edits labelled `Customer` and `Status`
+//! show what is stored. A read-only or disabled edit takes nothing set
+//! into it, whatever a client sends (decision 0399).
 //!
 //! What the stand witnesses: every control is subclassed, so every message
 //! another process sends it passes the stand's own procedure first. It
@@ -44,7 +54,7 @@ use windows::Win32::System::Diagnostics::Debug::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
-    EM_GETLINE, EM_GETLINECOUNT, EM_GETSEL, EM_REPLACESEL, EM_SETSEL, EM_UNDO,
+    EM_GETLINE, EM_GETLINECOUNT, EM_GETSEL, EM_REPLACESEL, EM_SETREADONLY, EM_SETSEL, EM_UNDO,
     ICC_LISTVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, LVCF_SUBITEM, LVCF_TEXT,
     LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_ENSUREVISIBLE, LVM_GETCOLUMNW, LVM_GETHEADER,
     LVM_GETITEMCOUNT, LVM_GETITEMRECT, LVM_GETITEMSTATE, LVM_GETITEMTEXTW, LVM_GETITEMW,
@@ -54,18 +64,19 @@ use windows::Win32::UI::Controls::{
 use windows::Win32::UI::WindowsAndMessaging::{
     BM_CLICK, BM_SETCHECK, BM_SETSTATE, BN_CLICKED, BS_PUSHBUTTON, CallWindowProcW,
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, ES_PASSWORD,
-    GWLP_USERDATA, GWLP_WNDPROC, GetDlgCtrlID, GetMessageW, GetWindowLongPtrW, HMENU, KillTimer,
-    MSG, PostMessageW, PostQuitMessage, RegisterClassW, SW_SHOWNOACTIVATE, SetTimer,
-    SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_APP, WM_CHAR, WM_CLEAR, WM_CLOSE, WM_COMMAND, WM_CUT, WM_DESTROY, WM_GETOBJECT, WM_GETTEXT,
-    WM_GETTEXTLENGTH, WM_KEYDOWN, WM_LBUTTONDOWN, WM_PASTE, WM_SETFOCUS, WM_SETTEXT, WM_TIMER,
-    WNDCLASSW, WNDPROC, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN, WS_EX_CLIENTEDGE,
-    WS_OVERLAPPED, WS_SYSMENU, WS_VISIBLE,
+    ES_READONLY, GWL_STYLE, GWLP_USERDATA, GWLP_WNDPROC, GetDlgCtrlID, GetMessageW,
+    GetWindowLongPtrW, GetWindowTextW, HMENU, KillTimer, MSG, PostMessageW, PostQuitMessage,
+    RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, SendMessageW, SetTimer, SetWindowLongPtrW,
+    SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CHAR,
+    WM_CLEAR, WM_CLOSE, WM_COMMAND, WM_CUT, WM_DESTROY, WM_GETOBJECT, WM_GETTEXT, WM_GETTEXTLENGTH,
+    WM_KEYDOWN, WM_LBUTTONDOWN, WM_PASTE, WM_SETFOCUS, WM_SETTEXT, WM_TIMER, WNDCLASSW, WNDPROC,
+    WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN, WS_DISABLED, WS_EX_CLIENTEDGE, WS_OVERLAPPED,
+    WS_SYSMENU, WS_VISIBLE,
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR, w};
 
-use crate::child::{ORDER_ENV, PREFIX, decode_order};
-use crate::{LATE, Order, SECRET, WINDOW};
+use crate::child::{FieldFault, ORDER_ENV, PREFIX, Pressed, arm, book, decode_order};
+use crate::{CUSTOMER_MOST, DIALOG, FieldSet, LATE, Order, SAVED, SECRET, WINDOW};
 
 /// What a control of the stand is, for the names of its counts.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -102,7 +113,39 @@ const CONTROLS: &[(i32, Kind, &str)] = &[
     (115, Kind::Label, "line_items"),
     (116, Kind::Table, "line_items"),
     (117, Kind::Button, "save"),
+    (118, Kind::Label, "new_customer"),
+    (119, Kind::Value, "new_customer"),
+    (120, Kind::Label, "new_status"),
+    (121, Kind::Value, "new_status"),
+    (122, Kind::Label, "message"),
+    (123, Kind::Value, "message"),
+    (124, Kind::Label, "problem"),
+    (125, Kind::Value, "problem"),
 ];
+
+/// The label of each edit, by its identifier: the name a set is kept
+/// under. Each label's identifier is its edit's less one.
+const LABELS: &[(i32, &str)] = &[
+    (101, "Order number"),
+    (103, "Customer"),
+    (105, "Status"),
+    (107, "Tracking"),
+    (109, "Reference"),
+    (111, "Reference"),
+    (113, "Access code"),
+    (118, "New customer"),
+    (120, "New status"),
+    (122, "Message"),
+    (124, "Problem"),
+];
+
+const ORDER_NUMBER: i32 = 102;
+const CUSTOMER: i32 = 104;
+const STATUS: i32 = 106;
+const NEW_CUSTOMER: i32 = 119;
+const NEW_STATUS: i32 = 121;
+const MESSAGE: i32 = 123;
+const PROBLEM: i32 = 125;
 
 const TRACKING: i32 = 108;
 const PASSWORD: i32 = 114;
@@ -112,6 +155,9 @@ const SAVE: i32 = 117;
 /// milliseconds.
 const LATE_MESSAGE: u32 = WM_APP + 1;
 const LATE_TIMER: usize = 1;
+/// The stand's own message: carry out the field fault the control
+/// interface left in [`FIELD_FAULT`], on the window's thread.
+const FAULT_MESSAGE: u32 = WM_APP + 2;
 
 /// The messages the stand counts, with whether each changes a control.
 /// Every other message passes uncounted: painting, sizing, and the
@@ -159,6 +205,9 @@ static SHOWN_LATE: Mutex<String> = Mutex::new(String::new());
 /// `Send`, and the control interface's thread posts to the window.
 static MAIN: AtomicIsize = AtomicIsize::new(0);
 static TRACKING_EDIT: AtomicIsize = AtomicIsize::new(0);
+/// The field fault the window's thread is to carry out next, and whether it
+/// found the field.
+static FIELD_FAULT: Mutex<Option<FieldFault>> = Mutex::new(None);
 
 thread_local! {
     /// Set while the stand sends a message to its own control, so that it
@@ -201,23 +250,39 @@ pub(crate) fn truth_line() -> String {
         .map(|(member, times)| format!("{member}={times}"))
         .collect();
     format!(
-        "{PREFIX}truth\t{}\t{}\t{}\t{}",
+        "{PREFIX}truth\t{}\t{}\t{}\t{}\t{}",
         WRITES.load(Ordering::SeqCst),
         SECRET_READS.load(Ordering::SeqCst),
         lock(&SHOWN_LATE),
-        asked.join(";")
+        asked.join(";"),
+        book().line()
     )
 }
 
 /// The procedure every control runs first: it counts, then hands the
 /// message to the control's own procedure unchanged.
-#[allow(unsafe_code)] // two calls into the system and one conversion, explained below
+#[allow(unsafe_code)] // calls into the system and one conversion, explained below
 extern "system" fn watched(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if !OWN.with(Cell::get) {
-        // SAFETY: `hwnd` is the control the system is calling this
-        // procedure for; asking its identifier touches no memory of ours.
-        count(unsafe { GetDlgCtrlID(hwnd) }, message);
+    let own = OWN.with(Cell::get);
+    // SAFETY: `hwnd` is the control the system is calling this procedure
+    // for; asking its identifier touches no memory of ours.
+    let id = unsafe { GetDlgCtrlID(hwnd) };
+    if !own {
+        count(id, message);
     }
+    if !own && message == WM_SETTEXT {
+        return client_set(hwnd, id, lparam);
+    }
+    let answer = own_procedure(hwnd, message, wparam, lparam);
+    if !own && message == WM_GETTEXT && id == ORDER_NUMBER {
+        after_key_read();
+    }
+    answer
+}
+
+/// Hands a message on to the control's own procedure unchanged.
+#[allow(unsafe_code)] // two calls into the system and one conversion, explained below
+fn own_procedure(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     // SAFETY: the stand put the control's own procedure in the control's
     // user data before it put this one in its place, and changes neither
     // afterwards. A window procedure is a pointer the size of `isize`, and
@@ -231,6 +296,201 @@ extern "system" fn watched(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPA
     }
 }
 
+/// The text of one of the stand's own controls, read by the stand.
+#[allow(unsafe_code)] // one call into the system, explained below
+fn text_of(control: HWND) -> String {
+    let mut buffer = vec![0_u16; 1024];
+    OWN.with(|own| own.set(true));
+    // SAFETY: `control` is a control of the stand's window, on this thread;
+    // the buffer is ours, and the call writes at most its length.
+    let length = unsafe { GetWindowTextW(control, &mut buffer) };
+    OWN.with(|own| own.set(false));
+    String::from_utf16_lossy(&buffer[..usize::try_from(length).unwrap_or(0)])
+}
+
+/// Sets the text of one of the stand's own controls, as the stand.
+#[allow(unsafe_code)] // one call into the system, explained below
+fn show(control: HWND, text: &str) {
+    OWN.with(|own| own.set(true));
+    // SAFETY: `control` is a control of the stand's window, on this thread;
+    // the text outlives the call.
+    let _ = unsafe { SetWindowTextW(control, &HSTRING::from(text)) };
+    OWN.with(|own| own.set(false));
+}
+
+/// The control of the stand's window with the identifier `id`.
+#[allow(unsafe_code)] // one call into the system, explained below
+fn control_of(id: i32) -> HWND {
+    let main = HWND(MAIN.load(Ordering::SeqCst) as *mut _);
+    // SAFETY: the window is the stand's; the call reads its child list.
+    unsafe { windows::Win32::UI::WindowsAndMessaging::GetDlgItem(Some(main), id) }
+        .unwrap_or_default()
+}
+
+/// What the window says, cleared once a field changes: the message, and
+/// the problem, hidden.
+#[allow(unsafe_code)] // one call into the system, explained below
+fn clear_said() {
+    show(control_of(MESSAGE), "");
+    book().message.clear();
+    let problem = control_of(PROBLEM);
+    show(problem, "");
+    // SAFETY: a control of the stand's window, on this thread.
+    let _ = unsafe { ShowWindow(problem, SW_HIDE) };
+}
+
+/// A client's `WM_SETTEXT` to a control: kept in the book, refused by a
+/// read-only or disabled edit, cut to [`CUSTOMER_MOST`] in `New customer`,
+/// and handed on.
+#[allow(unsafe_code)] // calls into the system and a read of the client's text, explained below
+fn client_set(hwnd: HWND, id: i32, lparam: LPARAM) -> LRESULT {
+    let Some((_, kind, _)) = CONTROLS.iter().find(|(known, _, _)| *known == id) else {
+        return own_procedure(hwnd, WM_SETTEXT, WPARAM(0), lparam);
+    };
+    if ![Kind::Value, Kind::Password].contains(kind) {
+        return own_procedure(hwnd, WM_SETTEXT, WPARAM(0), lparam);
+    }
+    // SAFETY: the control is the stand's; the call reads its style.
+    let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) };
+    let style = u32::try_from(style & 0xffff_ffff).unwrap_or(0);
+    if style & (ES_READONLY as u32) != 0 || style & WS_DISABLED.0 != 0 {
+        // A field that takes no value takes none from a client.
+        return LRESULT(0);
+    }
+    let pointer = lparam.0 as *const u16;
+    let text = if pointer.is_null() {
+        String::new()
+    } else {
+        // SAFETY: the system hands a `WM_SETTEXT` from another process to
+        // this one with its text copied into this process, ended by a zero,
+        // for the length of the call.
+        unsafe { PCWSTR(pointer).to_string() }.unwrap_or_default()
+    };
+    let field = LABELS
+        .iter()
+        .find(|(label, _)| *label == id - 1)
+        .map_or("", |(_, name)| *name);
+    book().sets.push(FieldSet {
+        window: WINDOW.to_owned(),
+        field: field.to_owned(),
+        value: if *kind == Kind::Password {
+            String::new()
+        } else {
+            text.clone()
+        },
+    });
+    let held: String = if id == NEW_CUSTOMER {
+        text.chars().take(CUSTOMER_MOST).collect()
+    } else {
+        text
+    };
+    // The text handed on, ended by a zero, in a buffer of the stand's own
+    // that outlives the call.
+    let held: Vec<u16> = held.encode_utf16().chain([0]).collect();
+    let answer = own_procedure(hwnd, WM_SETTEXT, WPARAM(0), LPARAM(held.as_ptr() as isize));
+    if [NEW_CUSTOMER, NEW_STATUS].contains(&id) {
+        clear_said();
+    }
+    answer
+}
+
+/// What the faults armed for the next read of the order number do once
+/// it has been answered: the window moves to another record, or the
+/// application raises its dialog.
+#[allow(unsafe_code)] // calls into the system, explained below
+fn after_key_read() {
+    let (record, dialog) = {
+        let mut book = book();
+        (
+            book.record_after_read.take(),
+            std::mem::take(&mut book.dialog_after_read),
+        )
+    };
+    if let Some(other) = record {
+        show(control_of(ORDER_NUMBER), &other);
+    }
+    if dialog {
+        // SAFETY: no argument: the module of this program.
+        let Ok(module) = (unsafe { GetModuleHandleW(None) }) else {
+            return;
+        };
+        // SAFETY: the class was registered when the window was made; the
+        // title outlives the call. A top-level window of the stand's
+        // process, shown without taking the focus.
+        if let Ok(dialog) = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("example-desk-dialog"),
+                &HSTRING::from(DIALOG),
+                WINDOW_STYLE(WS_OVERLAPPED.0 | WS_CAPTION.0),
+                80,
+                80,
+                300,
+                120,
+                None,
+                None,
+                Some(HINSTANCE(module.0)),
+                None,
+            )
+        } {
+            // SAFETY: the window just made, on this thread.
+            let _ = unsafe { ShowWindow(dialog, SW_SHOWNOACTIVATE) };
+        }
+    }
+}
+
+/// A press of Save: the application's rule, and what the window shows.
+#[allow(unsafe_code)] // one call into the system, explained below
+fn press() {
+    let customer = text_of(control_of(NEW_CUSTOMER));
+    let status = text_of(control_of(NEW_STATUS));
+    let pressed = book().press(&customer, &status);
+    match pressed {
+        Pressed::Silent => {}
+        Pressed::Refused(said) => {
+            let problem = control_of(PROBLEM);
+            show(problem, said);
+            // SAFETY: a control of the stand's window, on this thread.
+            let _ = unsafe { ShowWindow(problem, SW_SHOWNOACTIVATE) };
+        }
+        Pressed::Stored => {
+            show(control_of(CUSTOMER), &customer);
+            show(control_of(STATUS), &status);
+            show(control_of(MESSAGE), SAVED);
+            SAVED.clone_into(&mut book().message);
+        }
+    }
+}
+
+/// Carries out a field fault on the window's thread: the edit after the
+/// label named becomes read-only, or disabled. `false` when no label has
+/// the name.
+#[allow(unsafe_code)] // calls into the system, explained below
+fn field_fault(fault: &FieldFault) -> bool {
+    let (FieldFault::ReadOnly(label) | FieldFault::Disabled(label)) = fault;
+    let Some((id, _)) = LABELS.iter().find(|(_, name)| name == label) else {
+        return false;
+    };
+    let edit = control_of(id + 1);
+    OWN.with(|own| own.set(true));
+    match fault {
+        FieldFault::ReadOnly(_) => {
+            // SAFETY: an edit of the stand's window, on this thread.
+            let _ = unsafe { SendMessageW(edit, EM_SETREADONLY, Some(WPARAM(1)), Some(LPARAM(0))) };
+        }
+        FieldFault::Disabled(_) => {
+            // SAFETY: an edit of the stand's window, on this thread; the
+            // style is read and written back with the disabled flag.
+            unsafe {
+                let style = GetWindowLongPtrW(edit, GWL_STYLE);
+                SetWindowLongPtrW(edit, GWL_STYLE, style | WS_DISABLED.0 as isize);
+            }
+        }
+    }
+    OWN.with(|own| own.set(false));
+    true
+}
+
 /// The window's own procedure: Save counts a write; the stand's message
 /// starts the late value's timer; closing ends the loop.
 #[allow(unsafe_code)] // calls into the system, explained below
@@ -241,8 +501,13 @@ extern "system" fn window(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPAR
             let id = wparam.0 & 0xffff;
             if code == BN_CLICKED as usize && id == SAVE as usize {
                 WRITES.fetch_add(1, Ordering::SeqCst);
+                press();
             }
             LRESULT(0)
+        }
+        FAULT_MESSAGE => {
+            let fault = lock(&FIELD_FAULT).take();
+            LRESULT(isize::from(fault.as_ref().is_some_and(field_fault)))
         }
         LATE_MESSAGE => {
             let after = u32::try_from(wparam.0).unwrap_or(u32::MAX);
@@ -279,6 +544,13 @@ extern "system" fn window(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPAR
         // arguments the system gave.
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
     }
+}
+
+/// The dialog's procedure: the system's default for every message.
+#[allow(unsafe_code)] // one call into the system, explained below
+extern "system" fn plain(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    // SAFETY: the system's default, with the arguments the system gave.
+    unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
 }
 
 fn failed(doing: &str, error: &windows::core::Error) -> String {
@@ -422,6 +694,22 @@ fn make(order: &Order) -> Result<(HWND, HWND, HWND), String> {
             &windows::core::Error::from_thread(),
         ));
     }
+    // The dialog a fault raises: a window of its own class, whose closing
+    // ends nothing.
+    let dialog = WNDCLASSW {
+        lpfnWndProc: Some(plain),
+        hInstance: instance,
+        lpszClassName: w!("example-desk-dialog"),
+        hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as isize as *mut _),
+        ..Default::default()
+    };
+    // SAFETY: as above.
+    if unsafe { RegisterClassW(&raw const dialog) } == 0 {
+        return Err(failed(
+            "registering the dialog's class",
+            &windows::core::Error::from_thread(),
+        ));
+    }
     // SAFETY: the class was registered above; the title outlives the call.
     let main = unsafe {
         CreateWindowExW(
@@ -432,7 +720,7 @@ fn make(order: &Order) -> Result<(HWND, HWND, HWND), String> {
             40,
             40,
             560,
-            560,
+            660,
             None,
             None,
             Some(instance),
@@ -522,6 +810,35 @@ fn make(order: &Order) -> Result<(HWND, HWND, HWND), String> {
         (10, 456, 100, 30),
     )?;
     made.push(save);
+    let edits: [(&str, i32, u32); 4] = [
+        ("New customer", 118, field),
+        ("New status", 120, field),
+        ("Message", 122, field | ES_READONLY as u32),
+        ("Problem", 124, field | ES_READONLY as u32),
+    ];
+    for (row, (name, id, style)) in edits.iter().enumerate() {
+        let y = 496 + 32 * row as i32;
+        made.push(control(
+            main,
+            instance,
+            label,
+            name,
+            0,
+            none,
+            *id,
+            (10, y, 140, 24),
+        )?);
+        made.push(control(
+            main,
+            instance,
+            edit,
+            "",
+            *style,
+            none,
+            id + 1,
+            (160, y, 300, 24),
+        )?);
+    }
     for one in &made {
         watch(*one);
     }
@@ -539,6 +856,9 @@ fn make(order: &Order) -> Result<(HWND, HWND, HWND), String> {
         .ok_or_else(|| "the tracking edit was not made".to_owned())?;
     TRACKING_EDIT.store(tracking.0 as isize, Ordering::SeqCst);
     MAIN.store(main.0 as isize, Ordering::SeqCst);
+    // The problem is shown only while the application refuses a value.
+    // SAFETY: a control of the stand's window, on this thread.
+    let _ = unsafe { ShowWindow(control_of(PROBLEM), SW_HIDE) };
     // SAFETY: the stand's own window. Shown where UI Automation sees it on
     // the screen, and without taking the focus or the foreground.
     let _ = unsafe { ShowWindow(main, SW_SHOWNOACTIVATE) };
@@ -555,6 +875,29 @@ fn post(message: u32, wparam: usize) {
     let _ = unsafe { PostMessageW(Some(main), message, WPARAM(wparam), LPARAM(0)) };
 }
 
+/// Arms a fault, or has the window's thread carry out a field fault and
+/// waits until it has; the answer the control interface gives.
+#[allow(unsafe_code)] // one call into the system, explained below
+fn fault(line: &str) -> String {
+    match arm(line) {
+        Err(()) => "fault\tunknown".to_owned(),
+        Ok(None) => "fault".to_owned(),
+        Ok(Some(field)) => {
+            *lock(&FIELD_FAULT) = Some(field);
+            let main = HWND(MAIN.load(Ordering::SeqCst) as *mut _);
+            // SAFETY: sends the stand's own message to its window, and
+            // waits until the window's thread has carried it out; three
+            // plain values.
+            let done = unsafe { SendMessageW(main, FAULT_MESSAGE, None, None) };
+            if done.0 == 1 {
+                "fault".to_owned()
+            } else {
+                "fault\tno field has that label".to_owned()
+            }
+        }
+    }
+}
+
 /// The control interface: one command a line on standard input, answered
 /// on standard output. The end of the input, as when the test is gone,
 /// closes the window.
@@ -568,6 +911,8 @@ fn control_interface() {
         } else if let Some(after) = line.strip_prefix("late ") {
             post(LATE_MESSAGE, after.parse::<usize>().unwrap_or(0));
             println!("{PREFIX}late");
+        } else if line.starts_with("fault ") {
+            println!("{PREFIX}{}", fault(line));
         } else if line == "quit" {
             break;
         }
@@ -586,6 +931,7 @@ pub(crate) fn serve() -> i32 {
         .ok()
         .and_then(|text| decode_order(&text))
         .unwrap_or_else(Order::example);
+    book().open(&order);
     let (_, save, password) = match make(&order) {
         Ok(made) => made,
         Err(why) => {
