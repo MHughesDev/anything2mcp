@@ -281,6 +281,21 @@ jobs:
         env:
           A2M_TEST_BINARY: ${{ github.workspace }}/target/release/anything2mcp${{ runner.os == 'Windows' && '.exe' || '' }}
         run: python -m unittest discover -s tests -v
+      # The step above runs every test, and a test that needs the built
+      # program is skipped, not failed, when the variable is empty. On
+      # Windows the real-engine call by the named pipe is the whole proof
+      # of package 5.4, so this runs it alone and fails if it was skipped.
+      - name: Prove the Python client calls the real engine by its pipe on Windows
+        if: runner.os == 'Windows'
+        working-directory: bindings/python
+        env:
+          A2M_TEST_BINARY: ${{ github.workspace }}/target/release/anything2mcp.exe
+        run: |
+          test -f "$A2M_TEST_BINARY"
+          python -m unittest discover -s tests -p test_winpipe.py -k RealPipeTests -v 2>&1 | tee "$RUNNER_TEMP/winpipe.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          grep -q "test_the_client_reaches_a_real_engine_over_its_pipe .* ok$" "$RUNNER_TEMP/winpipe.log"
+          if grep -q skipped "$RUNNER_TEMP/winpipe.log"; then echo "a Windows pipe test was skipped"; exit 1; fi
       - name: Run the short name from the installed wheel on Windows
         if: runner.os == 'Windows'
         run: |
