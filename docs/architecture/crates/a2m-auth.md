@@ -314,7 +314,7 @@ Metrics, through the telemetry handle: `a2m.session.renewals`, `a2m.session.forc
 | `unknown_variant` | `unexpected_response` | The identity service answered with something no rule covers |
 | `unknown_variant` | `session_move_illegal` | The keeper was asked for a move that is not in the table; a fault of the keeper |
 | `edge_blocked` | `challenge_page` | A pack's provider met a challenge during sign-in; it is a stop, never something to get past. Produced by the pack |
-| `busy` | the vault's code | The key store is unreachable and a session must be restored or saved |
+| `busy` | the vault's code | The key store is unreachable and a session must be restored or saved. The call fails at once; the saved state is kept, nothing is signed in in its place, and the next call after the store answers restores it ([decision 0399](../../decisions/0399-the-faults-of-the-kernels-own-parts-as-proven-and-what-a-verified-record-keeps.md)) |
 
 Not produced yet: `busy`, `session_in_use`, the per-session parallelism of section 211.
 
