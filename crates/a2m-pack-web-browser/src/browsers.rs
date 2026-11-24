@@ -14,8 +14,8 @@ use a2m_core::{
     Values,
 };
 use a2m_provider::{
-    Access, CheckedPath, Cleanup, Deadline, LaunchSpec, PackContext, ProgramRef, RootName,
-    ScopedSupervisor, SubsystemId, SubsystemKind,
+    Access, CheckedPath, Cleanup, Deadline, LaunchSpec, Leftover, PackContext, ProgramRef,
+    RootName, ScopedSupervisor, SubsystemId, SubsystemKind,
 };
 
 use crate::client::{Client, ClientError, Why};
@@ -98,6 +98,20 @@ pub struct BrowserSettings {
     /// such as a proxy.
     #[cfg(test)]
     pub(crate) environment_for_tests: Vec<(String, std::ffi::OsString)>,
+    /// This crate's own tests only: the first launch that has started its
+    /// program says so here and then waits for ever, as a start slower
+    /// than its caller's limit does, so that a test can drop it there.
+    #[cfg(test)]
+    pub(crate) stall_after_start: Option<Arc<StallOnce>>,
+}
+
+/// This crate's own tests only: one launch that stops after its program
+/// started, and says when it has.
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub(crate) struct StallOnce {
+    pub(crate) started: tokio::sync::Notify,
+    done: std::sync::atomic::AtomicBool,
 }
 
 impl Default for BrowserSettings {
@@ -116,6 +130,8 @@ impl Default for BrowserSettings {
             display: None,
             #[cfg(test)]
             environment_for_tests: Vec::new(),
+            #[cfg(test)]
+            stall_after_start: None,
         }
     }
 }
@@ -387,6 +403,11 @@ pub(crate) struct Shared {
     open: Mutex<BTreeMap<ProfileKey, Arc<BrowserInner>>>,
     /// One launch at a time, so that a profile is never started twice.
     launching: tokio::sync::Mutex<()>,
+    /// Browsers whose launch was dropped after their program started,
+    /// before they were recorded in `open`, each with the stop begun for
+    /// it where a runtime ran. The next launch and the shutdown finish
+    /// these stops first.
+    abandoned: Mutex<Vec<(SubsystemId, Option<tokio::task::JoinHandle<Cleanup>>)>>,
     pub(crate) next_tab: AtomicU64,
 }
 
@@ -395,6 +416,73 @@ impl Shared {
         self.open
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Finishes the stop of every browser whose launch was dropped, and
+    /// says what could not be cleaned up.
+    async fn stop_abandoned(&self) -> Vec<Leftover> {
+        let abandoned = std::mem::take(
+            &mut *self
+                .abandoned
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        let mut remaining = Vec::new();
+        for (subsystem, stopping) in abandoned {
+            let cleanup = match stopping {
+                Some(stopping) => match stopping.await {
+                    Ok(cleanup) => cleanup,
+                    // The stop did not finish: it is asked again, and a
+                    // subsystem already stopped is a complete cleanup.
+                    Err(_) => self.supervisor.stop(subsystem).await,
+                },
+                None => self.supervisor.stop(subsystem).await,
+            };
+            remaining.extend(cleanup.remaining);
+        }
+        remaining
+    }
+}
+
+/// A browser whose program started and that is not yet recorded among the
+/// open ones. The engine drops a driver's preparation that passes its own
+/// limit, and a browser's start may take longer than that; a launch
+/// dropped there must leave no subsystem holding the profile's place.
+/// Dropped while armed, it begins the stop at once where a runtime runs,
+/// and leaves the subsystem for the next launch to finish stopping.
+struct Unrecorded<'a> {
+    shared: &'a Shared,
+    subsystem: Option<SubsystemId>,
+}
+
+impl Unrecorded<'_> {
+    /// The browser is recorded among the open ones: nothing to stop.
+    fn recorded(mut self) {
+        self.subsystem = None;
+    }
+
+    /// Stops the browser now, on a launch that failed.
+    async fn stop(mut self) {
+        if let Some(subsystem) = self.subsystem.take() {
+            self.shared.supervisor.stop(subsystem).await;
+        }
+    }
+}
+
+impl Drop for Unrecorded<'_> {
+    fn drop(&mut self) {
+        let Some(subsystem) = self.subsystem.take() else {
+            return;
+        };
+        let stopping = tokio::runtime::Handle::try_current().ok().map(|runtime| {
+            let supervisor = self.shared.supervisor.clone();
+            runtime.spawn(async move { supervisor.stop(subsystem).await })
+        });
+        self.shared
+            .abandoned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((subsystem, stopping));
     }
 }
 
@@ -675,6 +763,7 @@ impl Browsers {
                 settings,
                 open: Mutex::new(BTreeMap::new()),
                 launching: tokio::sync::Mutex::new(()),
+                abandoned: Mutex::new(Vec::new()),
                 next_tab: AtomicU64::new(1),
             }),
         })
@@ -752,6 +841,10 @@ impl Browsers {
     ) -> Result<Browser, BrowserError> {
         let shared = &self.shared;
         let _one = shared.launching.lock().await;
+        // A launch dropped earlier may have left a browser holding the
+        // place; it is gone before anything starts. What could not be
+        // ended is the supervisor's leftover, and it refuses the start.
+        shared.stop_abandoned().await;
         let existing = shared.open().get(profile).cloned();
         let notice = match &show {
             Visibility::Background => None,
@@ -853,14 +946,26 @@ impl Browsers {
             )
             .await
             .map_err(|failure| failed(LaunchReason::Supervisor(failure)))?;
+        let subsystem = link.id;
+        // From here until it is recorded, a dropped launch stops it.
+        let unrecorded = Unrecorded {
+            shared,
+            subsystem: Some(subsystem),
+        };
         // A program was started: one launch, counted under its profile
         // root, inside the section that lets one launch through at a time.
         #[cfg(any(test, feature = "test-support"))]
         if let Ok(root) = &shared.root {
             crate::test_support::launched(root.as_path());
         }
+        #[cfg(test)]
+        if let Some(stall) = &shared.settings.stall_after_start
+            && !stall.done.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            stall.started.notify_one();
+            std::future::pending::<()>().await;
+        }
 
-        let subsystem = link.id;
         let known = &shared.settings.known_digests;
         let reviewed = known.contains(&link.program_digest);
         let client = Client::connect(
@@ -908,7 +1013,7 @@ impl Browsers {
             Ok(product) => product,
             Err(reason) => {
                 client.close();
-                shared.supervisor.stop(subsystem).await;
+                unrecorded.stop().await;
                 return Err(failed(reason));
             }
         };
@@ -926,7 +1031,7 @@ impl Browsers {
             Ok(made) => made.browser_context_id,
             Err(_) => {
                 client.close();
-                shared.supervisor.stop(subsystem).await;
+                unrecorded.stop().await;
                 return Err(failed(LaunchReason::NotOwned(
                     "it did not make a context that keeps its state in memory".to_owned(),
                 )));
@@ -953,7 +1058,7 @@ impl Browsers {
         // can own: it is closed.
         if let Err(why) = lock_browser(&inner, shared.settings.call_deadline).await {
             inner.client.close();
-            shared.supervisor.stop(subsystem).await;
+            unrecorded.stop().await;
             return Err(failed(LaunchReason::NotOwned(why)));
         }
         let notice = match notice {
@@ -962,12 +1067,13 @@ impl Browsers {
                 Ok(tab) => Some(Arc::new(tab)),
                 Err(error) => {
                     inner.client.close();
-                    shared.supervisor.stop(subsystem).await;
+                    unrecorded.stop().await;
                     return Err(error);
                 }
             },
         };
         shared.open().insert(profile.clone(), Arc::clone(&inner));
+        unrecorded.recorded();
         Ok(Browser {
             inner,
             shared: Arc::clone(shared),
@@ -1035,8 +1141,11 @@ impl Browsers {
 
     /// Closes every browser. What could not be cleaned up is listed.
     pub async fn shutdown(&self) -> Cleanup {
+        let mut remaining = {
+            let _one = self.shared.launching.lock().await;
+            self.shared.stop_abandoned().await
+        };
         let profiles: Vec<ProfileKey> = self.shared.open().keys().cloned().collect();
-        let mut remaining = Vec::new();
         for profile in profiles {
             remaining.extend(self.close(&profile).await.remaining);
         }
