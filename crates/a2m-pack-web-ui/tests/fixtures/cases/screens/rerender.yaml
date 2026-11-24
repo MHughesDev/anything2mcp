@@ -1,0 +1,20 @@
+# Case 6: a list the page draws again on every change, with generated
+# identifiers that differ on each draw. The screen names buttons by role and
+# name and never by an identifier.
+screen: rerender
+surface: app
+reach: {url: "/cases/rerender"}
+ready: {text: {locate: {role: status, name: ""}, equals: "Ready."}}
+actions:
+  archive_pallet:
+    locate:
+      - {role: button, name: "Archive Pallet"}
+    fingerprint: {section: {role: list, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, equals: "Archived Pallet."}}
+    commits: true
+  archive_crate:
+    locate:
+      - {role: button, name: "Archive Crate"}
+    fingerprint: {section: {role: list, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, equals: "Archived Crate."}}
+    commits: true

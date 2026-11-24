@@ -140,7 +140,11 @@ pub(crate) fn screen_schema() -> JsonSchema {
             "when",
             JsonSchema::object().required("visible", locator_schema(1)),
         )
-        .required("handling", JsonSchema::words(&["absent", "stop"]));
+        .required(
+            "handling",
+            JsonSchema::words(&["absent", "stop", "confirm", "dismiss"]),
+        )
+        .optional("with", JsonSchema::name());
     JsonSchema::object()
         .required("screen", JsonSchema::name())
         .optional("surface", JsonSchema::surface())
@@ -148,6 +152,7 @@ pub(crate) fn screen_schema() -> JsonSchema {
             "reach",
             JsonSchema::object().required("url", JsonSchema::text()),
         )
+        .optional("frame", JsonSchema::non_empty_list(locator_schema(1)))
         .required("ready", condition_schema(2))
         .optional("fields", JsonSchema::map_of(field))
         .optional("actions", JsonSchema::map_of(action))
@@ -302,6 +307,7 @@ impl Reader {
         Some(Some(Fingerprint {
             section,
             near_text: stated.text("near_text").map(str::to_owned),
+            frame: None,
         }))
     }
 
@@ -496,16 +502,75 @@ impl Reader {
             let handling = match entry.value.text("handling") {
                 Some("absent") => Some(Handling::Absent),
                 Some("stop") => Some(Handling::Stop),
+                Some("confirm") => Some(Handling::Confirm),
+                Some("dismiss") => Some(Handling::Dismiss),
                 _ => None,
             };
+            let with = entry.value.text("with").map(str::to_owned);
+            let answers = matches!(handling, Some(Handling::Confirm | Handling::Dismiss));
+            match (&with, answers) {
+                (Some(name), true) if !actions.contains_key(name) => {
+                    self.refuse(
+                        "variant_with_unknown",
+                        &entry.value.at,
+                        format!(
+                            "The variant `{}` is answered with the action `{}`, which the screen does not declare.",
+                            shown(&entry.key.value),
+                            shown(name)
+                        ),
+                        "Declare the action on the screen, or name one it has.",
+                    );
+                }
+                (None, true) => {
+                    self.refuse(
+                        "variant_without_answer",
+                        &entry.value.at,
+                        format!(
+                            "The variant `{}` is to be confirmed or dismissed and names no action to do it with.",
+                            shown(&entry.key.value)
+                        ),
+                        "Add `with:` and the name of the action that answers it.",
+                    );
+                }
+                (Some(_), false) => {
+                    self.refuse(
+                        "variant_with_unused",
+                        &entry.value.at,
+                        format!(
+                            "The variant `{}` names an action to answer it with, and its handling answers nothing.",
+                            shown(&entry.key.value)
+                        ),
+                        "Remove `with:`, or make the handling `confirm` or `dismiss`.",
+                    );
+                }
+                _ => {}
+            }
             if let (Some(when), Some(handling)) = (when, handling) {
-                variants.insert(entry.key.value.clone(), Variant { when, handling });
+                variants.insert(
+                    entry.key.value.clone(),
+                    Variant {
+                        when,
+                        handling,
+                        with,
+                    },
+                );
+            }
+        }
+        // The frame the screen is in, outermost first: each frame is
+        // looked for inside the one before it.
+        let mut frame: Option<Locator> = None;
+        for stated in doc.get("frame").map(Located::items).unwrap_or_default() {
+            if let Some(mut next) = self.locator(stated) {
+                if let Some(outer) = &frame {
+                    next.inside(outer);
+                }
+                frame = Some(next);
             }
         }
         if self.problems.len() != before {
             return None;
         }
-        Some(Screen {
+        let mut screen = Screen {
             surface: surface.to_owned(),
             reach: reach?,
             ready: ready?,
@@ -513,7 +578,11 @@ impl Reader {
             actions,
             rows,
             variants,
-        })
+        };
+        if let Some(frame) = &frame {
+            screen.inside(frame);
+        }
+        Some(screen)
     }
 }
 

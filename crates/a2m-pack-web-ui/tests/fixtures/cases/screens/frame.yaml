@@ -1,0 +1,22 @@
+# Case 12: a form inside a frame of the page's own origin. Every locator
+# of the screen is looked for inside the frame the screen declares.
+screen: frame
+surface: app
+reach: {url: "/cases/frame"}
+frame:
+  - {title: "Dispatch form"}
+ready: {visible: {role: button, name: "Send code"}}
+fields:
+  code:
+    type: text
+    control: text
+    locate:
+      - {role: textbox, name: "Dispatch code"}
+    fingerprint: {section: {role: form, name: ""}}
+actions:
+  send:
+    locate:
+      - {role: button, name: "Send code"}
+    fingerprint: {section: {role: form, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, equals: "Code sent."}}
+    commits: true

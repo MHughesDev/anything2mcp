@@ -18,6 +18,8 @@
 //! - `/cases/confirm` (case 11): the button "Archive order" asks "Archive this
 //!   order?" in a dialog on the first and the third press, and not on the
 //!   second, and every fourth press asks in the browser's own dialog.
+//! - `/cases/notice` (case 11): a form with "Send report", under a notice that
+//!   covers it until "Close notice" is pressed.
 //! - `/cases/frame` (case 12): a form inside a frame (`/cases/frame/inner`), and
 //!   beside it a control inside an open shadow tree.
 
@@ -45,6 +47,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/cases/in-page", get(in_page))
         .route("/cases/grid", get(grid))
         .route("/cases/confirm", get(confirm))
+        .route("/cases/notice", get(notice))
         .route("/cases/frame", get(frame))
         .route("/cases/frame/inner", get(frame_inner))
 }
@@ -250,13 +253,15 @@ async fn confirm() -> Html<String> {
                <button id=\"yes\">Confirm</button> <button id=\"no\">Cancel</button>\n\
              </div>\n\
              <script>\n{TELL}\
-             let presses = 0;\n\
+             let presses = Number(localStorage.getItem(\"presses\") || 0);\n\
              const ask = document.getElementById(\"ask\");\n\
              const status = document.getElementById(\"status\");\n\
              const done = () => {{ tell(\"archived\", \"press \" + presses); status.textContent = \"Archived.\"; }};\n\
              document.getElementById(\"archive\").addEventListener(\"click\", () => {{\n\
                presses += 1;\n\
+               localStorage.setItem(\"presses\", String(presses));\n\
                tell(\"pressed\", String(presses));\n\
+               status.textContent = \"Working.\";\n\
                if (presses % 4 === 0) {{\n\
                  if (confirm(\"Archive this order?\")) done(); else tell(\"cancelled\", \"press \" + presses);\n\
                }} else if (presses % 2 === 1) {{\n\
@@ -270,6 +275,31 @@ async fn confirm() -> Html<String> {
                ask.hidden = true;\n\
                tell(\"cancelled\", \"press \" + presses);\n\
                status.textContent = \"Not archived.\";\n\
+             }});\n\
+             </script>"
+        ),
+    )
+}
+
+async fn notice() -> Html<String> {
+    page(
+        "Report",
+        &format!(
+            "<h1>Report</h1>\n<button id=\"send\">Send report</button>\n\
+             <p id=\"status\" role=\"status\">Not sent.</p>\n\
+             <div id=\"banner\" role=\"dialog\" aria-label=\"Newsletter notice\" \
+                  style=\"position:fixed;inset:0;background:#fffc;z-index:10\">\n\
+               <p>Our newsletter is back.</p>\n\
+               <button id=\"close\">Close notice</button>\n\
+             </div>\n\
+             <script>\n{TELL}\
+             document.getElementById(\"close\").addEventListener(\"click\", () => {{\n\
+               document.getElementById(\"banner\").remove();\n\
+               tell(\"closed\", \"notice\");\n\
+             }});\n\
+             document.getElementById(\"send\").addEventListener(\"click\", () => {{\n\
+               tell(\"sent\", \"report\");\n\
+               document.getElementById(\"status\").textContent = \"Report sent.\";\n\
              }});\n\
              </script>"
         ),

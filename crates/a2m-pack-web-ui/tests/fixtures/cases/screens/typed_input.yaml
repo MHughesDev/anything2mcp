@@ -1,0 +1,20 @@
+# Case 7: an input that keeps what is typed into it only when key presses
+# made it.
+screen: typed_input
+surface: app
+reach: {url: "/cases/typed-input"}
+ready: {visible: {role: heading, name: "Reference"}}
+fields:
+  reference:
+    type: text
+    control: text
+    locate:
+      - {role: textbox, name: Reference}
+    fingerprint: {section: {role: main, name: ""}}
+actions:
+  save:
+    locate:
+      - {role: button, name: "Save reference"}
+    fingerprint: {section: {role: main, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, contains: "Saved"}}
+    commits: true

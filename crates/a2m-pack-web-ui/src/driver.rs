@@ -719,6 +719,37 @@ pub(crate) fn refusal(refused: &[RequestShape], what: &str) -> Option<Failure> {
 }
 
 impl Session {
+    /// Answers a declared variant of a screen with the action it names:
+    /// one click, not a commit point. Nothing is retried.
+    async fn answer_variant(
+        &self,
+        screen_name: &str,
+        screen: &Screen,
+        variant: &str,
+        deadline: Deadline,
+    ) -> Result<(), StepFailure> {
+        let with = screen
+            .variants
+            .get(variant)
+            .and_then(|declared| declared.with.as_deref())
+            .and_then(|action| screen.actions.get(action).map(|found| (action, found)));
+        let Some((action_name, action)) = with else {
+            return Err(codes::not_usable(
+                "a variant it must answer names no action of its screen",
+            ));
+        };
+        let what = format!(
+            "the action `{action_name}` that answers the variant `{variant}` of the screen `{screen_name}`"
+        );
+        let (element, _) = self
+            .find(&what, &action.locate, action.fingerprint.as_ref(), deadline)
+            .await?;
+        self.tab()
+            .input(&element, &Input::Click, deadline, &what)
+            .await?;
+        Ok(())
+    }
+
     /// The variants of the screen the page shows now, by name.
     async fn variants_now(
         &self,
@@ -796,7 +827,8 @@ impl Session {
                     "a locator with a scope of its own also has a fingerprint",
                 ));
             }
-            let element = match self.tab().locate(&locator.query(), deadline).await {
+            let frame = fingerprint.and_then(|print| print.frame.as_ref());
+            let element = match self.tab().locate(&locator.query_in(frame), deadline).await {
                 Ok(element) => element,
                 Err(BrowserError::NotFound) => continue,
                 Err(error) => return Err(browser_failure(&error, what)),
@@ -1005,11 +1037,23 @@ impl Session {
                 }
             }
         }
-        let variant = self
+        let mut variant = self
             .variant(screen, deadline)
             .await
             .map_err(|error| browser_failure(&error, &what))?;
         let mut means = vec![Detail::new("step", "wait"), Detail::new("screen", name)];
+        // A notice over the screen that the screen declares as one to
+        // dismiss is closed by the action it names, once; a notice that is
+        // still there after that stops the run.
+        if let Some((shown_name, Handling::Dismiss)) = variant {
+            self.answer_variant(name, screen, shown_name, deadline)
+                .await?;
+            means.push(Detail::new("dismissed", shown_name));
+            variant = self
+                .variant(screen, deadline)
+                .await
+                .map_err(|error| browser_failure(&error, &what))?;
+        }
         match variant {
             Some((variant, Handling::Absent)) => {
                 means.push(Detail::new("variant", variant));
@@ -1023,6 +1067,15 @@ impl Session {
                 format!("The page shows the variant `{variant}` of {what}, which stops a run."),
                 "Look at the page; the application refused.",
             ))),
+            Some((variant, Handling::Confirm | Handling::Dismiss)) => {
+                Err(StepFailure::not_sent(fail(
+                    &codes::row::UNEXPECTED_PAGE,
+                    format!(
+                        "The page shows the variant `{variant}` of {what}, which is not one that can be answered at this point, or which the answer did not close."
+                    ),
+                    "Look at the page; the screen declares a state it cannot leave by its own action.",
+                )))
+            }
             None => {
                 let mut captures = Vec::new();
                 let mut measured = Vec::new();
@@ -1254,10 +1307,31 @@ impl Session {
         // not there before. A page that already shows a state the screen
         // declares, or the action's confirmation, could not tell its answer
         // from what it showed: the action is not performed (decision 0144).
-        let before = self
+        let mut before = self
             .variants_now(screen, deadline)
             .await
             .map_err(|error| browser_failure(&error, &what))?;
+        // A notice the screen declares as one to dismiss is in the way of
+        // the click, and is closed first; the click has not been made.
+        let dismissable: Vec<String> = before
+            .iter()
+            .filter(|shown| {
+                screen
+                    .variants
+                    .get(*shown)
+                    .is_some_and(|variant| variant.handling == Handling::Dismiss)
+            })
+            .cloned()
+            .collect();
+        if !dismissable.is_empty() {
+            for shown in &dismissable {
+                self.answer_variant(name, screen, shown, deadline).await?;
+            }
+            before = self
+                .variants_now(screen, deadline)
+                .await
+                .map_err(|error| browser_failure(&error, &what))?;
+        }
         if let Some(shown_before) = before.iter().next() {
             let handling = screen
                 .variants
@@ -1272,6 +1346,10 @@ impl Session {
                     &codes::row::UNEXPECTED_PAGE,
                     "Look at the page; the record is not where the action would act on it.",
                 ),
+                Handling::Confirm | Handling::Dismiss => (
+                    &codes::row::UNEXPECTED_PAGE,
+                    "Look at the page; a state the screen declares as one to answer was shown before the action, or was not closed by its answer.",
+                ),
             };
             let refused = StepFailure::not_sent(fail(
                 row,
@@ -1285,7 +1363,7 @@ impl Session {
                     Some(said) => refused.with_said(said),
                     None => refused,
                 },
-                Handling::Absent => refused,
+                Handling::Absent | Handling::Confirm | Handling::Dismiss => refused,
             });
         }
         if self
@@ -1333,47 +1411,77 @@ impl Session {
                 StepFailure::unknown(failure)
             }
         };
-        let mut any = vec![action.confirm.primitive()];
-        any.extend(
-            screen
-                .variants
-                .values()
-                .map(|variant| Primitive::Visible(variant.when.query())),
-        );
-        match self
-            .wait_hearing(&Primitive::Any(any), deadline, &what)
-            .await
-        {
-            Ok(None) => {}
-            Ok(Some(refused)) => return Err(after_click(refused)),
-            Err(BrowserError::Timeout { .. }) => {
-                return Err(no_confirmation(
-                    "the page did not show its confirmation in the time the step allows".to_owned(),
-                ));
+        let mut answered = false;
+        let now = loop {
+            let mut any = vec![action.confirm.primitive()];
+            any.extend(
+                screen
+                    .variants
+                    .values()
+                    .map(|variant| Primitive::Visible(variant.when.query())),
+            );
+            match self
+                .wait_hearing(&Primitive::Any(any), deadline, &what)
+                .await
+            {
+                Ok(None) => {}
+                Ok(Some(refused)) => return Err(after_click(refused)),
+                Err(BrowserError::Timeout { .. }) => {
+                    return Err(no_confirmation(
+                        "the page did not show its confirmation in the time the step allows"
+                            .to_owned(),
+                    ));
+                }
+                Err(BrowserError::UnexpectedDialog { .. }) => {
+                    return Err(StepFailure::unknown(
+                        browser_failure(
+                            &BrowserError::UnexpectedDialog {
+                                dispatch: Dispatch::Sent,
+                            },
+                            &what,
+                        )
+                        .failure,
+                    ));
+                }
+                Err(error @ BrowserError::ForeignOrigin(_)) => {
+                    return Err(after_click(browser_failure(&error, &what).failure));
+                }
+                Err(_) => {
+                    return Err(no_confirmation(
+                        "the browser was lost before the page showed its confirmation".to_owned(),
+                    ));
+                }
             }
-            Err(BrowserError::UnexpectedDialog { .. }) => {
-                return Err(StepFailure::unknown(
-                    browser_failure(
-                        &BrowserError::UnexpectedDialog {
-                            dispatch: Dispatch::Sent,
-                        },
-                        &what,
-                    )
-                    .failure,
-                ));
+            let now = self.variants_now(screen, deadline).await.map_err(|_| {
+                no_confirmation("the page could not be asked which state it is in".to_owned())
+            })?;
+            // A question the screen declares for this action is answered once,
+            // by the action it names, and the page's answer is waited for
+            // again. A second question stops the run below.
+            let question = now
+                .iter()
+                .find(|shown| {
+                    screen.variants.get(*shown).is_some_and(|variant| {
+                        matches!(variant.handling, Handling::Confirm | Handling::Dismiss)
+                    })
+                })
+                .cloned();
+            if let (false, Some(question)) = (answered, question) {
+                answered = true;
+                if let Err(failure) = self.answer_variant(name, screen, &question, deadline).await {
+                    return Err(if step.commits {
+                        no_confirmation(format!(
+                            "then the page asked `{question}`, which could not be answered: {}",
+                            failure.failure.message()
+                        ))
+                    } else {
+                        failure
+                    });
+                }
+                continue;
             }
-            Err(error @ BrowserError::ForeignOrigin(_)) => {
-                return Err(after_click(browser_failure(&error, &what).failure));
-            }
-            Err(_) => {
-                return Err(no_confirmation(
-                    "the browser was lost before the page showed its confirmation".to_owned(),
-                ));
-            }
-        }
-        let now = self.variants_now(screen, deadline).await.map_err(|_| {
-            no_confirmation("the page could not be asked which state it is in".to_owned())
-        })?;
+            break now;
+        };
         if let Some(variant) = now.iter().next() {
             let handling = screen
                 .variants
@@ -1407,6 +1515,16 @@ impl Session {
                 // of whether the save landed.
                 (Handling::Absent, true) => no_confirmation(format!(
                     "then the page showed the variant `{variant}`, which does not say whether the save landed"
+                )),
+                (Handling::Confirm | Handling::Dismiss, true) => no_confirmation(format!(
+                    "then the page showed the variant `{variant}` again after it was answered"
+                )),
+                (Handling::Confirm | Handling::Dismiss, false) => StepFailure::answered(fail(
+                    &codes::row::UNEXPECTED_PAGE,
+                    format!(
+                        "After {what}, the page shows the variant `{variant}` again after it was answered."
+                    ),
+                    "Look at the page; the screen declares a question the answer does not close.",
                 )),
                 (Handling::Absent, false) => StepFailure::answered(fail(
                     &codes::row::UNEXPECTED_PAGE,

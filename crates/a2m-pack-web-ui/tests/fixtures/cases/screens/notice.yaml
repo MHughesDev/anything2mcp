@@ -1,0 +1,23 @@
+# Case 11: a notice that covers the form until it is closed. The screen
+# declares it as one to dismiss, with the action that closes it.
+screen: notice
+surface: app
+reach: {url: "/cases/notice"}
+ready: {visible: {role: button, name: "Send report"}}
+actions:
+  send:
+    locate:
+      - {role: button, name: "Send report"}
+    fingerprint: {section: {role: main, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, equals: "Report sent."}}
+    commits: true
+  close:
+    locate:
+      - {role: button, name: "Close notice"}
+    fingerprint: {section: {role: dialog, name: "Newsletter notice"}}
+    confirm: {hidden: {role: dialog, name: "Newsletter notice"}}
+variants:
+  newsletter:
+    when: {visible: {role: dialog, name: "Newsletter notice"}}
+    handling: dismiss
+    with: close

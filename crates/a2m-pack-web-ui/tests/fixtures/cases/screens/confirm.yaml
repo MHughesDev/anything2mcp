@@ -1,0 +1,24 @@
+# Case 11: a question the page asks on some presses. The screen declares
+# it as a variant to confirm, answered by the action `yes`; a question the
+# screen does not declare, such as the browser's own, stops the run.
+screen: confirm
+surface: app
+reach: {url: "/cases/confirm"}
+ready: {visible: {role: button, name: "Archive order"}}
+actions:
+  archive:
+    locate:
+      - {role: button, name: "Archive order"}
+    fingerprint: {section: {role: main, name: ""}}
+    confirm: {text: {locate: {role: status, name: ""}, equals: "Archived."}}
+    commits: true
+  yes:
+    locate:
+      - {role: button, name: Confirm}
+    fingerprint: {section: {role: dialog, name: "Archive this order?"}}
+    confirm: {hidden: {role: dialog, name: "Archive this order?"}}
+variants:
+  asks:
+    when: {visible: {role: dialog, name: "Archive this order?"}}
+    handling: confirm
+    with: yes

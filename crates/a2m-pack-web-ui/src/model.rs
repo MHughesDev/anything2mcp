@@ -61,6 +61,43 @@ impl Screen {
         out
     }
 
+    /// Puts every locator of the screen inside the frame the screen is in
+    /// (spec section 301): the screen's own words stay the page's, and the
+    /// browser is asked for the frame's document.
+    pub(crate) fn inside(&mut self, frame: &Locator) {
+        self.ready.inside(frame);
+        let fingerprint = |print: &mut Option<Fingerprint>| {
+            if let Some(print) = print {
+                print.section.inside(frame);
+                print.frame = Some(frame.clone());
+            }
+        };
+        // An element held to a fingerprint is looked for inside the
+        // fingerprint's section, which is in the frame; its own locators
+        // keep no scope of their own, which the driver would refuse.
+        let locators = |locate: &mut [Locator], print: &Option<Fingerprint>| {
+            if print.is_none() {
+                locate.iter_mut().for_each(|locator| locator.inside(frame));
+            }
+        };
+        for field in self.fields.values_mut() {
+            locators(&mut field.locate, &field.fingerprint);
+            fingerprint(&mut field.fingerprint);
+        }
+        for action in self.actions.values_mut() {
+            locators(&mut action.locate, &action.fingerprint);
+            fingerprint(&mut action.fingerprint);
+            action.confirm.inside(frame);
+        }
+        if let Some(rows) = &mut self.rows {
+            locators(&mut rows.locate, &rows.fingerprint);
+            fingerprint(&mut rows.fingerprint);
+        }
+        for variant in self.variants.values_mut() {
+            variant.when.inside(frame);
+        }
+    }
+
     /// Whether a variant says the record the screen shows does not exist.
     pub(crate) fn can_be_absent(&self) -> bool {
         self.variants
@@ -138,6 +175,27 @@ impl Locator {
         }
     }
 
+    /// Puts the locator inside a frame: the end of its chain of scopes is
+    /// inside it, so that the whole match is made in the frame's document.
+    pub(crate) fn inside(&mut self, frame: &Locator) {
+        match &mut self.within {
+            Some(scope) => scope.inside(frame),
+            None => self.within = Some(Box::new(frame.clone())),
+        }
+    }
+
+    /// The base's query for this locator, in the frame when there is one.
+    pub(crate) fn query_in(&self, frame: Option<&Locator>) -> Query {
+        match frame {
+            Some(frame) => {
+                let mut framed = self.clone();
+                framed.inside(frame);
+                framed.query()
+            }
+            None => self.query(),
+        }
+    }
+
     /// The same match, inside the one element `section` matches. Used only
     /// for a locator with no `within` of its own.
     pub(crate) fn query_inside(&self, section: &Locator) -> Query {
@@ -152,6 +210,10 @@ pub(crate) struct Fingerprint {
     pub section: Locator,
     /// Text that must be shown inside that section.
     pub near_text: Option<String>,
+    /// The frame the screen is in, when it is in one: the element is first
+    /// looked for there, and then held to the section, which is there too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<Locator>,
 }
 
 /// A condition of a screen. Each is one the base waits on by an observer.
@@ -177,6 +239,17 @@ pub(crate) enum Cond {
 }
 
 impl Cond {
+    /// Puts every locator of the condition inside a frame.
+    pub(crate) fn inside(&mut self, frame: &Locator) {
+        match self {
+            Self::Visible(locator) | Self::Hidden(locator) | Self::Enabled(locator) => {
+                locator.inside(frame);
+            }
+            Self::Text { locate, .. } => locate.inside(frame),
+            Self::All(of) | Self::Any(of) => of.iter_mut().for_each(|cond| cond.inside(frame)),
+        }
+    }
+
     /// The base's condition.
     pub(crate) fn primitive(&self) -> Primitive {
         match self {
@@ -257,6 +330,12 @@ pub(crate) enum Handling {
     Absent,
     /// The application refused; the run stops.
     Stop,
+    /// A question the page asks of the action just performed, which the
+    /// variant's `with` action answers by agreeing (decision 0399).
+    Confirm,
+    /// A state in the way, such as a notice over the form, which the
+    /// variant's `with` action closes.
+    Dismiss,
 }
 
 /// A state a screen may be in instead of the one its fields describe.
@@ -266,6 +345,9 @@ pub(crate) struct Variant {
     pub when: Locator,
     /// What it means.
     pub handling: Handling,
+    /// For `confirm` and `dismiss`: the action of the screen that answers it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub with: Option<String>,
 }
 
 /// The table of a screen.
