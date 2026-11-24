@@ -151,7 +151,7 @@ Several large business platforms and grid component libraries have not been chec
 
 ### Platform profiles
 
-As built ([decision 0370](../../decisions/0370-platform-profiles-are-data-in-profiles-and-the-first-one-applied-is-the-identifiers-a-platform-makes.md)): the files are in `profiles/` at the root of the repository, read and held to this schema by the `profiles` module of `a2m-pack-web-ui` and embedded in the program (the base does not see the YAML reader, so the loader is not in `a2m-pack-web-browser`). A surface of the kind `web` may name a `profile`, one of the files' names or `auto`; `web.profile_unknown` refuses another, and `web.generated_id` refuses a locator built on an identifier the profile's `reject_id_patterns` match. Detection and `ready` are the probe's and are read and checked, not applied; the input commit, `web.profile_readonly`, the frame mode, and the locator priority as an order are not applied yet.
+As built ([decision 0370](../../decisions/0370-platform-profiles-are-data-in-profiles-and-the-first-one-applied-is-the-identifiers-a-platform-makes.md)): the files are in `profiles/` at the root of the repository, read and held to this schema by the `profiles` module of `a2m-pack-web-ui` and embedded in the program (the base does not see the YAML reader, so the loader is not in `a2m-pack-web-browser`). A surface of the kind `web` may name a `profile`, one of the files' names or `auto`; `web.profile_unknown` refuses another, and `web.generated_id` refuses a locator built on an identifier the profile's `reject_id_patterns` match, and `web.profile_readonly` refuses a write bound through a screen of a surface whose profile's tier is `read_only` or `unsupported`, in whatever mode names the screen (`ui` and `site_tools`), and says to bind it to a request instead; a read through such a screen compiles. Detection and `ready` are the probe's and are read and checked, not applied; the input commit, the frame mode, and the locator priority as an order are not applied yet.
 
 A profile is data, compiled into `a2m-pack-web-browser` and versioned with it, because both the drivers and the probe need it. Applying a profile to locating and input is `a2m-pack-web-ui`'s work; choosing one for a surface is the probe's. Code never branches on a platform's name where a profile's data can say it.
 
@@ -180,7 +180,7 @@ support_tier: full
 | `input_commit` | How a value is committed in the page |
 | `frames` | Whether frames are declared or found |
 | `drift_risk` | How often the platform changes its interface; it sets how often drift is checked |
-| `support_tier` | `full`, `read_only`, API-preferred, or `unsupported`. A write binding on a `read_only` or `unsupported` surface does not compile (`web_profile_readonly`) |
+| `support_tier` | `full`, `read_only`, API-preferred, or `unsupported`. A write binding through a screen of a `read_only` or `unsupported` surface does not compile (`web.profile_readonly`) |
 
 A surface whose profile is `auto` and matches none is `unknown_platform`: the probe reports it, its tier is `unsupported` until a person names a profile, and a run on it stops.
 

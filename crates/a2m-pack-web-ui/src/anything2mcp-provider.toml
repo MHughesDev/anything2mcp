@@ -188,6 +188,11 @@ level = "error"
 summary = "A surface's `profile` is the name of a platform profile, or `auto`."
 
 [[lint_rules]]
+code = "web.profile_readonly"
+level = "error"
+summary = "No write is bound through a screen of a surface whose platform profile's tier is `read_only` or `unsupported`."
+
+[[lint_rules]]
 code = "web.css_used"
 level = "warning"
 summary = "No field, action, or table is located by a `css` selector."

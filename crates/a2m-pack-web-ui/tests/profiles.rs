@@ -73,3 +73,41 @@ fn a_profile_that_is_not_one_is_refused_with_the_names_that_are() {
         assert!(refused.contains(name), "{refused}");
     }
 }
+
+#[test]
+fn a_write_through_a_screen_of_a_read_only_profile_does_not_compile_and_a_read_does() {
+    let refused = compiled(Some("virtualized_grid"), "reference").unwrap_err();
+    let lines: Vec<&str> = refused
+        .lines()
+        .filter(|line| line.contains("web.profile_readonly"))
+        .collect();
+    assert!(!lines.is_empty(), "{refused}");
+    // Each write bound through a screen is named, whatever its mode, with
+    // the profile, its tier, and what to do instead.
+    for write in ["example_order_delivery_update", "example_page_note_save"] {
+        assert!(
+            lines.iter().any(|line| line.contains(write)),
+            "{write}: {refused}"
+        );
+    }
+    assert!(
+        lines
+            .iter()
+            .all(|line| line.contains("virtualized_grid") && line.contains("read_only")),
+        "{refused}"
+    );
+    assert!(refused.contains("page_http"), "{refused}");
+    // No read is refused: a read-only profile is read.
+    for read in [
+        "example_options_read",
+        "example_note_read",
+        "example_order_line_quantity_read",
+    ] {
+        assert!(
+            !lines.iter().any(|line| line.contains(read)),
+            "{read}: {refused}"
+        );
+    }
+    // The same target under a profile that may write compiles.
+    compiled(Some("plain"), "reference").unwrap();
+}

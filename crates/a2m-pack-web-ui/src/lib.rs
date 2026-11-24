@@ -177,6 +177,7 @@ impl Pack for WebUiPack {
             .lint_rule(Arc::new(screens::CssNotLast))
             .lint_rule(Arc::new(screens::GeneratedId))
             .lint_rule(Arc::new(screens::ProfileUnknown))
+            .lint_rule(Arc::new(screens::ProfileReadonly))
             .lint_rule(Arc::new(screens::CssUsed))
             .lint_rule(Arc::new(screens::NoFingerprint))
             .drafting_rule(Arc::new(draft::TableScreenRule {

@@ -1104,6 +1104,75 @@ impl LintRule for ProfileUnknown {
     }
 }
 
+/// `web.profile_readonly`: a write bound through a screen whose surface's
+/// profile has the tier `read_only` or `unsupported`. It holds whatever
+/// mode binds the screen, since a mode that acts on the page acts on
+/// controls the profile says are not checked for writing.
+pub(crate) struct ProfileReadonly;
+
+impl LintRule for ProfileReadonly {
+    fn code(&self) -> LintCode {
+        code("profile_readonly")
+    }
+
+    fn level(&self, _mode: CompileMode) -> Level {
+        Level::Error
+    }
+
+    fn summary(&self) -> &str {
+        "No write is bound through a screen of a surface whose platform profile's tier is `read_only` or `unsupported`."
+    }
+
+    fn check(&self, view: &ResolvedView<'_>) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        let screens = view.entries(&SCREEN_KIND, &WEB_SURFACE);
+        for operation in view.operations() {
+            if operation.effect() == a2m_core::EffectClass::Read {
+                continue;
+            }
+            for binding in operation
+                .doc()
+                .get("bindings")
+                .map(Located::items)
+                .unwrap_or_default()
+            {
+                let Some(named) = binding.get("screen") else {
+                    continue;
+                };
+                let Some(name) = named.as_text() else {
+                    continue;
+                };
+                let Some((surface, profile)) = screens
+                    .iter()
+                    .find(|screen| screen.text("screen") == Some(name))
+                    .and_then(|screen| screen.text("surface"))
+                    .and_then(|surface| Some((surface, profile_of(view, surface)?)))
+                else {
+                    continue;
+                };
+                if profile.may_write() {
+                    continue;
+                }
+                out.push(problem(
+                    "profile_readonly",
+                    Stage::Lint,
+                    &named.at,
+                    format!(
+                        "The operation `{}` writes through the screen `{}`, on the surface `{}`, whose profile `{}` has the tier `{}`: its controls are not checked for writing.",
+                        operation.name(),
+                        shown(name),
+                        shown(surface),
+                        profile.name,
+                        profile.support_tier
+                    ),
+                    "Bind the write to a request instead (`page_http`, or `http` on the service behind the page), or keep the operation a read; the profile says this platform's controls may be read and not written.",
+                ));
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

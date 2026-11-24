@@ -10,6 +10,7 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 
 ### Added
 
+- A write bound through a screen of a web surface whose platform profile is read only (such as `virtualized_grid`) no longer compiles, and the message says to bind it to a request instead; reads through the same screen still compile.
 - A write from inside a web page (`page_http`) whose page is answered by the site's edge now stops as `edge_blocked`, with what the edge said, instead of as a missing anti-forgery token; and one whose session has ended rests at `needs_login` with nothing sent ([decision 0399](docs/decisions/0399-the-page-http-write-stops-at-the-edge-and-at-an-ended-session-before-it-sends.md)).
 - The benchmark harness measures the size of the program (`program_size`, budget 25 MB) and CI stores it on all three operating systems; `a2m-bench compare` holds the fastest iteration of each number and not its median, so that a busy machine does not fail a build, and CI compares with `bench/baseline/<os>-<arch>.json` once a baseline from a quiet runner is stored (decision 0369).
 - A surface of a web application may name a platform profile (`profile:` in its entry of `target.yaml`), one of the files in the product's `profiles/` or `auto`. A locator built on an identifier its platform makes, such as a number that changes when a control is added, no longer compiles, and says what to locate by instead.
