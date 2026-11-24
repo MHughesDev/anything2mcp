@@ -391,4 +391,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0397 | [What the first release needs of the packages left, and what waits until after it](0397-what-the-first-release-needs-of-the-packages-left-and-what-waits-until-after-it.md) | Accepted (design decision) |
 | 0398 | [The review shows a launched program as a launcher, and says what nothing pins](0398-the-review-shows-a-launched-program-as-a-launcher-and-says-what-nothing-pins.md) | Accepted (design decision) |
 | 0400 | [A capture ends as a scout does](0400-a-capture-ends-as-a-scout-does.md) | Accepted (design decision) |
-| 0950 | [The steps between a proven read and a publish are one action](0950-the-steps-between-a-proven-read-and-a-publish-are-one-action.md) | Accepted (design decision) |
+| 0401 | [The steps between a proven read and a publish are one action](0401-the-steps-between-a-proven-read-and-a-publish-are-one-action.md) | Accepted (design decision) |

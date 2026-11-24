@@ -1,4 +1,4 @@
-# 0950. The steps between a proven read and a publish are one action
+# 0401. The steps between a proven read and a publish are one action
 
 **Status:** Accepted. Design decision, made by the design architect. The owner had not read this record when it was merged. Nothing in it is built.
 
