@@ -72,6 +72,7 @@ mod tests {
     mod local_authentication;
     #[cfg(target_os = "linux")]
     mod polkit;
+    mod publish;
     mod surface;
     mod windows_hello;
     mod world;
