@@ -16,7 +16,9 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 
-use super::support::{STORED_HELD, World, account_key, decode_form, reference, request};
+use super::support::{
+    HOUR, STORED_HELD, STORED_SIGNING_IN, World, account_key, decode_form, reference, request,
+};
 use crate::{AuthEntry, ProviderName, SignInDestinations, Wait, codes};
 
 const CLIENT_SECRET: &str = "secret-for-tests-client-0248";
@@ -344,4 +346,152 @@ async fn a_credential_opens_only_for_the_target_it_was_stored_for() {
         .unwrap();
     assert_eq!(heard(&service), 1);
     assert!(heard_the_secret(&service));
+}
+
+/// The fake provider's entry, as the drafts give it, carried out by the
+/// session's person; and the same entry, published.
+fn fake_drafted_and_published() -> (Arc<AuthEntry>, Arc<AuthEntry>) {
+    let draft = AuthEntry::new(ProviderName::new("fake").unwrap());
+    let shown = AuthEntry {
+        surfaces: draft.surfaces.clone().shown_to_person(),
+        ..draft.clone()
+    };
+    (Arc::new(shown), Arc::new(draft.published()))
+}
+
+/// Signs `key` in under `entry` and waits until it holds.
+async fn signed_in_under(world: &World, key: &crate::SessionKey, entry: &Arc<AuthEntry>) {
+    let ticket = world
+        .keeper
+        .sign_in(key, Arc::clone(entry), None)
+        .await
+        .unwrap();
+    world
+        .keeper
+        .signed_in(ticket.session, Duration::from_secs(10))
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+}
+
+/// The mark that a session was made under drafts is the session's record's
+/// (decision 0399): a restart between the person's sign-in under drafts and
+/// a run under a published version that finds it run out does not let the
+/// keeper renew it without its person. The provider renews by signing in
+/// again, which needs nothing held in memory, so its count of sign-ins is
+/// the count of renewals the stand saw.
+#[tokio::test]
+async fn a_session_made_under_drafts_is_not_renewed_under_a_published_version_after_a_restart() {
+    let world = World::on_disk(STORED_SIGNING_IN).await;
+    let key = account_key("robot");
+    let (shown, published) = fake_drafted_and_published();
+    signed_in_under(&world, &key, &shown).await;
+    assert_eq!(world.fake.sign_ins(), 1);
+    assert!(marked_drafted(&world, &key).await);
+
+    let world = world.restarted().await;
+    world.clock.advance(HOUR + Duration::from_secs(1));
+    let refused = world
+        .keeper
+        .lease(request(&key, &published, Wait::NoWait))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), &codes::NEEDS_LOGIN, "{refused}");
+    world.keeper.idle().await;
+    let refused = world
+        .keeper
+        .lease(request(&key, &published, Wait::NoWait))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.class(), FailureClass::SessionExpired, "{refused}");
+    world.keeper.idle().await;
+    assert_eq!(world.fake.refreshes(), 0);
+    assert_eq!(world.fake.sign_ins(), 1);
+}
+
+/// A session made under a published version still renews without anyone
+/// after a restart: the mark says so.
+#[tokio::test]
+async fn a_session_made_under_a_published_version_renews_after_a_restart() {
+    let world = World::on_disk(STORED_SIGNING_IN).await;
+    let key = account_key("robot");
+    let (_, published) = fake_drafted_and_published();
+    signed_in_under(&world, &key, &published).await;
+    assert!(!marked_drafted(&world, &key).await);
+
+    let world = world.restarted().await;
+    world.clock.advance(HOUR + Duration::from_secs(1));
+    world
+        .keeper
+        .lease(request(&key, &published, Wait::DEFAULT))
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    assert_eq!(world.fake.sign_ins(), 2);
+    assert_eq!(world.fake.refreshes(), 0);
+}
+
+/// A store kept before migration 0027 opens, and its sessions, whose
+/// sign-in nobody can tell, are treated as made under drafts: none is
+/// renewed without its person.
+#[tokio::test]
+async fn a_store_from_before_the_mark_opens_and_its_sessions_count_as_made_under_drafts() {
+    let world = World::on_disk(STORED_SIGNING_IN).await;
+    let key = account_key("robot");
+    let (_, published) = fake_drafted_and_published();
+    signed_in_under(&world, &key, &published).await;
+
+    // What an engine before migration 0027 left: no column, and no record
+    // of the migration.
+    let raw = world.raw();
+    raw.execute_batch(
+        "BEGIN IMMEDIATE;
+         ALTER TABLE sessions DROP COLUMN signed_in_under;
+         DELETE FROM schema_migrations WHERE number = 27;
+         COMMIT;",
+    )
+    .unwrap();
+    drop(raw);
+
+    let world = world.restarted().await;
+    let row = world.store.find(&key).await.unwrap().unwrap();
+    assert_eq!(row.state, a2m_core::SessionState::Valid);
+    assert!(row.made_under_drafts);
+    let column: Option<String> = world
+        .raw()
+        .query_row("SELECT signed_in_under FROM sessions", [], |found| {
+            found.get(0)
+        })
+        .unwrap();
+    assert_eq!(column, None);
+
+    world.clock.advance(HOUR + Duration::from_secs(1));
+    let refused = world
+        .keeper
+        .lease(request(&key, &published, Wait::NoWait))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), &codes::NEEDS_LOGIN, "{refused}");
+    world.keeper.idle().await;
+    assert_eq!(world.fake.refreshes(), 0);
+    assert_eq!(world.fake.sign_ins(), 1);
+
+    // The person signs in under the published version: the mark is
+    // written, and the session renews without anyone from then on.
+    signed_in_under(&world, &key, &published).await;
+    assert!(!marked_drafted(&world, &key).await);
+    world.clock.advance(HOUR + Duration::from_secs(1));
+    world
+        .keeper
+        .lease(request(&key, &published, Wait::DEFAULT))
+        .await
+        .unwrap();
+    world.keeper.idle().await;
+    assert_eq!(world.fake.sign_ins(), 3);
+}
+
+/// What the session's record says of its last sign-in.
+async fn marked_drafted(world: &World, key: &crate::SessionKey) -> bool {
+    let row = world.store.find(key).await.unwrap().unwrap();
+    row.made_under_drafts
 }

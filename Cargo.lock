@@ -61,6 +61,7 @@ dependencies = [
  "a2m-vault",
  "axum",
  "reqwest",
+ "rusqlite",
  "rustls",
  "rustls-platform-verifier",
  "serde",

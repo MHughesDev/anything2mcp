@@ -763,6 +763,16 @@ impl World {
             .build()
     }
 
+    /// The store's file, opened beside the store, for a test that makes
+    /// it what an older engine left.
+    pub(super) fn raw(&self) -> rusqlite::Connection {
+        let folder = self
+            .folder
+            .as_ref()
+            .expect("only a world on disk has a file");
+        rusqlite::Connection::open(folder.0.join(a2m_ledger::DATABASE_FILE_NAME)).unwrap()
+    }
+
     pub(super) async fn store_credential(&self, key: &SessionKey, name: &str, value: &str) {
         self.credentials
             .put(

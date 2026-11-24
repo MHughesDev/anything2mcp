@@ -302,6 +302,18 @@ impl fmt::Debug for WeakKeeper {
     }
 }
 
+/// What a move to `valid` says of the session's sign-in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Made {
+    /// The same sign-in, renewed: its time and its mark are kept.
+    Kept,
+    /// A renewal that signed in afresh: a new time, the mark kept.
+    Again,
+    /// A sign-in, under drafts or a published version: a new time, and
+    /// the mark it was made under.
+    SignedIn { under_drafts: bool },
+}
+
 struct Inner {
     store: SessionStore,
     providers: ProviderSet,
@@ -324,9 +336,6 @@ struct Inner {
     /// restart a run under drafts is refused until the person signs in
     /// again.
     allowed: Mutex<BTreeMap<SessionId, BTreeSet<String>>>,
-    /// The sessions whose last sign-in was declared by drafts. None of them
-    /// is renewed without its person (decision 0248). In memory only.
-    drafted: Mutex<BTreeSet<SessionId>>,
     /// Sessions with work in flight in this process.
     busy: Mutex<BTreeMap<SessionId, usize>>,
     /// When each valid session was last probed with no answer: a probe that
@@ -458,7 +467,6 @@ impl Keeper {
                 changed: watch::Sender::new(0),
                 entries: Mutex::new(BTreeMap::new()),
                 allowed: Mutex::new(BTreeMap::new()),
-                drafted: Mutex::new(BTreeSet::new()),
                 busy: Mutex::new(BTreeMap::new()),
                 unanswered: Mutex::new(BTreeMap::new()),
                 failures: Mutex::new(BTreeMap::new()),
@@ -810,7 +818,6 @@ impl Keeper {
                 // What the person allowed was for this session, which has
                 // ended on purpose.
                 locked(&inner.allowed).remove(&revoked.id);
-                locked(&inner.drafted).remove(&revoked.id);
                 let entry = inner
                     .entry_of(revoked.id)
                     .unwrap_or_else(|| Arc::new(AuthEntry::new(revoked.provider.clone())));
@@ -1125,6 +1132,8 @@ impl Inner {
             stored_attempts: 0,
             wants: None,
             attempted_with: None,
+            // Nothing has signed it in yet; the first sign-in says.
+            made_under_drafts: true,
         };
         let event = SessionEvent {
             session: row.id,
@@ -1320,7 +1329,7 @@ impl Inner {
         kind: EventKind,
         cause: &'static str,
         automatic: Option<Count>,
-        fresh: bool,
+        made: Made,
     ) -> Result<(), Failure> {
         let WorkOutcome::Held {
             epoch,
@@ -1349,8 +1358,14 @@ impl Inner {
                     next.profile = profile;
                     next.checked_at = Some(now);
                     attempts.write(next);
-                    if fresh || next.signed_in_at.is_none() {
+                    if made != Made::Kept || next.signed_in_at.is_none() {
                         next.signed_in_at = Some(now);
+                    }
+                    // The mark goes with the move to `valid`, in the same
+                    // write, so that a restart cannot lose it (decision
+                    // 0399). A renewal keeps the one it found.
+                    if let Made::SignedIn { under_drafts } = made {
+                        next.made_under_drafts = under_drafts;
                     }
                 },
                 saved.map_or(Saved::Delete, Saved::Put),
@@ -1402,13 +1417,6 @@ impl Inner {
             let _busy = busy;
             let outcome = inner.perform(&row, &entry, Work::SignIn).await;
             if matches!(outcome, WorkOutcome::Held { .. }) {
-                let mut drafted = locked(&inner.drafted);
-                if entry.surfaces.from_published {
-                    drafted.remove(&row.id);
-                } else {
-                    drafted.insert(row.id);
-                }
-                drop(drafted);
                 inner.allow(row.id, &entry);
             }
             if let Err(failure) = inner.signed_in(&row, &entry, origin, outcome).await {
@@ -1445,7 +1453,9 @@ impl Inner {
                     EventKind::SignedIn,
                     origin.cause(),
                     automatic.then_some(count),
-                    true,
+                    Made::SignedIn {
+                        under_drafts: !entry.surfaces.from_published,
+                    },
                 )
                 .await
             }
@@ -1558,8 +1568,10 @@ impl Inner {
             return self.expire(row, "entry_unknown").await;
         };
         // A session signed in on a drafts' word, or one whose entry is a
-        // drafts', is never renewed without its person (decision 0248).
-        if !entry.surfaces.from_published || locked(&self.drafted).contains(&row.id) {
+        // drafts', is never renewed without its person (decision 0248). The
+        // mark is the record's, so it holds across a restart, and a record
+        // that does not say reads as drafted (decision 0399).
+        if !entry.surfaces.from_published || row.made_under_drafts {
             self.fail(
                 row.id,
                 failure::not_published("it would renew without its person"),
@@ -1691,7 +1703,8 @@ impl Inner {
         cause: &'static str,
         fresh: bool,
     ) -> Result<(), Failure> {
-        self.held(row, held, EventKind::Renewed, cause, automatic, fresh)
+        let made = if fresh { Made::Again } else { Made::Kept };
+        self.held(row, held, EventKind::Renewed, cause, automatic, made)
             .await?;
         if let Some(telemetry) = &self.telemetry {
             telemetry.count(RENEWALS, &[], 1);
