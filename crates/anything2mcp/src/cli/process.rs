@@ -293,8 +293,10 @@ async fn serve(
             .find(|reason| reason.part == a2m_actions::Part::Vault)
     {
         say(&a2m_local::stopped_line(&vault.failure));
-        local.control().stop(StopReason::Asked);
-        let _ = local.serve().await;
+        // Never served, not even for the moment it takes to stop: a client
+        // that were answered would learn of the stop only as a lost
+        // connection, and not why.
+        local.stop_unserved().await;
         return Err(failed(vault.failure));
     }
     let ask = local.stop_ask();

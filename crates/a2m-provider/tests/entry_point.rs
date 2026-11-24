@@ -21,7 +21,7 @@ use std::time::Duration;
 use a2m_core::{Availability, Digest};
 use a2m_provider::{
     ENTRY_POINT_GROUP, Exit, OneShot, ProviderKind, ProviderSettings, RegistryBuilder, Roots,
-    Supervisor, SupervisorLimits, find_python_providers,
+    Supervisor, SupervisorLimits, find_python_providers, resolved_path,
 };
 use common::{Folder, host, manifest};
 use example_cli::harness::Stand;
@@ -235,10 +235,13 @@ async fn a_provider_package_installed_with_pip_is_found_listed_not_enabled_and_s
     // Started under the supervisor: the program inside the package, by its
     // declared digest, with the manifest's fixed arguments and nothing else.
     let mut spec = found.launch_spec().unwrap();
+    // The launch path is in the form the roots resolve to (`resolved_path`:
+    // on Windows the ordinary `C:\...`, not the verbatim `\\?\C:\...` that
+    // `std::fs::canonicalize` gives), so the folder is put in that form too.
     assert!(
         spec.program
             .path
-            .starts_with(found.found.folder.canonicalize().unwrap())
+            .starts_with(resolved_path(&found.found.folder).unwrap())
     );
     assert_eq!(spec.program.digest, Some(digest));
     assert!(spec.env.pass.is_empty());

@@ -546,6 +546,23 @@ impl LocalEngine {
         self.ask.clone()
     }
 
+    /// Closes the kernel without ever serving the channel, then lets the
+    /// channel go. A client that connected meanwhile was never answered, so
+    /// it sees only a closed connection, and the line the engine wrote as
+    /// it stopped (`a2m_local::stopped_line`) is the one thing it learns.
+    /// The engine lock is held until the kernel has closed.
+    ///
+    /// An engine that stops before it serves must not serve even for a
+    /// moment: a client that is answered by it believes it has an engine,
+    /// and learns of the stop only as a lost connection, never why.
+    pub async fn stop_unserved(self) {
+        let Self {
+            engine, channel, ..
+        } = self;
+        engine.close_because(CloseReason::Asked).await;
+        drop(channel);
+    }
+
     /// Serves the channel until the engine is asked to stop or has been
     /// idle for `engine.idle_stop_minutes`, then closes the kernel. A page
     /// that still waits for a person is lost with the engine, which is a
