@@ -914,7 +914,7 @@ fn pairs(pairs: &[(&str, bool)]) -> Vec<(String, bool)> {
 #[test]
 fn a_documents_cell_may_be_empty_unless_it_is_a_key_or_declared_required() {
     // A cell of delimited text may be empty: every field read but the key
-    // may be absent (decision 0399).
+    // may be absent (decision 0342).
     assert_eq!(
         absent_of(&fixtures(), "example_stock_get"),
         pairs(&[("description", true), ("on_hand", true), ("note", true)])

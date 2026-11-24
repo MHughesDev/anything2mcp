@@ -1273,7 +1273,7 @@ fn queue_reconcile(
     requirements.kind = JobKind::Reconcile;
     // A reconcile after a lost lease ends by reading the verified records
     // once more; one that follows such a reconcile keeps that duty until a
-    // reconcile settles (decision 0399).
+    // reconcile settles (decision 0347).
     requirements.verify_after_loss |= lost;
     let id = insert_job(
         tx,

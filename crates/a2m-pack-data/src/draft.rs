@@ -395,7 +395,7 @@ impl DraftingRule for TableToReads {
             })
             .collect();
         // A row that is not there is an answer, `found: false`, with every
-        // other output absent (decision 0399).
+        // other output absent (decision 0348).
         let mut get_outputs: Vec<(String, DraftValue)> = (0..table.columns.len())
             .filter(|position| !shaped.key.contains(position))
             .map(|position| field(position, false))

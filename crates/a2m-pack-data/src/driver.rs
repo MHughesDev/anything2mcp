@@ -1103,7 +1103,7 @@ impl Session {
                 "Correct the record's key in the statements file.",
             )),
             Returns::OneOrNone => match ran.rows.into_iter().next() {
-                // A read that answers a missing row says so (decision 0399).
+                // A read that answers a missing row says so (decision 0348).
                 None if detail.answers_missing => Ok(StepOutcome::Done(Observed {
                     values: Values::new().with(FOUND, false),
                     ..Observed::default()

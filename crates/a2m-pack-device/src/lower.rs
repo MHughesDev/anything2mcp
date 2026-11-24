@@ -909,7 +909,7 @@ impl Lowering for DeviceLowering {
     /// the address is a socket address the driver parses without a lookup,
     /// and it dials only an address among the run's destinations. A firmware
     /// update is frames over the same link. An input never names an address
-    /// (decision 0399).
+    /// (decision 0334).
     fn statement(
         &self,
         _binding: &ResolvedBinding<'_>,

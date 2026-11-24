@@ -36,7 +36,7 @@ As built ([decision 0115](../../decisions/0115-the-mcp-endpoint-as-built-checks-
 pub struct McpService { /* Kernel, toolset, settings */ }
 impl McpService {
     /// Refuses a toolset other than `use` and `build`, and settings with no revision.
-    /// A toolset a policy set defines is not served yet (decision 0399, point 5).
+    /// A toolset a policy set defines is not served yet (decision 0340, point 5).
     pub fn new(kernel: Kernel, toolset: ToolsetName, settings: McpSettings) -> Result<Self, Failure>;
     pub fn toolset(&self) -> &ToolsetName;
     /// Stateless Streamable HTTP, as a router to nest at `mcp_path(toolset)`.

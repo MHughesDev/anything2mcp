@@ -1,5 +1,5 @@
 //! The optional decompiling engine, as a provider of discovery (package X6,
-//! decision 0399).
+//! decision 0343).
 //!
 //! A person installs an engine; the product never fetches one. The
 //! [`Decompiler`] holds where the person put it and the digests the product

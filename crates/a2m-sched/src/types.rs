@@ -452,7 +452,7 @@ pub struct JobRequirements {
     /// Set by the scheduler on the reconcile it queues after a lost lease,
     /// and kept on each reconcile that follows it: once its reconcile has
     /// settled, the job reads again every record the ledger holds as
-    /// verified, within the same lease (decision 0399). A job made by a
+    /// verified, within the same lease (decision 0347). A job made by a
     /// caller leaves it `false`; one stored before the field existed reads
     /// as `false`.
     #[serde(default)]

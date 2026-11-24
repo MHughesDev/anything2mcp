@@ -438,7 +438,7 @@ async fn a_column_that_takes_a_null_is_drafted_nullable_and_its_outputs_may_be_a
     ];
     // The read by key takes the key as its input, and returns the rest. A
     // row that is not there is answered with `found: false`, so every one
-    // of its outputs may be absent (decision 0399).
+    // of its outputs may be absent (decision 0348).
     assert_eq!(
         flags("example_customers_get"),
         [("name".to_owned(), true), ("notes".to_owned(), true)]

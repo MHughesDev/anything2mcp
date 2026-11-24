@@ -1,4 +1,4 @@
-//! Package 3.7, the check after a lost runner (decision 0399): the real
+//! Package 3.7, the check after a lost runner (decision 0347): the real
 //! program is killed after the test application stored its write and
 //! before the answer reached it. On a machine started again later, the
 //! reconcile reads the record, finds the write landed, and, in the same

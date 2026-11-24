@@ -1,4 +1,4 @@
-# 0399. A read by key of a row that is not there answers `found: false`
+# 0348. A read by key of a row that is not there answers `found: false`
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
 

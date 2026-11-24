@@ -78,7 +78,7 @@ pub const SURFACE_KEYS: &[&str] = &["kind", "same_session_as", "rate", "stands"]
 /// The keys of a binding the kernel owns; the rest are its mode's.
 pub const BINDING_KEYS: &[&str] = &["mode", "verb", "status", "precondition"];
 
-/// The orders an operation may state for its bindings (decision 0399):
+/// The orders an operation may state for its bindings (decision 0337):
 /// `listed` keeps the order of the file; stating none is by each mode's
 /// rank in its provider's manifest.
 pub const BINDING_ORDERS: &[&str] = &["listed"];

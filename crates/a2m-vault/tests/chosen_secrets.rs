@@ -1,5 +1,5 @@
 //! A secret a person chooses: one too short to mask safely is refused, and
-//! one that replaces another stays masked (decision 0399).
+//! one that replaces another stays masked (decision 0338).
 //! Every value here is invented.
 
 use std::sync::Arc;

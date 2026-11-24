@@ -169,13 +169,13 @@ impl Vault {
     /// The fewest bytes a secret a person chooses may have. A secret
     /// shorter than this is not accepted, because masking it would mask
     /// those characters wherever they appear in every answer and log, and
-    /// not masking it would let it out (decision 0399).
+    /// not masking it would let it out (decision 0338).
     pub const SHORTEST_CHOSEN_SECRET: usize = Redactor::SHORT;
 
     /// Registers a secret a person chose, such as a password or a key they
     /// stored, before it is sealed. It is registered as [`Vault::register`]
     /// registers one: masked for the life of the process, so a value that
-    /// is later replaced stays masked (decision 0399). `cx` names the item
+    /// is later replaced stays masked (decision 0338). `cx` names the item
     /// it is for; the check is the same for every item.
     ///
     /// Call it before sealing, and seal only when it returns `Ok`. A secret

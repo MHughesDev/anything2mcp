@@ -854,7 +854,7 @@ impl Kernel {
 
     /// The environment an action that names none is decided in.
     /// The toolset a decision names for a call that came through `named`
-    /// (decision 0399). A toolset the set in force defines is named as it
+    /// (decision 0339). A toolset the set in force defines is named as it
     /// is, and narrows. One that the engine's own doors serve (`use`,
     /// `build`, `admin`) and the set does not define is left out: it is a
     /// list of what is shown up front and holds no permit, so a set that

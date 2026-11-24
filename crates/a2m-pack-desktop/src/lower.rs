@@ -795,7 +795,7 @@ impl Lowering for DesktopLowering {
     /// management class's definition, it asks of this machine's management
     /// service. So it sends to no address. What the application does in
     /// answer to an action is its own, and no request the engine sends is
-    /// addressed to it by a name or an address (decision 0399). The one
+    /// addressed to it by a name or an address (decision 0336). The one
     /// surface field that could name another machine, a management
     /// namespace written `\\host\...` or `//host/...`, makes the statement
     /// not stated.

@@ -178,7 +178,7 @@ impl Lower<'_, '_> {
         problems: &mut Diagnostics,
     ) -> Option<Vec<Step>> {
         // A read by key whose operation declares an output `found` answers a
-        // row that is not there with `found: false` (decision 0399). The
+        // row that is not there with `found: false` (decision 0348). The
         // read-back of a write keeps `absent`, which reconcile needs.
         let answers = !assigned
             && statement.access == Access::ReadOnly
@@ -381,7 +381,7 @@ impl Lowering for SqlLowering {
     /// over the network by the operating system, and is not stated. On a
     /// store on a server it sends to the surface's address and to no other:
     /// the driver dials only a surface among the run's destinations, and an
-    /// input never names a host or a file (decision 0399).
+    /// input never names a host or a file (decision 0334).
     fn statement(
         &self,
         _binding: &ResolvedBinding<'_>,

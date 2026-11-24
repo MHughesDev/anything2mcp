@@ -2504,7 +2504,7 @@ impl<'a> Compiler<'a> {
         // The order of the bindings is the file's where the operation says
         // `binding_order: listed`; otherwise each mode's rank in its
         // provider's manifest, and the file's among bindings of one rank
-        // (decision 0399).
+        // (decision 0337).
         if doc.text("binding_order") != Some("listed") {
             let mut order: Vec<usize> = (0..bindings.len()).collect();
             order.sort_by_key(|&at| (set.mode_rank(&bindings[at].mode), file_places[at]));

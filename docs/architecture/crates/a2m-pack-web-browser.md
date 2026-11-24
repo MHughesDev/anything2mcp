@@ -119,7 +119,7 @@ impl Origins { pub fn of<'a>(addresses: impl IntoIterator<Item = &'a Address>) -
                 pub fn and_requests_to<'a>(self, addresses: impl IntoIterator<Item = &'a Address>) -> Self;
                 pub fn allows(&self, address: &Address) -> bool; pub fn iter(&self) -> impl Iterator<Item = &str>;
                 pub fn requests_only(&self) -> impl Iterator<Item = &str>;
-                /// The network place of each origin a request may go to, with the reason (decision 0399). The guard does not consult it.
+                /// The network place of each origin a request may go to, with the reason (decision 0313). The guard does not consult it.
                 pub fn places(&self, state: &MachineState) -> Vec<(&str, Placed)>; }
 /// What `blocked()` reports for a request to an origin outside the tab's reach.
 pub const OUTSIDE: &str = "OUTSIDE";

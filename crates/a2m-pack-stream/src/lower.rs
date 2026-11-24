@@ -704,7 +704,7 @@ impl Lowering for StreamLowering {
     /// is a subject, never a network address, the driver dials only a
     /// surface among the run's destinations, and the broker's own list of
     /// other servers is not followed. The wire is plain TCP to this
-    /// machine's loopback address only (decision 0399).
+    /// machine's loopback address only (decision 0334).
     fn statement(
         &self,
         _binding: &ResolvedBinding<'_>,

@@ -899,7 +899,7 @@ impl Kernel {
         // The check after a lost runner is the reconcile's own last part,
         // in its lease, while the heartbeats go on: the run has one live
         // job throughout, and a resume waits for it as for the reconcile
-        // (decision 0399).
+        // (decision 0347).
         if kind == JobKind::Reconcile
             && lease.requirements.verify_after_loss
             && matches!(outcome, JobOutcome::Settled { .. })
@@ -987,7 +987,7 @@ impl Kernel {
     /// run (spec section 223). It changes no state of the run or of a
     /// record. What it came to is one event of the run; a check that could
     /// not be carried through says so there, and the reconcile ends as it
-    /// would have without it (decision 0399).
+    /// would have without it (decision 0347).
     async fn verify_after_loss(
         &self,
         engine: &Engine,
