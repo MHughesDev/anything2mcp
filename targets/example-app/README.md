@@ -79,6 +79,10 @@ Each sends its write to `/traps/write/{name}`, which counts it under that name; 
 | `/traps/socket` | It opens a WebSocket to `socket`; the opening handshake is the write, and the upgrade is then refused |
 | `/traps/links` | Two links that write when followed with `GET`: one looks like an action by its address (`orders/A-100/delete`), one by its name ("Delete order A-102", at `tool-2`) |
 
+## A page that hangs
+
+`/traps/hangs` writes nothing. Its own script, run as its document is parsed, never returns: the document never finishes loading, and the page answers nothing after, as a tab stuck in a loop does. The browser engine's proof that a hung tab is closed, and that its browser is recycled after repeated hangs, goes to it.
+
 ## Pages that try to get out
 
 Each aims at `/traps/write/escapes/{what}`, so the same counts show that none arrived. "The other name" is this application under the other loopback host name, which to a browser is another origin and another site.
