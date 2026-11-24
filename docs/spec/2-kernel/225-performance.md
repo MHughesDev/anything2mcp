@@ -1,8 +1,8 @@
 # 225. Performance
 
-Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should add almost nothing on top of the time the target system itself takes, and should always take the fastest path that has been proven correct. This section sets the budgets and how they are measured. Built today: the benchmark harness runs in CI and measures six of the budgets below (package 1.7, [decision 0399](../../decisions/0399-the-budgets-as-first-measured-two-are-revised-and-four-cannot-yet-be-told-from-the-systems-own-time.md)); the 10% gate is not wired in CI.
+Speed is a design metric with budgets, not a hope. The rule: Anything2MCP should add almost nothing on top of the time the target system itself takes, and should always take the fastest path that has been proven correct. This section sets the budgets and how they are measured. Built today: the benchmark harness runs in CI and measures six of the budgets below (package 1.7, [decision 0363](../../decisions/0363-the-budgets-as-first-measured-two-are-revised-and-four-cannot-yet-be-told-from-the-systems-own-time.md)); the 10% gate is not wired in CI.
 
-**Budgets.** These are targets, measured once by package 1.7; a budget is confirmed or revised by decision record, and decision 0399 did so for each row. The measured numbers are in the next section.
+**Budgets.** These are targets, measured once by package 1.7; a budget is confirmed or revised by decision record, and decision 0363 did so for each row. The measured numbers are in the next section.
 
 | Path | Budget for Anything2MCP's own overhead |
 | --- | --- |

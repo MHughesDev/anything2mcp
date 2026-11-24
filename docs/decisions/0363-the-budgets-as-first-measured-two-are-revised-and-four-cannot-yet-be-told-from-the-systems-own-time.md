@@ -1,4 +1,4 @@
-# 0399. The budgets as first measured: two are revised, and four cannot yet be told from the system's own time
+# 0363. The budgets as first measured: two are revised, and four cannot yet be told from the system's own time
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged. Carries out package 1.7. Revises two rows of the budget table in [spec section 225](../spec/2-kernel/225-performance.md).
 
