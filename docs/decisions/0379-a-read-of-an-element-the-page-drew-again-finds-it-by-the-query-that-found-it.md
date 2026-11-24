@@ -1,4 +1,4 @@
-# 0399. A read of an element the page drew again finds it by the query that found it
+# 0379. A read of an element the page drew again finds it by the query that found it
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
 

@@ -1553,7 +1553,7 @@ impl Page {
             })?,
             CallArgument::number(self.max_read),
             // A page that drew the element again since it was found is read
-            // in the element its query finds now (decision 0399).
+            // in the element its query finds now (decision 0379).
             CallArgument::of(&element.query).ok_or_else(|| {
                 BrowserError::Unexpected("a helper argument could not be written".to_owned())
             })?,
