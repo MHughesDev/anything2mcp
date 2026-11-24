@@ -1,0 +1,113 @@
+surface: tool
+program:
+  digests:                                   # the build a test runs; sha-256 of the file
+    linux-x86_64: ["sha256:1111111111111111111111111111111111111111111111111111111111111111"]
+  version:
+    args: ["--version"]
+    expect: {exit: [0], stdout: '^example-cli (?<version>\d+\.\d+)\.\d+$'}
+    supported: ["2.4", "2.5"]
+  help: [["--help"], ["help", "{command}"]]  # the only forms discovery may run
+  env:
+    set: {LC_ALL: C.UTF-8, TZ: UTC, EXAMPLE_CLI_HOME: '/var/lib/example/home'}
+    pass: []
+  workdir: fresh
+  stdin: none
+  limits: {timeout: 20s, stdout: 1MiB, stderr: 64KiB}
+  prompts: ['^Are you sure\?', '^Password:']
+  exits: {0: ok, 2: input, 4: rejected, 5: stale, 6: busy, 75: transient, 77: session_expired}
+
+commands:
+  item_show:
+    effect: read
+    params: {sku: {type: identifier, pattern: '^[A-Z]{2}-\d{4}$'}}
+    args: [item, show, {param: sku}, --format=json]
+    exits: {3: absent}
+    output:
+      json:
+        fields:
+          sku: text
+          name: text
+          quantity: integer
+          location: text
+          ref: {type: text, required: false}
+          note: {type: text, required: false}
+          version: integer
+
+  item_list:
+    effect: read
+    params: {location: {type: location_code, required: false}}
+    args: [item, list, {flag: --location, param: location}]
+    output: {table: {separator: tab, header: [sku, name, quantity, location]}}
+
+  item_find_by_ref:
+    effect: read
+    args: [item, list, {flag: --ref, stamp: true}, --format=jsonl]
+    output:
+      json:
+        lines: true
+        fields:
+          sku: text
+          name: text
+          quantity: integer
+          location: text
+          ref: {type: text, required: false}
+          note: {type: text, required: false}
+          version: integer
+
+  item_set_quantity:
+    effect: write
+    params:
+      sku: {type: identifier, pattern: '^[A-Z]{2}-\d{4}$'}
+      quantity: {type: integer}
+    args: [item, set, {param: sku}, {flag: --quantity, param: quantity, join: "="}, --yes]
+    exits: {3: absent}
+    output: {pattern: '^updated (?<sku>\S+) quantity=(?<quantity>\d+)$', match: one_line}
+
+  item_add:
+    effect: write
+    params:
+      name: {type: item_name, pattern: '^[^\x00-\x1f]{1,60}$'}
+      location: {type: location_code}
+      quantity: {type: integer, required: false}
+    args: [item, add, {flag: --name, param: name}, {flag: --location, param: location},
+           {flag: --quantity, param: quantity}, {flag: --ref, stamp: true}, --format=json]
+    output:
+      json:
+        fields:
+          sku: text
+          name: text
+          quantity: integer
+          location: text
+          ref: {type: text, required: false}
+          note: {type: text, required: false}
+          version: integer
+    assigns: {sku: output.sku}
+
+  item_remove:
+    effect: write
+    params: {sku: {type: identifier, pattern: '^[A-Z]{2}-\d{4}$'}}
+    args: [item, remove, {param: sku}, --yes]
+    exits: {3: absent}
+    output: {pattern: '^removed (?<sku>\S+)$', match: one_line}
+
+  catalog_push:
+    effect: irreversible
+    hazard: sends_outside
+    reaches: {network: ["catalog.example.com"]}
+    args: [catalog, push, --yes]
+    output: {pattern: '^pushed (?<count>\d+) items$', match: one_line}
+
+  stock_report:
+    effect: read
+    params:
+      rows: {type: integer}
+      pause: {type: integer, required: false}
+    args: [report, stock, {flag: --rows, param: rows}, {flag: --pause-ms, param: pause}]
+    output: {table: {separator: tab, header: [row, sku, quantity]}}
+    limits: {timeout: 3s, stdout: 64KiB}
+
+  echo_text:
+    effect: read
+    params: {text: {type: item_name, pattern: '^(?s:.*)$'}}
+    args: [echo, {flag: --text, param: text, join: "="}, "--", {param: text}]
+    output: none

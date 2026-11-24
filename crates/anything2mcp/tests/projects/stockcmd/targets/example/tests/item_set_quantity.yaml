@@ -1,0 +1,5 @@
+test: example_item_set_quantity
+kind: offline
+fixture: item_set_quantity
+inputs: {sku: "SK-1001", quantity: 12}
+expect: {quantity: 12}

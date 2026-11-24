@@ -1,0 +1,19 @@
+operation: example_catalog_push
+title: Send the catalog outside
+effect: irreversible
+hazard: sends_outside
+identity: {strategy: none}
+commit_points: 1
+inputs: {}
+outputs:
+  count: {type: integer}
+bindings:
+  - mode: cli
+    verb: call
+    status: verified
+    command: catalog_push
+permissions:
+  destinations: ["catalog.example.com"]
+description: >
+  Sends the whole catalog of items to the outside catalog service.
+  It cannot be taken back. Prefer example_item_list to look at the items.

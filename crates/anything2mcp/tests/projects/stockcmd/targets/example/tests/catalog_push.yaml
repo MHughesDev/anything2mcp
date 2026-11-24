@@ -1,0 +1,5 @@
+test: example_catalog_push
+kind: offline
+fixture: catalog_push
+inputs: {}
+expect: {count: 3}
