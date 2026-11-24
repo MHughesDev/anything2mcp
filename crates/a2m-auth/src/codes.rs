@@ -6,7 +6,7 @@
 a2m_core::failure_codes! {
     NEEDS_LOGIN = SessionExpired, "needs_login",
         meaning "The session is absent, expired, or revoked, or a wait for it ran out.",
-        next "Sign in with `anything2mcp session login`, then run the tool again or resume the run.";
+        next "Sign in with `anything2mcp session login`, then resume the run, which reconciles any write it began before it writes again.";
     NEEDS_MFA = SessionExpired, "needs_mfa",
         meaning "A second factor is demanded and no person answered in time.",
         next "Answer the sign-in request, or sign in with `anything2mcp session login`, then run the tool again.";

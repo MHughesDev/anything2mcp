@@ -28,7 +28,7 @@ Package 3.10 makes each row of the failure table in section 224 a test, crate by
 ## Left, with reasons
 
 - **A start while the key store is unreachable** leaves the kernel `degraded` until the engine is started again (`a2m-actions` attaches the vault once, at start). Section 224 says recovery is automatic. That is the action registry's to change.
-- **A session that ends between a write and its read-back** leaves the run `needs_login`, whose fix says "run the tool again or resume the run", not `possible_commit` with `retry_safe: false`. The resume after a sign-in reconciles first and writes nothing twice; the words told to the caller are the engine's to change.
+- **A session that ends between a write and its read-back** leaves the run `needs_login`, whose fix says "run the tool again or resume the run", not `possible_commit` with `retry_safe: false`. The resume after a sign-in reconciles first and writes nothing twice. The words told to the caller now say only to resume the run, which reconciles any write it began first.
 - **A surface an edge blocks** stops a run as the HTTP pack's `unknown_variant`/`unexpected_status`, not `edge_blocked`: the product has no source of edge blocks yet (`a2m-actions` `runner.rs`). Nothing is written, and a block during a read-back leaves the record in doubt.
 - **A connection lost after a write in the `ui` mode** is proven in the web pack's driver tests; no write in that mode is published in the product's test projects yet.
 

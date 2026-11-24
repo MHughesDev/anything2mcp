@@ -294,7 +294,7 @@ fn needs_login(why: &str) -> Failure {
     failure_of(
         &a2m_auth::codes::row::NEEDS_LOGIN,
         format!("The session cannot be used: {why}."),
-        "Sign in again, then run the tool again or resume the run.",
+        "Sign in again, then resume the run, which reconciles any write it began before it writes again.",
     )
 }
 

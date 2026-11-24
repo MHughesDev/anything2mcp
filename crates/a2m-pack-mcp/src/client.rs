@@ -587,7 +587,7 @@ impl HttpLink {
                 a2m_core::FailureClass::SessionExpired,
                 a2m_auth::codes::NEEDS_LOGIN,
                 "The upstream server refused the credential.",
-                "Sign in with `anything2mcp session login`, then run the tool again or resume the run.",
+                "Sign in with `anything2mcp session login`, then resume the run, which reconciles any write it began before it writes again.",
             )),
             404 if self.session().is_some() => {
                 self.lost.store(true, Ordering::SeqCst);

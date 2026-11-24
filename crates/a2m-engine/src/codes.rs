@@ -59,7 +59,7 @@ a2m_core::failure_codes! {
         passes not_by_itself;
     NEEDS_LOGIN = SessionExpired, "needs_login",
         meaning "The session ended and could not be had again.",
-        next "Sign in with `anything2mcp session login`, then run the tool again or resume the run.";
+        next "Sign in with `anything2mcp session login`, then resume the run, which reconciles any write it began before it writes again.";
     EDGE_BLOCKED = EdgeBlocked, "edge_blocked",
         meaning "The surface is blocked at the edge.",
         next "Wait for the block to end; the engine does not go around it.";
