@@ -196,6 +196,8 @@ pub(crate) struct Inner {
     pub(crate) telemetry: Telemetry,
     pub(crate) policy: Option<Policy>,
     pub(crate) keeper: Option<Keeper>,
+    /// The keeper's way to run a session's probe through the engine.
+    pub(crate) probes: Arc<ProbeBridge>,
     pub(crate) credentials: Option<Arc<StoredCredentials>>,
     pub(crate) sched: Option<Scheduler>,
     pub(crate) providers: a2m_provider::Registry,
@@ -379,6 +381,7 @@ impl Kernel {
         let mut installation = None;
         let mut policy = None;
         let mut keeper = None;
+        let probes = Arc::new(ProbeBridge::default());
         let mut credentials = None;
         let mut sched = None;
         if let Some(store) = &prepared.store {
@@ -463,7 +466,7 @@ impl Kernel {
                     )
                     .with_random(Arc::clone(&prepared.random)),
                 );
-                let probe = Arc::new(ProbeBridge);
+                let probe = Arc::clone(&probes);
                 let work = Arc::new(InProcessWork::new(
                     Arc::clone(&held),
                     Arc::new(PersonBridge::new(Arc::clone(&person))),
@@ -506,6 +509,7 @@ impl Kernel {
                 telemetry: prepared.telemetry,
                 policy,
                 keeper,
+                probes,
                 credentials,
                 sched,
                 providers,
@@ -530,6 +534,7 @@ impl Kernel {
             }),
         };
         acts.bind(&kernel.inner);
+        kernel.inner.probes.bind(&kernel.inner);
         kernel.recheck().await;
         kernel.record_start().await;
         kernel.start_tending();
@@ -840,6 +845,16 @@ impl Kernel {
         if let Some(vault) = &self.inner.vault {
             vault.register(secret);
         }
+    }
+
+    /// Notes the published version a run leased `session` under, whose
+    /// probe the keeper's checks of it then run.
+    pub(crate) fn note_probe(
+        &self,
+        session: a2m_core::SessionId,
+        source: crate::keeper::ProbeSource,
+    ) {
+        self.inner.probes.note(session, source);
     }
 
     pub(crate) fn keeper(&self) -> Result<&Keeper, Failure> {

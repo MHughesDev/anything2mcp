@@ -102,6 +102,7 @@ mod tests {
     mod keys;
     mod net;
     mod pass_two;
+    mod probe;
     mod reach;
     mod runs;
     mod second;

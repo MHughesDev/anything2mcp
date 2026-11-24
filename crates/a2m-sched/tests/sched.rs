@@ -1603,3 +1603,60 @@ async fn a_resume_names_the_reconcile_it_finds_and_inside_a_quarantine_says_how_
     stand.advance(60);
     assert_eq!(stand.claim_one(one).await.job, found.job);
 }
+
+// ---- the slot kept for the keeper ------------------------------------------
+
+/// A probe of a session, submitted as a keeper job.
+fn keeper_job(caller: u8, input: &str) -> a2m_sched::Submission {
+    let mut submission = read(caller, input);
+    submission.job.kind = JobKind::SessionKeepalive;
+    submission.job.modes = Vec::new();
+    submission
+}
+
+#[tokio::test]
+async fn a_keeper_job_takes_the_slot_kept_for_it_and_no_other_job_ever_does() {
+    let stand = Stand::new("keeper-slot").await;
+    let runner = stand.hello(1).await;
+    // A run holds the runner's only ordinary slot, as a run that waits for
+    // a session's renewal does.
+    stand.admit(read(1, "waits")).await;
+    let held = stand.claim_one(runner).await;
+    assert_eq!(held.requirements.kind, JobKind::Execute);
+
+    // Another run and a keeper job wait. With no ordinary slot free and
+    // the keeper's slot free, only the keeper job is handed out.
+    stand.admit(read(2, "queued")).await;
+    stand.admit(keeper_job(1, "probe")).await;
+    let only_keeper = a2m_sched::Slots {
+        total: 0,
+        per_mode: std::collections::BTreeMap::new(),
+        keeper: 1,
+    };
+    let leased = stand
+        .sched
+        .claim(runner, only_keeper.clone(), Duration::ZERO)
+        .await
+        .unwrap();
+    let kinds: Vec<JobKind> = leased.iter().map(|lease| lease.requirements.kind).collect();
+    assert_eq!(kinds, [JobKind::SessionKeepalive]);
+
+    // The keeper's slot is all that is offered again: the run that waits
+    // is not handed out in it.
+    let none = stand
+        .sched
+        .claim(runner, only_keeper, Duration::ZERO)
+        .await
+        .unwrap();
+    assert!(none.is_empty(), "{none:?}");
+
+    // A keeper job also takes an ordinary slot when none is kept free.
+    stand.admit(keeper_job(3, "second probe")).await;
+    let ordinary = stand.claim(runner, 2).await;
+    let mut kinds: Vec<&str> = ordinary
+        .iter()
+        .map(|lease| lease.requirements.kind.as_str())
+        .collect();
+    kinds.sort_unstable();
+    assert_eq!(kinds, ["execute", "session_keepalive"]);
+}

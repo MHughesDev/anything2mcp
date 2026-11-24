@@ -329,6 +329,10 @@ struct Inner {
     drafted: Mutex<BTreeSet<SessionId>>,
     /// Sessions with work in flight in this process.
     busy: Mutex<BTreeMap<SessionId, usize>>,
+    /// When each valid session was last probed with no answer: a probe that
+    /// could not be made changes no state, and the next is due a whole
+    /// interval later, as after a pass. In memory only.
+    unanswered: Mutex<BTreeMap<SessionId, Timestamp>>,
     /// Why each session's last sign-in or renewal failed, until one works.
     failures: Mutex<BTreeMap<SessionId, Failure>>,
     /// How many calls are waiting for a session now.
@@ -456,6 +460,7 @@ impl Keeper {
                 allowed: Mutex::new(BTreeMap::new()),
                 drafted: Mutex::new(BTreeSet::new()),
                 busy: Mutex::new(BTreeMap::new()),
+                unanswered: Mutex::new(BTreeMap::new()),
                 failures: Mutex::new(BTreeMap::new()),
                 waiting: AtomicUsize::new(0),
             },
@@ -1770,6 +1775,14 @@ impl Inner {
                     None => continue,
                 }
             }
+            // A probe checks a sign-in that exists. It never starts one,
+            // and never waits for one: the keeper that asked for it would
+            // wait for itself.
+            if req.purpose == Purpose::Probe && row.state != SessionState::Valid {
+                return Err(failure::needs_login(
+                    "a probe checks a session that is signed in, and this one is not",
+                ));
+            }
             match call_rule(row.state) {
                 CallRule::Run => {
                     self.may_use(&row, &req.entry)?;
@@ -2071,14 +2084,26 @@ impl Inner {
         let every = entry
             .idle
             .map_or(self.settings.probe_every, |idle| idle / 2);
-        let due = row
-            .checked_at
-            .is_none_or(|checked| between(checked, now) >= every);
+        let tried = locked(&self.unanswered).get(&row.id).copied();
+        let last = match (row.checked_at, tried) {
+            (Some(checked), Some(tried)) => Some(checked.max(tried)),
+            (checked, tried) => checked.or(tried),
+        };
+        let due = last.is_none_or(|last| between(last, now) >= every);
         if !wanted || !due {
             return Ok(());
         }
         let _busy = self.mark_busy(row.id);
-        if self.work.probe(&session_ref(row)).await == ProbeOutcome::SignedIn {
+        let outcome = self.work.probe(&session_ref(row)).await;
+        if outcome == ProbeOutcome::Unknown {
+            // The probe could not be made, so nothing is known: the session
+            // stays as it is, and signs of expiry its driver reports still
+            // count against it.
+            locked(&self.unanswered).insert(row.id, now);
+            return Ok(());
+        }
+        locked(&self.unanswered).remove(&row.id);
+        if outcome == ProbeOutcome::SignedIn {
             let event = SessionEvent {
                 session: row.id,
                 at: now,

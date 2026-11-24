@@ -181,6 +181,9 @@ pub(super) struct World {
     pub(super) hooks: Arc<engine::Hooks>,
     /// The test pack's discoverer, and what each discovery handed it.
     pub(super) discoverer: Arc<engine::WritingDiscoverer>,
+    /// How many times the test provider `example_login` signed in, when
+    /// the options registered it.
+    pub(super) logins: Arc<AtomicU32>,
 }
 
 pub(super) struct Options {
@@ -194,6 +197,9 @@ pub(super) struct Options {
     /// The test application's pack also registers its surface kind with
     /// the compiler, with a notice for `profile: open`.
     pub(super) notices: bool,
+    /// The auth provider `example_login`, which the hand-built plan names,
+    /// is registered: a provider that needs the person (`super::probe`).
+    pub(super) login: bool,
 }
 
 impl Options {
@@ -235,6 +241,7 @@ impl Default for Options {
             settings: Settings::defaults(),
             before_open: None,
             notices: false,
+            login: false,
         }
     }
 }
@@ -302,6 +309,11 @@ pub(super) async fn world(options: Options) -> World {
         builder.add_pack(&app_pack);
     }
     builder.add_pack(&ProjectPack);
+    let logins = Arc::new(AtomicU32::new(0));
+    let login_pack = super::probe::LoginPack(Arc::clone(&logins));
+    if options.login {
+        builder.add_pack(&login_pack);
+    }
     let (registry, problems) = builder.build();
     assert!(problems.is_empty(), "{problems:?}");
     let surface = Arc::new(Surface {
@@ -340,6 +352,7 @@ pub(super) async fn world(options: Options) -> World {
         folder,
         hooks,
         discoverer,
+        logins,
     }
 }
 

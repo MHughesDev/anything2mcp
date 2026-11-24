@@ -547,11 +547,18 @@ pub struct RunnerTerms {
 /// How many more jobs a runner can take now.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Slots {
-    /// The most jobs one claim returns.
+    /// The most jobs one claim returns in the runner's ordinary slots.
     pub total: u32,
     /// Free slots for each mode, by name. A job that names modes takes one
     /// slot of the first of its modes that has one free.
     pub per_mode: BTreeMap<Mode, u32>,
+    /// Free slots kept for the session keeper's jobs, of kind
+    /// [`JobKind::SessionKeepalive`]: no other job takes one, so a run
+    /// that waits for a session's check or renewal never holds the only
+    /// slot that check needs (spec section 215). A keeper job takes one of
+    /// these before an ordinary slot, and the runner's modes do not limit
+    /// it.
+    pub keeper: u32,
 }
 
 /// The right to work on one job for a limited time.

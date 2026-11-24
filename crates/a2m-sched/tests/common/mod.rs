@@ -275,6 +275,7 @@ pub fn slots(total: u32) -> Slots {
     Slots {
         total,
         per_mode: BTreeMap::from([(mode(), total)]),
+        keeper: 0,
     }
 }
 

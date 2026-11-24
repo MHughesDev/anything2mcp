@@ -1068,6 +1068,50 @@ async fn the_timers_end_a_session_at_its_maximum_age_and_probe_only_while_wanted
 }
 
 #[tokio::test]
+async fn a_probe_that_could_not_be_made_changes_nothing_and_a_probes_lease_never_signs_in() {
+    let world = World::new(STORED_RENEWING).await;
+    let key = account_key("robot");
+    let entry = Arc::new(AuthEntry {
+        idle: Some(Duration::from_secs(1200)),
+        ..AuthEntry::new(ProviderName::new("fake").unwrap()).published()
+    });
+
+    // Before any sign-in a probe's lease is refused, and starts none.
+    let mut probing = request(&key, &entry, Wait::DEFAULT);
+    probing.purpose = crate::Purpose::Probe;
+    let refused = world.keeper.lease(probing.clone()).await.unwrap_err();
+    assert_eq!(refused.code(), &codes::NEEDS_LOGIN);
+    assert_eq!(world.fake.sign_ins(), 0);
+
+    world
+        .keeper
+        .lease(request(&key, &entry, Wait::DEFAULT))
+        .await
+        .unwrap();
+    assert_eq!(world.fake.sign_ins(), 1);
+
+    // A probe that answers nothing leaves the session valid, unchecked, and
+    // is not made again until a whole interval later.
+    *world.probe.outcome.lock().unwrap() = ProbeOutcome::Unknown;
+    world.clock.advance(Duration::from_secs(600));
+    world.keeper.tick().await;
+    assert_eq!(world.probe.calls(), 1);
+    assert_eq!(world.state(&key).await, SessionState::Valid);
+    world.keeper.tick().await;
+    assert_eq!(world.probe.calls(), 1);
+    world.clock.advance(Duration::from_secs(600));
+    world.keeper.tick().await;
+    assert_eq!(world.probe.calls(), 2);
+    assert_eq!(world.state(&key).await, SessionState::Valid);
+    assert_eq!(world.fake.refreshes(), 0);
+
+    // Once it is signed in, a probe's lease is given, and is no use: the
+    // session's last use stays the run's.
+    world.keeper.lease(probing).await.unwrap();
+    assert_eq!(world.fake.sign_ins(), 1);
+}
+
+#[tokio::test]
 async fn work_that_was_interrupted_is_ended_and_not_left_waiting() {
     let world = World::on_disk(STORED_RENEWING).await;
     let key = account_key("robot");

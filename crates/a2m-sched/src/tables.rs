@@ -273,14 +273,18 @@ impl Runner {
         Ok(())
     }
 
-    /// The slot the job would take on this runner now: `Some(None)` for a
-    /// job that names no mode.
-    fn slot(&self, requirements: &JobRequirements, free: &Slots) -> Option<Option<Mode>> {
+    /// The slot the job would take on this runner now. A keeper job takes
+    /// a slot kept for keeper jobs first; every other job takes an ordinary
+    /// one, of a mode it names when it names modes.
+    fn slot(&self, requirements: &JobRequirements, free: &Slots) -> Option<Taken> {
+        if requirements.kind == JobKind::SessionKeepalive && free.keeper > 0 {
+            return Some(Taken::Keeper);
+        }
         if free.total == 0 {
             return None;
         }
         if requirements.modes.is_empty() {
-            return Some(None);
+            return Some(Taken::Ordinary(None));
         }
         requirements
             .modes
@@ -289,8 +293,18 @@ impl Runner {
                 self.capabilities.modes.contains(mode)
                     && free.per_mode.get(*mode).copied().unwrap_or(0) > 0
             })
-            .map(|mode| Some(mode.clone()))
+            .map(|mode| Taken::Ordinary(Some(mode.clone())))
     }
+}
+
+/// Which of a runner's free slots a job takes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Taken {
+    /// One kept for the keeper's jobs.
+    Keeper,
+    /// An ordinary slot, and the mode whose slot it is when the job names
+    /// modes.
+    Ordinary(Option<Mode>),
 }
 
 /// Says what no enrolled runner offers, or nothing when one could serve.
@@ -1004,7 +1018,7 @@ pub(crate) fn claim(
         return Ok(leased);
     }
     let scope_holds = scope_holds(tx)?;
-    while free.total > 0 {
+    while free.total > 0 || free.keeper > 0 {
         let now = tx.now();
         let rows = tx.tables(Owner::Sched).query(
             select_jobs!(
@@ -1041,15 +1055,24 @@ pub(crate) fn claim(
                 None => spoken_for.extend(job.requirements.exclusive.iter().cloned()),
             }
         }
-        let Some((job, mode)) = chosen else {
+        let Some((job, taken)) = chosen else {
             break;
         };
+        let mode = match &taken {
+            Taken::Keeper => None,
+            Taken::Ordinary(mode) => mode.clone(),
+        };
         if let Some(lease) = lease(tx, settings, &job, runner_id, mode.clone())? {
-            free.total -= 1;
-            if let Some(mode) = mode
-                && let Some(slots) = free.per_mode.get_mut(&mode)
-            {
-                *slots = slots.saturating_sub(1);
+            match taken {
+                Taken::Keeper => free.keeper -= 1,
+                Taken::Ordinary(_) => {
+                    free.total -= 1;
+                    if let Some(mode) = mode
+                        && let Some(slots) = free.per_mode.get_mut(&mode)
+                    {
+                        *slots = slots.saturating_sub(1);
+                    }
+                }
             }
             leased.push(lease);
         }

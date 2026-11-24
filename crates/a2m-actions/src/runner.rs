@@ -38,6 +38,10 @@ use crate::kernel::{Kernel, fact, set_fact};
 /// kernel's wake notice ends it early.
 const CLAIM_WAIT: Duration = Duration::from_secs(30);
 
+/// The slots kept for the session keeper's jobs, beside the ones a runner
+/// loop is started with.
+const KEEPER_SLOTS: u32 = 1;
+
 /// The most rate budgets noted as set. Past it the notes are dropped, and a
 /// budget is set once more the next time its surface is used.
 const BUDGETS_NOTED: usize = 4096;
@@ -309,6 +313,8 @@ pub(crate) fn run_call(tx: &mut Tx<'_>, run: &RunRow) -> Result<Option<RunCall>,
 /// What the kernel keeps about its runner loop.
 pub(crate) struct RunnerState {
     pub(crate) task: Mutex<Option<JoinHandle<()>>>,
+    /// The loop that serves the slot kept for the session keeper's jobs.
+    keeper_task: Mutex<Option<JoinHandle<()>>>,
     engine: OnceLock<Arc<Engine>>,
     budgets: Mutex<BTreeSet<String>>,
 }
@@ -317,6 +323,7 @@ impl Default for RunnerState {
     fn default() -> Self {
         Self {
             task: Mutex::new(None),
+            keeper_task: Mutex::new(None),
             engine: OnceLock::new(),
             budgets: Mutex::new(BTreeSet::new()),
         }
@@ -402,6 +409,7 @@ impl Kernel {
                 let offer = Slots {
                     total: free,
                     per_mode: modes.iter().map(|mode| (mode.clone(), free)).collect(),
+                    keeper: 0,
                 };
                 let leases = match sched.claim(runner, offer, CLAIM_WAIT).await {
                     Ok(leases) => leases,
@@ -435,6 +443,46 @@ impl Kernel {
             }
         });
         *lock(&self.inner.runner.task) = Some(task);
+        // One more slot, kept for the session keeper's jobs and served by
+        // a loop of its own, so that a run that waits for a session's check
+        // never holds the only slot that check needs (spec section 215).
+        // A keeper job also takes an ordinary slot when one is free.
+        let kernel = self.clone();
+        let sched = self.sched()?.clone();
+        let kept = Arc::new(Semaphore::new(KEEPER_SLOTS as usize));
+        let keeper_task = tokio::spawn(async move {
+            loop {
+                let Ok(permit) = Arc::clone(&kept).acquire_owned().await else {
+                    break;
+                };
+                drop(permit);
+                let free = u32::try_from(kept.available_permits()).unwrap_or(1).max(1);
+                let offer = Slots {
+                    total: 0,
+                    per_mode: std::collections::BTreeMap::new(),
+                    keeper: free,
+                };
+                let Ok(leases) = sched.claim(runner, offer, CLAIM_WAIT).await else {
+                    tokio::select! {
+                        () = kernel.inner.wake.notified() => {}
+                        () = tokio::time::sleep(CLAIM_WAIT) => {}
+                    }
+                    continue;
+                };
+                for lease in leases {
+                    let Ok(permit) = Arc::clone(&kept).acquire_owned().await else {
+                        return;
+                    };
+                    let kernel = kernel.clone();
+                    let runtime = tokio::runtime::Handle::current();
+                    tokio::task::spawn_blocking(move || {
+                        runtime.block_on(kernel.work(lease, terms));
+                        drop(permit);
+                    });
+                }
+            }
+        });
+        *lock(&self.inner.runner.keeper_task) = Some(keeper_task);
         Ok(RunnerLoop {
             kernel: self.clone(),
             runner,
@@ -531,11 +579,22 @@ impl Kernel {
     }
 
     pub(crate) async fn stop_runner_loop(&self) {
-        let task = lock(&self.inner.runner.task).take();
-        if let Some(task) = task {
+        let tasks = [
+            lock(&self.inner.runner.task).take(),
+            lock(&self.inner.runner.keeper_task).take(),
+        ];
+        for task in tasks.into_iter().flatten() {
             task.abort();
             let _ = task.await;
         }
+    }
+
+    /// Whether the runner loop runs: whether a job submitted now is
+    /// carried out without anyone starting it.
+    pub(crate) fn runner_running(&self) -> bool {
+        lock(&self.inner.runner.task)
+            .as_ref()
+            .is_some_and(|task| !task.is_finished())
     }
 
     /// Whether the runner loop runs, as `engine.status` shows it.
@@ -892,9 +951,17 @@ impl Kernel {
             })
         };
 
+        // A keeper job is a session's probe: its lease of the session is a
+        // probe's, which never signs in and never counts as a use.
+        let purpose = if lease.requirements.kind == a2m_sched::JobKind::SessionKeepalive {
+            a2m_auth::Purpose::Probe
+        } else {
+            a2m_auth::Purpose::Run
+        };
         let control =
             InProcessControl::new(self.clone(), fence, lease.lease_ref(), row, plan, caller)
-                .with_discovery_files(handed);
+                .with_discovery_files(handed)
+                .with_purpose(purpose);
         let outcome = engine.run_job(&job, &control).await;
         // The check after a lost runner is the reconcile's own last part,
         // in its lease, while the heartbeats go on: the run has one live

@@ -93,6 +93,9 @@ pub(crate) struct InProcessControl {
     /// name to its path as the call wrote it (decision 0263). Empty for
     /// every other run.
     discovery_files: std::collections::BTreeMap<String, String>,
+    /// What the job leases a session for: a run's own use, or the probe
+    /// of a keeper job.
+    purpose: Purpose,
 }
 
 impl InProcessControl {
@@ -112,7 +115,14 @@ impl InProcessControl {
             plan,
             caller,
             discovery_files: std::collections::BTreeMap::new(),
+            purpose: Purpose::Run,
         }
+    }
+
+    /// The same control, leasing sessions for `purpose`.
+    pub(crate) fn with_purpose(mut self, purpose: Purpose) -> Self {
+        self.purpose = purpose;
+        self
     }
 
     /// The same control, handing a discovery job the files its run's
@@ -297,7 +307,8 @@ impl Control for InProcessControl {
                         "Declare the surface in the target's auth file, then publish again.",
                     )
                 })?;
-            let entry = entry_of(&self.plan, auth, &self.run.environment, !self.drafted());
+            let published = !self.drafted();
+            let entry = entry_of(&self.plan, auth, &self.run.environment, published);
 
             let settings = self.kernel.settings();
             let wait = if settings.text("engine.person") == Some("absent") {
@@ -310,7 +321,7 @@ impl Control for InProcessControl {
                 }
             };
             let decided = self.run.decision.unwrap_or(self.caller.decision);
-            keeper
+            let lease = keeper
                 .lease(LeaseRequest {
                     key: SessionKey {
                         workspace: self.run.workspace,
@@ -324,10 +335,23 @@ impl Control for InProcessControl {
                     acting_for: self.caller.person(),
                     wait,
                     headroom: want.headroom,
-                    purpose: Purpose::Run,
+                    purpose: self.purpose,
                 })
                 .await
-                .map_err(|failure| self.redacted(failure))
+                .map_err(|failure| self.redacted(failure))?;
+            // The session is checked with the probe of the published
+            // version a run last leased it under.
+            if published && self.purpose == Purpose::Run {
+                self.kernel.note_probe(
+                    lease.session(),
+                    crate::keeper::ProbeSource {
+                        target: self.run.target.clone(),
+                        plan: self.run.target_version,
+                        probe: auth.probe.clone(),
+                    },
+                );
+            }
+            Ok(lease)
         })
     }
 
