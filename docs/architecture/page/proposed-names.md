@@ -621,3 +621,9 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Field Prompt | part | pages | glossary | The presence prompt of the Field Harness; it passes only the short hash the runner answers on its pipe (decision 0310). |
 | Handed Files | part | project | glossary | The files in the project's `sources` folder that a person gives a scout or a pipeline; never compiled (decision 0309). |
 | Waiting Reads | part | scout | glossary | The part of the scout's report that lists each read not sent because no one has signed in (decision 0303). |
+| Capture Contract | part | contract | a2m-provider, src/capture.rs | The provider contract's capability for traffic capture: a capture source a pack declares, and the one check every yield passes (decision 0391). |
+| Person-Driven Discoverer | part | contract | the title of decision 0395 | A discoverer whose manifest says `driven_by = "person"`, called only through `watch` (decision 0395). |
+| Body Shape | part | contract | coined (a2m-provider, module shape, not built) | The one closed subset of JSON Schema in the provider contract, the module `shape` of decision 0394. |
+| Safe Request Match | part | web-browser | coined | The base's `SafeRequest` list and its match by method, origin, path template, and body (decision 0394). |
+| Unavailable Mark | part | mcp-face | coined | What the MCP door's list carries for a tool stopped by a drift: the fixed sentence and `anything2mcp/unavailable` (decision 0396). |
+| Capture Job | part | scout | decision 0392 | The job `capture.start` asks for, which its person begins and ends, and whose findings enter the scout at the draft stage (decisions 0392, 0400). |

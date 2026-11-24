@@ -1,6 +1,6 @@
 {
  "root": "system",
- "updated": "23 Nov 2026",
+ "updated": "24 Nov 2026",
  "nodes": {
   "ai-agent": {
    "name": "AI Agent",
@@ -224,7 +224,8 @@
        "ids": [
         "mcp-list",
         "mcp-call",
-        "mcp-links"
+        "mcp-links",
+        "mcp-unavailable"
        ]
       }
      ]
@@ -285,6 +286,12 @@
      "mcp-call",
      "mcp-long",
      "a run id, at once",
+     "use"
+    ],
+    [
+     "mcp-list",
+     "mcp-unavailable",
+     "a tool whose every binding has drifted",
      "use"
     ]
    ],
@@ -1699,7 +1706,7 @@
    "group": "Kernel",
    "where": "a2m-actions, a2m-files, each pack",
    "state": "p",
-   "text": "Build time only. The scout identifies a system, runs the discoverers that suit it, drafts what follows by rule, and tries the drafted reads in a sandbox where a write is impossible. It reads a published description today. Learning an application by watching a person use it is not built, and that is the largest gap.",
+   "text": "Build time only. The scout identifies a system, runs the discoverers that suit it, drafts what follows by rule, and tries the drafted reads in a sandbox where a write is impossible. It reads a published description today. Learning an application by watching a person use it is designed and not built: a capture ends as a scout does. It is the largest gap.",
    "decided": [
     "The short path is the sandbox: one command carries a system to drafted reads that passed their trial, and the building agent can call them at once. Publishing stays a person's act.",
     "Drafts with an open question are written to a holding folder (0298, being built).",
@@ -1717,7 +1724,8 @@
        "title": "Observation Stage",
        "ids": [
         "scout-identify",
-        "scout-discover"
+        "scout-discover",
+        "scout-capture"
        ]
       },
       {
@@ -1836,6 +1844,12 @@
      "scout-waiting",
      "a read that waits for a sign-in",
      "store"
+    ],
+    [
+     "scout-capture",
+     "scout-draft",
+     "findings of a person's use",
+     "use"
     ]
    ],
    "steps": [
@@ -1924,6 +1938,73 @@
        ]
       }
      ]
+    },
+    {
+     "name": "Capture End",
+     "steps": [
+      {
+       "text": "The person stops the capture. Its findings enter the scout at the draft stage, as a scout's own would.",
+       "at": [
+        "scout-capture",
+        "scout-draft"
+       ],
+       "edges": [
+        [
+         "scout-capture",
+         "scout-draft"
+        ]
+       ]
+      },
+      {
+       "text": "The drafter drafts a read for each GET seen twice in one shape. A request by another method becomes a held page request with a question, and no operation.",
+       "at": [
+        "scout-draft",
+        "scout-held"
+       ],
+       "edges": [
+        [
+         "scout-draft",
+         "scout-held"
+        ]
+       ]
+      },
+      {
+       "text": "Draft Check lints and compiles what is not held.",
+       "at": [
+        "scout-check"
+       ],
+       "edges": [
+        [
+         "scout-draft",
+         "scout-check"
+        ]
+       ]
+      },
+      {
+       "text": "Trial tries the drafted reads in the sandbox. A held draft and an asserted read are not tried; nothing that may write is.",
+       "at": [
+        "scout-try"
+       ],
+       "edges": [
+        [
+         "scout-check",
+         "scout-try"
+        ]
+       ]
+      },
+      {
+       "text": "capture.stop answers with the report's reference. The report says it came from a capture, and its coverage is partial.",
+       "at": [
+        "scout-report"
+       ],
+       "edges": [
+        [
+         "scout-try",
+         "scout-report"
+        ]
+       ]
+      }
+     ]
     }
    ]
   },
@@ -1932,7 +2013,7 @@
    "group": "Kernel",
    "where": "a2m-engine, a2m-actions",
    "state": "p",
-   "text": "A watch repeats a published read at an interval a person confirmed and reports what changed. A canary is a small read that runs before real work to catch a system that has changed. Watches are partly built. Canaries are not built.",
+   "text": "A watch repeats a published read at an interval a person confirmed and reports what changed. A canary is a small read that runs before real work to catch a system that has changed. Watches are partly built. Canaries on a schedule of their own, and the rest of watches (records compared by key, the MCP resource, the REST stream), wait until after the first release.",
    "rows": [
     {
      "title": "Watch Creation",
@@ -2062,14 +2143,17 @@
      ]
     }
    ],
-   "stepsTitle": "Watch Lifecycle"
+   "stepsTitle": "Watch Lifecycle",
+   "decided": [
+    "Canaries on a schedule of their own move after the first release: a canary nobody asked for sends requests nobody confirmed, and a stopped tool is shown by its mark. Not: build them before it, as 0390 first said (0397)."
+   ]
   },
   "contract": {
    "name": "Provider Contract",
    "group": "Kernel",
    "where": "a2m-provider",
    "state": "b",
-   "text": "The one interface between the kernel and the packs: the driver, the discoverer, the sign-in provider, the source reader, and the manifest in which a pack declares its modes, failure codes, and limits. Changing it needs a decision record.",
+   "text": "The one interface between the kernel and the packs: the driver, the discoverer, the sign-in provider, the source reader, the capture contract, and the manifest in which a pack declares its modes, failure codes, and limits. Changing it needs a decision record.",
    "rows": [
     {
      "title": "Declarations",
@@ -2091,7 +2175,9 @@
         "con-discoverer",
         "con-compiler-reg",
         "con-auth",
-        "con-reader"
+        "con-reader",
+        "con-capture",
+        "con-watch"
        ]
       }
      ]
@@ -2104,7 +2190,8 @@
         "con-handle",
         "con-paths",
         "con-supervisor",
-        "con-plugins"
+        "con-plugins",
+        "con-shape"
        ]
       }
      ]
@@ -2143,6 +2230,24 @@
      "con-plugins",
      "a process to start",
      "use"
+    ],
+    [
+     "con-manifest",
+     "con-capture",
+     "the surface kinds a pack captures",
+     "use"
+    ],
+    [
+     "con-capture",
+     "con-watch",
+     "a recording, read only through take_capture",
+     "use"
+    ],
+    [
+     "con-shape",
+     "con-compiler-reg",
+     "the closed shape a file kind checks a body by",
+     "use"
     ]
    ],
    "steps": [
@@ -2159,13 +2264,14 @@
      ]
     },
     {
-     "text": "The provider fills extension points from a fixed list: a driver, a discoverer, compiler registrations, an auth provider, a source reader.",
+     "text": "The provider fills extension points from a fixed list: a driver, a discoverer, compiler registrations, an auth provider, a source reader, a capture source.",
      "at": [
       "con-driver",
       "con-discoverer",
       "con-compiler-reg",
       "con-auth",
-      "con-reader"
+      "con-reader",
+      "con-capture"
      ]
     },
     {
@@ -2196,7 +2302,7 @@
    "group": "Pack",
    "where": "a2m-pack-web-browser, a2m-pack-web-ui, a2m-pack-web-probe",
    "state": "p",
-   "text": "Drives a web application through a browser the engine owns, with its own profile. It finds controls by a screen model, reads and sets them, and can make the page's own requests. Reads and some writes are built; many widget drivers and the capture of a person's use are not.",
+   "text": "Drives a web application through a browser the engine owns, with its own profile. It finds controls by a screen model, reads and sets them, and can make the page's own requests. Reads and some writes are built; many widget drivers, the capture of a person's use, and the asserted read of a page that reads by POST are not.",
    "weighing": [
     "Whether requests made from inside the page are worth keeping: the first measurement did not show them faster than reading the screen."
    ],
@@ -2253,7 +2359,7 @@
     [
      "web-probe",
      "web-browser",
-     "an observing tab",
+     "an observing tab, or a watching tab",
      "use"
     ]
    ],
@@ -2333,6 +2439,44 @@
       {
        "text": "A new dialog the pack does not recognise is a stop, not a guess.",
        "at": [
+        "web-refuses"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Asserted Read",
+     "steps": [
+      {
+       "text": "A read of a published version names the ui mode. The driver reads the version's page requests and hands the tab each asserted read.",
+       "at": [
+        "web-ui",
+        "web-browser"
+       ],
+       "edges": [
+        [
+         "web-ui",
+         "web-browser"
+        ]
+       ]
+      },
+      {
+       "text": "The page sends its own POST for its rows. It matches an asserted read in all four parts and goes on; anything else that may write is failed.",
+       "at": [
+        "web-browser"
+       ]
+      },
+      {
+       "text": "The value is read from the screen, as any ui read is.",
+       "at": [
+        "web-ui",
+        "web-browser"
+       ]
+      },
+      {
+       "text": "Under the drafts the same read stops as policy, page_write_refused, and its next step names the page request and says to publish it.",
+       "at": [
+        "web-ui",
         "web-refuses"
        ]
       }
@@ -2564,7 +2708,7 @@
    "group": "Pack",
    "where": "a2m-pack-mcp",
    "state": "p",
-   "text": "Wraps an existing MCP server and adds what it lacks: declared effects, approval, and read-back. Over HTTP, and as a local program. A server started through an interpreter cannot be started yet; that waits on a decision.",
+   "text": "Wraps an existing MCP server and adds what it lacks: declared effects, approval, and read-back. Over HTTP, and as a local program. A local server can be started through a launcher with its entry file pinned where it lies; a package runner is refused, with what to do instead.",
    "weighing": [],
    "rows": [
     {
@@ -2704,7 +2848,8 @@
    ],
    "stepsTitle": "Upstream Call",
    "decided": [
-    "0299: a server that runs through a launcher is started when its entry file is pinned by a digest. A package runner that fetches code at start stays refused, with what to do instead."
+    "0299: a server that runs through a launcher is started when its entry file is pinned by a digest. A package runner that fetches code at start stays refused, with what to do instead.",
+    "The review shows a server started through a launcher as a launcher, and says that what its entry file loads is not pinned; no hazard is added. Not: mark every such operation as sending outside (0390, 0398)."
    ]
   },
   "pack-desktop": {
@@ -2712,7 +2857,7 @@
    "group": "Pack",
    "where": "a2m-pack-desktop",
    "state": "p",
-   "text": "Reads and sets a desktop application through the operating system's accessibility interface. Never by clicking on a picture of the screen. Linux has reads and verified writes; Windows and macOS have reads.",
+   "text": "Reads and sets a desktop application through the operating system's accessibility interface. Never by clicking on a picture of the screen. Linux has reads and verified writes. Windows and macOS have reads, and writes through a closed list of their own on each, written and linted and not yet run there.",
    "rows": [
     {
      "title": "Desktop Reach",
@@ -2846,7 +2991,10 @@
      ]
     }
    ],
-   "stepsTitle": "Desktop Write Sequence"
+   "stepsTitle": "Desktop Write Sequence",
+   "decided": [
+    "Windows and macOS each have an acting half with a closed list of its own: SetValue and Invoke through UI Automation, AXValue and AXPress through the accessibility interface; the process is proven again before every act. Not: one acting interface behind a trait (0399)."
+   ]
   },
   "pack-command": {
    "name": "command",
@@ -3755,7 +3903,8 @@
    "state": "b",
    "text": "The compiler checks a target's files and writes one file, the compiled target, with a hash of its exact bytes. The engine runs only compiled targets and refuses one whose hash does not match. Every run records the hash, and a publish is tied to it.",
    "decided": [
-    "0298, reworked the same day: the compiler stays all-or-nothing. A draft with an open question waits in a holding folder that the compiler never reads."
+    "0298, reworked the same day: the compiler stays all-or-nothing. A draft with an open question waits in a holding folder that the compiler never reads.",
+    "Every name of the part is the compiled target. What is stored keeps the old word, so that an older build's bytes still open and every hash stays the same: the envelope anything2mcp-plan 1, the ledger's plan_hash and plan columns, and the plan field of a diff, a trace and gate evidence. Not: rename what is stored with a migration, which would change every published hash (0402)."
    ],
    "weighing": [
     "Rejected after a build and a review: having the compiler set files aside and compile the rest. It made the compiler decide what a target is, and the review found six faults with that one cause."
@@ -3798,7 +3947,8 @@
         "compiled-target-contents",
         "compiled-target-hash",
         "compiled-target-whole",
-        "compiled-target-versions"
+        "compiled-target-versions",
+        "compiled-target-review"
        ]
       }
      ]
@@ -3885,6 +4035,12 @@
      "compiled-target-versions",
      "the compiled target bytes of each version",
      "store"
+    ],
+    [
+     "compiled-target-versions",
+     "compiled-target-review",
+     "a version to review before it is published",
+     "use"
     ]
    ],
    "steps": [
@@ -4241,6 +4397,9 @@
       }
      ]
     }
+   ],
+   "decided": [
+    "A read's own records are committed without a disk sync of their own, so a power loss can take the last records that a read happened. A request with a diff, an action that needs an administrator's role, and every write are synced. Not: sync every read, which costs more than half a read's speed and protects nothing rule 3 names (0386, 0390)."
    ]
   },
   "vault": {
@@ -4948,28 +5107,28 @@
    "group": "Shared Server Extension",
    "where": "a2m-mcp, a2m-api",
    "state": "t",
-   "text": "Agents on other machines reach the engine over the network, each signed in, each acting only as themselves."
+   "text": "Agents on other machines reach the engine over the network, each signed in, each acting only as themselves. After the first release."
   },
   "later-runners": {
    "name": "Remote Runners",
    "group": "Shared Server Extension",
    "where": "a2m-runner",
    "state": "t",
-   "text": "A worker on another machine claims a job, holds a lease, and reports back. A runner lost in the middle of a write leaves no duplicate."
+   "text": "A worker on another machine claims a job, holds a lease, and reports back. A runner lost in the middle of a write leaves no duplicate. After the first release."
   },
   "later-postgres": {
    "name": "PostgreSQL Ledger",
    "group": "Shared Server Extension",
    "where": "a2m-ledger",
    "state": "t",
-   "text": "The same schema on a database server, for more than one engine process."
+   "text": "The same schema on a database server, for more than one engine process. After the first release."
   },
   "later-grants": {
    "name": "Server Grants and Toolsets",
    "group": "Shared Server Extension",
    "where": "a2m-policy",
    "state": "t",
-   "text": "Who may see and call which tools, compiled into policy. No role, including administrator, acts as someone else."
+   "text": "Who may see and call which tools, compiled into policy. No role, including administrator, acts as someone else. After the first release."
   },
   "t-web": {
    "name": "Web Application",
@@ -5433,7 +5592,8 @@
    "decided": [
     "A draft with an open question waits in a holding folder; the compiler stays all-or-nothing (0298).",
     "Servers run through a launcher start with a pinned entry file (0299).",
-    "Publishing always needs a person; the sandbox is the short path."
+    "Publishing always needs a person; the sandbox is the short path.",
+    "The shared server waits for the first release, and progress is counted against it: packages done of all, and how many of those left an agent can build before the release. Not: build the shared server now because its rows are unblocked, or weight progress by a guessed size (0390)."
    ],
    "walks": [
     {
@@ -5760,6 +5920,9 @@
    "where": "a2m-engine: src/run.rs",
    "never": [
     "Name a mode, a driver or a pack."
+   ],
+   "decided": [
+    "A tool whose every binding is covered by a drift mark is shown as unavailable where tools are listed, and comes back when the mark is lifted (0396)."
    ]
   },
   "engine-prepare": {
@@ -6887,7 +7050,10 @@
    "group": "Kernel",
    "state": "p",
    "text": "The list of actions with a digest. Every face is generated from it and checked against it, so a face cannot drift from the list.",
-   "where": "a2m-actions: src/catalog.rs"
+   "where": "a2m-actions: src/catalog.rs",
+   "decided": [
+    "The 23 actions with no handler and no package before the first release answer action_not_built and wait until after it; a test is to name each one, so an unbuilt action is a decision. Not: drop them from the catalog (0397)."
+   ]
   },
   "reg-faces": {
    "name": "Generated Faces",
@@ -7084,17 +7250,18 @@
    "name": "Tool Use Actions",
    "group": "Action Group",
    "state": "b",
-   "text": "Search and describe tools, call one (tool.search, tool.describe, tool.call), read a run, resume or cancel it, see a trace, check or ask for a sign-in (session.status, session.login), and make and manage watches. Undo of a run is planned, not built.",
+   "text": "Search and describe tools, call one (tool.search, tool.describe, tool.call), read a run, resume or cancel it, see a trace, check or ask for a sign-in (session.status, session.login), and make and manage watches. Designed and not built: tool.search and tool.describe say whether each tool is available, and why not. Undo of a run is planned, not built.",
    "where": "a2m-actions"
   },
   "reg-build": {
    "name": "Target Build Actions",
    "group": "Action Group",
    "state": "p",
-   "text": "Add and probe a target, detect the sign-in, take a snapshot, read and write and lint and try drafts, run the tests, record a fixture, compare versions, request publication. Capture and endpoint inference are planned.",
+   "text": "Add and probe a target, detect the sign-in, take a snapshot, read and write and lint and try drafts, run the tests, record a fixture, compare versions, request publication. capture.start and capture.stop are in the catalog with no handler. Designed and not built: draft.ready, which makes every read the scout proved ready to publish in one action.",
    "where": "a2m-actions",
    "decided": [
-    "The add shortcut takes the description a person has, with a file option that puts it in the Handed Files, and ends at the report; each proven read in the report carries the call that reads it. Not: a new action that lists what can be tried (0306)."
+    "The add shortcut takes the description a person has, with a file option that puts it in the Handed Files, and ends at the report; each proven read in the report carries the call that reads it. Not: a new action that lists what can be tried (0306).",
+    "The steps between a proven read and a publish are one action, draft.ready: for each proven read it records the fixture, promotes the first binding and runs the gates, each by the existing action's own handler. It never touches a write, a held draft or an unproven read, and never asks for the publish. Not: a shortcut of fixed actions, or folding the steps into add (0401)."
    ]
   },
   "reg-providers": {
@@ -7227,7 +7394,7 @@
    "name": "Pack File Kinds",
    "group": "Project File",
    "state": "b",
-   "text": "Folders a pack brings: screens/ for web and desktop, endpoints/ for HTTP, and others such as commands/ or registers/. Each kind has one owning pack; another pack may declare it reads one.",
+   "text": "Folders a pack brings: screens/ for web and desktop, page_requests/ for web, endpoints/ for HTTP, and others such as commands/ or registers/. Each kind has one owning pack; another pack may declare it reads one.",
    "where": "a2m-files: src/register.rs"
   },
   "proj-tests": {
@@ -7387,8 +7554,11 @@
    "name": "Scenario Comparison",
    "group": "Scout",
    "state": "p",
-   "text": "Sets what a system describes against what was observed. An endpoint present in a description and never seen is reported as inferred. Each difference is a finding or an open question.",
-   "where": "a2m-actions: src/handlers/scout.rs"
+   "text": "Sets what a system describes against what was observed. An endpoint present in a description and never seen is reported as inferred. Each difference is a finding or an open question. The rest of it waits until after the first release.",
+   "where": "a2m-actions: src/handlers/scout.rs",
+   "decided": [
+    "The comparison stage, and the scout's own budget, wait until after the first release: no field test has both a description and a capture (0397, 0400)."
+   ]
   },
   "scout-draft": {
    "name": "Drafter",
@@ -7430,7 +7600,8 @@
    "decided": [
     "The report counts the properties left out because their names are a secret's. Not built yet; roadmap packages FT10 and FT11. Not: leave them out unmentioned (0302).",
     "The report lists reads that wait for a sign-in apart from proven and failed ones, and its counts add up: drafted is proven, waiting, failed and held. Not: a third value that sends a credential when there is one (0303).",
-    "Each proven read in the report carries the call that reads it, with the target, the tool and an accepted input, for an agent to copy. Not: a third list of what can be tried (0306)."
+    "Each proven read in the report carries the call that reads it, with the target, the tool and an accepted input, for an agent to copy. Not: a third list of what can be tried (0306).",
+    "A capture's report is a scout report: it says it came from a capture, how long it ran, what it saw and each bound it hit, and lists each held draft and asserted read as not tried, with its next step (0400)."
    ]
   },
   "scout-findings": {
@@ -7677,6 +7848,9 @@
    "where": "a2m-provider: src/discover.rs",
    "never": [
     "Write."
+   ],
+   "decided": [
+    "A discoverer is called by discover or by watch, never both, as its manifest's driven_by says; one driven by the engine is never handed the capture's end (0395)."
    ]
   },
   "con-compiler-reg": {
@@ -7765,7 +7939,8 @@
    ],
    "decided": [
     "Only a built action is listed up front in a toolset. Not: a higher cap on the list (0306).",
-    "With each tool the MCP door sends the target's name, the version, and whether the description was drafted by rule or written by a builder, in the tool's _meta. Not: a client told nothing of whose words they are (0307)."
+    "With each tool the MCP door sends the target's name, the version, and whether the description was drafted by rule or written by a builder, in the tool's _meta. Not: a client told nothing of whose words they are (0307).",
+    "A tool stopped by a drift stays in the list with a mark, never left out (0396, not built)."
    ]
   },
   "mcp-call": {
@@ -7873,7 +8048,11 @@
    "group": "Person Surface",
    "state": "p",
    "text": "Shows a person's act that an agent asked for, such as publishing, pinned to the hash of what the page shows. If drafts change before the press, nothing is published.",
-   "where": "a2m-local: src/pages/act.html"
+   "where": "a2m-local: src/pages/act.html",
+   "decided": [
+    "The publish page names each asserted read and each launcher, from the review summary, with its fixed sentence (0394, 0398).",
+    "A capture an agent asked for begins only when its person begins it here, past the presence prompt, told what is kept (0392)."
+   ]
   },
   "pages-signin": {
    "name": "Sign-In Window",
@@ -7943,7 +8122,7 @@
    "name": "Command Tree",
    "group": "Thin Client",
    "state": "b",
-   "text": "Built from the registry: anything2mcp noun verb. A short name, a2m, runs the same program. Shortcuts are a word and a fixed list of actions.",
+   "text": "Built from the registry: anything2mcp noun verb. A short name, a2m, runs the same program. Shortcuts are a word and a fixed list of actions. The shortcut ready, designed and not built, runs draft.ready, so a read-only tool is add, ready, publish, and a person's press.",
    "where": "anything2mcp: src/cli/parse.rs"
   },
   "cli-client": {
@@ -8063,7 +8242,8 @@
         "webui-widgets",
         "webui-screens",
         "webui-signin",
-        "webui-expiry"
+        "webui-expiry",
+        "webui-page-requests"
        ]
       }
      ]
@@ -8095,6 +8275,18 @@
      "webui-signin",
      "webui-expiry",
      "the sign-in page it must recognise",
+     "use"
+    ],
+    [
+     "webui-page-requests",
+     "webui-ui",
+     "asserted reads of a published version",
+     "use"
+    ],
+    [
+     "webui-page-requests",
+     "webui-page-http",
+     "the requests a page makes",
      "use"
     ]
    ],
@@ -8178,7 +8370,10 @@
    "group": "Web Pack",
    "state": "p",
    "text": "The only place locators live: ordered locators by role and name, fingerprints, frame paths and variants of a page. Platform profiles, kept as data, say which locators to prefer and what the support tier lets it write.",
-   "where": "a2m-pack-web-ui: src/screens.rs"
+   "where": "a2m-pack-web-ui: src/screens.rs",
+   "decided": [
+    "The platform profile once named after a real framework is server_postback_forms, detected by a hidden field that carries the page's state between postbacks, with no ready rule of its own. Not: keep the framework's readiness script, which names it and was never run (0390, 0402)."
+   ]
   },
   "webui-signin": {
    "name": "Browser Sign-In",
@@ -8290,7 +8485,7 @@
      ]
     },
     {
-     "text": "Traffic Capture and Endpoint Inference, which group the page's own requests into endpoint shapes, are designed and still in progress.",
+     "text": "Traffic Capture records a page's own requests by structure; a person's use, in a watching tab, is designed. Endpoint Inference groups them into endpoint shapes and drafts reads, and holds a request that may write with a question.",
      "at": [
       "probe-capture",
       "probe-infer"
@@ -8308,13 +8503,58 @@
    "group": "Web Pack",
    "where": "a2m-pack-web-probe",
    "state": "p",
-   "text": "Says what a web surface is and what is on it, without ever acting on it. It identifies the surface, takes snapshots as findings, reads what a site declares for agents, and is designed to capture a person's own use and infer endpoints from it. Capture and inference are still in progress.",
+   "text": "Says what a web surface is and what is on it, without ever acting on it. It identifies the surface, takes snapshots as findings, reads what a site declares for agents, captures a page's own requests through the capture contract, and is designed to capture a person's use in a watching tab and infer endpoints from it. A person's capture is not built; inference is in progress.",
    "never": [
     "Press, type or submit.",
     "Enter a surface the target did not declare."
    ],
    "decided": [
     "The capture package needs the sign-in window and not every sign-in provider. Writes from a capture wait for the first verified web write. Not: wait for every provider (0308)."
+   ],
+   "walks": [
+    {
+     "name": "Watched Use",
+     "steps": [
+      {
+       "text": "The person begins a capture on the engine's page and uses the system in a watching tab. The engine only listens.",
+       "at": [
+        "probe-capture"
+       ]
+      },
+      {
+       "text": "Each request is kept by structure through the capture contract: method, path, and the names and kinds of its fields.",
+       "at": [
+        "probe-capture",
+        "probe-infer"
+       ],
+       "edges": [
+        [
+         "probe-capture",
+         "probe-infer"
+        ]
+       ]
+      },
+      {
+       "text": "A GET seen twice in one shape becomes a drafted read. A POST seen twice becomes a held page request with a question.",
+       "at": [
+        "probe-infer"
+       ]
+      },
+      {
+       "text": "The describer says what was seen, and that nothing the person did not use was looked at.",
+       "at": [
+        "probe-infer",
+        "probe-describe"
+       ],
+       "edges": [
+        [
+         "probe-infer",
+         "probe-describe"
+        ]
+       ]
+      }
+     ]
+    }
    ]
   },
   "probe-identify": {
@@ -8340,21 +8580,23 @@
   "probe-capture": {
    "name": "Traffic Capture",
    "group": "Web Pack",
-   "state": "t",
-   "text": "Records the exchanges seen while a scenario runs or a person uses the system, as shapes, attributed to scenario steps. Started only by the person whose use it records. Not built. The first capture records reads only, in the engine's own browser, and sets no proxy between another program and the network.",
+   "state": "p",
+   "text": "Records the requests a page makes, by structure, through the capture contract. Built: the probe's web_capture reads a page's own requests in an observing tab, recording started before the page loads. Designed and not built: a person's own use, captured in a watching tab for every method, with a request's body as its fields' names and kinds. Started only by the person whose use it records, and no proxy is set between another program and the network.",
    "where": "a2m-pack-web-probe: src/infer.rs",
    "decided": [
-    "The first capture runs only in the engine's own observing tab, records a request's method, path template, parameter names and answer shape with values scrubbed, and a credential header as present only. Not: a proxy that records any program's traffic (0308)."
+    "The probe declares traffic_capture for web and reads its tab only through take_capture. Not: a path private to the web pack (0391).",
+    "An exchange seen is discovered; a path with a placeholder, and every draft from a capture, is inferred and sampled, and goes to the holding folder (0392, amending 0308)."
    ]
   },
   "probe-infer": {
    "name": "Endpoint Inference",
    "group": "Web Pack",
    "state": "p",
-   "text": "Groups exchanges into endpoints, templates paths in two tiers, infers request and response shapes and the dependencies between requests, by comparing digests so no value is stored. Everything inferred stays at the inferred level. The scout drafts endpoints from them through the HTTP pack. The first inference drafts reads only, each to the holding folder.",
+   "text": "Groups exchanges into endpoints, templates paths in two tiers, infers request and response shapes and the dependencies between requests, by comparing digests so no value is stored. Everything inferred stays at the inferred level. The scout drafts endpoints from them through the HTTP pack. The first inference drafts reads only, each to the holding folder. A request by a method that may write is drafted only as a held page request with a question, never as a read.",
    "where": "a2m-pack-web-probe: src/infer.rs",
    "decided": [
-    "The first inference drafts a read only for a GET answered with success and a structured body, seen at least twice with one shape; a placeholder in a path comes only from two requests that differ in that one part. Every draft goes to the holding folder at the inferred level. Not: draft writes from what a person did (0308)."
+    "The first inference drafts a read only for a GET answered with success and a structured body, seen at least twice with one shape; a placeholder in a path comes only from two requests that differ in that one part. Every draft goes to the holding folder at the inferred level. Not: draft writes from what a person did (0308).",
+    "A request by a method that may write, seen twice with one shape, becomes a held page request: its body schema drafted from field names and kinds, a question in place of its effect, and no operation. A person answers by writing read_asserted. Not: let through a request whose path holds a word such as search (0392, 0394)."
    ]
   },
   "probe-site-tools": {
@@ -8382,7 +8624,8 @@
       {
        "ids": [
         "wb-launch",
-        "wb-tabs"
+        "wb-tabs",
+        "wb-watching"
        ]
       }
      ]
@@ -8416,7 +8659,8 @@
       {
        "ids": [
         "wb-origins",
-        "wb-failures"
+        "wb-failures",
+        "wb-safe"
        ]
       }
      ]
@@ -8474,6 +8718,24 @@
      "wb-failures",
      "whether the input reached the page",
      "use"
+    ],
+    [
+     "wb-safe",
+     "wb-tabs",
+     "the asserted reads a tab may let through",
+     "use"
+    ],
+    [
+     "wb-origins",
+     "wb-watching",
+     "the origins the surface declares",
+     "use"
+    ],
+    [
+     "wb-watching",
+     "wb-requests",
+     "the person's requests, by structure",
+     "use"
     ]
    ],
    "steps": [
@@ -8526,10 +8788,63 @@
    "group": "Web Pack",
    "where": "a2m-pack-web-browser",
    "state": "b",
-   "text": "Starts the engine's own browser with a data directory the engine owns, opens tabs that may act or only observe, finds one element by role and name, acts, waits on named events, builds snapshots, and keeps each tab on the origins it was opened for.",
+   "text": "Starts the engine's own browser with a data directory the engine owns, opens tabs that may act, only observe, or only listen while a person acts, finds one element by role and name, acts, waits on named events, builds snapshots, and keeps each tab on the origins it was opened for.",
    "never": [
     "Drive the person's everyday browser profile.",
     "Hide that it is automation."
+   ],
+   "walks": [
+    {
+     "name": "Asserted Read",
+     "steps": [
+      {
+       "text": "A read of a published version runs in an observing tab. The driver hands the tab the version's asserted reads.",
+       "at": [
+        "wb-tabs",
+        "wb-safe"
+       ],
+       "edges": [
+        [
+         "wb-safe",
+         "wb-tabs"
+        ]
+       ]
+      },
+      {
+       "text": "The page asks for its rows by POST. The tab holds the request and reads its body in memory.",
+       "at": [
+        "wb-tabs",
+        "wb-requests"
+       ],
+       "edges": [
+        [
+         "wb-tabs",
+         "wb-requests"
+        ]
+       ]
+      },
+      {
+       "text": "The request matches one asserted read in method, origin, path template and body shape, so it goes on to the surface.",
+       "at": [
+        "wb-safe",
+        "wb-origins"
+       ]
+      },
+      {
+       "text": "Any other request that may write is failed before it leaves the browser, and the read stops as policy, page_write_refused.",
+       "at": [
+        "wb-safe",
+        "wb-failures"
+       ]
+      },
+      {
+       "text": "The page draws its rows, and the value is read from the screen as in any ui read.",
+       "at": [
+        "wb-locate"
+       ]
+      }
+     ]
+    }
    ]
   },
   "wb-launch": {
@@ -8547,10 +8862,10 @@
    "name": "Tab Postures",
    "group": "Web Pack",
    "state": "b",
-   "text": "One browser process per profile, shared by many tabs. A tab has a fixed environment and a posture: one that may act, or one that may only observe. Observing tabs fail every request that could write.",
+   "text": "One browser process per profile, shared by many tabs. A tab has a fixed environment and a posture: one that may act, one that may only observe, or, designed and not built, one where a person acts and the engine only listens. Observing tabs fail every request that could write, except an asserted read a published version hands them.",
    "where": "a2m-pack-web-browser: src/tab.rs",
    "decided": [
-    "A capture is taken in an observing tab only, on a surface the target declares. Not: capture in a person's everyday browser (0308)."
+    "A capture of a person's use runs in a watching tab; the scout keeps the observing tab, where every request that may write is failed. Not: capture in the observing tab (0392, superseding point 1 of 0308)."
    ]
   },
   "wb-locate": {
@@ -8561,6 +8876,9 @@
    "where": "a2m-pack-web-browser: src/structure.rs",
    "never": [
     "Use XPath or a pixel position."
+   ],
+   "decided": [
+    "A read may find again an element the page drew again, by the query that found it, only when that query matches exactly one element; none or more than one is a stop. An act never finds an element again (0379, 0390)."
    ]
   },
   "wb-act": {
@@ -8641,6 +8959,9 @@
    "where": "a2m-pack-http: src/shape.rs",
    "never": [
     "Guess at an unexpected answer."
+   ],
+   "decided": [
+    "The shape moves to the provider contract, as Body Shape, and this check uses it unchanged (0394)."
    ]
   },
   "http-forms": {
@@ -9156,7 +9477,7 @@
    "name": "Upstream Connection",
    "group": "MCP Pack",
    "state": "p",
-   "text": "One connection per surface and identity, never shared between identities. A local program is started through the supervisor by path and digest with an allowlisted environment; a remote server is reached over HTTP with a bearer token, and over HTTPS in a build with the tls feature. Launcher-started servers are refused today; decision 0299 plans a pinned way in.",
+   "text": "One connection per surface and identity, never shared between identities. A local program is started through the supervisor by path and digest with an allowlisted environment; a remote server is reached over HTTP with a bearer token, and over HTTPS in a build with the tls feature. A server can be started through a launcher of the table with its entry file pinned by digest (0371); a package runner is refused.",
    "where": "a2m-pack-mcp: src/client.rs",
    "never": [
     "Share a connection between identities."
@@ -9201,7 +9522,7 @@
    "name": "Window Identification",
    "group": "Desktop Pack",
    "state": "p",
-   "text": "Finds the application's window, and proves before every act that the element is in the window and process the step expects. It attaches only to a process a person named. The first slice finds an application already running and starts nothing.",
+   "text": "Finds the application's window, and proves before every act that the element is in the window and process the step expects. It attaches only to a process a person named, and on every system proves it again before each act by id, start time, program and digest. The first slice finds an application already running and starts nothing.",
    "where": "a2m-pack-desktop: src/driver.rs",
    "never": [
     "Act in a window it cannot prove is the expected one."
@@ -9211,7 +9532,7 @@
    "name": "Accessibility Backend",
    "group": "Desktop Pack",
    "state": "p",
-   "text": "One implementation for each operating system, behind one private interface: find exactly one element, read, set, invoke, report events, build the tree for a snapshot. Reads and writes on Linux are built; Windows and macOS are not shown yet.",
+   "text": "One implementation for each operating system, behind one private interface: find exactly one element, read, set, invoke, report events, build the tree for a snapshot. Reads run on all three systems and writes on Linux. Writes on Windows and macOS are written and linted from Linux; their first run is CI's.",
    "where": "a2m-pack-desktop: src/backend",
    "never": [
     "Click by screen position."
@@ -9228,10 +9549,13 @@
    "name": "Input Actions",
    "group": "Desktop Pack",
    "state": "p",
-   "text": "Sets a value, invokes an action, selects, expands, using accessibility patterns. A control that exposes no value cannot be written except as irreversible. An invoke that was sent with no confirmation, or after which the application exited, is possible_commit.",
+   "text": "Sets a value, invokes an action, selects, expands, using accessibility patterns. A control that exposes no value cannot be written except as irreversible. An invoke that was sent with no confirmation, or after which the application exited, is possible_commit. On Windows and macOS a press is Invoke or AXPress, and a screen names it click; any other name is a stop, nothing sent.",
    "where": "a2m-pack-desktop: src/driver.rs",
    "never": [
     "Read a password field's value."
+   ],
+   "decided": [
+    "The action a screen names on Windows and macOS is click, and only click. Not: more names such as press or activate for the same press, a second spelling where unknown means stop (0399)."
    ]
   },
   "desk-wait": {
@@ -9249,7 +9573,10 @@
    "group": "Desktop Pack",
    "state": "p",
    "text": "desktop_probe says what a running application is; desktop_snapshot reads a window's shape, never a value, as findings of kind window.",
-   "where": "a2m-pack-desktop: src/discover.rs"
+   "where": "a2m-pack-desktop: src/discover.rs",
+   "decided": [
+    "desktop_probe, starting an application, and keys and clicks wait until after the first release: the person starts their own application, and a tool that finds no window stops by name (0397)."
+   ]
   },
   "desk-screens": {
    "name": "Desktop Screen Models",
@@ -9269,8 +9596,11 @@
    "name": "Desktop Refusals",
    "group": "Desktop Pack",
    "state": "p",
-   "text": "Clicking or typing by position, acting in an unproven window, reading a password, attaching to a process nobody named, and applications built on a browser runtime, which are web surfaces.",
-   "where": "a2m-pack-desktop"
+   "text": "Clicking or typing by position, acting in an unproven window, reading a password, attaching to a process nobody named, and applications built on a browser runtime, which are web surfaces. A management namespace of another machine is refused by the driver before anything is asked, as remote_namespace_refused.",
+   "where": "a2m-pack-desktop",
+   "decided": [
+    "The driver refuses a remote management namespace itself, as well as the review withdrawing its binding: fail closed (0399)."
+   ]
   },
   "cmd-commands": {
    "name": "Commands File",
@@ -10025,6 +10355,131 @@
    ],
    "decided": [
     "The two folders each have a proper name and neither is renamed on disk. Not: rename the project's folder (0309)."
+   ]
+  },
+  "con-capture": {
+   "name": "Capture Contract",
+   "group": "Provider Contract",
+   "state": "b",
+   "where": "a2m-provider: src/capture.rs",
+   "text": "How a pack offers traffic capture, and the one check every capture passes. A pack lists the surface kinds it captures in its manifest and registers one capture source; a pack that lists none is never asked. A yield holds a request's method, origin, path by structure, and the names and kinds of its fields, and has no field a value could be put in. Every yield is read through take_capture, which withholds whatever does not look like structure, whatever the pack did. The web probe's capture of a page's own requests is built on it; a person's capture is not yet.",
+   "never": [
+    "Yield a value of a query, a header, a cookie or a body.",
+    "Ask a pack that declared no capture."
+   ],
+   "decided": [
+    "Traffic capture is a capability of the provider contract that a pack declares, with one floor under every pack. Not: an interface of the web pack's own, a capture as a kind of discoverer, or trusting each pack to redact (0390, 0391)."
+   ]
+  },
+  "con-watch": {
+   "name": "Person-Driven Discoverer",
+   "group": "Provider Contract",
+   "state": "t",
+   "where": "a2m-provider: src/discover.rs",
+   "text": "A discoverer a person drives, as a capture of their own use. Its manifest says driven_by person, and it is called only through watch, with the scope, the capture's end and the sink, and with no port: it reaches the system through nothing of the kernel's. A scout and discover.run never get one. Its findings are checked against the manifest as any discoverer's. Not built.",
+   "never": [
+    "Run in a scout or in discover.run.",
+    "Reach the system through a port of the kernel's."
+   ],
+   "decided": [
+    "A person-driven discoverer is called through a method of its own, watch, and the capture's end is a type of the contract that only the kernel sets. Not: a new field of the discovery scope, which twelve crates build field by field, or a port that refuses every step (0392, 0395)."
+   ]
+  },
+  "con-shape": {
+   "name": "Body Shape",
+   "group": "Provider Contract",
+   "state": "t",
+   "where": "a2m-provider: src/shape.rs",
+   "text": "The one closed subset of JSON Schema that a pack checks a body against: type, nullable, properties, required, additionalProperties, items and enum. It moves here from the HTTP pack and the web drivers, which each hold a copy, so that the browser can check a request's body by the same rule. Not built.",
+   "decided": [
+    "One shape in the provider contract, used by both packs and the browser base. Not: two copies and a third in the base, or the shape in a2m-core (0394)."
+   ]
+  },
+  "wb-watching": {
+   "name": "Watching Tab",
+   "group": "Web Pack",
+   "state": "t",
+   "where": "a2m-pack-web-browser",
+   "text": "A tab in a visible window of the engine's own browser, under the session the person signed in with, where the person uses the system and the engine only listens. It has no input method, starts no navigation and makes no request, so it fails none: every request there is the person's. It is held to the surface's declared origins and records only their exchanges, by structure, with a request's body as its media type and its fields' names and kinds. It takes a snapshot of each screen the person visits, to a bound. Not built.",
+   "never": [
+    "Send input, navigate, or make a request of its own.",
+    "Store a value the person typed."
+   ],
+   "decided": [
+    "A person's use is captured in a watching tab, and the scout never opens one. Not: capture in the observing tab, which records what the probe already sees and nothing of a page that reads by POST (0392, superseding point 1 of 0308)."
+   ]
+  },
+  "wb-safe": {
+   "name": "Safe Request Match",
+   "group": "Web Pack",
+   "state": "p",
+   "where": "a2m-pack-web-browser: src/tab.rs",
+   "text": "The requests an observing tab lets through although their method may write. A request passes only when it matches one entry in method, origin, path template segment for segment, and body: none, or a shape in json or form encoding. A body the browser does not hand over whole, one longer than 1 MiB, or one that does not fit the shape is failed. The list exists and every caller hands it over empty; the match by template and body is not built.",
+   "never": [
+    "Store or log a body.",
+    "Match a path by its prefix."
+   ],
+   "decided": [
+    "A safe request is matched in four parts, its body included, because two requests to one path can differ only in their bodies. Not: method, origin and path alone, or a word such as search in the path, which is a guess (0392, 0394)."
+   ]
+  },
+  "webui-page-requests": {
+   "name": "page_requests/",
+   "group": "Web Pack",
+   "state": "p",
+   "where": "a2m-pack-web-ui: src/requests.rs",
+   "text": "The web pack's file kind for the requests a page makes by itself, in the form of entries of the endpoint catalog, each with the screen whose page sends it. GET alone reads. A request by another method marked read is an asserted read: it compiles only with read_asserted: true and a body shape closed at its top level, or none. The drivers hand a published version's asserted reads to the observing tab, in a live run or in an environment of kind test. The file kind is built; asserted reads are not.",
+   "never": [
+    "Let a drafter write read_asserted."
+   ],
+   "decided": [
+    "An asserted read of a web surface is a key of its page request, read by the web drivers. Not: the HTTP pack's endpoints/, which has no section for a web surface (0394, correcting 0392).",
+    "An asserted read is let through in a live run of a published version and in an environment of kind test, never under the drafts or in discovery; under the drafts the stop names the page request and says to publish it (0392, 0394)."
+   ],
+   "weighing": [
+    "A person's word is the only evidence that an asserted read changes nothing; the match narrows what a wrong one lets through and does not make it right. A field whose long text tells a read from a write waits for a pin by digest, after the first release (0392).",
+    "Kept as a bet (H-52): the person confirms each assertion as the capture ends, so a draft may be tried. Taken up if FT6 shows the steps from capture to first read are the complaint (0392)."
+   ]
+  },
+  "compiled-target-review": {
+   "name": "Review Summary",
+   "group": "Compiled Target",
+   "state": "p",
+   "where": "a2m-files: src/review.rs",
+   "text": "The risk-ordered list a person sees on the publish page before a version goes live: what each tool can do, its evidence, which gates ran, and each program a tool starts, with a fixed notice. Two additions are designed and not built. Each asserted read is shown with the sign-ins, before the tools, with the sentence that the person's word is its only evidence. A server started through a launcher is shown as a launcher, with its entry file's path and digest and the sentence that whatever the entry file loads is not pinned and not shown.",
+   "never": [
+    "Gate a publish on a notice: a notice informs."
+   ],
+   "decided": [
+    "A launched program is shown as a launcher with a notice of its own, and counts as a script does in the order. Not: the script's notice, which is untrue for an installed entry file, or a list of what the entry file loads, a guess shown as a fact (0390, 0398).",
+    "A file kind says what it asserts, and the summary lists every asserted read of the HTTP and web packs. Not: an assertion stated on one binding, since the tab lets it through for every read of the surface (0394)."
+   ]
+  },
+  "mcp-unavailable": {
+   "name": "Unavailable Mark",
+   "group": "Front Door",
+   "state": "t",
+   "where": "a2m-mcp: src/tools.rs",
+   "text": "A tool whose every binding is stopped by a drift stays in the list, marked. Its schema is unchanged; its description begins with one fixed sentence, that the system changed and the tool was stopped until its target is repaired; its _meta carries anything2mcp/unavailable with the reason, the knowledge marked and when. tool.search and tool.describe say the same. A call is refused as binding_drifted before anything is sent. Not built.",
+   "never": [
+    "Leave a stopped tool out of the list.",
+    "Put a word of the system's in the mark."
+   ],
+   "decided": [
+    "A tool stopped by a drift is listed and marked. Not: left out, which tells an agent nothing, marked only in _meta, which few clients show a model, or a notice that the list changed, which needs a session the door does not keep (0396)."
+   ]
+  },
+  "scout-capture": {
+   "name": "Capture Job",
+   "group": "Scout",
+   "state": "t",
+   "where": "a2m-actions",
+   "text": "A scout whose first stage a person drove. Anyone who may build can ask for one with capture.start, an agent included; it records nothing until the person begins it on the engine's page, past the presence prompt. The person ends it there or by closing the window, or it ends at its bound. Its findings then enter the scout at the draft stage, and capture.stop answers with the report's reference. Not built.",
+   "never": [
+    "Record before its person begins it."
+   ],
+   "decided": [
+    "A capture ends as a scout does: the same drafter, trial and report, stored and resumable, its coverage partial. Not: a report of its own, or a draft action to call for each finding (0400)."
    ]
   }
  }
