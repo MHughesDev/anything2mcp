@@ -58,7 +58,7 @@ pub use presence::{
 pub use start::{
     ENGINE_LOG_NAME, Launch, START_LOCK_NAME, STARTED_LINE, STOPPED_LINE, Started, stopped_line,
 };
-pub use surface::{LocalSurface, SurfaceParts};
+pub use surface::{FAILURE_CODE_HEADER, LocalSurface, SurfaceParts};
 
 #[cfg(test)]
 #[allow(

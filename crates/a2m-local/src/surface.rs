@@ -30,7 +30,7 @@ use a2m_actions::{
     PresenceReport, PreviewRecord, SessionAsk, SignInAsk, SurfaceLink,
 };
 use a2m_auth::{PersonAnswer, PersonAsk};
-use a2m_core::{Digest, Failure, Identity, PrincipalId, RunId};
+use a2m_core::{Digest, Failure, FailureCode, Identity, PrincipalId, RunId};
 use a2m_policy::{Channel as ApprovalChannel, PresenceCheck, PrincipalRef};
 use a2m_telemetry::Clock;
 use a2m_vault::RandomSource;
@@ -344,9 +344,26 @@ fn answer(status: StatusCode, title: &str, detail: &str) -> Response {
     )
 }
 
+/// The header every refusal of the loopback listener names its failure
+/// code in, so that whatever sent the request, a person's browser or a
+/// program, is told by name why nothing was recorded. The page's own words
+/// say the same to a person.
+pub const FAILURE_CODE_HEADER: &str = "a2m-failure-code";
+
+/// A refusal: the answer page, with the failure code in
+/// [`FAILURE_CODE_HEADER`].
+fn refused(status: StatusCode, code: &FailureCode, title: &str, detail: &str) -> Response {
+    let mut response = answer(status, title, detail);
+    if let Ok(value) = HeaderValue::from_str(code.as_str()) {
+        response.headers_mut().insert(FAILURE_CODE_HEADER, value);
+    }
+    response
+}
+
 fn nothing_here() -> Response {
-    answer(
+    refused(
         StatusCode::NOT_FOUND,
+        &codes::PAGE_NOT_FOUND,
         "Nothing waits here",
         "This address shows nothing. A page for an approval closes when it is answered or when its time ends.",
     )
@@ -450,8 +467,9 @@ async fn guard(State(port): State<u16>, request: Request, next: Next) -> Respons
         None => request.method() != Method::POST && !headers.contains_key(header::ORIGIN),
     };
     if !host_fits || !origin_fits {
-        return answer(
+        return refused(
             StatusCode::FORBIDDEN,
+            &codes::REQUEST_NOT_FROM_PAGE,
             "Not from this machine's own page",
             "This page answers only the browser that opened its link on this machine.",
         );
@@ -1135,11 +1153,14 @@ fn presence_html(presence: &Availability) -> String {
     }
 }
 
+const GONE_DETAIL: &str = "The change this page was opened for no longer waits for an approval. Look at the run again for where it stands.";
+
 fn gone() -> Response {
-    answer(
+    refused(
         StatusCode::CONFLICT,
+        &a2m_policy::APPROVAL_STALE,
         "Nothing to approve here",
-        "The change this page was opened for no longer waits for an approval. Look at the run again for where it stands.",
+        GONE_DETAIL,
     )
 }
 
@@ -1225,15 +1246,17 @@ fn begin(inner: &Inner, code: &str, body: &Bytes) -> Result<Pressed, Box<Respons
         _ => false,
     };
     if !fits {
-        return Err(Box::new(answer(
+        return Err(Box::new(refused(
             StatusCode::FORBIDDEN,
+            &codes::REQUEST_NOT_FROM_PAGE,
             "Nothing was recorded",
             "The press did not come from the page as it was last shown. Open the link again and press there.",
         )));
     }
     if found.pressed {
-        return Err(Box::new(answer(
+        return Err(Box::new(refused(
             StatusCode::CONFLICT,
+            &codes::PROMPT_BUSY,
             "A press is already being answered",
             "Answer the prompt on this machine, or open the link again when it has closed.",
         )));
@@ -1311,10 +1334,10 @@ async fn approve(
     carried.await.unwrap_or_else(|_| not_carried_out())
 }
 
-fn nothing_approved(status: StatusCode, detail: &str) -> (Outcome, Response) {
+fn nothing_approved(status: StatusCode, code: &FailureCode, detail: &str) -> (Outcome, Response) {
     (
         Outcome::Open,
-        answer(status, "Nothing was approved", detail),
+        refused(status, code, "Nothing was approved", detail),
     )
 }
 
@@ -1323,12 +1346,14 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
     let Some(desk) = inner.desk.get() else {
         return nothing_approved(
             StatusCode::SERVICE_UNAVAILABLE,
+            &codes::SURFACE_UNAVAILABLE,
             "The engine cannot record an approval now. Run `anything2mcp doctor run` for the reason.",
         );
     };
     if !pressed.whole {
         return nothing_approved(
             StatusCode::CONFLICT,
+            &codes::CHANGE_NOT_SHOWN_WHOLE,
             "This change has more records than its page can show, and a change that was not shown in full is not approved here. You can decline it from the page.",
         );
     }
@@ -1341,8 +1366,9 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
     if !still_waits {
         return (
             Outcome::Gone,
-            answer(
+            refused(
                 StatusCode::CONFLICT,
+                &a2m_policy::APPROVAL_STALE,
                 "Nothing was approved",
                 "The change this page showed no longer waits for an approval. Look at the run again for where it stands.",
             ),
@@ -1352,6 +1378,7 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
     let Ok(_up) = inner.prompting.try_lock() else {
         return nothing_approved(
             StatusCode::SERVICE_UNAVAILABLE,
+            &codes::PROMPT_BUSY,
             "Another presence prompt is up on this machine. Answer or close it first, then open the link again and press once more.",
         );
     };
@@ -1388,18 +1415,21 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
         PromptAnswer::Dismissed => {
             return nothing_approved(
                 StatusCode::FORBIDDEN,
+                &codes::PRESENCE_FAILED,
                 "The prompt on this machine was closed, or its time ended. Open the link again to answer once more.",
             );
         }
         PromptAnswer::Denied => {
             return nothing_approved(
                 StatusCode::FORBIDDEN,
+                &codes::PRESENCE_FAILED,
                 "The prompt on this machine was answered and not passed. Open the link again to answer once more.",
             );
         }
         PromptAnswer::NotAvailable(why) => {
             return nothing_approved(
                 StatusCode::FORBIDDEN,
+                &codes::PRESENCE_FAILED,
                 &format!(
                     "No presence prompt is available on this machine, so no approval is recorded. {} {} You can decline the write from the page.",
                     why.message, why.remedy
@@ -1432,7 +1462,7 @@ async fn approve_pressed(inner: &Inner, pressed: &Pressed) -> (Outcome, Response
             ),
         ),
         // The policy engine's refusal is the engine's own words.
-        Err(failure) => nothing_approved(StatusCode::FORBIDDEN, failure.message()),
+        Err(failure) => nothing_approved(StatusCode::FORBIDDEN, failure.code(), failure.message()),
     }
 }
 
@@ -1589,7 +1619,12 @@ async fn act_show(State(inner): State<Arc<Inner>>, Path(code): Path<String>) -> 
         return nothing_here();
     };
     let Some(desk) = inner.desk.get() else {
-        return gone();
+        return refused(
+            StatusCode::CONFLICT,
+            &codes::SURFACE_UNAVAILABLE,
+            "Nothing to approve here",
+            GONE_DETAIL,
+        );
     };
     // The page shows what the desk holds for the act, and nothing kept
     // from the ask.
