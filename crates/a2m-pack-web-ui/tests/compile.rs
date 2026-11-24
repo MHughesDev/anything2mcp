@@ -115,6 +115,20 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     assert_eq!(roots, ["profiles"]);
 }
 
+/// The hash of the plan the `example` pages target compiles to. Held in the
+/// source so that each of the three CI systems compares its own build to the
+/// same value (package 1.3): the plan's bytes carry no line ending of a
+/// system, and no path or time of a machine.
+const PAGES_PLAN_HASH: &str = "b7964c167c02b0501e690dd8083c2d794e4aba382193b9d8c3811416a51caf31";
+
+#[test]
+fn the_pages_target_compiles_to_the_same_plan_bytes_on_every_machine() {
+    let stand = stand("plan_hash");
+    let compiled = compile(&stand.registry, "example");
+    assert!(!compiled.encoded.bytes.contains(&b'\r'));
+    assert_eq!(compiled.encoded.hash.to_string(), PAGES_PLAN_HASH);
+}
+
 #[test]
 fn the_fixture_target_compiles_twice_to_the_same_bytes() {
     let stand = stand("compile");
