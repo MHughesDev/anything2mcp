@@ -43,6 +43,7 @@ Every word that arrives with a pack is a registered name in the same way: a surf
 | `steps` | The step kinds its lowerings may emit |
 | `commit_steps` | The step kinds that always save. A step of such a kind that is not marked as the commit point is refused before the driver sees it. May be left out |
 | `absence_steps` | The step kinds whose "absent", once the binding's settle time has passed, the provider states is authoritative: the record is not in the system. Only a lookup made of these alone may return a record with no key that is in doubt to `planned` ([section 208](208-runs-the-ledger-and-resume.md)); a read-back never does. Empty by default |
+| `prepare_within_ms` | The longest one `prepare` of the mode's driver takes on a slow machine, in milliseconds, starting any program it needs. The engine gives `prepare` this long, and 30 seconds where it is left out. At least one millisecond and at most the kernel's ceiling of ten minutes; a manifest that states another is refused ([decision 0999](../../decisions/0999-a-mode-states-how-long-its-prepare-may-take-and-the-engine-honours-it-under-a-ceiling.md)) |
 | `rank` | Its default place in binding order when an operation states none. Lower is tried first |
 | `intent_window` | How many intents may be stored ahead of acting, by default ([section 208](208-runs-the-ledger-and-resume.md)) |
 | `session_reads`, `session_writes` | Parallel reads and writes per session, by default ([section 211](211-concurrency.md)) |
