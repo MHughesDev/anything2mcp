@@ -37,6 +37,49 @@ pub(crate) fn plus(moment: Timestamp, duration: Duration) -> Timestamp {
     Timestamp::from_unix_millis(moment.as_unix_millis().saturating_add(ms(duration)))
 }
 
+/// The scheduler's count of lease time: the time of day when the scheduler
+/// was made, carried forward by the machine's steady clock and by nothing
+/// else. Every lease's end is a moment of this count and is judged by it, so
+/// a jump of the machine's time of day, forward or back, neither ends a
+/// lease early nor keeps one past its length (spec section 224). Deadlines
+/// of other kinds (a queue limit, a budget's refill, a job's availability)
+/// stay moments of the store's clock.
+#[derive(Clone)]
+pub(crate) struct LeaseClock {
+    clock: std::sync::Arc<dyn a2m_telemetry::Clock>,
+    wall: i64,
+    steady: Duration,
+}
+
+impl LeaseClock {
+    pub(crate) fn new(clock: std::sync::Arc<dyn a2m_telemetry::Clock>) -> Self {
+        let wall = clock.now().as_unix_millis();
+        let steady = clock.elapsed();
+        Self {
+            clock,
+            wall,
+            steady,
+        }
+    }
+
+    /// Now, on the count of lease time.
+    pub(crate) fn now(&self) -> Timestamp {
+        let since = self.clock.elapsed().saturating_sub(self.steady);
+        Timestamp::from_unix_millis(self.wall.saturating_add(ms(since)))
+    }
+
+    /// A moment of lease time as the store's clock would show it now: for a
+    /// deadline that a timer on the store's clock waits for.
+    pub(crate) fn to_store(&self, moment: Timestamp) -> Timestamp {
+        let offset = self
+            .clock
+            .now()
+            .as_unix_millis()
+            .saturating_sub(self.now().as_unix_millis());
+        Timestamp::from_unix_millis(moment.as_unix_millis().saturating_add(offset))
+    }
+}
+
 /// The time from `from` to `to`, or none when `to` is not later.
 pub(crate) fn between(from: Timestamp, to: Timestamp) -> Duration {
     let millis = to.as_unix_millis().saturating_sub(from.as_unix_millis());
@@ -518,8 +561,9 @@ pub(crate) fn acquire(
     lease: &LeaseRef,
     keys: &[ResourceKey],
     waited_for: &BTreeSet<ResourceKey>,
+    at: Timestamp,
 ) -> Result<Acquired, Failure> {
-    let job = held(tx, lease, true)?;
+    let job = held(tx, lease, Some(at))?;
     let holds = resource_holds(tx)?;
     let me = job.id.to_string();
     let highest = holds
@@ -542,7 +586,7 @@ pub(crate) fn acquire(
         .any(|key| holds.contains_key(key) || waited_for.contains(key));
     if blocked {
         return Ok(Acquired::Blocked {
-            lease_until: job.lease_until.unwrap_or_else(|| tx.now()),
+            lease_until: job.lease_until.unwrap_or(at),
         });
     }
     take_holds(tx, job.id, &wanted)?;
@@ -554,6 +598,7 @@ pub(crate) fn acquire(
 pub(crate) fn grant(
     tx: &mut Tx<'_>,
     waiters: &[(u64, JobId, Vec<ResourceKey>)],
+    at: Timestamp,
 ) -> Result<Vec<u64>, Failure> {
     let mut holds = resource_holds(tx)?;
     let mut spoken_for = BTreeSet::new();
@@ -564,8 +609,7 @@ pub(crate) fn grant(
             holds.get(key).is_none_or(|holder| *holder == me) && !spoken_for.contains(key)
         });
         let waiting = find_job(tx, *job)?;
-        let now = tx.now();
-        if waiting.state != JobState::Leased || waiting.lease_until.is_none_or(|until| now >= until)
+        if waiting.state != JobState::Leased || waiting.lease_until.is_none_or(|until| at >= until)
         {
             // Its job has ended, or its lease has run out and it is about
             // to be declared lost: it is given nothing and keeps no place,
@@ -591,7 +635,7 @@ pub(crate) fn release(
     lease: &LeaseRef,
     keys: &[ResourceKey],
 ) -> Result<(), Failure> {
-    let job = held(tx, lease, false)?;
+    let job = held(tx, lease, None)?;
     for key in keys {
         tx.tables(Owner::Sched).execute(
             "DELETE FROM resource_holds WHERE resource_key = ?1 AND job_id = ?2",
@@ -1006,6 +1050,7 @@ pub(crate) fn claim(
     runner_id: RunnerId,
     mut free: Slots,
     waited_for: &BTreeSet<ResourceKey>,
+    at: Timestamp,
 ) -> Result<Vec<Leased>, Failure> {
     let runner = find_runner(tx, runner_id)?.ok_or_else(failure::runner_not_enrolled)?;
     if runner.state == "revoked" {
@@ -1062,7 +1107,7 @@ pub(crate) fn claim(
             Taken::Keeper => None,
             Taken::Ordinary(mode) => mode.clone(),
         };
-        if let Some(lease) = lease(tx, settings, &job, runner_id, mode.clone())? {
+        if let Some(lease) = lease(tx, settings, &job, runner_id, mode.clone(), at)? {
             match taken {
                 Taken::Keeper => free.keeper -= 1,
                 Taken::Ordinary(_) => {
@@ -1089,6 +1134,7 @@ fn lease(
     job: &Job,
     runner: RunnerId,
     mode: Option<Mode>,
+    at: Timestamp,
 ) -> Result<Option<Leased>, Failure> {
     let now = tx.now();
     let epoch = match job.run {
@@ -1124,7 +1170,7 @@ fn lease(
             epoch_value(epoch)?,
             runner.to_string().into(),
             mode.as_ref().map(Mode::as_str).into(),
-            plus(now, settings.lease_length).into(),
+            plus(at, settings.lease_length).into(),
             now.into(),
         ],
     )?;
@@ -1162,9 +1208,10 @@ fn lease(
 
 // ---- leases --------------------------------------------------------------
 
-/// The job, when the lease is its current one. With `in_time`, a lease whose
-/// time has run out on the scheduler's count is refused too.
-fn held(tx: &mut Tx<'_>, lease: &LeaseRef, in_time: bool) -> Result<Job, Failure> {
+/// The job, when the lease is its current one. With `in_time`, the moment
+/// of lease time now, a lease whose time has run out on the scheduler's
+/// count is refused too.
+fn held(tx: &mut Tx<'_>, lease: &LeaseRef, in_time: Option<Timestamp>) -> Result<Job, Failure> {
     let job = find_job(tx, lease.job)?;
     if job.state != JobState::Leased {
         return Err(failure::lease_superseded("the job is no longer leased"));
@@ -1174,7 +1221,9 @@ fn held(tx: &mut Tx<'_>, lease: &LeaseRef, in_time: bool) -> Result<Job, Failure
             "the call carries another lease number than the job's current one",
         ));
     }
-    if in_time && job.lease_until.is_none_or(|until| tx.now() >= until) {
+    if let Some(at) = in_time
+        && job.lease_until.is_none_or(|until| at >= until)
+    {
         return Err(failure::lease_superseded(
             "it ran out before this call arrived",
         ));
@@ -1182,9 +1231,14 @@ fn held(tx: &mut Tx<'_>, lease: &LeaseRef, in_time: bool) -> Result<Job, Failure
     Ok(job)
 }
 
-/// The moment the lease runs out, for a call that waits inside it.
-pub(crate) fn lease_until(tx: &mut Tx<'_>, lease: &LeaseRef) -> Result<Timestamp, Failure> {
-    let job = held(tx, lease, true)?;
+/// The moment the lease runs out, on the count of lease time, for a call
+/// that waits inside it.
+pub(crate) fn lease_until(
+    tx: &mut Tx<'_>,
+    lease: &LeaseRef,
+    at: Timestamp,
+) -> Result<Timestamp, Failure> {
+    let job = held(tx, lease, Some(at))?;
     job.lease_until
         .ok_or_else(|| failure::corrupt("a leased job with no end of lease"))
 }
@@ -1194,14 +1248,15 @@ pub(crate) fn heartbeat(
     tx: &mut Tx<'_>,
     settings: &SchedSettings,
     lease: &LeaseRef,
+    at: Timestamp,
 ) -> Result<Renewal, Failure> {
-    let job = held(tx, lease, true)?;
+    let job = held(tx, lease, Some(at))?;
     let now = tx.now();
     tx.tables(Owner::Sched).execute(
         "UPDATE jobs SET lease_until = ?2, heartbeat_at = ?3 WHERE id = ?1",
         &[
             job.id.to_string().into(),
-            plus(now, settings.lease_length).into(),
+            plus(at, settings.lease_length).into(),
             now.into(),
         ],
     )?;
@@ -1487,7 +1542,7 @@ pub(crate) fn finish(
 ) -> Result<Ended, Failure> {
     // A result is taken until the lease is declared lost: until then nobody
     // else has been given the job.
-    let job = held(tx, lease, false)?;
+    let job = held(tx, lease, None)?;
     let run_state = match job.run {
         Some(run) => Some(tx.ledger().run(run)?.state),
         None => None,
@@ -1614,6 +1669,7 @@ pub(crate) fn sweep(
     tx: &mut Tx<'_>,
     settings: &SchedSettings,
     resumed: &BTreeSet<JobId>,
+    at: Timestamp,
 ) -> Result<Swept, Failure> {
     let now = tx.now();
     let mut swept = Swept::default();
@@ -1623,8 +1679,10 @@ pub(crate) fn sweep(
     // number that nobody holds, which sorts its locks, and stops as
     // `possible_commit`, `runner_lost`; a reconcile job waits out the
     // quarantine.
+    // Judged on the count of lease time: a jump of the time of day loses
+    // no lease and keeps none.
     let lost_before =
-        Timestamp::from_unix_millis(now.as_unix_millis().saturating_sub(ms(settings.lost_after)));
+        Timestamp::from_unix_millis(at.as_unix_millis().saturating_sub(ms(settings.lost_after)));
     let rows = tx.tables(Owner::Sched).query(
         select_jobs!("WHERE j.state = 'leased' AND j.lease_until <= ?1 ORDER BY j.seq"),
         &[lost_before.into()],
@@ -1721,6 +1779,7 @@ pub(crate) fn sweep(
 pub(crate) fn next_due(
     tx: &mut Tx<'_>,
     settings: &SchedSettings,
+    lease_time: &LeaseClock,
 ) -> Result<Option<Timestamp>, Failure> {
     let now = tx.now();
     let mut due: Option<Timestamp> = None;
@@ -1732,10 +1791,12 @@ pub(crate) fn next_due(
         &[],
     )? && let Some(until) = row.opt_int(0)?
     {
-        sooner(plus(
+        // A lease's end is a moment of lease time; the sweeping task waits
+        // on the store's clock.
+        sooner(lease_time.to_store(plus(
             Timestamp::from_unix_millis(until),
             settings.lost_after,
-        ));
+        )));
     }
     let scope_holds = scope_holds(tx)?;
     let rows = tx.tables(Owner::Sched).query(

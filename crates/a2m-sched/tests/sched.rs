@@ -405,6 +405,41 @@ async fn a_lost_lease_is_fenced_and_quarantined_before_anyone_else_gets_the_run(
     );
 }
 
+/// Spec section 224: when the machine's clock jumps, leases are unaffected,
+/// because they are measured on a steady clock.
+#[tokio::test]
+async fn a_jump_in_the_machines_clock_does_not_move_leases() {
+    let stand = Stand::new("clock-jump").await;
+    let one = stand.hello(1).await;
+    let two = stand.hello(2).await;
+    let (run, job) = stand.admit(write(1, "w")).await;
+    let lease = stand.claim_one(one).await;
+
+    // The time of day jumps a day forward, with no time passing. The lease
+    // is not lost, nobody else is given the job, and its heartbeat is taken.
+    stand.clock.jump(86_400_000);
+    let swept = stand.sched.sweep().await.unwrap();
+    assert!(swept.lost.is_empty(), "{swept:?}");
+    assert!(stand.claim(two, 1).await.is_empty());
+    stand.sched.heartbeat(&lease.lease_ref()).await.unwrap();
+    assert_eq!(stand.sched.job(job).await.unwrap().state, JobState::Leased);
+    assert_ne!(stand.run_state(run), "stopped");
+
+    // The time of day jumps two days back. The lease still runs its own
+    // length on the steady count: it is lost when that has passed, and not
+    // a day and more later.
+    stand.clock.jump(-2 * 86_400_000);
+    // The sweeping task is told the moment of the loss on the store's
+    // clock: the lease's length and the grace after it, from now.
+    assert_eq!(stand.sched.next_due().await.unwrap(), Some(stand.after(35)));
+    stand.advance(30);
+    assert!(stand.sched.sweep().await.unwrap().lost.is_empty());
+    stand.advance(5);
+    let swept = stand.sched.sweep().await.unwrap();
+    assert_eq!(swept.lost, vec![job]);
+    assert_eq!(stand.run_state(run), "stopped");
+}
+
 // ---- exclusive resources -------------------------------------------------
 
 fn screen() -> ResourceKey {
