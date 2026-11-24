@@ -37,15 +37,21 @@
 //! and kinds, and takes a snapshot of each screen with no value kept
 //! (decision 0392, point 1).
 //!
+//! A browser is recycled between runs after repeated hangs of its tabs
+//! (decision 0422) and once past its memory limit; while the browsers hold
+//! their memory ceiling, no new browser work is started and the open
+//! answers `busy`, `memory_short`, with a retry time (decision 0999).
+//!
 //! Not built yet: page storage in a session's state, frames, the stream of every network exchange,
 //! declared pop-ups and downloads (an undeclared one is refused and
-//! reported), uploads, recycling, and the platform profiles.
+//! reported), uploads, recycling by run count and age, and the platform profiles.
 
 mod browsers;
 mod capture;
 mod client;
 mod error;
 mod launch;
+mod memory;
 mod origin;
 mod page_read;
 mod page_write;
@@ -65,11 +71,12 @@ pub use a2m_provider::Deadline;
 
 pub use browsers::{
     Address, BROWSER_KIND, Browser, BrowserHealth, BrowserSettings, BrowserState, Browsers,
-    DIGESTS_SETTING, DOWNLOADS_FOLDER, HANG_PROBE, HANGS_BEFORE_RECYCLE, Observer, OpenBrowser,
-    PROFILE_ROOT, ProfileKey, STAGING_FOLDER, SharedBrowsers, StateCookie, Visibility,
+    DIGESTS_SETTING, DOWNLOADS_FOLDER, HANG_PROBE, HANGS_BEFORE_RECYCLE, MEMORY_CEILING,
+    MEMORY_LIMIT, MEMORY_RETRY, Observer, OpenBrowser, PROFILE_ROOT, ProfileKey, STAGING_FOLDER,
+    SharedBrowsers, StateCookie, Visibility,
 };
 pub use capture::captured;
-pub use error::{BrowserError, Dispatch, LaunchReason, Reason, RequestShape, codes};
+pub use error::{BrowserError, Dispatch, LaunchReason, MemoryShort, Reason, RequestShape, codes};
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
 pub use origin::Origins;
 pub use page_read::{MAX_SEGMENT_BYTES, PageAnswer, PagePath, plain_segment};

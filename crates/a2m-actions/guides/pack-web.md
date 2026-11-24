@@ -59,6 +59,6 @@ A binding of mode `ui` names a `screen`, and for a write a `verb`, `fields` (scr
 
 ## Codes
 
-`drift`: `locator_not_found`, `locator_ambiguous`, `fingerprint_mismatch`. `unknown_variant`: `unexpected_dialog`, `unexpected_page`, `unexpected_control`, `unknown_control`, `browser_not_owned`, `read_too_large`. `rejected`: `app_validation_error`. `policy`: `surface_not_declared`, `password_read_refused`. `busy`: `browser_unavailable`. `input`: `step_not_usable`, `address_invalid`, `address_value_refused`.
+`drift`: `locator_not_found`, `locator_ambiguous`, `fingerprint_mismatch`. `unknown_variant`: `unexpected_dialog`, `unexpected_page`, `unexpected_control`, `unknown_control`, `browser_not_owned`, `read_too_large`. `rejected`: `app_validation_error`. `policy`: `surface_not_declared`, `password_read_refused`. `busy`: `browser_unavailable`, `memory_short` (call again after the wait it gives). `input`: `step_not_usable`, `address_invalid`, `address_value_refused`.
 
 A crash or a lost connection after a commit was sent is `possible_commit`, never `transient`.

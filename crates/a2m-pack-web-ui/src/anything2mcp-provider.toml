@@ -331,6 +331,10 @@ class = "busy"
 code = "browser_unavailable"
 
 [[failure_codes]]
+class = "busy"
+code = "memory_short"
+
+[[failure_codes]]
 class = "input"
 code = "step_not_usable"
 

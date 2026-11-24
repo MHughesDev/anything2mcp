@@ -413,9 +413,11 @@ dependencies = [
  "a2m-provider",
  "a2m-telemetry",
  "example-app",
+ "libc",
  "serde",
  "serde_json",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

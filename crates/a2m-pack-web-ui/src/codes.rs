@@ -7,7 +7,8 @@
 //! manifest declares too, are in [`PASSED_ON`].
 //!
 //! The pack has no `busy` code of its own; the browser engine's
-//! `browser_unavailable` does not pass by itself.
+//! `browser_unavailable` does not pass by itself, and its `memory_short`
+//! does (decision 0999).
 
 use a2m_core::{CodeEntry, Failure, FailureCode};
 use a2m_provider::StepFailure;
@@ -108,6 +109,9 @@ a2m_core::failure_codes! {
 
 /// The browser engine's: no browser is installed.
 pub const BROWSER_UNAVAILABLE: FailureCode = a2m_pack_web_browser::codes::BROWSER_UNAVAILABLE;
+/// The browser engine's: memory runs short, so no new browser work is
+/// started; the failure carries a retry time.
+pub const MEMORY_SHORT: FailureCode = a2m_pack_web_browser::codes::MEMORY_SHORT;
 /// The browser engine's: the program that started is not a browser the
 /// engine can own.
 pub const BROWSER_NOT_OWNED: FailureCode = a2m_pack_web_browser::codes::BROWSER_NOT_OWNED;
@@ -124,6 +128,7 @@ pub const ADDRESS_VALUE_REFUSED: FailureCode = a2m_pack_web_browser::codes::ADDR
 /// manifest declares too.
 pub const PASSED_ON: &[FailureCode] = &[
     BROWSER_UNAVAILABLE,
+    MEMORY_SHORT,
     BROWSER_NOT_OWNED,
     PASSWORD_READ_REFUSED,
     ADDRESS_INVALID,

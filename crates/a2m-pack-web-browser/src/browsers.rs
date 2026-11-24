@@ -19,12 +19,12 @@ use a2m_provider::{
 };
 
 use crate::client::{Client, ClientError, Why};
-use crate::error::{BrowserError, Dispatch, LaunchReason, codes, input};
+use crate::error::{BrowserError, Dispatch, LaunchReason, MemoryShort, codes, input};
 use crate::launch;
 use crate::origin::Origins;
 use crate::protocol::{
-    CloseBrowser, CloseTarget, CookieToSet, CreateBrowserContext, GetCookies, GetTargets,
-    GetVersion, GrantPermissions, SetAutoAttach, SetCookies, SetDocumentContent,
+    CloseBrowser, CloseTarget, CookieToSet, CreateBrowserContext, GetCookies, GetProcessInfo,
+    GetTargets, GetVersion, GrantPermissions, SetAutoAttach, SetCookies, SetDocumentContent,
     SetDownloadBehavior, TargetFilter,
 };
 use crate::safe::SafeRequests;
@@ -58,6 +58,23 @@ pub const HANGS_BEFORE_RECYCLE: u32 = 3;
 /// before it is called hung and closed, when the settings say nothing else
 /// (decision 0422).
 pub const HANG_PROBE: Duration = Duration::from_secs(5);
+
+/// The most memory one browser may hold, its processes together, before it
+/// is recycled between runs, when the settings say nothing else (decision
+/// 0999): two gibibytes. A draft, set when first measured on a long run
+/// (spec section 226); a browser of the test application with one tab was
+/// measured at about 300 MB on Linux.
+pub const MEMORY_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
+
+/// The most memory the engine's browsers may hold together for new browser
+/// work to start, when the settings say nothing else (decision 0999): four
+/// gibibytes, two browsers at their limit. A draft, as [`MEMORY_LIMIT`] is.
+pub const MEMORY_CEILING: u64 = 4 * 1024 * 1024 * 1024;
+
+/// How long a call refused because memory runs short is told to wait
+/// before it asks again, when the settings say nothing else (decision
+/// 0999).
+pub const MEMORY_RETRY: Duration = Duration::from_secs(30);
 
 /// The version of the DevTools protocol the engine speaks.
 const PROTOCOL_VERSION: &str = "1.3";
@@ -105,6 +122,22 @@ pub struct BrowserSettings {
     /// but an answer. A tab that gives none is hung: it is closed, and the
     /// hang is counted against its browser. [`HANG_PROBE`] by default.
     pub hang_probe: Duration,
+    /// The most memory one browser may hold, in bytes, its processes
+    /// together, as their operating system counts what each costs. A
+    /// browser past it is recycled at the next open that finds no tab of it
+    /// held, between two runs and never inside one; so is one whose memory
+    /// cannot be measured. [`MEMORY_LIMIT`] by default.
+    pub memory_limit: u64,
+    /// The most memory, in bytes, the engine's browsers may hold together
+    /// for new browser work to start. An open that would begin work, on a
+    /// new browser or on one of whose tabs none is held, while they hold it
+    /// or more, or while one of them cannot be measured, starts nothing and
+    /// answers `busy`, `memory_short`, with [`Self::memory_retry`] as its
+    /// retry time. [`MEMORY_CEILING`] by default.
+    pub memory_ceiling: u64,
+    /// The retry time of a call refused because memory runs short.
+    /// [`MEMORY_RETRY`] by default.
+    pub memory_retry: Duration,
     /// Test equipment only: starts the browser without its sandbox, for a
     /// machine whose tests run as the superuser. It exists only in a test
     /// build, and nothing in the product can set it.
@@ -147,6 +180,9 @@ impl Default for BrowserSettings {
             max_read_chars: 1024 * 1024,
             hangs_before_recycle: HANGS_BEFORE_RECYCLE,
             hang_probe: HANG_PROBE,
+            memory_limit: MEMORY_LIMIT,
+            memory_ceiling: MEMORY_CEILING,
+            memory_retry: MEMORY_RETRY,
             #[cfg(any(test, feature = "test-support"))]
             without_sandbox: false,
             #[cfg(any(test, feature = "test-support"))]
@@ -420,6 +456,36 @@ impl BrowserInner {
         self.hangs.load(Ordering::SeqCst) >= limit && self.tabs.load(Ordering::SeqCst) == 0
     }
 
+    /// The memory the browser holds, in bytes: the sum of what its
+    /// processes hold, by the browser's own list of them, each measured by
+    /// its operating system. A browser that does not answer within `wait`,
+    /// or names no process, or a process that cannot be measured, is an
+    /// error, and the caller fails closed on it (decision 0999).
+    pub(crate) async fn memory(&self, wait: Duration) -> Result<u64, String> {
+        let listed = self
+            .client
+            .call(None, &GetProcessInfo {}, Deadline::after(wait))
+            .await
+            .map_err(|_| "it did not say which processes are its own".to_owned())?;
+        let ids: Vec<u32> = listed.process_info.iter().map(|one| one.id).collect();
+        if ids.is_empty() {
+            return Err("it named no process of its own".to_owned());
+        }
+        // The system's tables are read off the threads that serve
+        // everything else.
+        tokio::task::spawn_blocking(move || {
+            let mut total = 0_u64;
+            for id in ids {
+                if let Some(bytes) = crate::memory::of_process(id)? {
+                    total = total.saturating_add(bytes);
+                }
+            }
+            Ok(total)
+        })
+        .await
+        .map_err(|_| "its measurement was stopped".to_owned())?
+    }
+
     fn health(&self) -> BrowserHealth {
         if self.client.closed().is_some() {
             BrowserHealth::Exited
@@ -445,7 +511,13 @@ pub(crate) struct Shared {
     /// these stops first.
     abandoned: Mutex<Vec<(SubsystemId, Option<tokio::task::JoinHandle<Cleanup>>)>>,
     pub(crate) next_tab: AtomicU64,
+    /// [`BrowserSettings::memory_ceiling`], which this crate's own tests
+    /// move while a browser runs.
+    memory_ceiling: AtomicU64,
 }
+
+/// What each running browser holds, by profile.
+type Measured = Vec<(ProfileKey, Result<u64, String>)>;
 
 impl Shared {
     fn open(&self) -> MutexGuard<'_, BTreeMap<ProfileKey, Arc<BrowserInner>>> {
@@ -477,6 +549,59 @@ impl Shared {
         }
         browser.client.close();
         self.supervisor.stop(browser.subsystem).await
+    }
+
+    /// What each open browser that still runs holds. One that has ended
+    /// holds nothing and is not asked; it is started afresh at its next
+    /// open.
+    async fn measure(&self) -> Measured {
+        let running: Vec<Arc<BrowserInner>> = self
+            .open()
+            .values()
+            .filter(|browser| browser.health() != BrowserHealth::Exited)
+            .cloned()
+            .collect();
+        let mut measured = Vec::with_capacity(running.len());
+        for browser in running {
+            let held = browser.memory(self.settings.hang_probe).await;
+            measured.push((browser.profile.clone(), held));
+        }
+        measured
+    }
+
+    /// Refuses new browser work while the browsers measured hold the
+    /// ceiling or more, or one of them could not be measured: `busy`,
+    /// `memory_short`, with the retry time (decision 0999).
+    fn room(&self, measured: &Measured) -> Result<(), BrowserError> {
+        let ceiling = self.memory_ceiling.load(Ordering::SeqCst);
+        let retry = self.settings.memory_retry;
+        let mut held = 0_u64;
+        for (_, one) in measured {
+            match one {
+                Ok(bytes) => held = held.saturating_add(*bytes),
+                Err(why) => {
+                    return Err(BrowserError::LaunchFailed(LaunchReason::MemoryShort(
+                        MemoryShort {
+                            held: None,
+                            ceiling,
+                            retry,
+                            why: Some(shown(self.redact.as_ref(), why)),
+                        },
+                    )));
+                }
+            }
+        }
+        if held >= ceiling {
+            return Err(BrowserError::LaunchFailed(LaunchReason::MemoryShort(
+                MemoryShort {
+                    held: Some(held),
+                    ceiling,
+                    retry,
+                    why: None,
+                },
+            )));
+        }
+        Ok(())
     }
 
     /// Finishes the stop of every browser whose launch was dropped, and
@@ -821,11 +946,12 @@ impl Browsers {
                 supervisor: ctx.supervisor().clone(),
                 root: ctx.folder(&name, Access::Write),
                 redact: Arc::clone(ctx.redact()),
-                settings,
                 open: Mutex::new(BTreeMap::new()),
                 launching: tokio::sync::Mutex::new(()),
                 abandoned: Mutex::new(Vec::new()),
                 next_tab: AtomicU64::new(1),
+                memory_ceiling: AtomicU64::new(settings.memory_ceiling),
+                settings,
             }),
         })
     }
@@ -915,18 +1041,45 @@ impl Browsers {
             Visibility::Window { notice } => Some(notice.clone()),
         };
         let window = notice.is_some();
+        // An open that finds a tab of its profile's browser held is a run's
+        // work going on, and is let go on; every other open begins browser
+        // work, and memory is measured for it (decision 0999).
+        let begins = window
+            || existing
+                .as_ref()
+                .is_none_or(|existing| existing.tabs.load(Ordering::SeqCst) == 0);
+        let mut measured = if begins {
+            shared.measure().await
+        } else {
+            Vec::new()
+        };
         if let Some(existing) = existing {
             // A browser in the background is used again; a window never is,
-            // and one is never used for a run in the background.
+            // and one is never used for a run in the background. One past
+            // its memory limit, or that cannot be measured, is recycled, as
+            // one is after its hangs: only when no tab of it is held.
             let exited = existing.health() == BrowserHealth::Exited;
             let due = existing.due_for_recycling(&shared.settings);
-            if !exited && !due && !window && !existing.window {
+            let heavy = begins
+                && measured
+                    .iter()
+                    .find(|(measured, _)| measured == profile)
+                    .is_some_and(|(_, held)| {
+                        held.as_ref()
+                            .map_or(true, |bytes| *bytes >= shared.settings.memory_limit)
+                    });
+            if !exited && !due && !heavy && !window && !existing.window {
+                if begins {
+                    shared.room(&measured)?;
+                }
                 return Ok(Browser {
                     inner: existing,
                     shared: Arc::clone(shared),
                     _notice: None,
                 });
             }
+            // What it holds goes with it.
+            measured.retain(|(measured, _)| measured != profile);
             shared.open().remove(profile);
             if exited {
                 existing.client.close();
@@ -937,6 +1090,8 @@ impl Browsers {
                 shared.end(&existing).await;
             }
         }
+        // Nothing is started while memory runs short.
+        shared.room(&measured)?;
         let failed = |reason| BrowserError::LaunchFailed(reason);
         let screen = if window {
             Some(
@@ -1152,6 +1307,13 @@ impl Browsers {
             shared: Arc::clone(shared),
             _notice: notice,
         })
+    }
+
+    /// This crate's own tests only: moves the memory ceiling while the
+    /// browsers run, as a person's new setting would at the next start.
+    #[cfg(test)]
+    pub(crate) fn set_memory_ceiling(&self, bytes: u64) {
+        self.shared.memory_ceiling.store(bytes, Ordering::SeqCst);
     }
 
     /// A handle that can open observing tabs and nothing else. The pack

@@ -544,6 +544,24 @@ pub(crate) struct Version {
     pub product: String,
 }
 
+/// The browser's processes, by the browser's own word: itself and each of
+/// its children, such as a page's renderer (decision 0999).
+#[derive(Debug, Serialize)]
+pub(crate) struct GetProcessInfo {}
+command!(GetProcessInfo, "SystemInfo.getProcessInfo" => ProcessInfos);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProcessInfos {
+    pub process_info: Vec<ProcessInfo>,
+}
+
+/// One process of the browser. Only its number is read.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ProcessInfo {
+    pub id: u32,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct CloseBrowser {}
 command!(CloseBrowser, "Browser.close" => Nothing);
