@@ -286,7 +286,7 @@ No step is idempotent, and there is no confirm step. A step's time limit is the 
 
 Not built:
 
-- The review naming, for each tool on a server a launcher runs, the code nothing pins: the packages the entry file loads, and what those start ([decision 0371](../../decisions/0371-the-mcp-pack-starts-a-server-through-a-launcher-with-its-installed-entry-file-pinned-where-it-lies.md), point 6). It needs a kind of run in the review summary of `a2m-files`; until then the review shows the pair as a `Script` run, with its notice.
+- The review naming, for each tool on a server a launcher runs, the code nothing pins: the packages the entry file loads, and what those start ([decision 0371](../../decisions/0371-the-mcp-pack-starts-a-server-through-a-launcher-with-its-installed-entry-file-pinned-where-it-lies.md), point 6). Done by [decision 0398](../../decisions/0398-the-review-shows-a-launched-program-as-a-launcher-and-says-what-nothing-pins.md) (package L4), which found that listing the packages is a guess: the review shows the pair as a `ProgramRun::Launcher`, with `LAUNCHER_NOTICE`, which says that what the entry file loads, and what that starts, is not pinned and is not shown. The lowering states it so.
 - A server that an interpreter runs from a script the target keeps, copied for the run as the command pack does: a server's installed entry file is run where it lies instead.
 - A setting that names a group whose write counts as the administrators' (Not yet, decision 0250): only the system's own count.
 - Keeping a local program's standard error: it goes to the null device, on every system.
