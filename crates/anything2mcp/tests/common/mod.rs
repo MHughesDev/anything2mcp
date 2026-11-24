@@ -406,3 +406,26 @@ impl World {
         self.engine.close().await;
     }
 }
+
+/// The files under `folder` this process still has open. Windows refuses
+/// to remove a file that is open; Linux removes it, so a test there asks
+/// the process itself. Read from `/proc/self/fd`, on Linux only; empty on
+/// every other system.
+pub fn open_under(folder: &Path) -> Vec<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        let folder = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+        let Ok(entries) = std::fs::read_dir("/proc/self/fd") else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+            .filter(|target| target.starts_with(&folder))
+            .collect()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = folder;
+        Vec::new()
+    }
+}

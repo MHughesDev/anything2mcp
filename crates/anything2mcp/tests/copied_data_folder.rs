@@ -27,7 +27,7 @@ use a2m_actions::{Paths, PresenceProof};
 use a2m_core::{RunId, Timestamp};
 use a2m_policy::{Channel, PresenceCheck};
 use a2m_telemetry::{Clock, ManualClock, SystemClock};
-use common::{Folder, Machine, World};
+use common::{Folder, Machine, World, open_under};
 use example_app::harness::TestApp;
 use serde_json::Value as Json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -280,6 +280,15 @@ async fn a_data_folder_put_back_holds_the_copy_and_its_stopped_run_resumes_with_
     let newer = world.ok(&["trace", "show", &run]).await;
     assert!(completed(&newer), "{newer}");
     world.close().await;
+    // A closed engine has let go of its store: Windows refuses to remove a
+    // file the store's database has open, which it shares for reading and
+    // writing and not for removal. (The process's log file is opened as the
+    // standard library opens every file, shared for removal too, and may
+    // stay open: the last engine's log receives the process's log lines.)
+    assert_eq!(
+        open_under(&Paths::under(machine.home.path()).store),
+        Vec::<std::path::PathBuf>::new()
+    );
 
     // The person puts the copy back in place of the newer folder, with the
     // engine stopped, and starts it again.

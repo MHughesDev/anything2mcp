@@ -855,6 +855,10 @@ async fn serve_asks_the_prompt_of_its_host_for_an_approval_with_the_operations_e
     let paths = Paths::under(machine.home.path());
     let give_up = tokio::time::Instant::now() + PATIENCE;
     while !EngineLock::held(&paths).unwrap() {
+        // A serve that ended without the lock says why it ended.
+        if serving.is_finished() {
+            panic!("serve ended before it took the lock: {:?}", serving.await);
+        }
         assert!(
             tokio::time::Instant::now() < give_up,
             "serve never took the lock"
