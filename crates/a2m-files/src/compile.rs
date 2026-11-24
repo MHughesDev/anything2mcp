@@ -3911,6 +3911,7 @@ impl<'a> Compiler<'a> {
             places.push(at);
         }
         self.lint_what_addresses_the_reader(&tools, &places);
+        self.hold_url_inputs_to_destinations();
         // Two tools a caller cannot tell apart, and names that differ only
         // by a suffix.
         for (later, tool) in tools.iter().enumerate() {
@@ -4154,6 +4155,69 @@ impl<'a> Compiler<'a> {
                 format!("The definition of `{name}` holds {total} characters of text; it holds at most {MOST_DEFINITION_CHARACTERS} in all."),
                 "Shorten the descriptions of its fields, or split the tool in two.",
             ));
+        }
+    }
+
+    /// An input of the built-in type `url` accepts only the destinations its
+    /// operation declares, which the engine holds it to at run time (section
+    /// 502), and only a destination that names its scheme: an operation
+    /// with one and no such destination, or a pipeline with one that calls
+    /// no operation with such a destination, could accept no address at
+    /// all, and does not compile.
+    fn hold_url_inputs_to_destinations(&mut self) {
+        let is_url = |field_types: &[a2m_core::CompiledFieldType], input: &CompiledInput| {
+            field_types
+                .get(input.field_type.get())
+                .is_some_and(|field_type| field_type.name == crate::types::URL_TYPE)
+        };
+        let mut refused = Vec::new();
+        for (position, (operation, _, _)) in self.compiled_ops.iter().enumerate() {
+            if !operation
+                .manifest
+                .destinations
+                .iter()
+                .any(|destination| destination.contains("://"))
+                && operation
+                    .inputs
+                    .iter()
+                    .any(|input| is_url(&self.model.field_types, input))
+            {
+                refused.push((
+                    operation.name.clone(),
+                    self.operations[position].doc.at.clone(),
+                ));
+            }
+        }
+        for pipeline in &self.pipelines {
+            let reaches = pipeline.compiled.steps.iter().any(|step| {
+                self.compiled_ops
+                    .get(step.operation.get())
+                    .is_some_and(|(operation, _, _)| {
+                        operation
+                            .manifest
+                            .destinations
+                            .iter()
+                            .any(|destination| destination.contains("://"))
+                    })
+            });
+            if !reaches
+                && pipeline
+                    .compiled
+                    .inputs
+                    .iter()
+                    .any(|input| is_url(&self.model.field_types, input))
+            {
+                refused.push((pipeline.compiled.name.clone(), pipeline.at.clone()));
+            }
+        }
+        for (name, at) in refused {
+            self.error(
+                codes::URL_WITHOUT_DESTINATION,
+                Stage::Analyze,
+                &at,
+                format!("`{name}` takes an input of the type `url` and declares no destination with a scheme that it may name, so it could accept no address."),
+                "List each address the input may name, with its scheme and `://`, under `permissions.destinations` of the operation it reaches, or give the input another type.".to_owned(),
+            );
         }
     }
 

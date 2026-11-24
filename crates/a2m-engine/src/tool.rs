@@ -647,8 +647,16 @@ impl Tool<'_> {
                     ));
                 }
             }
+            let inputs = loaded.inputs_waiting(&found.inputs, &given, &waiting)?;
+            crate::destination::guard_url_inputs(
+                &loaded.compiled_target,
+                &found.inputs,
+                &inputs,
+                &found.manifest.destinations,
+                &format!("the step `{}`", step.id),
+            )?;
             calls.push(Call {
-                inputs: loaded.inputs_waiting(&found.inputs, &given, &waiting)?,
+                inputs,
                 pending: !waiting.is_empty(),
             });
         }
@@ -795,6 +803,23 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
         run.moved(RunState::Validating).await?;
     }
     let inputs = loaded.inputs(declared, &run.job.input)?;
+    // Guard: an input of the type `url` is an address the operation
+    // declares; for a pipeline, one an operation it calls declares, and
+    // each call is held to its own operation's again (section 502).
+    let reachable: Vec<String> = steps
+        .iter()
+        .map(|step| operation(&loaded, step.operation))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flat_map(|found| found.manifest.destinations.iter().cloned())
+        .collect();
+    crate::destination::guard_url_inputs(
+        &loaded.compiled_target,
+        declared,
+        &inputs,
+        &reachable,
+        &format!("the tool `{name}`"),
+    )?;
     let (source, rows) = read_source(run, &loaded, tool.runs).await?;
     if let Some(most) = limits.max_records
         && rows > most

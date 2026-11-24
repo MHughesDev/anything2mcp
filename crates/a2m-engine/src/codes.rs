@@ -47,6 +47,9 @@ a2m_core::failure_codes! {
     INPUT_INVALID = Input, "input_invalid",
         meaning "An input is missing, is not declared, or is not of its type.",
         next "Call the tool with every input it declares, each of its type.";
+    SURFACE_NOT_DECLARED = Policy, "surface_not_declared",
+        meaning "An address outside what the target declares was asked for: a surface it does not declare, or an input of the type `url` that is not a destination its operation declares.",
+        next "Give an address the target declares, or declare it as a surface in `target.yaml` or as a destination in the operation's `permissions`, and publish again.";
     RECORD_LIMIT = Policy, "record_limit_exceeded",
         meaning "The run would touch more records than its limit allows.",
         next "Split the source, or raise the pipeline's limit and publish again.";

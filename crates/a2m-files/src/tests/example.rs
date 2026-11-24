@@ -434,6 +434,14 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
+            "kernel.url_without_destination",
+            Case::Edit(
+                ORDER_GET,
+                "inputs:\n",
+                "inputs:\n  link: {type: url, required: false, description: \"Where the order's file is kept\"}\n",
+            ),
+        ),
+        (
             "kernel.description_instructs_the_reader",
             Case::Edit(
                 ORDER_GET,
@@ -3205,4 +3213,70 @@ fn a_description_that_addresses_its_reader_is_a_warning_and_still_compiles() {
             }
         }
     }
+}
+
+/// An input of the built-in type `url` compiles only where its operation
+/// declares a destination, and keeps the type's name in the compiled
+/// target, which is how the engine knows to hold it to those destinations
+/// (section 502).
+#[test]
+fn a_url_input_compiles_with_a_destination_and_keeps_its_type_by_name() {
+    let set = stand_set().unwrap();
+    let link = Case::Edit(
+        ORDER_GET,
+        "inputs:\n",
+        "inputs:\n  link: {type: url, required: false, description: \"Where the order's file is kept\"}\n",
+    );
+    let declaring = |destination: &str| {
+        let mut files = changed(&link);
+        let file = files
+            .iter_mut()
+            .find(|(path, _)| path.as_str() == ORDER_GET)
+            .unwrap();
+        let text = String::from_utf8(file.1.clone()).unwrap().replacen(
+            "description: >",
+            &format!("permissions: {{destinations: [\"{destination}\"]}}\ndescription: >"),
+            1,
+        );
+        file.1 = text.into_bytes();
+        files
+    };
+    // A destination that names no scheme is matched by no input.
+    let schemeless = problems_with(&declaring("files.example.com"), &set, CompileMode::Publish);
+    assert!(
+        schemeless.find("kernel.url_without_destination").is_some(),
+        "{schemeless}"
+    );
+    let files = declaring("https://files.example.com");
+    let sources = load_files(&TargetRoot::new("example"), &files, &set).unwrap();
+    let compiled = compile(&sources, &set, CompileMode::Publish, VERSION)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    let operation = compiled
+        .compiled_target
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_order_get")
+        .unwrap();
+    let input = operation
+        .inputs
+        .iter()
+        .find(|input| input.name == "link")
+        .unwrap();
+    assert_eq!(
+        compiled.compiled_target.field_types[input.field_type.get()].name,
+        crate::types::URL_TYPE
+    );
+    assert_eq!(
+        operation.manifest.destinations,
+        ["https://files.example.com"]
+    );
+    // Without the destination it does not compile.
+    let problems = problems_of(&link);
+    assert_eq!(
+        problems
+            .find("kernel.url_without_destination")
+            .unwrap()
+            .level,
+        Level::Error
+    );
 }
