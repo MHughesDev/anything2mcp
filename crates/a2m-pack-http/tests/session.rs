@@ -956,7 +956,12 @@ async fn a_drafted_api_read_is_pinned_to_its_description_and_a_changed_one_is_na
     // The pinned description holds the digest of the text it was read
     // from, and where that text is served.
     let pinned = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
-    let served = reqwest::get(app.url("/api/openapi.json"))
+    // The stand's own client, which states its TLS provider whatever
+    // features the build unifies.
+    let served = app
+        .http()
+        .get(app.url("/api/openapi.json"))
+        .send()
         .await
         .unwrap()
         .text()
