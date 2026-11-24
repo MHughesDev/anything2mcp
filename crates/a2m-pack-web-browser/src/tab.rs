@@ -4269,6 +4269,15 @@ impl ObserveTab {
         Self { page }
     }
 
+    /// Whether the browser this tab is in is lost: its link is closed,
+    /// because its process ended or the engine closed it. Every call on
+    /// the tab fails from then on, and a tab opened again for the profile
+    /// is in a new browser started from the same data directory.
+    #[must_use]
+    pub fn browser_lost(&self) -> bool {
+        self.page.client.closed().is_some()
+    }
+
     /// What this tab refused since the last call, oldest first: a request
     /// whose method could change the system, by its method; a move of the
     /// tab that its page started (`NAVIGATION`); a window its page opened,
