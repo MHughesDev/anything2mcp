@@ -40,13 +40,13 @@ a2m_core::failure_codes! {
         meaning "A local server program, a launcher, or a server's entry file that another user could change, or a program that is a shell, an interpreter, or a script, is not started (decision 0250).",
         next "Name a program that is itself the server, or a launcher of the provider's table with the server's entry file, by absolute paths on a local drive, and give each file and every folder above it to the engine's user or the administrator, with no write access for anyone else.";
     ENTRY_DIGEST_CHANGED = Drift, "entry_digest_changed",
-        meaning "The entry file of a server started through a launcher is not the one its `entry_digest` pins. Nothing is started (decision 0399).",
+        meaning "The entry file of a server started through a launcher is not the one its `entry_digest` pins. Nothing is started (decision 0371).",
         next "Review the installed server's entry file, write the SHA-256 of its bytes under the surface's `entry_digest`, and publish.";
     PACKAGE_RUNNER_REFUSED = Policy, "package_runner_refused",
         meaning "The local server program is a package runner, which fetches the code it runs at the moment it starts; nothing the product starts fetches code then (decision 0299). Nothing is started.",
         next "Install the server's package, then name the launcher of the provider's table as the surface's `program` and the installed entry file as `entry`, each with its digest.";
     LAUNCHER_NOT_IN_TABLE = Policy, "launcher_not_in_table",
-        meaning "A surface names an entry file, and its program is not a launcher of the provider's closed table of interpreter forms, or is not given that launcher's one form. Nothing is started (decision 0399).",
+        meaning "A surface names an entry file, and its program is not a launcher of the provider's closed table of interpreter forms, or is not given that launcher's one form. Nothing is started (decision 0371).",
         next "Name a launcher of the table as `program`, with the fixed arguments of its form as `launcher_args`, or name a program that is itself the server and no entry file.";
     PRODUCT_HEADER_REFUSED = Policy, "product_header_refused",
         meaning "A session's provider placed a header whose name begins `a2m-`, one of the product's own carriers between its parts, which never goes on the wire. Nothing is sent (decision 0270).",
@@ -329,7 +329,7 @@ pub(crate) fn file_refused(why: &a2m_provider::ProgramRefused, path: &str, noun:
             format!(
                 "The {noun} `{at}` is a shell, an interpreter, a launcher, package runner, container runner, or build tool that runs code its arguments name, a batch file, or a script that one of them would run."
             ),
-            "Name a program that is itself the server, or, for a server a launcher runs, name a launcher of the provider's table as `program` and the server's installed entry file as `entry`, with `entry_digest` (decision 0399).",
+            "Name a program that is itself the server, or, for a server a launcher runs, name a launcher of the provider's table as `program` and the server's installed entry file as `entry`, with `entry_digest` (decision 0371).",
         ),
         ProgramRefused::Writable(what) => unsafe_path(
             format!(

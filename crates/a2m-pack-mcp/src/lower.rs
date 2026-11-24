@@ -472,7 +472,7 @@ impl Lowering for McpLowering {
         );
         // A launcher and the entry file it runs are the fixed pair the
         // review shows for a script: the launcher, its fixed arguments, and
-        // the file with its digest (decision 0399).
+        // the file with its digest (decision 0371).
         let run = match (
             surface.doc.text(crate::mapping::ENTRY),
             surface

@@ -1,4 +1,4 @@
-# 0399. The MCP pack starts a server through a launcher with its installed entry file pinned where it lies
+# 0371. The MCP pack starts a server through a launcher with its installed entry file pinned where it lies
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). It builds package L3 of what [decision 0299](0299-programs-that-run-what-their-arguments-name-are-reached-in-two-steps.md) decided, decides the question [decision 0349](0349-the-two-steps-of-decision-0299-as-built-a-closed-list-of-commands-and-the-javascript-runtime-as-a-launcher.md) left to L3, and supersedes 0299, point 6, in part. The owner had not read this record when it was merged.
 

@@ -75,7 +75,7 @@ impl FarEnd {
                 )));
             }
             // An entry file is started only pinned, and only as the plan
-            // declares it for the surface (decision 0399).
+            // declares it for the surface (decision 0371).
             let entry = match (fields.entry.as_deref(), fields.entry_digest.as_deref()) {
                 (None, None) => None,
                 (Some(entry), Some(stated)) => {
@@ -395,7 +395,7 @@ impl McpDriver {
         }
         let entry = fields.entry.as_deref().zip(fields.entry_digest.as_deref());
         // A launcher runs an entry file only in the one form the provider's
-        // closed table gives it, by both names (decision 0399).
+        // closed table gives it, by both names (decision 0371).
         if entry.is_some() {
             for name in names {
                 let why = match a2m_provider::interpreter_form(
@@ -631,7 +631,7 @@ impl State {
 }
 
 /// Holds the entry file of a server started through a launcher to what it
-/// must be before every start (decision 0399): it and every folder on the
+/// must be before every start (decision 0371): it and every folder on the
 /// way to it closed to other users, as the provider checks a file the
 /// engine wrote, and its bytes the ones `pinned` names. It is run where it
 /// lies, so that the files it loads beside it load; those are not pinned.

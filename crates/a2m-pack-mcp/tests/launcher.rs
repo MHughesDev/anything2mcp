@@ -1,5 +1,5 @@
 //! A local server started through a launcher with its entry file pinned
-//! (package L3, decision 0399): the JavaScript runtime, a launcher of the
+//! (package L3, decision 0371): the JavaScript runtime, a launcher of the
 //! provider's closed table, runs the stand's server as an installed entry
 //! file, and a write through it is proven by asking the stand what it
 //! stored. A changed entry file, a package runner, and a program that is

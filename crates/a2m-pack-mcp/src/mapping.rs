@@ -47,7 +47,7 @@ pub(crate) const RESULT_JSON_TEXT: &str = "json_text";
 /// server started through a launcher names the launcher as its program and
 /// the server's installed entry file as `entry`, pinned by `entry_digest`,
 /// with the fixed arguments of the launcher's form as `launcher_args`
-/// (decision 0399): the plan declares both files as the surface's programs.
+/// (decision 0371): the plan declares both files as the surface's programs.
 pub(crate) fn surface_kind_spec() -> SurfaceKindSpec {
     SurfaceKindSpec::new(
         names::surface_kind(),
@@ -185,7 +185,7 @@ pub(crate) struct SurfaceFields {
     #[serde(default)]
     pub digest: Option<String>,
     /// The server's installed entry file, when the program is a launcher
-    /// of the provider's table that runs it (decision 0399).
+    /// of the provider's table that runs it (decision 0371).
     #[serde(default)]
     pub entry: Option<String>,
     /// The digest the entry file must have at every start.
