@@ -1969,8 +1969,29 @@ handler!(
         let binding = named_binding(&plan, &found.tool, &call, file_modes.as_deref())?;
         let surface = binding_surface(&plan, &found.tool, binding.as_ref());
         kernel.keep_draft(&target, compiled.encoded.hash, std::sync::Arc::clone(&plan));
+        let asked_at = kernel.inner.clock.now();
         let run = submit_trial(kernel, &call, &found, &input, environment, binding).await?;
-        let row = kernel.wait_for_rest(run, wait_of(&call)).await?;
+        let mut row = kernel.wait_for_rest(run, wait_of(&call)).await?;
+        // The same trial made again is the run that was made first (ledger
+        // rule 6). One that was made before this call and rests waiting for
+        // a sign-in is taken up again, once, so that a trial made again
+        // after the person signed in reads through the session.
+        if row.state == RunState::NeedsLogin && row.created_at < asked_at {
+            let queued = kernel
+                .sched()?
+                .resume(Enqueue {
+                    run,
+                    job: requirements(&row, JobKind::Try, Vec::new()),
+                    priority: Priority::Interactive,
+                    health: sched_health(kernel),
+                    queue_wait: None,
+                })
+                .await;
+            if queued.is_ok() {
+                kernel.run_changed();
+                row = kernel.wait_for_rest(run, wait_of(&call)).await?;
+            }
+        }
         let waits = row.state == RunState::NeedsLogin;
         let output = run_output(kernel, &call, row, Tell::Person).await?;
         let mut output = output;
@@ -2006,7 +2027,8 @@ pub(crate) fn binding_surface(
         None => a2m_engine::default_binding(operation)?,
     };
     let acted = operation.bindings.get(position)?;
-    plan.surface(acted.surface).map(|surface| surface.name.clone())
+    plan.surface(acted.surface)
+        .map(|surface| surface.name.clone())
 }
 
 /// The one action that signs in to `surface` of `target`, for a read that

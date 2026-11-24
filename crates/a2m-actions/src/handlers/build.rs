@@ -439,6 +439,56 @@ struct AddedSurface {
     kind: a2m_core::SurfaceKind,
     key: String,
     address: String,
+    /// The surface's other fields, by name, each a JSON scalar written as
+    /// data: what its kind's pack declares beyond the address, such as a
+    /// database surface's store and port (field finding 17). The compiler
+    /// checks them against the kind before anything is written.
+    fields: Vec<(String, Json)>,
+}
+
+/// The surface fields `target.add` was given: each a plain name that is
+/// neither the kernel's nor the address's, with a text, a number, or true
+/// or false. Which names a kind takes is its pack's, and the compiler
+/// refuses one it does not declare.
+fn given_fields(given: Option<&Json>, key: &str) -> Result<Vec<(String, Json)>, Failure> {
+    let Some(given) = given else {
+        return Ok(Vec::new());
+    };
+    let refused = |why: String| {
+        codes::input(
+            codes::SCHEMA_INVALID,
+            why,
+            "Give `fields` as a map of the surface's field names, as its kind's pack documents them, to texts, numbers, or true or false.",
+        )
+    };
+    let Some(map) = given.as_object() else {
+        return Err(refused("`fields` is not a map.".to_owned()));
+    };
+    let mut fields = Vec::new();
+    for (name, value) in map {
+        let plain = !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+        if !plain {
+            return Err(refused(format!(
+                "The field name `{}` is not a plain name.",
+                a2m_core::said_neutral(name)
+            )));
+        }
+        if name == key || a2m_files::kernel::SURFACE_KEYS.contains(&name.as_str()) {
+            return Err(refused(format!(
+                "The field `{name}` is not given in `fields`: the address is `address`, the kind is `kind`, and the kernel's own fields are written in the target file."
+            )));
+        }
+        if !matches!(value, Json::String(_) | Json::Number(_) | Json::Bool(_)) {
+            return Err(refused(format!(
+                "The field `{name}` holds a list, a map, or nothing; `target.add` writes texts, numbers, and true or false."
+            )));
+        }
+        fields.push((name.clone(), value.clone()));
+    }
+    Ok(fields)
 }
 
 /// The surface `target.add` is asked to declare, or none. Given an address
@@ -450,6 +500,7 @@ fn added_surface(
     set: &a2m_files::CompilerSet,
     address: Option<&str>,
     kind: Option<&str>,
+    fields: Option<&Json>,
 ) -> Result<Option<AddedSurface>, Failure> {
     let offered = || {
         let kinds: Vec<String> = set
@@ -463,6 +514,11 @@ fn added_surface(
         }
     };
     match (address, kind) {
+        (None, None) if fields.is_some() => Err(codes::input(
+            codes::SCHEMA_INVALID,
+            "Fields of a surface were given with no surface: no address and no kind.",
+            "Call `target.add` again with `address` and `kind` beside `fields`.",
+        )),
         (None, None) => Ok(None),
         (Some(_), None) => Err(codes::input(
             codes::SCHEMA_INVALID,
@@ -491,6 +547,7 @@ fn added_surface(
                 ));
             };
             Ok(Some(AddedSurface {
+                fields: given_fields(fields, key)?,
                 key: key.to_owned(),
                 kind: named,
                 address: address.to_owned(),
@@ -512,10 +569,17 @@ fn first_target_file(target: &TargetName, surface: Option<&AddedSurface>) -> Str
     // as data, whatever it holds.
     let address = Json::String(surface.address.clone()).to_string();
     let kind = &surface.kind;
+    // A JSON scalar is a YAML scalar of the same value: each field is
+    // written as data.
+    let fields: String = surface
+        .fields
+        .iter()
+        .map(|(name, value)| format!("    {name}: {value}\n"))
+        .collect();
     format!(
         "# The target `{target}`, with the one surface it was added with. Run `anything2mcp scout run {target}` next.\n\
          schema_version: 1\ntarget: {target}\ntitle: {target}\n\
-         surfaces:\n  {kind}:\n    kind: {kind}\n    {key}: {address}\n\
+         surfaces:\n  {kind}:\n    kind: {kind}\n    {key}: {address}\n{fields}\
          environments:\n  test:\n    kind: test\ndefault_environment: test\n",
         key = surface.key,
     )
@@ -552,6 +616,7 @@ handler!(
             kernel.providers().compiler_set(),
             call.text("address"),
             call.text("kind"),
+            call.input.get("fields"),
         )?;
         let text = first_target_file(&target, surface.as_ref());
         let declared = surface.is_some();

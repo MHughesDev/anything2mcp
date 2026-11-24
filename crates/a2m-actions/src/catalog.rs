@@ -475,6 +475,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .pos("name", TEXT, "The new target's name: lowercase letters, digits, and underscores.")
             .opt("address", TEXT, "Where the system is reached, in the form the surface's kind takes. Given with `kind`, the target file declares one surface of that kind at this address, and a test environment.")
             .opt("kind", TEXT, "The kind of the surface at `address`, as an enabled pack registers it. Never guessed from the address: left out with an address, the refusal lists the kinds offered.")
+            .opt("fields", MAP, "The surface's other fields, by name, as its kind's pack declares them, such as a database surface's `store`, `port`, and `database`; each a text, a number, or true or false. Given only with `address` and `kind`; the compiler checks them against the kind before anything is written.")
             .writes()
             .needs(HealthNeed::Reads)
             .output(JsonSchema::object()

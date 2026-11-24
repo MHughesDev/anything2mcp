@@ -43,16 +43,24 @@ fn not_looked_at(done: &BTreeMap<u8, Json>) -> Vec<Json> {
                 "what": format!("surface `{name}`"),
                 "why": "It needs a sign-in, and the scout cannot make one. A person signs in, and the scout runs again.",
             })),
-            Some(state) => out.push(json!({
-                "what": format!("surface `{name}`"),
-                "why": surface["why"].as_str().map_or_else(
-                    || match surface["failure"]["code"].as_str() {
-                        Some(code) => format!("Its discovery ended as `{state}`, with `{code}`."),
-                        None => format!("Its discovery ended as `{state}`."),
-                    },
-                    str::to_owned,
-                ),
-            })),
+            Some(state) => {
+                let mut entry = json!({
+                    "what": format!("surface `{name}`"),
+                    "why": surface["why"].as_str().map_or_else(
+                        || match surface["failure"]["code"].as_str() {
+                            Some(code) => format!("Its discovery ended as `{state}`, with `{code}`."),
+                            None => format!("Its discovery ended as `{state}`."),
+                        },
+                        str::to_owned,
+                    ),
+                });
+                // The stop's code, which the summary names (field finding
+                // 18): a person reading it can tell why nothing was found.
+                if let Some(code) = surface["failure"]["code"].as_str() {
+                    entry["code"] = json!(code);
+                }
+                out.push(entry);
+            }
             None => {}
         }
         for ended in list(&surface["ended"]) {
@@ -234,8 +242,14 @@ fn rendered(report: &Json) -> String {
             .flat_map(|(_, levels)| levels.as_object().into_iter().flatten())
             .filter_map(|(_, count)| count.as_u64())
             .sum();
+        // A surface whose discovery stopped says with which code, so that
+        // the summary tells why nothing was found (field finding 18).
+        let stopped = surface["failure"]["code"]
+            .as_str()
+            .map(|code| format!(" with `{code}`"))
+            .unwrap_or_default();
         lines.push(format!(
-            "Surface `{}` ({}): {}, {found} findings.",
+            "Surface `{}` ({}): {}{stopped}, {found} findings.",
             surface["surface"].as_str().unwrap_or_default(),
             surface["kind"].as_str().unwrap_or_default(),
             surface["state"].as_str().unwrap_or_default()
@@ -316,7 +330,11 @@ fn rendered(report: &Json) -> String {
             count("held")
         ));
     }
-    for tool in tools.iter().filter(|tool| tool["state"] == "waiting").take(1) {
+    for tool in tools
+        .iter()
+        .filter(|tool| tool["state"] == "waiting")
+        .take(1)
+    {
         lines.push(format!(
             "Waiting: the reads of surface `{}` wait for a sign-in: `session.login` with this target and that surface signs in, and `draft.try` then tries each again.",
             tool["surface"].as_str().unwrap_or_default()
@@ -552,6 +570,30 @@ mod tests {
             .expect("a line for the discoverer");
         assert!(line.contains("`description_unreadable`"), "{line}");
         assert!(line.contains("Hand in a readable description."), "{line}");
+    }
+
+    #[test]
+    fn a_refused_surface_is_summed_up_with_the_code_of_its_stop() {
+        let surface = json!({
+            "surface": "store", "kind": "database_server", "state": "refused",
+            "failure": {"class": "policy", "code": "identity_is_administrator"},
+        });
+        let done = BTreeMap::from([(1_u8, json!({"surfaces": [surface.clone()]}))]);
+        let content = json!({"surfaces": [surface], "not_looked_at": not_looked_at(&done)});
+        let text = rendered(&json!({"target": "example", "report_hash": "h", "content": content}));
+        let named: Vec<&str> = text
+            .lines()
+            .filter(|line| line.contains("`identity_is_administrator`"))
+            .collect();
+        assert_eq!(named.len(), 2, "{text}");
+        assert!(
+            named[0].starts_with("Surface `store` (database_server): refused with"),
+            "{text}"
+        );
+        assert!(
+            named[1].starts_with("Not looked at: surface `store`."),
+            "{text}"
+        );
     }
 
     #[test]
