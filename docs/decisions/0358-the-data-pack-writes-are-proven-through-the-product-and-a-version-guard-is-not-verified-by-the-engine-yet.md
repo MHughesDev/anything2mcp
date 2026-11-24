@@ -1,4 +1,4 @@
-# 0399. The data pack's writes are proven through the product, and a version guard is not yet verified by the engine
+# 0358. The data pack's writes are proven through the product, and a version guard is not yet verified by the engine
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md). The owner had not read this record when it was merged.
 
