@@ -620,7 +620,7 @@ handler!(
         )?;
         let text = first_target_file(&target, surface.as_ref());
         let declared = surface.is_some();
-        let (kernel, named) = (kernel.clone(), target.clone());
+        let (owned, named) = (kernel.clone(), target.clone());
         // Looking at the folder, compiling, and writing the file wait on
         // the disk or compute.
         off_thread(move || {
@@ -637,7 +637,7 @@ handler!(
                 // The file is compiled as the draft it will be, with the
                 // packs that are enabled: what the compiler refuses for the
                 // surface is refused here, and nothing is written.
-                let set = kernel.providers().compiler_set();
+                let set = owned.providers().compiler_set();
                 let path = a2m_files::RelPath::new("target.yaml")?;
                 let source = a2m_files::SourceFile::read(path, text.as_bytes(), set)
                     .map_err(|problem| first_file_refused(&Diagnostics::from(problem)))?;
@@ -662,6 +662,17 @@ handler!(
             file.write(text.as_bytes())
         })
         .await?;
+        // The address given here is the first a person registers for the
+        // target: a draft that reaches another is published only from the
+        // page that names it (spec section 502, rule 2).
+        if let Some(surface) = &surface {
+            kernel
+                .register_origins(
+                    &target,
+                    std::iter::once(crate::origins::origin_of(&surface.address)).collect(),
+                )
+                .await?;
+        }
         let next = if declared {
             Next::new(
                 "scout.run",
@@ -838,6 +849,32 @@ handler!(
                 "Ask for the publish again; the person reads the new compiled target on a new page.",
             ));
         }
+        // A draft cannot widen the target's reach by itself (spec section
+        // 502, rule 2): an address no person registered is published only
+        // from the publish page, which names it, and never from a command.
+        let unregistered = kernel
+            .unregistered_origins(&target, &compiled.compiled_target)
+            .await?;
+        let from_page = call
+            .presence
+            .as_ref()
+            .is_some_and(|proof| proof.act().is_some());
+        if !unregistered.is_empty() && !from_page {
+            return Err(codes::policy(
+                codes::ADDRESS_UNREGISTERED,
+                format!(
+                    "The drafts of `{target}` reach {}, which no person registered for the target, so nothing was published.",
+                    unregistered
+                        .iter()
+                        .map(|place| format!("`{place}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                format!(
+                    "Ask for the publish on its page, with `anything2mcp publish request {target}`, read the new address it names, and press there."
+                ),
+            ));
+        }
         // The publish gates (spec section 403): a version is published only
         // when every gate this build has passes, and its evidence is
         // stored with it (decision 0180).
@@ -871,6 +908,7 @@ handler!(
             .iter()
             .map(|tool| tool.name.to_string())
             .collect();
+        let origins = crate::origins::origins_of(&compiled.compiled_target);
         let hash = kernel
             .store_version(
                 compiled.encoded,
@@ -880,6 +918,8 @@ handler!(
                 stored_evidence,
             )
             .await?;
+        // What a person published, they registered: every place it leads.
+        kernel.register_origins(&target, origins).await?;
         // A watch is tied to the version its person confirmed: every watch
         // of another version pauses or ends now (decision 0262).
         kernel.watches_after_publish(&target, hash).await;

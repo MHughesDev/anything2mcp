@@ -1086,3 +1086,142 @@ async fn two_commands_at_once_read_through_one_browser() {
     assert_eq!(stopped.code, 0, "{stopped:?}");
     assert_eq!(serving.await.unwrap(), StopReason::Asked);
 }
+
+/// The address of no stand: a second place a draft can reach.
+const ELSEWHERE: &str = "http://127.0.0.1:9";
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_draft_that_reaches_a_new_address_is_published_only_from_the_page_that_names_it() {
+    let app = TestApp::start().await.unwrap();
+    let machine = Machine::new("orders", &[(PLACEHOLDER, &app.url(""))]).with_passphrase();
+    let file = machine
+        .project
+        .path()
+        .join("targets")
+        .join("example")
+        .join("target.yaml");
+    let written = std::fs::read_to_string(&file).unwrap();
+    std::fs::remove_file(&file).unwrap();
+
+    // A person adds the target at the test application's address.
+    let world = machine.open().await;
+    let address = app.url("");
+    let added = world
+        .person(&[
+            "target",
+            "add",
+            "example",
+            "--address",
+            &address,
+            "--kind",
+            "http",
+        ])
+        .await;
+    assert_eq!(added.finished.code, 0, "{:?}", added.finished);
+
+    // The target's file as it was, at that address, and a draft that adds
+    // a surface at another.
+    let widened = written.replace(
+        "environments:",
+        &format!("  spare:\n    kind: http\n    base: \"{ELSEWHERE}\"\nenvironments:"),
+    );
+    assert_ne!(widened, written);
+    std::fs::write(&file, &widened).unwrap();
+
+    // A person's publish from the command line stops, naming the new
+    // address, and nothing is published.
+    let refused = world.person(&["version", "publish", "example"]).await;
+    assert_ne!(refused.finished.code, 0, "{:?}", refused.finished);
+    assert_eq!(
+        refused.error()["code"],
+        "address_unregistered",
+        "{:?}",
+        refused.finished
+    );
+    assert!(
+        refused.error()["message"]
+            .as_str()
+            .unwrap()
+            .contains(ELSEWHERE),
+        "{:?}",
+        refused.finished
+    );
+    let unread = world
+        .agent(&["tool", "call", ORDER_GET, "--input", READ_INPUT])
+        .await;
+    assert_eq!(unread.error()["code"], "not_found", "{:?}", unread.finished);
+    world.close().await;
+
+    // Asked for on its page, the publish names the new address there, and
+    // a person's press publishes it.
+    let prompt = Arc::new(Passed(AtomicU32::new(0)));
+    let mut options = EngineOptions::of_machine(
+        Paths::under(machine.home.path()),
+        machine.environment(),
+        Surface::new() as Arc<dyn PersonSurface>,
+    );
+    options.project = Some(machine.project.path().to_path_buf());
+    let local = LocalEngine::start(options, Arc::clone(&prompt) as Arc<dyn PresencePrompt>)
+        .await
+        .unwrap();
+    let serving = tokio::spawn(local.serve());
+    let asked = output(machine.program(&["version", "publish", "example"])).await;
+    assert_eq!(asked.status.code(), Some(3), "{asked:?}");
+    let link = object(&asked)["result"]["link"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let http = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .no_proxy()
+        .build()
+        .unwrap();
+    let text = http.get(&link).send().await.unwrap().text().await.unwrap();
+    assert!(
+        text.contains(&format!(
+            "<li>New address: the drafts reach `{ELSEWHERE}`, which no person registered for this target. Publishing registers it.</li>"
+        )),
+        "{text}"
+    );
+    let marker = "name=\"once\" value=\"";
+    let from = text.find(marker).unwrap() + marker.len();
+    let once = &text[from..from + text[from..].find('"').unwrap()];
+    let origin = &link[..link.find("/act/").unwrap()];
+    let pressed = http
+        .post(format!("{link}/confirm"))
+        .header("origin", origin)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("once={once}"))
+        .send()
+        .await
+        .unwrap();
+    let said = pressed.status().as_u16();
+    let body = pressed.text().await.unwrap();
+    assert_eq!(said, 200, "{body}");
+    let read = output(machine.program(&["tool", "call", ORDER_GET, "--input", READ_INPUT])).await;
+    assert_eq!(read.status.code(), Some(0), "{read:?}");
+    let stop = output(machine.program(&["engine", "stop"])).await;
+    assert_eq!(stop.status.code(), Some(0), "{stop:?}");
+    assert_eq!(serving.await.unwrap(), StopReason::Asked);
+    lock_comes_free(&machine).await;
+
+    // A draft that adds no address publishes from the command line with no
+    // further question.
+    std::fs::write(
+        &file,
+        widened.replace(
+            "title: Example order entry",
+            "title: Example order entry, renamed",
+        ),
+    )
+    .unwrap();
+    let world = machine.open().await;
+    let published = world.person(&["version", "publish", "example"]).await;
+    assert_eq!(published.finished.code, 0, "{:?}", published.finished);
+    assert_eq!(
+        published.result()["current"],
+        true,
+        "{:?}",
+        published.finished
+    );
+    world.close().await;
+}

@@ -388,6 +388,8 @@ The `Response` is the same structure for every face: `ok`, `action`, `result`, `
 | Compiled targets | `a2m-ledger` | A compiled target that fails its hash check is unavailable alone: a call to one of its tools answers the load's failure, `busy`/`store_corrupt`, before a run is made, and `tool.search` leaves its tools out with a warning (`a_compiled_target_that_fails_its_hash_check_makes_its_tools_unavailable_and_no_other`) | `ok` |
 | Keeper, scheduler, engine | `a2m-auth`, `a2m-sched`, `a2m-engine` | Not expected to fail; a failure is `stopped` | |
 
+The places a person registered for each target (decision 0999, `src/origins.rs`): the place of the address given to `target.add`, and every place of every version a person published, kept among the installation's facts. `version.publish` compares the places of the compiled target with them; one not registered is published only from the publish page, whose kernel lines name it first, and a publish from a command is refused `policy`/`address_unregistered`.
+
 The kernel is always returned, so that the front door can answer `engine.status` and `doctor.run` with the reason instead of failing to start. Opening is two calls, `prepare` and `open`, because the provider registry is built between them from the redactor and telemetry the first one makes. The state is re-evaluated whenever a part reports a change, and a move to a lower state is an event in the audit log.
 
 Before anything else on open, the store's runs left `running` under a lease nobody holds are set to `stopped` with `possible_commit` / `runner_lost` ([spec section 222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md)). Their reconcile is a job like any other. Not built at open: today such a run is stopped by the scheduler's sweep once its lease has ended, so an engine started within the lease of one that was killed sees the run as `running` until then.
@@ -540,6 +542,7 @@ The crate's own codes are declared once, each with its class, meaning, next step
 | `policy` | Any code `decide` returns | Refused by policy, passed through unchanged |
 | `input` | `network_not_recognizable` | The network the machine is on states too few facts to be recognized again, so no reach is named on it |
 | `policy` | `person_required` | A person's act was asked for by a caller that acts for no person, or the surface has no page for it |
+| `policy` | `address_unregistered` | A publish would reach a place no person registered for the target, and was not carried out from the publish page that names it (decision 0999) |
 | `stale` | `drafts_changed` | The drafts of a publish a person was shown compile to another compiled target by the time they press |
 | `policy` | `scout_off` | `scout.run` was called and `authoring.scout.run` is `off` |
 | `input` | `discovery_file_not_taken` | `scout.run`, `discover.run`, or `spec.import` names a file under a name no discoverer suiting the observed surfaces reads; nothing starts |

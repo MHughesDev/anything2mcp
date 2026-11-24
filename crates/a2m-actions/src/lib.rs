@@ -36,6 +36,7 @@ pub mod init;
 mod keeper;
 mod kernel;
 mod offline;
+mod origins;
 mod paths;
 mod person;
 mod places;
