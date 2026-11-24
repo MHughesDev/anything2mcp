@@ -71,6 +71,13 @@ jobs:
       # shows every failure on this operating system.
       - name: Test
         run: cargo test --workspace --locked --no-fail-fast
+      # The browser's memory tests once more, with their output shown, so
+      # that this log holds each process's kind and figure and the browser's
+      # sum on this operating system, each line starting `a2m-memory:`
+      # (package OS4, decision 0425). It runs even when a test above failed.
+      - name: The memory figures of a browser
+        if: ${{ !cancelled() }}
+        run: cargo test -p a2m-pack-web-browser --locked tests::memory:: -- --nocapture --test-threads=1
       # The compiled dependencies are stored when this lock file and toolchain
       # had none stored, before the release builds below: the workspace's own
       # crates are taken out first, since they change with every commit.

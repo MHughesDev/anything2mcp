@@ -556,10 +556,14 @@ pub(crate) struct ProcessInfos {
     pub process_info: Vec<ProcessInfo>,
 }
 
-/// One process of the browser. Only its number is read.
+/// One process of the browser: its number, which is measured, and its
+/// kind (`browser`, `renderer`, `GPU`, `utility`, and others the browser
+/// names), which only the memory tests print.
 #[derive(Debug, Deserialize)]
 pub(crate) struct ProcessInfo {
     pub id: u32,
+    #[serde(rename = "type", default)]
+    pub kind: String,
 }
 
 #[derive(Debug, Serialize)]

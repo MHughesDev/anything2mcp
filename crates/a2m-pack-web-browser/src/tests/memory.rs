@@ -24,13 +24,38 @@ async fn reads(browser: &Browser, app: &TestApp) -> ActTab {
     tab
 }
 
-/// What the browser holds now, measured as the crate measures it.
-async fn held(browser: &Browser) -> u64 {
-    browser
+/// What the browser holds now, measured as the crate measures it, with
+/// each process's kind and figure and the browser's sum written to the test
+/// output, one line each, every line starting `a2m-memory:`, so that a CI
+/// log can be searched for them (package OS4). CI runs these tests a second
+/// time with their output shown.
+async fn held(browser: &Browser, when: &str) -> u64 {
+    let processes = browser
         .inner
-        .memory(Duration::from_secs(5))
+        .processes(Duration::from_secs(5))
         .await
-        .expect("the browser's memory is measured")
+        .expect("the browser's memory is measured");
+    let system = std::env::consts::OS;
+    for one in &processes {
+        let figure = one.bytes.map_or_else(
+            || "ended before it was measured".to_owned(),
+            |bytes| bytes.to_string(),
+        );
+        println!(
+            "a2m-memory: {system} {when}: process {} kind {} holds {figure}",
+            one.id, one.kind
+        );
+    }
+    let sum = processes
+        .iter()
+        .filter_map(|one| one.bytes)
+        .fold(0_u64, u64::saturating_add);
+    println!(
+        "a2m-memory: {system} {when}: browser of {} processes holds {sum} ({} MiB)",
+        processes.len(),
+        sum / (1024 * 1024)
+    );
+    sum
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -49,7 +74,7 @@ async fn with_the_ceiling_below_the_browsers_use_a_new_runs_browser_work_is_not_
     let browser = stand.open(&clerk).await;
     let first = browser.subsystem();
     let tab = reads(&browser, &app).await;
-    let use_now = held(&browser).await;
+    let use_now = held(&browser, "one tab on the form").await;
     assert!(use_now > 0);
     drop((tab, browser));
     let launches = launches_under(&root);
@@ -120,7 +145,7 @@ async fn a_browser_past_its_memory_limit_is_replaced_between_two_runs_and_never_
     let browser = stand.open(&clerk).await;
     let first = browser.subsystem();
     let tab = reads(&browser, &app).await;
-    assert!(held(&browser).await > 1);
+    assert!(held(&browser, "one tab held, limit 1").await > 1);
 
     // Inside the run, the browser past its limit is kept: an open while
     // its tab is held hands out the same process, and the tab still reads.

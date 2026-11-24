@@ -462,25 +462,41 @@ impl BrowserInner {
     /// or names no process, or a process that cannot be measured, is an
     /// error, and the caller fails closed on it (decision 0425).
     pub(crate) async fn memory(&self, wait: Duration) -> Result<u64, String> {
+        Ok(self
+            .processes(wait)
+            .await?
+            .iter()
+            .filter_map(|one| one.bytes)
+            .fold(0_u64, u64::saturating_add))
+    }
+
+    /// Each process the browser names, with what it holds; `bytes` is
+    /// `None` for a process that ended between the list and its
+    /// measurement. [`Self::memory`] is their sum; the memory tests print
+    /// each.
+    pub(crate) async fn processes(&self, wait: Duration) -> Result<Vec<HeldBy>, String> {
         let listed = self
             .client
             .call(None, &GetProcessInfo {}, Deadline::after(wait))
             .await
             .map_err(|_| "it did not say which processes are its own".to_owned())?;
-        let ids: Vec<u32> = listed.process_info.iter().map(|one| one.id).collect();
-        if ids.is_empty() {
+        if listed.process_info.is_empty() {
             return Err("it named no process of its own".to_owned());
         }
         // The system's tables are read off the threads that serve
         // everything else.
         tokio::task::spawn_blocking(move || {
-            let mut total = 0_u64;
-            for id in ids {
-                if let Some(bytes) = crate::memory::of_process(id)? {
-                    total = total.saturating_add(bytes);
-                }
-            }
-            Ok(total)
+            listed
+                .process_info
+                .into_iter()
+                .map(|one| {
+                    Ok(HeldBy {
+                        bytes: crate::memory::of_process(one.id)?,
+                        id: one.id,
+                        kind: one.kind,
+                    })
+                })
+                .collect()
         })
         .await
         .map_err(|_| "its measurement was stopped".to_owned())?
@@ -495,6 +511,19 @@ impl BrowserInner {
             BrowserHealth::Idle
         }
     }
+}
+
+/// One process of a browser, by the browser's own list, and what its
+/// operating system says it holds.
+#[derive(Debug)]
+pub(crate) struct HeldBy {
+    /// The kind the browser gives it, such as `browser` or `renderer`.
+    #[cfg_attr(not(test), allow(dead_code, reason = "only the memory tests print it"))]
+    pub(crate) kind: String,
+    #[cfg_attr(not(test), allow(dead_code, reason = "only the memory tests print it"))]
+    pub(crate) id: u32,
+    /// In bytes; `None` when the process ended before it was measured.
+    pub(crate) bytes: Option<u64>,
 }
 
 pub(crate) struct Shared {
