@@ -279,9 +279,9 @@ Rows are inserted in the same transaction as the change they announce, so a mess
 
 As built by migration `0013-ledger-caller-idempotency.sql` ([decision 0160](../decisions/0160-an-idempotency-key-gives-back-its-run-and-run-list-shows-a-callers-own-runs.md)).
 
-## actions_installation, actions_toolsets, actions_scout_stages, actions_targets, actions_run_calls, actions_run_sources, actions_scouts, actions_discovery_results
+## actions_installation, actions_toolsets, actions_scout_stages, actions_targets, actions_run_calls, actions_run_sources, actions_scouts, actions_discovery_results, actions_drift_marks
 
-As built by migrations `0009`, `0011`, and `0014`, which `a2m-actions` owns and is the only crate to read or write. Moments are milliseconds since 1970, from the store's clock.
+As built by migrations `0009`, `0011`, `0014`, and `0028`, which `a2m-actions` owns and is the only crate to read or write. Moments are milliseconds since 1970, from the store's clock.
 
 | Table | One row is | Key |
 | --- | --- | --- |
@@ -293,6 +293,7 @@ As built by migrations `0009`, `0011`, and `0014`, which `a2m-actions` owns and 
 | `actions_run_sources` | The source a run was called with: the blob that holds its bytes, whether it was a file of the project or rows given inline, the path inside the project as the caller wrote it, and its size. Written beside the row of `actions_run_calls`, and read by the runner so that every lease of the run reads the same bytes | The same key as `actions_run_calls` |
 | `actions_scouts` | One scout of one target by one person: when it started and finished, its report's hash once the last stage is stored, and `project`, the digest of the project folder it was made in or `none` (migration `0018`, [decision 0196](../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md); a scout stored before has none and is never continued). Its identifier keys its stages in `actions_scout_stages` (column `run_id`); one with no `finished_at` is continued by the next `scout.run` in the same project ([decision 0170](../decisions/0170-the-scout-identifies-each-surface-with-one-discovery-job-and-stores-each-stage.md)) | `scout_id` |
 | `actions_discovery_results` | What one discoverer reported in one discovery run: the surface, the identifiers of its findings as a JSON list, and as JSON its coverage, the bounds it reached, and what it dropped, or its failure's class and code. Written by the run's control in the transaction that stores the findings | `run_id`, `provider`, `discoverer` |
+| `actions_drift_marks` | One piece of knowledge a canary or a run found drifted, on one surface through one mode: `entry`, a pack entry held by its name and the digest of the whole section that holds it, or `binding`, a binding whose drift no step named, held by its digest; with the operation, the drift's code, and the run that saw it. Kept when the engine reports a drift, lifted when a canary's pass vouches for the same knowledge, and read by the runner into each job's conditions. Of the target, not of a version: a version that holds the same digest is stopped by it ([decision 0399](../decisions/0399-a-drift-marks-the-knowledge-it-was-seen-in-and-stops-every-binding-that-relies-on-it.md)) | `workspace_id`, `target`, `surface`, `mode`, `knowledge`, `digest`, `entry` |
 
 ## target_versions
 
