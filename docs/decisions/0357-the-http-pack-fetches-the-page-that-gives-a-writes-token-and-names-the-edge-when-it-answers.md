@@ -1,4 +1,4 @@
-# 0399. The HTTP pack fetches the page that gives a write's token, and names the edge when it answers
+# 0357. The HTTP pack fetches the page that gives a write's token, and names the edge when it answers
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged.
 

@@ -1,4 +1,4 @@
-//! Case 23, for the HTTP pack (decision 0399): an answer that comes from the
+//! Case 23, for the HTTP pack (decision 0357): an answer that comes from the
 //! edge in front of a system is recognized by its status and its content
 //! type, stops with its own named code, is never sent again, and never
 //! hides what an endpoint declares for itself. Each is proven against the

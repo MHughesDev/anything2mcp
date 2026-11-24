@@ -262,7 +262,7 @@ fn is_reserved_for_credentials(name: &str) -> bool {
 
 /// Reads the `anti_forgery` of a write: the page that gives the token, the
 /// one place on it that holds it, and the one place in the write that
-/// carries it (decision 0399). The word `none` says the endpoint checks no
+/// carries it (decision 0357). The word `none` says the endpoint checks no
 /// token. The form is the one `page_http` reads, with `page` added: where
 /// the request is made from is the page that gives the token.
 fn anti_forgery_of(

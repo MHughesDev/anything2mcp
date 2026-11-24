@@ -1,4 +1,4 @@
-//! Case 5, for the HTTP pack (decision 0399): a write that needs the
+//! Case 5, for the HTTP pack (decision 0357): a write that needs the
 //! anti-forgery token of a page fetches the page in the same pass, takes the
 //! one token the endpoint names, sends it once, and never quotes it. Each
 //! write is proven by asking the test application what it stored, how often,

@@ -380,7 +380,7 @@ async fn a_surface_an_edge_blocks_writes_nothing_and_a_block_during_the_read_bac
     // Every read goes to the stand's edge, which answers 403 with its
     // page. The resume stops before the write, and the run can be resumed.
     // The HTTP pack names the page for what it is: `edge_blocked`,
-    // `forbidden_by_edge` (decision 0399).
+    // `forbidden_by_edge` (decision 0357).
     proxy.alter_reads(Alteration::Divert("/edge/blocked".to_owned()), false);
     let blocked = world.agent(&["run", "resume", &run]).await;
     assert_eq!(blocked.result()["status"], "stopped", "{}", blocked.json);

@@ -1,4 +1,4 @@
-//! Reading an anti-forgery token off the page that gives it (decision 0399).
+//! Reading an anti-forgery token off the page that gives it (decision 0357).
 //!
 //! The page is data from outside. It is scanned, never run: tags are taken
 //! apart one at a time, comments and the raw text of `script`, `style`,

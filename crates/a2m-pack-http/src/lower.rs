@@ -29,7 +29,7 @@ use crate::template::{
 
 /// The step that fetches the page which gives a write's anti-forgery
 /// token, and keeps the token for the `request` step that follows
-/// (decision 0399).
+/// (decision 0357).
 pub const TOKEN: StepKind = StepKind::fixed("token");
 /// The step that sends one request built from an endpoint's template.
 pub const REQUEST: StepKind = StepKind::fixed("request");

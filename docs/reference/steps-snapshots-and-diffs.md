@@ -19,7 +19,7 @@ The compiler lowers each binding's verb into a fixed list of steps ([spec sectio
 | | `handle` | Deal with a declared variant, such as a dialog |
 | | `upload`, `download` | Attach or receive a file |
 | `ui` only | `observe` | Capture the response for a named endpoint while the page acts |
-| `http` | `token` | Fetch the page that gives a write's anti-forgery token and keep the one token it holds for the `request` that follows, which sends it once; never a commit point ([decision 0399](../decisions/0399-the-http-pack-fetches-the-page-that-gives-a-writes-token-and-names-the-edge-when-it-answers.md)). `page_http` has no such step: its `request` reads the page's token inside the page in the same call that sends the write ([decision 0206](../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)) |
+| `http` | `token` | Fetch the page that gives a write's anti-forgery token and keep the one token it holds for the `request` that follows, which sends it once; never a commit point ([decision 0357](../decisions/0357-the-http-pack-fetches-the-page-that-gives-a-writes-token-and-names-the-edge-when-it-answers.md)). `page_http` has no such step: its `request` reads the page's token inside the page in the same call that sends the write ([decision 0206](../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)) |
 | | `request` | Send a request built from an endpoint and expressions |
 | | `validate` | Check the response against its schema |
 | | `extract` | Take values out of the response |

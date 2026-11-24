@@ -933,7 +933,7 @@ impl HttpDriver {
     /// the one text it holds where the endpoint says, for the `request`
     /// step that follows. It is a GET with no body, sent where the
     /// endpoint's own requests go, and it writes nothing. A page that holds
-    /// no token, or two, stops the write before it is sent (decision 0399).
+    /// no token, or two, stops the write before it is sent (decision 0357).
     async fn token(
         &self,
         session: &mut Session,
@@ -1850,7 +1850,7 @@ async fn validate(
             "Correct the input the system refused, then run the tool again.",
         ));
         // A refusal that quotes the token the write carried, in any
-        // letter case, is not quoted back (decision 0399).
+        // letter case, is not quoted back (decision 0357).
         let said = if answer.echoed.is_some() {
             None
         } else {
@@ -1862,7 +1862,7 @@ async fn validate(
         });
     }
     // The edge's own answers, recognized by status and header, never
-    // retried (decision 0399). Only what the endpoint does not declare
+    // retried (decision 0357). Only what the endpoint does not declare
     // gets here, so an endpoint that declares 429 or 403 keeps its meaning.
     if let Some(edge) = edge_failure(&name, status, answer) {
         return Err(answered(edge));
@@ -2056,7 +2056,7 @@ impl HttpDriver {
                 )));
             }
             // An answer that quotes the token the write carried returns no
-            // value that holds it (decision 0399).
+            // value that holds it (decision 0357).
             if let Some(token) = &answer.echoed
                 && holds_token(&value, token.expose())
             {

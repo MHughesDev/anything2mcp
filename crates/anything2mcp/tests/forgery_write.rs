@@ -1,4 +1,4 @@
-//! Case 5 through the product (decision 0399): the note of an order is
+//! Case 5 through the product (decision 0357): the note of an order is
 //! written over direct requests with the anti-forgery token its page gives.
 //! The page is fetched in the same pass as the write, the write rests for a
 //! person's approval, is sent once and read back, an answer lost after the

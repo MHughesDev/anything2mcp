@@ -202,7 +202,7 @@ pub(crate) struct VersionRule {
     pub send: Option<VersionSink>,
 }
 
-/// Where a page holds the anti-forgery token it gives (decision 0399).
+/// Where a page holds the anti-forgery token it gives (decision 0357).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TokenSource {
@@ -272,7 +272,7 @@ pub(crate) struct EndpointTemplate {
     /// The header that carries the record's idempotency token.
     pub idempotency_header: Option<String>,
     /// The anti-forgery bootstrap of a write. Left out of the payload when
-    /// there is none, so other endpoints compile as before (decision 0399).
+    /// there is none, so other endpoints compile as before (decision 0357).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anti_forgery: Option<AntiForgery>,
     pub version: VersionRule,
