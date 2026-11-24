@@ -31,7 +31,7 @@ use crate::protocol::{
     GetTargetInfo, HandleDialog, InsertText, MediaFeature, Navigate, NetworkEnable,
     NodeDescription, PageEnable, RequestPattern, RequestPaused, RunIfWaiting, RuntimeEnable,
     SetAcceptLanguage, SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia, SetFileInputFiles,
-    SetLifecycleEvents, SetLocale, SetTimezone,
+    SetLifecycleEvents, SetLocale, SetTimezone, TerminateExecution,
 };
 use crate::safe::SafeRequests;
 use crate::snapshot::{Snapshot, SnapshotLimits};
@@ -830,11 +830,15 @@ pub(crate) fn fields_of(json: &Json) -> (BTreeMap<String, String>, bool) {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Status {
+pub(crate) enum Status {
     Open,
     Dialog,
     Crashed,
     Gone,
+    /// The page gave no answer to a call by its deadline, nor to the probe
+    /// after it: the tab was closed, and every call on it since is a
+    /// timeout.
+    Hung,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -952,14 +956,14 @@ enum Verdict {
 
 pub(crate) struct Page {
     client: Client,
-    session: String,
+    pub(crate) session: String,
     pub(crate) target: String,
     serial: u64,
     call_deadline: Duration,
     max_read: usize,
     redact: Arc<dyn Redact>,
     world: watch::Sender<Option<i64>>,
-    status: watch::Sender<Status>,
+    pub(crate) status: watch::Sender<Status>,
     nav: watch::Sender<Nav>,
     /// How many dialogs of the page have closed.
     dialogs_closed: watch::Sender<u64>,
@@ -1019,6 +1023,13 @@ pub(crate) struct Page {
     /// which the tab's events also end: the release is done once, whatever
     /// the status says by then.
     released: AtomicBool,
+    /// Whether the page is being probed after a call it did not answer.
+    probing: AtomicBool,
+    /// How long the probe waits for the page's answer.
+    hang_probe: Duration,
+    /// Whether the browser has been asked to close the page of a hung tab,
+    /// and has answered or not by its deadline.
+    pub(crate) hang_closed: watch::Sender<bool>,
     browser: Arc<BrowserInner>,
 }
 
@@ -1032,6 +1043,33 @@ pub use site_tools::{SiteAnswer, SiteTool, digest_of};
 pub use watching::{
     LONGEST_WATCHED_BODY, SCREENS_KEPT, SETTLE_BOUND, WatchStart, WatchTab, WatchedScreens,
 };
+
+/// A call to the page that has not been answered. Dropped unanswered, at
+/// its deadline or because its caller was dropped, it has the page probed
+/// ([`Page::suspect`]).
+struct Unanswered<'a> {
+    page: &'a Page,
+    armed: bool,
+}
+
+impl<'a> Unanswered<'a> {
+    fn new(page: &'a Page) -> Self {
+        Self { page, armed: true }
+    }
+
+    /// The page answered, or the call ended for a reason with a name.
+    fn answered(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for Unanswered<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.page.suspect();
+        }
+    }
+}
 
 /// Clears the mark of a `goto` under way when the `goto` ends, however it
 /// ends.
@@ -1142,6 +1180,7 @@ impl Page {
         match status {
             Status::Crashed => Some(BrowserError::Crashed { dispatch }),
             Status::Gone => Some(BrowserError::Disconnected { dispatch }),
+            Status::Hung => Some(BrowserError::Timeout { dispatch }),
             Status::Dialog if heed_dialog => Some(BrowserError::UnexpectedDialog { dispatch }),
             Status::Dialog | Status::Open => None,
         }
@@ -1165,18 +1204,122 @@ impl Page {
             .client
             .begin(Some(&self.session), command)
             .map_err(Ended::Client)?;
+        // From here, a call that ends at its deadline, or is dropped before
+        // its reply, has the page probed: a page that does not answer is
+        // hung, and its tab is closed.
+        let unanswered = Unanswered::new(self);
         loop {
             tokio::select! {
                 biased;
-                reply = flight.finish(deadline) => return reply.map_err(Ended::Client),
+                reply = flight.finish(deadline) => {
+                    if !matches!(reply, Err(ClientError::Timeout { .. })) {
+                        unanswered.answered();
+                    }
+                    return reply.map_err(Ended::Client);
+                }
                 changed = status.changed() => {
                     let now = if changed.is_ok() { *status.borrow_and_update() } else { Status::Gone };
                     if let Some(error) = Self::interrupted(now, heed_dialog, flight.dispatch()) {
+                        unanswered.answered();
                         return Err(Ended::Browser(error));
                     }
                 }
             }
         }
+    }
+
+    /// The page did not answer a call by its deadline, or the call was
+    /// dropped before its reply. In a tab the engine drives, the page is
+    /// asked for nothing but an answer, within the settings' probe time,
+    /// on a task of its own, so that the caller's step ends at its own
+    /// deadline. A page that answers is slow, not hung, and its tab goes
+    /// on. A tab a person uses is never probed or closed by the engine.
+    fn suspect(&self) {
+        if self.quiet || self.watching || self.released.load(Ordering::SeqCst) {
+            return;
+        }
+        if *self.status.borrow() != Status::Open || self.probing.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let page = self
+            .browser
+            .pages()
+            .get(&self.target)
+            .and_then(Weak::upgrade);
+        match (page, tokio::runtime::Handle::try_current()) {
+            (Some(page), Ok(runtime)) => {
+                runtime.spawn(async move { page.probe().await });
+            }
+            _ => self.probing.store(false, Ordering::SeqCst),
+        }
+    }
+
+    /// Asks the page for a constant, in the helper's world where there is
+    /// one: it runs nothing of the page's and reads nothing. Only a page
+    /// whose own script holds it gives no answer.
+    async fn probe(&self) {
+        let world = *self.world.borrow();
+        let answered = self
+            .client
+            .call(
+                Some(&self.session),
+                &Evaluate {
+                    expression: "0",
+                    context_id: world,
+                    return_by_value: true,
+                    await_promise: false,
+                },
+                Deadline::after(self.hang_probe),
+            )
+            .await;
+        match answered {
+            Err(ClientError::Timeout { .. }) => self.hang().await,
+            _ => self.probing.store(false, Ordering::SeqCst),
+        }
+    }
+
+    /// Closes a hung tab: every call on it is a timeout from now on, its
+    /// events stop, the browser is asked to close its page and the windows
+    /// it opened, and the hang is counted against the browser. The handle
+    /// stays held by whoever opened the tab until it is dropped, so that
+    /// the browser is not recycled under a run that is still going.
+    async fn hang(&self) {
+        let fresh = self.status.send_if_modified(|status| {
+            let open = *status == Status::Open;
+            if open {
+                *status = Status::Hung;
+            }
+            open
+        });
+        if !fresh {
+            return;
+        }
+        self.browser.hangs.fetch_add(1, Ordering::SeqCst);
+        let deadline = Deadline::after(self.call_deadline);
+        // The page's script is ended first: a renderer held by its own
+        // script does not end with its last tab, and would go on running.
+        let _ = self
+            .client
+            .call(Some(&self.session), &TerminateExecution {}, deadline)
+            .await;
+        // The tab's events stop: this listener takes the session's place,
+        // and its end is the browser's word that the session is detached,
+        // which it says once the page is gone.
+        let mut session = self.client.subscribe(Some(&self.session));
+        let mut closing = vec![self.target.clone()];
+        closing.extend(self.browser.windows_of(&self.target));
+        for target in closing {
+            let _ = self
+                .client
+                .call(None, &CloseTarget { target_id: &target }, deadline)
+                .await;
+        }
+        let _ = tokio::time::timeout_at(deadline.at(), async {
+            while session.recv().await.is_some() {}
+        })
+        .await;
+        self.client.unsubscribe(&self.session);
+        self.hang_closed.send_replace(true);
     }
 
     pub(crate) async fn call<C: Command>(
@@ -1450,20 +1593,26 @@ impl Page {
         }
         let mut document_status = None;
         if let Some(loader) = navigated.loader_id {
+            // A document that is not parsed by the deadline may be held by
+            // its own script: the page is probed then.
+            let unanswered = Unanswered::new(self);
             // The document of this navigation has been parsed: a protocol
             // event, not a guess at how long a page takes.
             loop {
                 if nav.borrow_and_update().loaded.as_deref() == Some(loader.as_str()) {
+                    unanswered.answered();
                     break;
                 }
                 if let Some(error) =
                     Self::interrupted(*status.borrow_and_update(), true, Dispatch::Sent)
                 {
+                    unanswered.answered();
                     return Err(error);
                 }
                 tokio::select! {
                     changed = nav.changed() => {
                         if changed.is_err() {
+                            unanswered.answered();
                             return Err(BrowserError::Disconnected { dispatch: Dispatch::Sent });
                         }
                     }
@@ -2645,7 +2794,15 @@ impl Page {
                 self.dialogs_closed.send_modify(|closed| *closed += 1);
             }
             EventKind::TargetCrashed if own => {
-                self.status.send_replace(Status::Crashed);
+                // A tab closed as hung stays hung, whatever its renderer
+                // does as it goes.
+                self.status.send_if_modified(|status| {
+                    let hung = *status == Status::Hung;
+                    if !hung {
+                        *status = Status::Crashed;
+                    }
+                    !hung
+                });
             }
             EventKind::MoveAsked(asked) if own => {
                 if asked.frame_id == self.target {
@@ -3327,7 +3484,7 @@ async fn pump(page: Arc<Page>, mut events: mpsc::UnboundedReceiver<Event>) {
     }
     // The subscription ended: the tab was released, or the link closed.
     page.status.send_if_modified(|status| {
-        let open = *status != Status::Gone && *status != Status::Crashed;
+        let open = !matches!(*status, Status::Gone | Status::Crashed | Status::Hung);
         if open {
             *status = Status::Gone;
         }
@@ -3433,6 +3590,9 @@ pub(crate) async fn open_page(
         sockets,
         moves: Mutex::new(Moves::default()),
         released: AtomicBool::new(false),
+        probing: AtomicBool::new(false),
+        hang_probe: settings.hang_probe,
+        hang_closed: watch::Sender::new(false),
         browser: Arc::clone(browser),
     });
     browser.tabs.fetch_add(1, Ordering::SeqCst);
