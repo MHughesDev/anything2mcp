@@ -225,6 +225,11 @@ pub(crate) enum Posture {
     /// origins as an acting tab is, and with no network event on, since
     /// nothing in it writes and what the person types would cross in them.
     SignIn,
+    /// A tab a person uses while the engine watches, in a window (decision
+    /// 0392, point 1): held to its origins as a sign-in tab is, with no
+    /// interception of a request by its method, and its network events on,
+    /// so that every request of its page is recorded by structure.
+    Watch,
 }
 
 /// How one element is matched. Every variant must match exactly one
@@ -677,6 +682,19 @@ pub struct PageExchange {
     /// name, and was read as a dictionary, whose names are values. Only its
     /// own name and kind are in `fields`.
     pub names_withheld: bool,
+    /// The media type of the body the request sent, in lowercase, without
+    /// its parameters; empty when it sent none. Recorded by a watching tab
+    /// alone: an observing tab records only `GET`, which sends no body.
+    pub body_media_type: String,
+    /// For a body sent as JSON, its names and kinds by the rule of
+    /// `fields`; for a form, its entries' names, each a `string`, by the
+    /// rule of [`crate::query_names`] and [`crate::names_are_structure`].
+    /// `None` for no body, a body of another media type, or one the
+    /// browser did not give whole up to [`crate::LONGEST_WATCHED_BODY`].
+    /// Never a value.
+    pub body_fields: Option<BTreeMap<String, String>>,
+    /// Whether names of the body were withheld, as `names_withheld`.
+    pub body_names_withheld: bool,
 }
 
 /// What [`ObserveTab::exchanges`] gives: the page's own requests answered
@@ -740,6 +758,9 @@ pub const CREDENTIAL_HEADER_WORDS: &[&str] = &[
 struct Pending {
     exchange: PageExchange,
     answered: bool,
+    /// The loader of the document it was sent under, where the browser
+    /// said: a watching tab closes what a document left behind.
+    loader: Option<String>,
 }
 
 /// The most exchanges an observing tab keeps before they are taken.
@@ -817,6 +838,9 @@ enum Status {
 struct Nav {
     /// The loader whose document has been parsed.
     loaded: Option<String>,
+    /// The loader whose document the browser last said is idle on the
+    /// network.
+    idle: Option<String>,
     /// The loader of the last document response, and its status.
     document: Option<(String, u16, bool)>,
 }
@@ -971,6 +995,14 @@ pub(crate) struct Page {
     safe: Option<SafeRequests>,
     /// Whether the tab hears no network event (a sign-in tab).
     quiet: bool,
+    /// Whether the tab is a watching tab: it records every request of its
+    /// page from the browser's network events, and the screens it shows.
+    watching: bool,
+    /// The screens a watching tab's page showed, by structure.
+    screens: Mutex<watching::Screens>,
+    /// How many addresses a watching tab has looked at: a snapshot taken,
+    /// missed, or past the bound.
+    looked: watch::Sender<usize>,
     /// The origins the tab was opened for.
     origins: Origins,
     /// The helper's source, with those origins written in.
@@ -989,10 +1021,14 @@ pub(crate) struct Page {
 
 mod downloads;
 mod site_tools;
+mod watching;
 use downloads::DownloadState;
 pub use downloads::{Download, DownloadError};
 use site_tools::SiteState;
 pub use site_tools::{SiteAnswer, SiteTool, digest_of};
+pub use watching::{
+    LONGEST_WATCHED_BODY, SCREENS_KEPT, SETTLE_BOUND, WatchStart, WatchTab, WatchedScreens,
+};
 
 /// Clears the mark of a `goto` under way when the `goto` ends, however it
 /// ends.
@@ -2319,6 +2355,37 @@ impl Page {
         )
     }
 
+    /// Waits until the count of changes grows past `seen`.
+    pub(crate) async fn changed_since(
+        &self,
+        seen: u64,
+        deadline: Deadline,
+    ) -> Result<(), BrowserError> {
+        let mut changes = self.changes.subscribe();
+        let mut status = self.status.subscribe();
+        loop {
+            if *changes.borrow_and_update() > seen {
+                return Ok(());
+            }
+            if let Some(error) =
+                Page::interrupted(*status.borrow_and_update(), false, Dispatch::NotSent)
+            {
+                return Err(error);
+            }
+            tokio::select! {
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        return Err(BrowserError::Disconnected { dispatch: Dispatch::NotSent });
+                    }
+                }
+                _ = status.changed() => {}
+                () = tokio::time::sleep_until(deadline.at()) => {
+                    return Err(BrowserError::Timeout { dispatch: Dispatch::NotSent });
+                }
+            }
+        }
+    }
+
     // ---- the tab's own task ----
 
     pub(crate) fn block(&self, method: &str, address: &str) {
@@ -2507,9 +2574,15 @@ impl Page {
         match event.kind {
             EventKind::Lifecycle(lifecycle) if own => {
                 if lifecycle.frame_id == self.target && lifecycle.name == "DOMContentLoaded" {
+                    if self.watching {
+                        self.left_behind(&lifecycle.loader_id);
+                    }
                     self.nav
                         .send_modify(|nav| nav.loaded = Some(lifecycle.loader_id));
                     self.changes.send_modify(|count| *count += 1);
+                } else if lifecycle.frame_id == self.target && lifecycle.name == "networkIdle" {
+                    self.nav
+                        .send_modify(|nav| nav.idle = Some(lifecycle.loader_id));
                 }
             }
             EventKind::ResponseReceived(received) if own => {
@@ -2668,6 +2741,12 @@ impl Page {
                     }
                 }
             }
+            EventKind::RequestSent(sent) if own && self.watching => self.heard_sent(&sent),
+            EventKind::SameDocument(moved) if own && self.watching => {
+                if moved.frame_id == self.target {
+                    self.changes.send_modify(|count| *count += 1);
+                }
+            }
             EventKind::LoadingFinished(done) if own => self.finished(&done.request_id).await,
             EventKind::LoadingFailed(done) if own => self.forget(&done.request_id),
             EventKind::BindingCalled(called) if called.name == REFUSED_BINDING => {
@@ -2705,9 +2784,16 @@ impl Page {
         {
             return;
         }
-        let Some(origin) = origin_of(&request.url) else {
-            return;
-        };
+        if let Some(exchange) = self.exchange_of(request) {
+            self.note_pending(number, exchange, None);
+        }
+    }
+
+    /// The start of a [`PageExchange`] for a request: its method, origin,
+    /// path, and the names of its query and headers, by structure. No
+    /// value is kept. `None` for an address with no origin.
+    fn exchange_of(&self, request: &crate::protocol::PausedRequest) -> Option<PageExchange> {
+        let origin = origin_of(&request.url)?;
         let address = without_fragment(&request.url);
         let (query, query_left_out) = crate::query_names(
             address
@@ -2757,7 +2843,7 @@ impl Page {
             .into_iter()
             .filter(|name| !browsers_own(name))
             .collect();
-        let exchange = PageExchange {
+        Some(PageExchange {
             method: request.method.clone(),
             origin,
             path: crate::path_by_structure(&self.redact.redact(path_of(address))),
@@ -2769,7 +2855,15 @@ impl Page {
             content_type: String::new(),
             fields: None,
             names_withheld: false,
-        };
+            body_media_type: String::new(),
+            body_fields: None,
+            body_names_withheld: false,
+        })
+    }
+
+    /// Notes a request of the page heard and not yet answered, or counts it
+    /// as left out when the tab already holds its most.
+    fn note_pending(&self, number: &str, exchange: PageExchange, loader: Option<String>) {
         if let Ok(mut pending) = self.pending.lock() {
             if pending.len() < EXCHANGES_KEPT {
                 pending.insert(
@@ -2777,6 +2871,7 @@ impl Page {
                     Pending {
                         exchange,
                         answered: false,
+                        loader,
                     },
                 );
                 self.waiting.send_replace(pending.len());
@@ -2789,7 +2884,7 @@ impl Page {
     /// Notes what the request of the tab's own document held of the
     /// headers the browser sets by itself, and its address.
     fn heard_document(&self, paused: &RequestPaused) {
-        if self.safe.is_none() || !self.recording.load(Ordering::SeqCst) {
+        if (self.safe.is_none() && !self.watching) || !self.recording.load(Ordering::SeqCst) {
             return;
         }
         let defaults = paused
@@ -2849,6 +2944,7 @@ impl Page {
         let Some(Pending {
             mut exchange,
             answered: true,
+            ..
         }) = taken
         else {
             self.forget(number);
@@ -3289,7 +3385,7 @@ pub(crate) async fn open_page(
         .map_err(lost)?;
     let sockets = match &posture {
         Posture::Observe(_) => REFUSE_SOCKETS.to_owned(),
-        Posture::Act | Posture::SignIn => sockets_held_to(origins),
+        Posture::Act | Posture::SignIn | Posture::Watch => sockets_held_to(origins),
     };
     let page = Arc::new(Page {
         client: client.clone(),
@@ -3313,12 +3409,17 @@ pub(crate) async fn open_page(
         pending: Mutex::new(BTreeMap::new()),
         waiting: watch::Sender::new(0),
         exchanges: Mutex::new(Vec::new()),
-        recording: AtomicBool::new(false),
+        // A watching tab is opened for a capture alone: it records from
+        // its first request.
+        recording: AtomicBool::new(matches!(posture, Posture::Watch)),
         dropped: AtomicUsize::new(0),
         document: Mutex::new(None),
         quiet: matches!(posture, Posture::SignIn),
+        watching: matches!(posture, Posture::Watch),
+        screens: Mutex::new(watching::Screens::default()),
+        looked: watch::Sender::new(0),
         safe: match posture {
-            Posture::Act | Posture::SignIn => None,
+            Posture::Act | Posture::SignIn | Posture::Watch => None,
             Posture::Observe(safe) => Some(safe),
         },
         origins: origins.clone(),
@@ -3368,6 +3469,39 @@ async fn prepare(
         .await?;
         page.call(&NetworkEnable::keeping(page.max_read), deadline)
             .await?;
+        page.call(&BypassServiceWorker { bypass: true }, deadline)
+            .await?;
+        page.call(&RuntimeEnable {}, deadline).await?;
+        page.call(
+            &AddBinding {
+                name: REFUSED_BINDING,
+            },
+            deadline,
+        )
+        .await?;
+        page.call(
+            &AddScriptOnNewDocument {
+                source: &page.sockets,
+                world_name: None,
+            },
+            deadline,
+        )
+        .await?;
+    } else if page.watching {
+        // A tab a person uses while the engine watches holds the requests
+        // of documents and of what the page loads with no body to its
+        // origins, as a sign-in tab does, and fails none for its method:
+        // every request in it is the person's (decision 0392, point 1). Its
+        // network events are on, with a body up to a bound, so that each
+        // request of the page is recorded by structure; the page's service
+        // worker is passed by, so that its requests are seen. Nothing is
+        // attached to its workers or frames.
+        page.call(&fetch_documents_and_loads(), deadline).await?;
+        page.call(
+            &NetworkEnable::keeping(page.max_read).with_bodies_up_to(LONGEST_WATCHED_BODY),
+            deadline,
+        )
+        .await?;
         page.call(&BypassServiceWorker { bypass: true }, deadline)
             .await?;
         page.call(&RuntimeEnable {}, deadline).await?;
@@ -3840,29 +3974,7 @@ impl ActTab {
     /// [`BrowserError::Timeout`] at the deadline; [`BrowserError::Crashed`]
     /// or [`BrowserError::Disconnected`] when the tab goes.
     pub async fn changed_since(&self, seen: u64, deadline: Deadline) -> Result<(), BrowserError> {
-        let mut changes = self.page.changes.subscribe();
-        let mut status = self.page.status.subscribe();
-        loop {
-            if *changes.borrow_and_update() > seen {
-                return Ok(());
-            }
-            if let Some(error) =
-                Page::interrupted(*status.borrow_and_update(), false, Dispatch::NotSent)
-            {
-                return Err(error);
-            }
-            tokio::select! {
-                changed = changes.changed() => {
-                    if changed.is_err() {
-                        return Err(BrowserError::Disconnected { dispatch: Dispatch::NotSent });
-                    }
-                }
-                _ = status.changed() => {}
-                () = tokio::time::sleep_until(deadline.at()) => {
-                    return Err(BrowserError::Timeout { dispatch: Dispatch::NotSent });
-                }
-            }
-        }
+        self.page.changed_since(seen, deadline).await
     }
 
     /// Waits, at most `within`, for the page to draw again the part that

@@ -155,6 +155,11 @@ pub(crate) enum EventKind {
     LoadingFinished(Loading),
     /// A request failed, or was ended.
     LoadingFailed(Loading),
+    /// A request is about to leave: what a watching tab records, since it
+    /// holds no request of a script (decision 0392, point 1).
+    RequestSent(Box<RequestSent>),
+    /// A frame's address changed with no new document.
+    SameDocument(SameDocument),
 }
 
 /// What the browser says of a dialog that opened.
@@ -198,6 +203,8 @@ impl EventKind {
             "WebMCP.toolResponded" => Self::ToolResponded(params),
             "Network.loadingFinished" => Self::LoadingFinished(of(params)?),
             "Network.loadingFailed" => Self::LoadingFailed(of(params)?),
+            "Network.requestWillBeSent" => Self::RequestSent(Box::new(of(params)?)),
+            "Page.navigatedWithinDocument" => Self::SameDocument(of(params)?),
             _ => return None,
         })
     }
@@ -452,6 +459,28 @@ impl ResponseDescription {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Loading {
     pub request_id: String,
+}
+
+/// What the browser says of a request about to leave. Its headers and body
+/// are of the form the interception hands over, and are read as it reads
+/// them: names, and a body's structure, alone.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RequestSent {
+    pub request_id: String,
+    pub request: PausedRequest,
+    /// `Document`, `XHR`, `Fetch`, and the like.
+    #[serde(default, rename = "type")]
+    pub resource_type: String,
+    /// The loader of the document it was sent under.
+    #[serde(default)]
+    pub loader_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SameDocument {
+    pub frame_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1170,6 +1199,15 @@ impl NetworkEnable {
             max_resource_buffer_size: one,
             max_total_buffer_size: one.saturating_mul(4),
             max_post_data_size: None,
+        }
+    }
+
+    /// The same, and the body of a request in its event up to `longest`
+    /// bytes: a longer one is said to be there and not given.
+    pub(crate) fn with_bodies_up_to(self, longest: usize) -> Self {
+        Self {
+            max_post_data_size: Some(u64::try_from(longest).unwrap_or(u64::MAX).max(1)),
+            ..self
         }
     }
 

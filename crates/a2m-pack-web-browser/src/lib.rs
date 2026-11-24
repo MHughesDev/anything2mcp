@@ -31,9 +31,13 @@
 //! person carries out themself, in a tab held to the origins given that
 //! hears no network event ([`Browser::sign_in_tab`]); an acting tab's
 //! network events carry no body of a request its page's script makes
-//! (decision 0254).
+//! (decision 0254). A window also holds a tab a person uses while the
+//! engine watches ([`Observer::watching_tab`], [`WatchTab`]): it fails no
+//! request for its method, records each by structure with its body's names
+//! and kinds, and takes a snapshot of each screen with no value kept
+//! (decision 0392, point 1).
 //!
-//! Not built yet: page storage in a session's state, the watching tab, frames, the stream of every network exchange,
+//! Not built yet: page storage in a session's state, frames, the stream of every network exchange,
 //! declared pop-ups and downloads (an undeclared one is refused and
 //! reported), uploads, recycling, and the platform profiles.
 
@@ -82,7 +86,8 @@ pub use structure::{
 };
 pub use tab::{
     ActTab, BROWSER_DEFAULT_HEADERS, BROWSER_HEADERS, By, CREDENTIAL_HEADER_WORDS, DialogAnswer,
-    Download, DownloadError, EXCHANGES_KEPT, Element, Input, Key, Loaded, Look, OUTSIDE,
-    ObserveTab, OpenDialog, PageEnvironment, PageExchange, PageExchanges, PageRequest,
-    PageResponse, Primitive, Query, RawValue, ReadWhat, SiteAnswer, SiteTool, TextMatch, digest_of,
+    Download, DownloadError, EXCHANGES_KEPT, Element, Input, Key, LONGEST_WATCHED_BODY, Loaded,
+    Look, OUTSIDE, ObserveTab, OpenDialog, PageEnvironment, PageExchange, PageExchanges,
+    PageRequest, PageResponse, Primitive, Query, RawValue, ReadWhat, SCREENS_KEPT, SETTLE_BOUND,
+    SiteAnswer, SiteTool, TextMatch, WatchStart, WatchTab, WatchedScreens, digest_of,
 };

@@ -29,7 +29,8 @@ use crate::protocol::{
 };
 use crate::safe::SafeRequests;
 use crate::tab::{
-    ActTab, ObserveTab, Page, PageEnvironment, Posture, open_page, shown, watch_windows,
+    ActTab, ObserveTab, Page, PageEnvironment, Posture, WatchStart, WatchTab, open_page, shown,
+    watch_windows,
 };
 
 /// The named root that holds the browsers' data directories. The manifest
@@ -549,6 +550,7 @@ async fn show_notice(
     shared: &Arc<Shared>,
     inner: &Arc<BrowserInner>,
     text: &str,
+    purpose: NoticeFor,
 ) -> Result<ActTab, BrowserError> {
     let page = open_page(
         shared,
@@ -561,7 +563,7 @@ async fn show_notice(
     .await?;
     let tab = ActTab::new(page);
     let deadline = Deadline::after(shared.settings.call_deadline);
-    let html = notice_html(text);
+    let html = notice_html(text, purpose);
     tab.page
         .call(
             &SetDocumentContent {
@@ -599,8 +601,21 @@ async fn show_notice(
     Ok(tab)
 }
 
+/// What a window is for, and so what its notice says under its heading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoticeFor {
+    /// A sign-in the person carries out (decision 0254).
+    SignIn,
+    /// A use of the system the engine watches (decision 0392, point 1).
+    Watch,
+}
+
+/// What a window's notice says under its heading, for each purpose.
+const SIGN_IN_NOTICE: &str = "The next tab is the sign-in page. The engine types nothing there and reads nothing you type. Close the window to stop.";
+const WATCH_NOTICE: &str = "The next tab is the system, opened once on its own address. Use it as you always do. The engine presses and types nothing there, sends it nowhere, and sends nothing of its own. It keeps the shape of each request the page sends and of each screen you visit: names and kinds, never a value you type or the page shows. Close the window to stop.";
+
 /// The notice, as a page: plain text, escaped, with no script.
-fn notice_html(text: &str) -> String {
+fn notice_html(text: &str, purpose: NoticeFor) -> String {
     let mut escaped = String::with_capacity(text.len());
     for c in text.chars() {
         match c {
@@ -613,7 +628,11 @@ fn notice_html(text: &str) -> String {
         }
     }
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{escaped}</title></head><body><main><h1>{escaped}</h1><p>The next tab is the sign-in page. The engine types nothing there and reads nothing you type. Close the window to stop.</p></main></body></html>"
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{escaped}</title></head><body><main><h1>{escaped}</h1><p>{said}</p></main></body></html>",
+        said = match purpose {
+            NoticeFor::SignIn => SIGN_IN_NOTICE,
+            NoticeFor::Watch => WATCH_NOTICE,
+        }
     )
 }
 
@@ -720,6 +739,16 @@ impl Browsers {
         &self,
         profile: &ProfileKey,
         show: Visibility,
+    ) -> Result<Browser, BrowserError> {
+        self.open_for(profile, show, NoticeFor::SignIn).await
+    }
+
+    /// As [`Self::open`], with a window's notice written for `purpose`.
+    pub(crate) async fn open_for(
+        &self,
+        profile: &ProfileKey,
+        show: Visibility,
+        purpose: NoticeFor,
     ) -> Result<Browser, BrowserError> {
         let shared = &self.shared;
         let _one = shared.launching.lock().await;
@@ -929,7 +958,7 @@ impl Browsers {
         }
         let notice = match notice {
             None => None,
-            Some(text) => match show_notice(shared, &inner, &text).await {
+            Some(text) => match show_notice(shared, &inner, &text, purpose).await {
                 Ok(tab) => Some(Arc::new(tab)),
                 Err(error) => {
                     inner.client.close();
@@ -1305,8 +1334,9 @@ fn lost(error: &ClientError, redact: &dyn Redact) -> BrowserError {
     }
 }
 
-/// A set of browsers that can only look: it opens observing tabs, which
-/// have no method that acts, and there is no way from it to an acting tab.
+/// A set of browsers that can only look: it opens observing tabs and
+/// watching tabs, neither of which has a method that acts, and there is no
+/// way from it to an acting tab.
 #[derive(Clone)]
 pub struct Observer {
     browsers: Browsers,
@@ -1348,6 +1378,54 @@ impl Observer {
         )
         .await?;
         Ok(ObserveTab::new(page))
+    }
+
+    /// A tab a person uses while the engine watches (decision 0392, point
+    /// 1), in a window of the profile's browser, started afresh as for a
+    /// sign-in, whose first tab shows `notice` and says what is kept. The
+    /// tab is held to `origins` as a sign-in tab is, sent once to `start`,
+    /// and sent nowhere after that. Nothing in it is failed for its method,
+    /// and it records every request of its page to those origins and the
+    /// screens the page shows, by structure, from the moment it opens. It
+    /// has no method that presses, types, navigates, or sends.
+    ///
+    /// # Errors
+    ///
+    /// [`BrowserError::ForeignOrigin`] when `start` is not on `origins`;
+    /// nothing was opened. As [`Browsers::open`] with a window, and as a
+    /// `goto` of the first address.
+    pub async fn watching_tab(
+        &self,
+        profile: &ProfileKey,
+        env: &PageEnvironment,
+        notice: &str,
+        origins: &Origins,
+        start: &WatchStart,
+        deadline: Deadline,
+    ) -> Result<WatchTab, BrowserError> {
+        if !origins.allows(start.address()) {
+            return Err(BrowserError::ForeignOrigin(start.address().origin()));
+        }
+        let browser = self
+            .browsers
+            .open_for(
+                profile,
+                Visibility::Window {
+                    notice: notice.to_owned(),
+                },
+                NoticeFor::Watch,
+            )
+            .await?;
+        let page = open_page(
+            &browser.shared,
+            &browser.inner,
+            env,
+            Posture::Watch,
+            origins,
+            None,
+        )
+        .await?;
+        WatchTab::open(page, browser, start, deadline).await
     }
 
     /// Whether a browser program is installed. Starts nothing.

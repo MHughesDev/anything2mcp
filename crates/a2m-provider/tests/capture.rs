@@ -40,6 +40,13 @@ fn careless() -> CapturedTraffic {
     fields.insert(WORD_SECRET.to_owned(), "string".to_owned());
     fields.insert("note".to_owned(), TOKEN.to_owned());
     fields.insert("items.[].name".to_owned(), "string".to_owned());
+    // The body the request sent: a secret as a field's name, a value as a
+    // kind, an identifier as a name, and a media type that holds a secret.
+    let mut body = BTreeMap::new();
+    body.insert("status".to_owned(), "string".to_owned());
+    body.insert(WORD_SECRET.to_owned(), "string".to_owned());
+    body.insert("op".to_owned(), TOKEN.to_owned());
+    body.insert("rows.100245".to_owned(), "integer".to_owned());
     CapturedTraffic {
         requests: vec![
             CapturedRequest {
@@ -60,6 +67,9 @@ fn careless() -> CapturedTraffic {
                 media_type: "application/json".to_owned(),
                 fields: Some(fields),
                 names_withheld: false,
+                body_media_type: "application/json".to_owned(),
+                body_fields: Some(body),
+                body_names_withheld: false,
             },
             // A secret in the origin withholds the request whole.
             CapturedRequest {
@@ -127,6 +137,34 @@ fn a_capture_keeps_structure_and_no_secret_whatever_the_pack_yields() {
         vec!["id".to_owned(), "items.[].name".to_owned()]
     );
     assert!(one.names_withheld);
+    // A body's names and kinds pass the same floor as the answer's.
+    assert_eq!(one.body_media_type, "application/json");
+    let body = one.body_fields.as_ref().unwrap();
+    assert_eq!(
+        body.keys().cloned().collect::<Vec<_>>(),
+        vec!["status".to_owned()]
+    );
+    assert!(one.body_names_withheld);
+    // A body's media type that holds a secret, or is not of its form, is
+    // not kept.
+    for media_type in [
+        format!("application/{WORD_SECRET}"),
+        "text plain".to_owned(),
+    ] {
+        let one = CapturedTraffic {
+            requests: vec![CapturedRequest {
+                method: "POST".to_owned(),
+                origin: "http://127.0.0.1:8080".to_owned(),
+                path: "/api/rows".to_owned(),
+                status: 200,
+                body_media_type: media_type.clone(),
+                ..CapturedRequest::default()
+            }],
+            ..CapturedTraffic::default()
+        };
+        let kept = kept_by_structure(one, &redact);
+        assert_eq!(kept.requests[0].body_media_type, "", "{media_type}");
+    }
     // What is already structure passes unchanged.
     let again = kept_by_structure(kept.clone(), &redact);
     assert_eq!(again.requests, kept.requests);

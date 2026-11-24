@@ -14,7 +14,7 @@ use crate::{Primitive, TextMatch};
 use super::*;
 
 /// A screen, or `None` when this machine has none and none is required.
-fn screen() -> Option<Screen> {
+pub(super) fn screen() -> Option<Screen> {
     match Screen::start() {
         Ok(screen) => Some(screen),
         Err(why) if !screen_required() => {

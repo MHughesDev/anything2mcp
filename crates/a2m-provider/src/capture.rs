@@ -13,8 +13,10 @@
 //! origin, a path whose every segment that is not a plain word is
 //! [`CAPTURE_PLACEHOLDER`], the names of a query's parameters, the names of
 //! headers that carry a credential or that the client set, a status, a
-//! media type, and the names and kinds of an answer's fields. No value of a
-//! query, a header, a cookie, or a body has a field to be put in. Every
+//! media type, the names and kinds of an answer's fields, and the media
+//! type and the names and kinds of the fields of the body the request sent
+//! (decision 0392, point 2). No value of a query, a header, a cookie, or a
+//! body has a field to be put in. Every
 //! yield passes [`take_capture`], which the contract applies whatever the
 //! pack did: each text that holds a secret the redactor knows (rule 4), or
 //! that is not of its structural form, is not kept, and what was not kept
@@ -83,6 +85,17 @@ pub struct CapturedRequest {
     /// Whether names of the answer were withheld: read as a dictionary's
     /// keys, which are values, or not of a name's form.
     pub names_withheld: bool,
+    /// The media type of the body the request sent, in lowercase, without
+    /// its parameters; empty when it sent none, or when it is not known.
+    pub body_media_type: String,
+    /// The names of the fields of a structured body the request sent, in
+    /// the form of [`Self::fields`], each with one of [`FIELD_KINDS`].
+    /// `None` when it sent no body, or one that was not read as structure.
+    /// Never a value.
+    pub body_fields: Option<BTreeMap<String, String>>,
+    /// Whether names of the body were withheld, as [`Self::names_withheld`]
+    /// says of the answer's.
+    pub body_names_withheld: bool,
 }
 
 /// What one take of a capture yields.
@@ -190,23 +203,17 @@ fn kept_request(raw: CapturedRequest, redact: &dyn Redact) -> Option<CapturedReq
     };
     let credential_headers = header_names(raw.credential_headers);
     let set_headers = header_names(raw.set_headers);
-    let media_type = if is_media_type(&raw.media_type) && clean(&raw.media_type) {
-        raw.media_type
-    } else {
-        String::new()
-    };
+    let media_type = kept_media_type(raw.media_type, redact);
     let mut names_withheld = raw.names_withheld;
-    let fields = raw.fields.map(|fields| {
-        fields
-            .into_iter()
-            .filter(|(name, kind)| {
-                let keep =
-                    is_field_name(name) && clean(name) && FIELD_KINDS.contains(&kind.as_str());
-                names_withheld |= !keep;
-                keep
-            })
-            .collect()
-    });
+    let fields = raw
+        .fields
+        .map(|fields| kept_fields(fields, redact, &mut names_withheld));
+    // A body's names and kinds pass the rule an answer's pass.
+    let body_media_type = kept_media_type(raw.body_media_type, redact);
+    let mut body_names_withheld = raw.body_names_withheld;
+    let body_fields = raw
+        .body_fields
+        .map(|fields| kept_fields(fields, redact, &mut body_names_withheld));
     Some(CapturedRequest {
         method: raw.method,
         origin: raw.origin,
@@ -220,7 +227,38 @@ fn kept_request(raw: CapturedRequest, redact: &dyn Redact) -> Option<CapturedReq
         media_type,
         fields,
         names_withheld,
+        body_media_type,
+        body_fields,
+        body_names_withheld,
     })
+}
+
+/// A media type of its form that holds no secret, or nothing.
+fn kept_media_type(media_type: String, redact: &dyn Redact) -> String {
+    if is_media_type(&media_type) && !redact.contains_secret(&media_type) {
+        media_type
+    } else {
+        String::new()
+    }
+}
+
+/// The fields whose names are of a field name's form, hold no secret, and
+/// whose kinds are of [`FIELD_KINDS`]; `withheld` is set when one was not.
+fn kept_fields(
+    fields: BTreeMap<String, String>,
+    redact: &dyn Redact,
+    withheld: &mut bool,
+) -> BTreeMap<String, String> {
+    fields
+        .into_iter()
+        .filter(|(name, kind)| {
+            let keep = is_field_name(name)
+                && !redact.contains_secret(name)
+                && FIELD_KINDS.contains(&kind.as_str());
+            *withheld |= !keep;
+            keep
+        })
+        .collect()
 }
 
 /// The path with every segment that is not a plain word, or that holds a

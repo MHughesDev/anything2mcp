@@ -225,6 +225,9 @@ async fn an_observing_tab_records_its_pages_own_reads_by_structure_and_keeps_no_
             content_type: "application/json".to_owned(),
             fields: Some(fields),
             names_withheld: false,
+            body_media_type: String::new(),
+            body_fields: None,
+            body_names_withheld: false,
         }]
     );
     // No value of the query, the header, the cookie, or the answer.
