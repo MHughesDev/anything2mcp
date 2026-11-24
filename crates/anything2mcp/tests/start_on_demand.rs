@@ -672,7 +672,6 @@ async fn a_started_engine_killed_with_no_warning_is_replaced_by_the_next_command
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "in one process a job's lease lasts at least ten minutes, and nothing at the start of the next engine declares the killed process's lease lost although the new engine holds the lock, so the run stays `running` until the lease runs out (package 9.3i; the fix is in a2m-sched and a2m-actions)"]
 async fn the_engine_after_a_killed_one_resumes_its_run_at_once() {
     let app = TestApp::start().await.unwrap();
     let (_proxy, machine, run, _) = killed_with_a_write_in_flight(&app).await;

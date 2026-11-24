@@ -73,6 +73,7 @@ impl Scheduler {
 
     // Time. Called by one background task in `a2m-actions`.
     pub async fn sweep(&self) -> Result<SweepReport, Failure>;            // lost leases, queue limits, waits that ran out
+    pub async fn runner_ended(&self, runner: RunnerId) -> Result<SweepReport, Failure>; // every lease the runner holds, lost at once
     pub async fn next_due(&self) -> Result<Option<Timestamp>, Failure>;   // the earliest deadline the scheduler holds
     pub fn due_watch(&self) -> DueWatch;                                  // tells that task to read `next_due` again
 
@@ -203,6 +204,8 @@ On loss, `sweep` does section 223's steps in one transaction:
 2. The run is given a new lease number that nobody holds. From that commit on, the ledger refuses the lost runner, and the ledger sorts the run's locks: those of records in doubt are quarantined, the rest released.
 3. The run stops as `possible_commit`, `runner_lost`, when it is in a state a run can stop from.
 4. A `reconcile` job is queued when the job could write or a record is in doubt, with `available_at` at the end of the quarantine. What the lost job held alone passes to it, so no other job takes those resources in between.
+
+**A runner that starts again holds nothing** ([decision 0998](../../decisions/0998-a-runner-that-starts-again-holds-nothing-and-its-earlier-leases-are-lost-at-once.md)). `runner_ended(runner)` loses every lease the runner holds at once, by the same four steps, when the process that was that runner has ended: the caller says so, and calls it only when no other process can be that runner, as the kernel does at the first start of its runner loop on one machine. The reconcile's `available_at` is then the job's longest step from the loss, the time a step the ended process sent can still be in flight; the setting's quarantine is for a runner that may only be frozen, and a process that ended cannot act again. A resume and a wake still read the quarantine with the setting, which ends later, so they never bring that reconcile earlier.
 
 When the reconcile job is leased it gets the next lease number, and confirms the quarantined locks under it. A late result from the lost runner is refused. Storing its journal as late evidence is the ledger's `late_evidence`, called by the runner link, which is not built. The check after a loss is not a job of its own: the reconcile queued after a lost lease carries `verify_after_loss`, as does each reconcile queued after it, and when it settles the runner reads every verified record once more in the same lease ([decision 0347](../../decisions/0347-the-check-after-a-lost-runner-is-the-last-part-of-its-reconcile.md)).
 
