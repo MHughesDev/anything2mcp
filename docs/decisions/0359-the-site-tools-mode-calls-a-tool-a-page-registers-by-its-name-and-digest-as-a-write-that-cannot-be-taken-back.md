@@ -1,4 +1,4 @@
-# 0399. The `site_tools` mode calls a tool a page registers, by its name and digest, as a write that cannot be taken back
+# 0359. The `site_tools` mode calls a tool a page registers, by its name and digest, as a write that cannot be taken back
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was written. Carries out package 8.2a, on the reading of [research note 25](../research/25-webmcp-standard-status.md).
 

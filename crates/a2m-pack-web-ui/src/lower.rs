@@ -733,7 +733,7 @@ pub(crate) const TOOL_ARG: &str = "arg.";
 /// The lowering of the `site_tools` mode: one binding into `goto` in an
 /// acting tab, `wait` for the screen it names, and `call_tool`, the commit
 /// point. A tool runs the page's own script, so the binding is held to the
-/// least effect that cannot be taken back (decision 0399, the `site_tools`
+/// least effect that cannot be taken back (decision 0359, the `site_tools`
 /// record): the page's hints are its own claims and are never evidence.
 pub(crate) struct SiteToolsLowering {
     mode: Mode,

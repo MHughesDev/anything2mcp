@@ -47,7 +47,7 @@ exclusive = "none"
 # name from an acting tab. A tool runs the page's own script, so what it does
 # is whatever that script does: the binding is held to the least effect that
 # cannot be taken back, and the page's own hints are never evidence
-# (decision 0399, the `site_tools` record).
+# (decision 0359, the `site_tools` record).
 [[modes]]
 name = "site_tools"
 archetype = "request"
