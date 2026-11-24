@@ -525,8 +525,7 @@ pub struct PreviewField {
 /// change, and does nothing else. It is not `Clone`, has no public
 /// constructor, and is reached by no action.
 pub struct ApprovalDesk {
-    surface: Arc<ApprovalSurface>,
-    store: Store,
+    reach: DeskReach,
     workspace: WorkspaceId,
     signals: Arc<RunSignals>,
     redact: Arc<dyn Redact>,
@@ -558,18 +557,63 @@ fn waiting_row(row: RunRow, workspace: WorkspaceId) -> Result<(RunRow, Digest), 
     }
 }
 
+/// The store and the policy engine's approval surface, as the desk reaches
+/// them until the kernel closes. The kernel keeps one clone and empties it
+/// at its close: a surface that keeps the desk longer, as a test's surface
+/// that serves one engine after another does, then holds no clone of the
+/// store, and so no file of the data folder open, which Windows needs to
+/// remove or replace one.
+#[derive(Clone)]
+pub(crate) struct DeskReach(Arc<std::sync::Mutex<Option<Reached>>>);
+
+/// What the desk reaches while the kernel is open.
+type Reached = (Store, Arc<ApprovalSurface>);
+
+impl DeskReach {
+    pub(crate) fn new(store: Store, surface: ApprovalSurface) -> Self {
+        Self(Arc::new(std::sync::Mutex::new(Some((
+            store,
+            Arc::new(surface),
+        )))))
+    }
+
+    fn held(&self) -> std::sync::MutexGuard<'_, Option<Reached>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The store and the approval surface, while the kernel is open.
+    fn get(&self) -> Result<Reached, Failure> {
+        self.held()
+            .as_ref()
+            .map(|(store, surface)| (store.clone(), Arc::clone(surface)))
+            .ok_or_else(|| {
+                codes::busy(
+                    codes::ENGINE_DEGRADED,
+                    "The engine has closed, so no approval can be shown or recorded.",
+                    "Start the engine again and open the approval link once more.",
+                )
+            })
+    }
+
+    /// Lets go of the store and the approval surface: the kernel closed.
+    pub(crate) fn close(&self) {
+        let held = self.held().take();
+        drop(held);
+    }
+}
+
 impl ApprovalDesk {
     pub(crate) fn new(
-        surface: ApprovalSurface,
-        store: Store,
+        reach: DeskReach,
         workspace: WorkspaceId,
         signals: Arc<RunSignals>,
         redact: Arc<dyn Redact>,
         acts: Arc<Acts>,
     ) -> Self {
         Self {
-            surface: Arc::new(surface),
-            store,
+            reach,
             workspace,
             signals,
             redact,
@@ -652,7 +696,8 @@ impl ApprovalDesk {
     /// for an approval; the store's failures.
     pub async fn waiting(&self, run: RunId) -> Result<WaitingApproval, Failure> {
         let workspace = self.workspace;
-        self.store
+        let (store, _) = self.reach.get()?;
+        store
             .read(move |tx| {
                 let (row, diff_hash) = waiting_row(tx.ledger().run(run)?, workspace)?;
                 Ok(WaitingApproval {
@@ -682,8 +727,8 @@ impl ApprovalDesk {
     /// not the one whose hash the run carries; the store's failures.
     pub async fn preview(&self, run: RunId, offset: usize) -> Result<ApprovalPreview, Failure> {
         let workspace = self.workspace;
-        let (row, diff_hash) = self
-            .store
+        let (store, _) = self.reach.get()?;
+        let (row, diff_hash) = store
             .read(move |tx| waiting_row(tx.ledger().run(run)?, workspace))
             .await?;
         let stale = || {
@@ -694,7 +739,7 @@ impl ApprovalDesk {
             )
         };
         let blob = row.diff.ok_or_else(stale)?;
-        let opened = self.store.blobs().get(&blob).await?;
+        let opened = store.blobs().get(&blob).await?;
         let diff = Diff::decode(opened.expose())?;
         if diff.hash() != diff_hash {
             return Err(stale());
@@ -707,7 +752,7 @@ impl ApprovalDesk {
         let set_and_compiled_target = match self.acts.kernel() {
             Ok(kernel) => {
                 let (target, hash) = (diff.target.clone(), diff.compiled_target);
-                self.store
+                store
                     .read(move |tx| tx.versions().load(&workspace, &target, &hash))
                     .await
                     .ok()
@@ -870,7 +915,7 @@ impl ApprovalDesk {
         proof: PresenceProof,
     ) -> Result<ApprovalId, Failure> {
         let waiting = self.waiting(run).await?;
-        let surface = Arc::clone(&self.surface);
+        let (store, surface) = self.reach.get()?;
         let workspace = self.workspace;
         let approved = Approved {
             run,
@@ -882,8 +927,7 @@ impl ApprovalDesk {
             proved_at: proof.at(),
             prompt: proof.prompt().map(str::to_owned),
         };
-        let approval = self
-            .store
+        let approval = store
             .write(Durability::Synced, move |tx| {
                 let entry = |action: &str, detail: String| AuditEntry {
                     workspace,
@@ -957,7 +1001,7 @@ impl ApprovalDesk {
         channel: Channel,
     ) -> Result<(), Failure> {
         let workspace = self.workspace;
-        let surface = Arc::clone(&self.surface);
+        let (store, surface) = self.reach.get()?;
         let why = codes::policy(
             a2m_policy::APPROVAL_REFUSED,
             if by.is_some() {
@@ -968,8 +1012,7 @@ impl ApprovalDesk {
             "Call the tool again if the write is still wanted; a person must approve the new diff.",
         );
         let declined = Declined { run, by, channel };
-        let ended = self
-            .store
+        let ended = store
             .write(Durability::Synced, move |tx| {
                 let row = tx.ledger().run(run)?;
                 if row.workspace != workspace {

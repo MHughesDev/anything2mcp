@@ -647,7 +647,34 @@ async fn a_write_rests_until_a_person_approves_at_the_desk_and_is_written_exactl
     assert_eq!(again.result.as_ref().unwrap()["status"], "completed");
     assert_eq!(world.app.write_count("A-102", "L-300").await.unwrap(), 1);
 
+    // Closed, the kernel leaves no clone of the store behind, though the
+    // surface keeps the desk: the desk answers that the engine has closed,
+    // and no file of the store is open, which Windows needs to remove or
+    // replace one.
     world.kernel.close(CloseReason::Asked).await;
+    let closed = desk.waiting(run_id).await.unwrap_err();
+    assert_eq!(closed.code(), &a2m_actions::codes::ENGINE_DEGRADED);
+    assert_eq!(
+        open_under(&Paths::under(world.folder.path()).store),
+        Vec::<std::path::PathBuf>::new()
+    );
+}
+
+/// The files under `folder` this process has open, read from
+/// `/proc/self/fd` on Linux; empty on every other system.
+fn open_under(folder: &Path) -> Vec<std::path::PathBuf> {
+    if !cfg!(target_os = "linux") {
+        return Vec::new();
+    }
+    let folder = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    std::fs::read_dir("/proc/self/fd")
+        .map(|entries| {
+            entries
+                .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+                .filter(|target| target.starts_with(&folder))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

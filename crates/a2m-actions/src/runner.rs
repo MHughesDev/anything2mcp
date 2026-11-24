@@ -320,6 +320,10 @@ pub(crate) struct RunnerState {
     /// Set once the leases this runner held before this process started
     /// are declared lost, at the first start of the loop.
     earlier_leases_lost: tokio::sync::OnceCell<()>,
+    /// The threads of the jobs in hand, each holding a clone of the kernel
+    /// until its job has ended: [`Kernel::close`] waits for them, so that
+    /// no clone of the store outlives a closed kernel.
+    jobs: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl Default for RunnerState {
@@ -330,6 +334,7 @@ impl Default for RunnerState {
             engine: OnceLock::new(),
             budgets: Mutex::new(BTreeSet::new()),
             earlier_leases_lost: tokio::sync::OnceCell::new(),
+            jobs: Mutex::new(Vec::new()),
         }
     }
 }
@@ -348,9 +353,9 @@ impl RunnerLoop {
         self.runner
     }
 
-    /// Stops the loop. A job in hand is dropped between the engine's own
-    /// waits; its lease runs out and the run is reconciled before anyone
-    /// else gets the job.
+    /// Stops the loop: no job is claimed after it. A job in hand goes on to
+    /// its end on its own thread, which cannot be aborted;
+    /// [`Kernel::close`] waits for it.
     pub async fn stop(self) {
         self.kernel.stop_runner_loop().await;
     }
@@ -449,17 +454,21 @@ impl Kernel {
                     let Ok(permit) = Arc::clone(&permits).acquire_owned().await else {
                         return;
                     };
-                    let kernel = kernel.clone();
                     // The engine's future is not `Send`: a driver's prepared
                     // state is held across its waits and may not be shared
                     // between threads. So a job runs on a thread of its
                     // own, driven by this same runtime, whose timers and
                     // connections it goes on using.
                     let runtime = tokio::runtime::Handle::current();
-                    tokio::task::spawn_blocking(move || {
-                        runtime.block_on(kernel.work(lease, terms));
-                        drop(permit);
+                    let job = tokio::task::spawn_blocking({
+                        let kernel = kernel.clone();
+                        move || {
+                            runtime.block_on(kernel.work(lease, terms));
+                            drop(kernel);
+                            drop(permit);
+                        }
                     });
+                    kernel.hold_job(job);
                 }
             }
         });
@@ -494,12 +503,16 @@ impl Kernel {
                     let Ok(permit) = Arc::clone(&kept).acquire_owned().await else {
                         return;
                     };
-                    let kernel = kernel.clone();
                     let runtime = tokio::runtime::Handle::current();
-                    tokio::task::spawn_blocking(move || {
-                        runtime.block_on(kernel.work(lease, terms));
-                        drop(permit);
+                    let job = tokio::task::spawn_blocking({
+                        let kernel = kernel.clone();
+                        move || {
+                            runtime.block_on(kernel.work(lease, terms));
+                            drop(kernel);
+                            drop(permit);
+                        }
                     });
+                    kernel.hold_job(job);
                 }
             }
         });
@@ -607,6 +620,26 @@ impl Kernel {
         for task in tasks.into_iter().flatten() {
             task.abort();
             let _ = task.await;
+        }
+    }
+
+    /// Keeps the thread of a job in hand, and lets go of those that ended.
+    fn hold_job(&self, job: JoinHandle<()>) {
+        let mut jobs = lock(&self.inner.runner.jobs);
+        jobs.retain(|held| !held.is_finished());
+        jobs.push(job);
+    }
+
+    /// Waits for every job in hand to end, once the loops that hand jobs
+    /// out have stopped. A job's thread cannot be aborted, and it holds a
+    /// clone of the kernel, and so of the store, until its job has ended;
+    /// a closed kernel holds no file of its data folder open, which Windows
+    /// needs to remove or replace one. Each job ends of itself: its steps
+    /// keep their time limits and its lease its length.
+    pub(crate) async fn end_jobs_in_hand(&self) {
+        let jobs: Vec<JoinHandle<()>> = lock(&self.inner.runner.jobs).drain(..).collect();
+        for job in jobs {
+            let _ = job.await;
         }
     }
 

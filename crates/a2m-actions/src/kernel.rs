@@ -195,6 +195,9 @@ pub(crate) struct Inner {
     redact: Arc<dyn Redact>,
     pub(crate) telemetry: Telemetry,
     pub(crate) policy: Option<Policy>,
+    /// How the approval desk reaches the store, emptied at close so that a
+    /// person surface that keeps the desk holds no clone of the store.
+    desk_reach: Option<crate::person::DeskReach>,
     pub(crate) keeper: Option<Keeper>,
     /// The keeper's way to run a session's probe through the engine.
     pub(crate) probes: Arc<ProbeBridge>,
@@ -383,6 +386,7 @@ impl Kernel {
         let acts = crate::acts::Acts::new();
         let mut installation = None;
         let mut policy = None;
+        let mut desk_reach = None;
         let mut keeper = None;
         let probes = Arc::new(ProbeBridge::default());
         let mut credentials = None;
@@ -420,9 +424,10 @@ impl Kernel {
                 Ok((opened, surface)) => {
                     // The one handle that can record an approval goes to the
                     // person surface, and nowhere else.
+                    let reach = crate::person::DeskReach::new(store.clone(), surface);
+                    desk_reach = Some(reach.clone());
                     person.take_desk(ApprovalDesk::new(
-                        surface,
-                        store.clone(),
+                        reach,
                         found.workspace,
                         Arc::clone(&signals),
                         Arc::clone(&prepared.redact),
@@ -530,6 +535,7 @@ impl Kernel {
                 redact: prepared.redact,
                 telemetry: prepared.telemetry,
                 policy,
+                desk_reach,
                 keeper,
                 probes,
                 credentials,
@@ -1041,12 +1047,14 @@ impl Kernel {
         lock(&self.inner.tasks).push(task);
     }
 
-    /// Stops the runner loop and the tending task, stops every subsystem
-    /// the supervisor holds, and writes the reason to the audit log.
+    /// Stops the runner loop and the tending task, waits for every job in
+    /// hand to end, stops every subsystem the supervisor holds, and writes
+    /// the reason to the audit log.
     /// Sessions' saved state is in the store already: the keeper saves it
     /// whenever credentials change.
     pub async fn close(self, why: CloseReason) {
         self.stop_runner_loop().await;
+        self.end_jobs_in_hand().await;
         let tasks: Vec<JoinHandle<()>> = lock(&self.inner.tasks).drain(..).collect();
         for task in &tasks {
             task.abort();
@@ -1070,6 +1078,11 @@ impl Kernel {
                 },
             )
             .await;
+        // The approval desk lets go of the store: a person surface may
+        // keep the desk after the kernel has gone.
+        if let Some(reach) = &self.inner.desk_reach {
+            reach.close();
+        }
         // The engine is closed: the store's lock on its data folder goes,
         // though a clone of the store may outlive this kernel for a while.
         if let Some(store) = &self.inner.store {
