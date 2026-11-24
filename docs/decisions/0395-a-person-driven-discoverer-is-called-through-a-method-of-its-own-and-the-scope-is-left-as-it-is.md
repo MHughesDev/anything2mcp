@@ -1,4 +1,4 @@
-# 0453. A person-driven discoverer is called through a method of its own, and the scope is left as it is
+# 0395. A person-driven discoverer is called through a method of its own, and the scope is left as it is
 
 **Status:** Accepted. Design decision, made by the design architect. The owner had not read this record when it was merged. Nothing in it is built. It changes a public contract, the `Discoverer` interface, by addition.
 

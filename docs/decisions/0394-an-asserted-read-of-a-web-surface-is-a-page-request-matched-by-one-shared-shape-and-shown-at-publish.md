@@ -1,4 +1,4 @@
-# 0452. An asserted read of a web surface is a page request, matched by one shared shape and shown at publish
+# 0394. An asserted read of a web surface is a page request, matched by one shared shape and shown at publish
 
 **Status:** Accepted. Design decision, made by the design architect with the lead. The owner had not read this record when it was merged. Nothing in it is built. It changes two public contracts: the provider contract gains a module, and the file-kind interface gains a method.
 
