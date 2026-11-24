@@ -1,0 +1,22 @@
+# The imaginary order-entry system `example`, used through its pages, for a
+# page that asks for its rows by `POST` (the test application's case 39,
+# decision 0394). It describes no real product. A test gives the surface the
+# address of the application it started.
+schema_version: 1
+target: example
+title: Example order entry
+surfaces:
+  app:
+    kind: web
+    origin: "http://127.0.0.1:4010"
+    viewport: {width: 1280, height: 800}
+    color_scheme: light
+    reduced_motion: true
+environments:
+  test:
+    kind: test
+  production:
+    kind: production
+default_environment: test
+environment: {locale: en-US, timezone: UTC}
+drift_risk: low

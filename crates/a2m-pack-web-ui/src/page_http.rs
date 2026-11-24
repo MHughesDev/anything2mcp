@@ -47,7 +47,7 @@ use a2m_files::{
 use a2m_pack_web_browser::{
     ActTab, Address, AntiForgery, BodyEncoding, BrowserError, Browsers, Deadline, Dispatch,
     FieldValue, Look, ObserveTab, Origins, PageAnswer, PageEnvironment, PagePath, PageWrite,
-    Primitive, ProfileKey, SafeRequests, TokenFrom, TokenTo, Visibility, WriteMethod,
+    Primitive, ProfileKey, TokenFrom, TokenTo, Visibility, WriteMethod,
 };
 use a2m_provider::shape::{Misfit, MisfitKind, PathStep};
 use a2m_provider::{
@@ -65,7 +65,10 @@ use crate::driver::{
 };
 use crate::lower::{GOTO, REACH_ARG};
 use crate::model::{GotoStep, PAYLOAD_FORMAT, ReadItem, ScreenSection, TabKind};
-use crate::requests::{Kind, PageRequest, REQUEST_KIND, RequestSection, WriteForm, pattern};
+use crate::requests::{
+    AssertedRead, AssertedReads, Kind, PageRequest, REQUEST_KIND, RequestSection, WriteForm,
+    pattern,
+};
 use crate::screens::{PACK, SCREEN_KIND, WEB_SURFACE, problem};
 use crate::sign_in::{ExpirySigns, session_ended};
 
@@ -310,6 +313,23 @@ fn read_steps(
     vec![goto, request]
 }
 
+/// The refusal of a `page_http` read of an asserted read: the mode reads by
+/// `GET` alone, and an asserted read is let through for the page's own use,
+/// never sent by the engine (decision 0394, point 2).
+fn asserted_not_sent(at: &Place, name: &str, asserted: &AssertedRead) -> a2m_files::Diagnostic {
+    problem(
+        "request_method_not_built",
+        Stage::Analyze,
+        at,
+        format!(
+            "The page request `{}` is an asserted read by `{}`, and the `page_http` mode reads by `GET` alone: an asserted read is let through the tab when the page sends it, and the engine never sends it.",
+            shown(name),
+            shown(&asserted.method)
+        ),
+        "Read the page that sends it in the `ui` mode, or name a page request by `GET`.",
+    )
+}
+
 impl PageHttpLowering {
     fn lower_read(
         binding: &ResolvedBinding<'_>,
@@ -330,6 +350,9 @@ impl PageHttpLowering {
                 ),
                 "Bind a read to a page request with `method: GET` and `effect: read`.",
             ));
+        }
+        if let Some(asserted) = &found.entry.asserted {
+            problems.push(asserted_not_sent(at, &found.name, asserted));
         }
         for key in ["body", "read_back"] {
             if let Some(stray) = binding.field(key) {
@@ -411,6 +434,9 @@ impl PageHttpLowering {
                 ),
                 "Name a page request that reads.",
             ));
+        }
+        if let Some(asserted) = &reader.entry.asserted {
+            problems.push(asserted_not_sent(&read_back.at, &reader.name, asserted));
         }
         if reader.entry.absent.is_empty() {
             problems.push(problem(
@@ -797,6 +823,9 @@ struct Session {
     /// What the run may do. A write is sent in a live run, and against a
     /// declared test record for the step marked as the commit point.
     posture: Posture,
+    /// The surface's asserted reads, and whether the observing tab was
+    /// handed them.
+    asserted: AssertedReads,
 }
 
 /// What a write's answer is, by what its entry declares.
@@ -832,7 +861,7 @@ impl Session {
         if let Some(acting) = &self.acting {
             refused.extend(acting.blocked());
         }
-        refusal(&refused, what)
+        refusal(&refused, what, &self.asserted)
     }
 
     /// The tab for a `goto`: the acting tab only for a write's own `goto`,
@@ -1045,6 +1074,9 @@ impl Session {
             Some(write) => self.write(step, input, name, entry, write).await,
             None if step.commits => Err(codes::not_usable(
                 "it is marked as a commit point, and its page request reads",
+            )),
+            None if entry.asserted.is_some() => Err(codes::not_usable(
+                "its page request is an asserted read, which the engine never sends",
             )),
             None => self.read(step, input, name, entry).await,
         }
@@ -1542,11 +1574,19 @@ impl PageHttpDriver {
         }
         // Every session looks through an observing tab, in which the
         // browser fails every request of the page that could change the
-        // system, and none is marked safe. Every read runs there.
+        // system, but the asserted reads of a published version, live or in
+        // an environment of kind `test` (decision 0394, point 4). Every read
+        // runs there.
+        let asserted = AssertedReads::of(cx)?;
         let looking = self
             .browsers
             .observer()
-            .observing_tab(&profile, &environment, &SafeRequests::default(), &origins)
+            .observing_tab(
+                &profile,
+                &environment,
+                &asserted.safe_requests(&origin),
+                &origins,
+            )
             .await
             .map_err(|error| browser_failure(&error, "the opening of a tab"))?;
         let may_act = matches!(
@@ -1567,6 +1607,7 @@ impl PageHttpDriver {
             sections,
             expiry,
             posture: cx.posture,
+            asserted,
         })
     }
 }
