@@ -79,7 +79,7 @@ A lost lease means the control plane does not know whether the last write was se
 - The quarantine outlasts any step that was in flight.
 - A late duplicate inside one run is harmless: the values are the ones already approved, written to the same key.
 - Where the system offers a record version, the binding sends it, and a stale write is refused by the system itself.
-- After a lost lease, a `verify_after_loss` job re-reads the records once more, later, and alerts if any differ from what the ledger says was verified.
+- After a lost lease, the reconcile, once it has settled the run, re-reads in the same lease every record the ledger says was verified, and keeps any that differs as late evidence of the run. It is the reconcile's last part and not a job of its own, so the run keeps one live job ([decision 0399](../../decisions/0399-the-check-after-a-lost-runner-is-the-last-part-of-its-reconcile.md)).
 
 What remains is a runner frozen for longer than the quarantine that then overwrites a record a different run has since changed, in a system with no version check. It is unlikely and it is detected afterwards, not prevented. The design records this instead of claiming otherwise.
 
