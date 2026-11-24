@@ -15,8 +15,8 @@ use a2m_files::{
 
 use crate::codes::shown;
 use crate::model::{
-    Action, Cond, Field, Fingerprint, Handling, LocateBy, Locator, NativeDialog, PAYLOAD_FORMAT,
-    ReadHow, Rows, Screen, ScreenSection, Segment, Variant,
+    Action, Cond, DownloadDecl, Field, Fingerprint, Handling, LocateBy, Locator, NativeDialog,
+    PAYLOAD_FORMAT, ReadHow, Rows, Screen, ScreenSection, Segment, Variant,
 };
 
 /// The name of this pack, as its manifest gives it.
@@ -58,6 +58,10 @@ pub const CONTROLS: &[&str] = &[
 /// `combobox` and an `autocomplete` may; with none, the label is the value.
 const CHOICES_REQUIRED: &[&str] = &["radio", "tabs", "accordion"];
 const CHOICES_OPTIONAL: &[&str] = &["combobox", "autocomplete"];
+
+/// The most a declared download may be, in bytes: a person's file, not a
+/// disk's contents.
+pub const MOST_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
 
 /// A code of this pack's compiler: its lint rules, and what its file kind
 /// and lowering refuse.
@@ -151,6 +155,12 @@ pub(crate) fn screen_schema() -> JsonSchema {
             JsonSchema::object()
                 .required("says", JsonSchema::text())
                 .required("answer", JsonSchema::words(&["accept", "dismiss"])),
+        )
+        .optional(
+            "download",
+            JsonSchema::object()
+                .required("most_bytes", JsonSchema::int())
+                .optional("into", JsonSchema::name()),
         );
     let rows = JsonSchema::object()
         .required("locate", locate_schema())
@@ -504,12 +514,38 @@ impl Reader {
                 accept: stated.text("answer") == Some("accept"),
             })
         });
+        let download = match doc.get("download") {
+            Some(stated) => {
+                let most = stated
+                    .get("most_bytes")
+                    .and_then(Located::as_int)
+                    .and_then(|most| u64::try_from(most).ok())
+                    .filter(|most| (1..=MOST_DOWNLOAD_BYTES).contains(most));
+                let Some(most_bytes) = most else {
+                    self.refuse(
+                        "download_invalid",
+                        &stated.at,
+                        format!(
+                            "The most a download may hold is between 1 and {MOST_DOWNLOAD_BYTES} bytes."
+                        ),
+                        "Write `most_bytes:` with the size the file may be, in bytes.",
+                    );
+                    return None;
+                };
+                Some(DownloadDecl {
+                    most_bytes,
+                    into: stated.text("into").map(str::to_owned),
+                })
+            }
+            None => None,
+        };
         Some(Action {
             locate,
             fingerprint,
             confirm: self.condition(doc.get("confirm")?)?,
             commits: doc.get("commits").and_then(Located::as_bool) == Some(true),
             dialog,
+            download,
         })
     }
 

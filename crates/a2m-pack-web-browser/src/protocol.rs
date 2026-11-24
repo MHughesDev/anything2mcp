@@ -148,6 +148,8 @@ pub(crate) enum EventKind {
     ToolsRemoved(Value),
     /// A call of a page's tool ended.
     ToolResponded(Value),
+    /// How a download stands.
+    DownloadProgress(Value),
     /// A request's answer has arrived whole.
     LoadingFinished(Loading),
     /// A request failed, or was ended.
@@ -189,6 +191,7 @@ impl EventKind {
             "Page.frameRequestedNavigation" => Self::MoveAsked(of(params)?),
             "Page.frameStartedNavigating" => Self::MoveStarted(of(params)?),
             "Page.downloadWillBegin" => Self::DownloadBegins(of(params)?),
+            "Page.downloadProgress" => Self::DownloadProgress(params),
             "WebMCP.toolsAdded" => Self::ToolsAdded(params),
             "WebMCP.toolsRemoved" => Self::ToolsRemoved(params),
             "WebMCP.toolResponded" => Self::ToolResponded(params),
@@ -358,6 +361,10 @@ pub(crate) struct MoveStarted {
 pub(crate) struct DownloadBegins {
     #[serde(default)]
     pub url: String,
+    #[serde(default)]
+    pub guid: String,
+    #[serde(default)]
+    pub suggested_filename: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -402,8 +409,24 @@ pub(crate) struct SetDownloadBehavior<'a> {
     pub behavior: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub browser_context_id: Option<&'a str>,
+    /// Where `allow` and `allowAndName` write.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_path: Option<&'a str>,
+    /// Whether the browser reports how a download stands.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events_enabled: Option<bool>,
 }
 command!(SetDownloadBehavior<'_>, "Browser.setDownloadBehavior" => Nothing);
+
+/// Ends a download that is under way.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CancelDownload<'a> {
+    pub guid: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_context_id: Option<&'a str>,
+}
+command!(CancelDownload<'_>, "Browser.cancelDownload" => Nothing);
 
 /// The permissions the browser grants: those listed, for every origin,
 /// and no other. An empty list refuses every permission a page asks for.

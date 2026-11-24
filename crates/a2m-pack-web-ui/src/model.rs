@@ -333,6 +333,19 @@ pub(crate) struct Action {
     /// The dialog of the browser the action's click is expected to open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dialog: Option<NativeDialog>,
+    /// The download the action's click is expected to start: the one file
+    /// the page may offer, and at most this many bytes of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download: Option<DownloadDecl>,
+}
+
+/// A download an action declares (decision 0399, the download record).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct DownloadDecl {
+    /// The most bytes the file may hold.
+    pub most_bytes: u64,
+    /// The output that takes the name of the file the engine made.
+    pub into: Option<String>,
 }
 
 /// A dialog of the browser, such as a confirmation before saving, that an

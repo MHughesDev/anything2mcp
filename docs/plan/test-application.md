@@ -50,7 +50,7 @@ Each case exists because of a named risk. *Phase* is when Anything2MCP must pass
 | 21 | Lets a second user change a record between preview and write | `changed_since_preview` | 3 |
 | 22 | Computes a value in the browser before saving, and signs a request in the browser. Built as `/cases/signed` ([decision 0355](../decisions/0355-the-web-pack-handles-the-edge-a-fixed-language-and-the-pages-of-cases-22-to-27.md)) | Endpoint mining stopping at shadow; the HTTP binding marked unsupported | 4 |
 | 23 | Answers with a rate-limit status, a challenge page, or a maintenance page when told to | `edge_blocked` and surface health; no retry | 4 |
-| 24 | Starts an export that finishes later and offers a download. Built as `/cases/export` | Long-running jobs and downloads | 4 |
+| 24 | Starts an export that finishes later and offers a download. Built as `/cases/export`, which offers a small file and one of two mebibytes whose suggested name climbs out of a folder | Long-running jobs and downloads | 4 |
 | 25 | Shows one of two layouts depending on a flag. Built as `/cases/layout/{flag}`, with a third layout for a flag nobody declared | Ordered locators; a new variant stops | 8 |
 | 26 | Switches language and number format. Built as `/cases/locale`, which speaks the browser's language | Fixed locale; comparison by code, not label | 8 |
 | 27 | Returns text containing instructions aimed at an agent. Built as `/cases/note`, with a button the text names | Untrusted fields; the manipulation test suite | 3 |

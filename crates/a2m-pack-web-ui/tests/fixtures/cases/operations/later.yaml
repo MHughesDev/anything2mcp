@@ -128,3 +128,35 @@ bindings:
     screen: note
 description: >
   Reads a note whose text is not to be believed.
+---
+operation: example_export_file
+title: Download the export
+effect: irreversible
+commit_points: 1
+inputs: {}
+outputs:
+  file: {type: text}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: export
+    action: download_declared
+description: >
+  Presses the link that offers the file, which the screen declares as a download of at most a hundred thousand bytes.
+---
+operation: example_export_large_file
+title: Download the large export
+effect: irreversible
+commit_points: 1
+inputs: {}
+outputs:
+  file: {type: text}
+bindings:
+  - mode: ui
+    verb: submit
+    status: shadow
+    screen: export
+    action: download_large
+description: >
+  Presses the link that offers a file larger than the screen declares it may be.

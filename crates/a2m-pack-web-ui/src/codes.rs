@@ -83,6 +83,15 @@ a2m_core::failure_codes! {
     SITE_TOOLS_UNAVAILABLE = UnknownVariant, "site_tools_unavailable",
         meaning "The browser has no tools of pages to offer: the browser the engine owns does not carry the experimental domain they are called through.",
         next "Use a browser of a version that carries it, or bind the operation through the interface.";
+    DOWNLOAD_NOT_OFFERED = UnknownVariant, "download_not_offered",
+        meaning "The action declares a download, and the page began none before the step's time ended.",
+        next "Look at the page; the action's click does not offer a file, or the file is offered another way than a download.";
+    DOWNLOAD_TOO_LARGE = UnknownVariant, "download_too_large",
+        meaning "The file the page offered is larger than the most the action declares. It was cancelled and nothing was kept.",
+        next "Raise `download.most_bytes` of the action if the file is the one meant; otherwise look at what the page offers.";
+    DOWNLOAD_INCOMPLETE = UnknownVariant, "download_incomplete",
+        meaning "The browser ended the download before the file was whole, or the step's time ended before it was. Nothing was kept.",
+        next "Run the tool again; if it ends the same way, look at the page in a browser of your own.";
     FILE_NOT_STAGED = Input, "file_not_staged",
         meaning "A file input was given a name that is not the name of a file in the staging folder: it holds no file of that name, or the name is not one plain name.",
         next "Put the file in the staging folder under the name, and give that name; no path is taken.";

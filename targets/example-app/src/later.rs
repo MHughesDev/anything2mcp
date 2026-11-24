@@ -50,6 +50,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/cases/export/start", post(export_start))
         .route("/cases/export/status", get(export_status))
         .route("/cases/export/file", get(export_file))
+        .route("/cases/export/large", get(export_large))
         .route("/cases/layout/{flag}", get(layout))
         .route("/cases/locale", get(locale))
         .route("/cases/note", get(note))
@@ -145,6 +146,14 @@ async fn export() -> Html<String> {
                document.getElementById(\"status\").textContent = \"Export downloaded.\";\n\
              });\n\
              document.getElementById(\"offer\").append(link);\n\
+             const large = document.createElement(\"a\");\n\
+             large.href = \"/cases/export/large\";\n\
+             large.download = \"large.csv\";\n\
+             large.textContent = \"Download large export\";\n\
+             large.addEventListener(\"click\", () => {\n\
+               document.getElementById(\"status\").textContent = \"Large export downloaded.\";\n\
+             });\n\
+             document.getElementById(\"offer\").append(\" \", large);\n\
            }, 200);\n\
          });\n\
          </script>",
@@ -177,6 +186,23 @@ async fn export_file(State(state): State<AppState>) -> Response {
             ),
         ],
         "order,quantity\nA-100,4\n",
+    )
+        .into_response()
+}
+
+/// A file of two mebibytes, for a download that is larger than an action
+/// allows.
+async fn export_large(State(state): State<AppState>) -> Response {
+    tell(&state, "export: large file requested".to_owned()).await;
+    (
+        [
+            (header::CONTENT_TYPE, "text/csv"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"../../large.csv\"",
+            ),
+        ],
+        "order,quantity\n".repeat(2 * 1024 * 1024 / 15),
     )
         .into_response()
 }

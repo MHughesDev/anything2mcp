@@ -257,6 +257,8 @@ struct Session {
     snapshots: SnapshotLimits,
     /// The surfaces the edge refused lately, shared with the driver.
     held: Held,
+    /// Where a declared download is written, or why that is not known.
+    downloads: Result<a2m_provider::CheckedPath, Failure>,
     /// Where files for a file input are staged, or why that is not known.
     staging: Result<a2m_provider::CheckedPath, Failure>,
     /// What the run may do. Only a live run sets a field or clicks an
@@ -1497,7 +1499,112 @@ impl Session {
         )))
     }
 
+    /// An action, and the download it declares, if it does: the refusal of
+    /// downloads is lifted for this step alone, for one file of at most the
+    /// size declared, into the folder of the profile; and put back, whatever
+    /// the step came to (decision 0399, the download record).
     async fn invoke(&self, step: &Step, input: &StepInput<'_>) -> Result<StepOutcome, StepFailure> {
+        let declared = {
+            let (_, screen) = self.screen(step)?;
+            let payload: InvokeStep = step
+                .payload
+                .decode()
+                .map_err(|_| codes::not_usable("its payload does not decode"))?;
+            screen
+                .actions
+                .get(&payload.action)
+                .and_then(|action| action.download.clone())
+        };
+        let Some(download) = declared else {
+            return self.invoke_action(step, input).await;
+        };
+        self.may_act(step)?;
+        let acting_tab = self
+            .acting
+            .as_ref()
+            .filter(|_| self.on == TabKind::Act)
+            .ok_or_else(|| {
+                codes::not_usable("a download is declared for an action of a tab that may act")
+            })?;
+        let deadline = until(step, input);
+        let folder = self
+            .downloads
+            .as_ref()
+            .map_err(|failure| StepFailure::not_sent(failure.clone()))?;
+        let what = "the download of the action".to_owned();
+        acting_tab
+            .allow_download(folder.as_path(), download.most_bytes, deadline)
+            .await
+            .map_err(|error| browser_failure(&error, &what))?;
+        let performed = self.invoke_action(step, input).await;
+        let got = match &performed {
+            Ok(_) => Some(acting_tab.downloaded(deadline).await),
+            Err(_) => None,
+        };
+        // The refusal goes back before anything else is decided.
+        let back = acting_tab
+            .forbid_downloads(Deadline::after(Duration::from_secs(5)))
+            .await;
+        let mut outcome = performed?;
+        back.map_err(|error| StepFailure::unknown(browser_failure(&error, &what).failure))?;
+        let Some(got) = got else {
+            return Err(codes::not_usable("the download was not waited for"));
+        };
+        let file = match got {
+            Ok(file) => file,
+            Err(error) => {
+                let (row, why) = match error {
+                    a2m_pack_web_browser::DownloadError::NoneBegan => (
+                        &codes::row::DOWNLOAD_NOT_OFFERED,
+                        "The page offered no file.".to_owned(),
+                    ),
+                    a2m_pack_web_browser::DownloadError::TooLarge { limit } => (
+                        &codes::row::DOWNLOAD_TOO_LARGE,
+                        format!("The file is larger than the {limit} bytes the action allows."),
+                    ),
+                    a2m_pack_web_browser::DownloadError::Cancelled => (
+                        &codes::row::DOWNLOAD_INCOMPLETE,
+                        "The download did not end whole.".to_owned(),
+                    ),
+                    a2m_pack_web_browser::DownloadError::Browser(error) => {
+                        return Err(StepFailure::unknown(browser_failure(&error, &what).failure));
+                    }
+                };
+                // The page answered the click; what it offered is not what
+                // the action declares.
+                return Err(StepFailure::answered(fail(row, why, row.next)));
+            }
+        };
+        let StepOutcome::Done(observed) = &mut outcome else {
+            return Ok(outcome);
+        };
+        let name = file
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if let Some(into) = &download.into {
+            observed
+                .values
+                .insert(into.clone(), Value::Text(name.clone()));
+        }
+        observed.captures.push(acting(
+            vec![
+                Detail::new("step", "download"),
+                Detail::new("file", name),
+                Detail::new("bytes", file.bytes.to_string()),
+                Detail::new("suggested", shown(&file.suggested)),
+            ],
+            Vec::new(),
+        ));
+        Ok(outcome)
+    }
+
+    async fn invoke_action(
+        &self,
+        step: &Step,
+        input: &StepInput<'_>,
+    ) -> Result<StepOutcome, StepFailure> {
         self.may_act(step)?;
         let (name, screen) = self.screen(step)?;
         let payload: InvokeStep = step
@@ -2182,6 +2289,7 @@ impl UiDriver {
             sections,
             snapshots: self.snapshots.clone(),
             held: self.held.clone(),
+            downloads: self.browsers.downloads_folder(),
             staging: self.browsers.staging_folder(),
             posture: cx.posture,
         })

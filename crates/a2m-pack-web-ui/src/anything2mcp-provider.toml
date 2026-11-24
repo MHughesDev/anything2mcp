@@ -276,6 +276,18 @@ class = "unknown_variant"
 code = "site_tools_unavailable"
 
 [[failure_codes]]
+class = "unknown_variant"
+code = "download_not_offered"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "download_too_large"
+
+[[failure_codes]]
+class = "unknown_variant"
+code = "download_incomplete"
+
+[[failure_codes]]
 class = "input"
 code = "file_not_staged"
 

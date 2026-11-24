@@ -389,3 +389,148 @@ async fn a_note_that_gives_orders_is_read_as_untrusted_text_and_obeyed_by_nothin
     assert!(app.case_events().await.unwrap().is_empty());
     scene.stand.end().await;
 }
+
+/// Case 24, the declared download: the action says it starts one file, and
+/// of what size. The file is written into the `downloads` folder of the
+/// engine's profile under a name the browser made, never the page's; one
+/// larger than the action allows is cancelled and nothing of it is kept; and
+/// once the step is over the browser refuses downloads again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_declared_download_is_written_into_the_profile_and_a_larger_one_is_cancelled() {
+    let app = TestApp::start().await.unwrap();
+    let scene = scene("case-download", &app).await;
+    let downloads = scene.stand.folder.path().join("profiles").join("downloads");
+    let (handle, mut prepared, write) = writing(&scene).await;
+    write_steps(
+        &scene,
+        &handle,
+        &mut prepared,
+        &write,
+        "example_export_start",
+        &Values::new(),
+    )
+    .await
+    .unwrap();
+    let declared = &scene.binding("example_export_file").act[2..];
+    let second = Write::new(&["later", "declared"]).await;
+    let ran = scene
+        .run(
+            &handle,
+            &mut prepared,
+            declared,
+            &Values::new(),
+            Some(second.authority()),
+        )
+        .await
+        .unwrap();
+    let Some(Value::Text(name)) = ran.values.get("file") else {
+        panic!("the step named no file: {:?}", ran.values);
+    };
+    assert!(
+        !name.contains(['/', '\\']) && !name.contains("export"),
+        "{name}"
+    );
+    let kept = std::fs::read_to_string(downloads.join(name)).unwrap();
+    assert_eq!(kept, "order,quantity\nA-100,4\n");
+    assert_eq!(
+        app.case_events().await.unwrap().len(),
+        2,
+        "started, and one file"
+    );
+
+    // The next visit offers it again, and the refusal is back: a download
+    // no step declares is a stop, and no file is written for it.
+    let third = Write::new(&["later", "again"]).await;
+    write_steps(
+        &scene,
+        &handle,
+        &mut prepared,
+        &third,
+        "example_export_start",
+        &Values::new(),
+    )
+    .await
+    .unwrap();
+    let undeclared = &scene.binding("example_export_download").act[2..];
+    let fourth = Write::new(&["later", "undeclared"]).await;
+    let first = scene
+        .run(
+            &handle,
+            &mut prepared,
+            undeclared,
+            &Values::new(),
+            Some(fourth.authority()),
+        )
+        .await;
+    let stopped = match first {
+        Err(stopped) => stopped,
+        Ok(_) => {
+            let wait = &scene.binding("example_export_start").act[1..2];
+            let fifth = Write::new(&["later", "after"]).await;
+            scene
+                .run(
+                    &handle,
+                    &mut prepared,
+                    wait,
+                    &Values::new(),
+                    Some(fifth.authority()),
+                )
+                .await
+                .unwrap_err()
+        }
+    };
+    assert!(
+        stopped
+            .failure
+            .message()
+            .to_lowercase()
+            .contains("download"),
+        "{stopped}"
+    );
+    handle.release(prepared, true).await;
+    assert_eq!(std::fs::read_dir(&downloads).unwrap().count(), 1);
+
+    // A file larger than the action allows is cancelled, and nothing is kept.
+    let (handle, mut prepared, write) = writing(&scene).await;
+    write_steps(
+        &scene,
+        &handle,
+        &mut prepared,
+        &write,
+        "example_export_start",
+        &Values::new(),
+    )
+    .await
+    .unwrap();
+    let large = &scene.binding("example_export_large_file").act[2..];
+    let sixth = Write::new(&["later", "large"]).await;
+    let stopped = scene
+        .run(
+            &handle,
+            &mut prepared,
+            large,
+            &Values::new(),
+            Some(sixth.authority()),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        stopped.failure.code().as_str(),
+        "download_too_large",
+        "{stopped}"
+    );
+    handle.release(prepared, true).await;
+    assert_eq!(std::fs::read_dir(&downloads).unwrap().count(), 1);
+    // The name the page suggested, which climbs out of a folder, made no file.
+    assert!(!scene.stand.folder.path().join("large.csv").exists());
+    assert!(
+        !scene
+            .stand
+            .folder
+            .path()
+            .join("profiles")
+            .join("large.csv")
+            .exists()
+    );
+    scene.stand.end().await;
+}

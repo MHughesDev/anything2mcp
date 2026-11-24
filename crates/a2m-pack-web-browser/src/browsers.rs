@@ -40,6 +40,10 @@ pub const PROFILE_ROOT: &str = "profiles";
 /// in: a file input is given a file of this folder and of no other.
 pub const STAGING_FOLDER: &str = "staging";
 
+/// The folder, inside the profile root, that a download a step declares is
+/// written into, under a name the browser makes.
+pub const DOWNLOADS_FOLDER: &str = "downloads";
+
 /// The kind of subsystem a browser is, as the supervisor counts it.
 pub const BROWSER_KIND: &str = "browser";
 
@@ -491,6 +495,8 @@ async fn lock_browser(inner: &Arc<BrowserInner>, call_deadline: Duration) -> Res
                 &SetDownloadBehavior {
                     behavior: "deny",
                     browser_context_id: context,
+                    download_path: None,
+                    events_enabled: None,
                 },
                 deadline,
             )
@@ -667,6 +673,23 @@ impl Browsers {
             .root
             .clone()
             .and_then(|root| root.join(STAGING_FOLDER))
+    }
+
+    /// The folder a declared download is written into, as a checked path:
+    /// the [`DOWNLOADS_FOLDER`] of the profile root, made when it is not
+    /// there.
+    ///
+    /// # Errors
+    ///
+    /// The profile root is not declared, or the folder cannot be made.
+    pub fn downloads_folder(&self) -> Result<a2m_provider::CheckedPath, Failure> {
+        let folder = self
+            .shared
+            .root
+            .clone()
+            .and_then(|root| root.join(DOWNLOADS_FOLDER))?;
+        folder.create_dir_all()?;
+        Ok(folder)
     }
 
     /// Whether a browser program is installed. Looks at the machine and

@@ -973,6 +973,10 @@ pub(crate) struct Page {
     nav: watch::Sender<Nav>,
     /// How many dialogs of the page have closed.
     dialogs_closed: watch::Sender<u64>,
+    /// A download a step declared, and how it stands.
+    download: Mutex<DownloadState>,
+    /// How many times what the page's download stands at changed.
+    download_changes: watch::Sender<u64>,
     /// The tools the page registered, and the answers of calls of them.
     site: Mutex<SiteState>,
     /// How many times what the page announced of its tools changed.
@@ -1020,7 +1024,10 @@ pub(crate) struct Page {
     browser: Arc<BrowserInner>,
 }
 
+mod downloads;
 mod site_tools;
+use downloads::DownloadState;
+pub use downloads::{Download, DownloadError};
 use site_tools::SiteState;
 pub use site_tools::{SiteAnswer, SiteTool, digest_of};
 
@@ -2565,7 +2572,18 @@ impl Page {
             }
             // The browser writes no file for it: every download is denied
             // when the browser starts. This is the report.
-            EventKind::DownloadBegins(download) => self.block(DOWNLOAD, &download.url),
+            EventKind::DownloadBegins(download) => {
+                // A download a step declared is the one, kept; any other is
+                // refused as ever, and a second one cancelled.
+                let declared = self.download_begins(&serde_json::json!({
+                    "guid": download.guid,
+                    "suggestedFilename": download.suggested_filename,
+                }));
+                if !declared {
+                    self.block(DOWNLOAD, &download.url);
+                }
+            }
+            EventKind::DownloadProgress(params) if own => self.download_progress(&params),
             EventKind::Attached(attached) => {
                 // Every child of a tab a tool runs in is locked before it
                 // runs, in both postures (decision 0292); a sign-in tab
@@ -3270,6 +3288,8 @@ pub(crate) async fn open_page(
         status: watch::Sender::new(Status::Open),
         nav: watch::Sender::new(Nav::default()),
         dialogs_closed: watch::Sender::new(0),
+        download: Mutex::new(DownloadState::default()),
+        download_changes: watch::Sender::new(0),
         site: Mutex::new(SiteState::default()),
         site_changes: watch::Sender::new(0),
         open_dialog: Mutex::new(None),
