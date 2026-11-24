@@ -233,6 +233,9 @@ pub(crate) struct Inner {
     /// The person's acts that wait on a page, and what became of the last
     /// ones (decision 0163).
     pub(crate) acts: Arc<crate::acts::Acts>,
+    /// The captures of a person's use, asked for, recording, or ended
+    /// (decision 0392, point 2).
+    pub(crate) captures: crate::handlers::captures::Captures,
     /// Where the identifiers of those acts come from.
     pub(crate) random: Arc<dyn RandomSource>,
     /// One call at a time for each caller's idempotency key, from the
@@ -556,6 +559,7 @@ impl Kernel {
                 runner: crate::runner::RunnerState::default(),
                 signals,
                 acts: Arc::clone(&acts),
+                captures: crate::handlers::captures::Captures::default(),
                 random: Arc::clone(&prepared.random),
                 key_locks: crate::signals::KeyLocks::default(),
                 wake: Arc::new(Notify::new()),
@@ -1053,6 +1057,9 @@ impl Kernel {
     /// Sessions' saved state is in the store already: the keeper saves it
     /// whenever credentials change.
     pub async fn close(self, why: CloseReason) {
+        // A capture that records ends now, and stores what it found while
+        // the store is open.
+        self.inner.captures.end_all().await;
         self.stop_runner_loop().await;
         self.end_jobs_in_hand().await;
         let tasks: Vec<JoinHandle<()>> = lock(&self.inner.tasks).drain(..).collect();

@@ -121,6 +121,12 @@ a2m_core::failure_codes! {
     PROMOTION_UNPROVEN = Input, "promotion_unproven",
         meaning "A promotion whose evidence is missing: an offline test of the operation that is missing or did not pass, or a read no trial proved at `executed` (decision 0189).",
         next "Write or correct the operation's offline test, run `test.run`, and promote again.";
+    CAPTURE_NOT_OFFERED = Input, "capture_not_offered",
+        meaning "No enabled pack watches a person's use of the surface: no discoverer a person drives suits it, so no capture of it can be asked for.",
+        next "Scout the target with `scout.run` instead, or enable a pack whose discoverer a person drives.";
+    CAPTURE_ENDED = Stale, "capture_ended",
+        meaning "The capture was ended, by the one who asked for it, before its person began it on its page, so nothing was recorded.",
+        next "Ask for a new capture with `capture.start`.";
     RUN_NOT_COMPLETED = Rejected, "run_not_completed",
         meaning "A run ended in a state other than completed, and carried no failure of its own.",
         next "Call `trace.show` with the run's identifier to see what happened.";

@@ -44,8 +44,8 @@ This is a design draft. The list is settled action by action as each phase build
 | `target.list` | Targets in the project and their versions | Builder | No | 5 |
 | `auth.detect` | The sign-in method, with evidence, and a recommended identity mode | Builder | build | 2 |
 | `screen.snapshot` | Compact accessibility snapshot of the current page or window | Builder | build | 1 |
-| `capture.start` | Begin recording actions and traffic, redacted | Builder | build | 4 |
-| `capture.stop` | End the recording and store it | Builder | build | 4 |
+| `capture.start` | Ask for a capture of the caller's person's own use of a surface: nothing records until the person begins it on the engine's page, past the presence prompt, where they are told what is kept; then only structure is kept, never a value ([decision 0392](../decisions/0392-a-page-that-reads-by-a-method-that-may-write-is-learned-from-a-persons-watched-use-and-read-through-an-asserted-request.md), point 2; [decision 0433](../decisions/0433-a-capture-is-asked-for-by-capture-start-begun-by-its-person-on-the-page-and-held-in-the-engines-memory.md)). The press on the page carries the capture's identifier, with the person's proof | Builder | build | 4 |
+| `capture.stop` | End a capture the caller asked for, or read how it ended: by the asker, by its person on its page, or at its discoverer's bound. What it found is stored as findings, read with `finding.list` | Builder | build | 4 |
 | `endpoints.infer` | Endpoint templates, schemas, and dependencies from recordings | Builder | build | 4 |
 | `spec.import` | A new scout of a target handed one file of the project's `sources` folder, a description the system publishes about itself: `scout.run` with `files` naming it `description`, and nothing more | Builder | build | 4 |
 | `draft.read` | Read a draft file; stands in for a file system | Builder | build | 5 |

@@ -424,3 +424,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0430 | [A file whose bytes are not on this machine is refused by name, and never fetched](0430-a-file-whose-bytes-are-not-on-this-machine-is-refused-by-name-and-never-fetched.md) | Accepted (design decision) |
 | 0431 | [A name that Windows keeps for a device is refused on every system](0431-a-name-that-windows-keeps-for-a-device-is-refused-on-every-system.md) | Accepted (design decision) |
 | 0432 | [The runtime folder does not follow a variable that differs between one user's processes](0432-the-runtime-folder-does-not-follow-a-variable-that-differs-between-one-users-processes.md) | Accepted (design decision) |
+| 0433 | [A capture is asked for by `capture.start`, begun by its person on the page, and held in the engine's memory](0433-a-capture-is-asked-for-by-capture-start-begun-by-its-person-on-the-page-and-held-in-the-engines-memory.md) | Accepted (design decision) |

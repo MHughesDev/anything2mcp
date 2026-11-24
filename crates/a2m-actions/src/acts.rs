@@ -645,6 +645,13 @@ impl Kernel {
             let details = self.watch_confirmation_lines(caller, &input).await?;
             return Ok((input, details, PublishShown::default(), Vec::new()));
         }
+        if def.name.as_str() == "capture.start" {
+            // What the person begins is shown from the capture as the
+            // kernel holds it: what is watched, its bound, and what is
+            // kept (decision 0392, point 2).
+            let details = self.capture_lines(caller, &input)?;
+            return Ok((input, details, PublishShown::default(), Vec::new()));
+        }
         if def.name.as_str() != "version.publish" {
             return Ok((input, Vec::new(), PublishShown::default(), Vec::new()));
         }

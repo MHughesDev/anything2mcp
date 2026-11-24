@@ -4,6 +4,7 @@
 mod access;
 mod admin;
 pub(crate) mod build;
+pub(crate) mod captures;
 mod client;
 mod drafts;
 mod machine;
@@ -121,6 +122,8 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "watch.pause" => watches::watch_pause,
         "watch.resume" => watches::watch_resume,
         "watch.end" => watches::watch_end,
+        "capture.start" => captures::capture_start,
+        "capture.stop" => captures::capture_stop,
         _ => return None,
     })
 }
