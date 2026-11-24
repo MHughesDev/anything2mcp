@@ -1,6 +1,6 @@
-# 0399. A step that declares a download lifts the refusal of downloads for itself alone, into a folder of the profile
+# 0362. A step that declares a download lifts the refusal of downloads for itself alone, into a folder of the profile
 
-**Status:** Accepted. Design decision. The owner had not read this record when it was written. Carries out the declared download that [the record of cases 22 to 27](0399-the-web-pack-handles-the-edge-a-fixed-language-and-the-pages-of-cases-22-to-27.md) left with `a2m-pack-web-browser`, and the rule of [spec section 301](../spec/3-packs/301-the-web-pack.md) that a download is declared on the step.
+**Status:** Accepted. Design decision. The owner had not read this record when it was written. Carries out the declared download that [the record of cases 22 to 27](0355-the-web-pack-handles-the-edge-a-fixed-language-and-the-pages-of-cases-22-to-27.md) left with `a2m-pack-web-browser`, and the rule of [spec section 301](../spec/3-packs/301-the-web-pack.md) that a download is declared on the step.
 
 **Date:** 2026-11-24
 

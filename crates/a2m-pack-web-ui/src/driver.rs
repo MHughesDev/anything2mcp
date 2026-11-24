@@ -1502,7 +1502,7 @@ impl Session {
     /// An action, and the download it declares, if it does: the refusal of
     /// downloads is lifted for this step alone, for one file of at most the
     /// size declared, into the folder of the profile; and put back, whatever
-    /// the step came to (decision 0399, the download record).
+    /// the step came to (decision 0362, the download record).
     async fn invoke(&self, step: &Step, input: &StepInput<'_>) -> Result<StepOutcome, StepFailure> {
         let declared = {
             let (_, screen) = self.screen(step)?;

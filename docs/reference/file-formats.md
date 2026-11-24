@@ -124,7 +124,7 @@ Brought by the web pack, and by the desktop pack for desktop surfaces.
 | `locate` (required) | Ordered list of locators |
 | `fingerprint` (required) | As for a field |
 | `confirm` (required) | The condition that shows the action took effect |
-| `download` | The download the action's click starts: `most_bytes` (1 to 64 MiB) and, optionally, `into`, the output that takes the name of the file written into the profile's `downloads` folder. An action without it keeps the refusal of downloads ([decision 0399](../decisions/0399-a-step-that-declares-a-download-lifts-the-refusal-of-downloads-for-itself-alone-into-a-folder-of-the-profile.md)) |
+| `download` | The download the action's click starts: `most_bytes` (1 to 64 MiB) and, optionally, `into`, the output that takes the name of the file written into the profile's `downloads` folder. An action without it keeps the refusal of downloads ([decision 0362](../decisions/0362-a-step-that-declares-a-download-lifts-the-refusal-of-downloads-for-itself-alone-into-a-folder-of-the-profile.md)) |
 | `dialog` | A dialog of the browser the action's click is expected to open: `says`, the words it must have exactly, and `answer`, `accept` or `dismiss`. One that says anything else stops the run ([decision 0350](../decisions/0350-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md)) |
 | `commits` | True when the action saves in the application; counted as a commit point. This is what the compiler counts ([spec section 206](../spec/2-kernel/206-the-compiler-and-the-plan.md)); an action without it is not a save |
 

@@ -339,7 +339,7 @@ pub(crate) struct Action {
     pub download: Option<DownloadDecl>,
 }
 
-/// A download an action declares (decision 0399, the download record).
+/// A download an action declares (decision 0362, the download record).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct DownloadDecl {
     /// The most bytes the file may hold.
