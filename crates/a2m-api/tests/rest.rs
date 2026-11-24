@@ -113,7 +113,7 @@ impl World {
             settings: Settings::defaults(),
             paths: Paths::under(folder.path()),
             place: StorePlace::Memory,
-            key_store: Arc::new(MemoryKeyStore::with_random(Counted::new())),
+            key_store: Arc::new(MemoryKeyStore::with_random(Counted::apart())),
             clock,
             random: Counted::new(),
             os_user: USER.to_owned(),

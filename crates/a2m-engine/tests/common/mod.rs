@@ -64,6 +64,15 @@ impl Counted {
     pub fn new() -> Arc<Self> {
         Arc::new(Self(AtomicU64::new(0)))
     }
+
+    /// A counter that starts far from where [`Counted::new`] starts, for a
+    /// second source beside it: two counters from one start hand out the same
+    /// bytes, and the vault rightly refuses a key and a nonce that are the
+    /// same as a stuck source's.
+    #[allow(dead_code)]
+    pub fn apart() -> Arc<Self> {
+        Arc::new(Self(AtomicU64::new(1 << 40)))
+    }
 }
 
 impl RandomSource for Counted {

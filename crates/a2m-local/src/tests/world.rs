@@ -191,7 +191,7 @@ impl World {
             settings: Settings::defaults(),
             paths: paths.clone(),
             place: StorePlace::Memory,
-            key_store: Arc::new(MemoryKeyStore::with_random(Counted::new())),
+            key_store: Arc::new(MemoryKeyStore::with_random(Counted::apart())),
             clock: Arc::clone(&clock),
             random: Counted::new(),
             os_user: user.clone(),
