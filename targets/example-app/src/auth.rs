@@ -239,9 +239,14 @@ impl AuthState {
 }
 
 pub(crate) fn routes(state: &AppState) -> Router<AppState> {
-    let interface = || api::routes().merge(details::api_routes());
+    let interface = || {
+        api::routes()
+            .merge(details::api_routes())
+            .merge(crate::forgery::api_routes())
+    };
     let pages = Router::new()
         .route(HOME, get(home))
+        .merge(crate::forgery::secure_pages())
         .route_layer(from_fn_with_state(state.clone(), page_guard));
     Router::new()
         .route("/secure", get(|| async { Redirect::to(HOME) }))

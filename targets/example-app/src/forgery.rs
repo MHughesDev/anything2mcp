@@ -17,6 +17,12 @@
 //! token too when it came in the body, as some applications do; its
 //! message then quotes that token again in capitals.
 //!
+//! The signed-in part of the application serves the same page and interface
+//! behind its session, at `/secure/orders/{order_id}/note` and
+//! `/secure/api/orders/{order_id}/note`, over the same notes: once the
+//! session has ended, the page is answered by the sign-in page and the
+//! interface by 401.
+//!
 //! What was stored, how often, and how many writes were refused for their
 //! token are reported under `/__control/notes`. Every token is made up and
 //! looks it: `example-forgery-token-...`.
@@ -111,7 +117,20 @@ pub(crate) fn seeded() -> Notes {
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
         .route("/orders/{order_id}/note", get(page))
-        .route("/api/orders/{order_id}/note", get(read).put(write))
+        .merge(api_routes())
+}
+
+/// The note's interface, which the signed-in part of the application
+/// serves under `/secure` too, behind its session.
+pub(crate) fn api_routes() -> Router<AppState> {
+    Router::new().route("/api/orders/{order_id}/note", get(read).put(write))
+}
+
+/// The note's page in the signed-in part of the application, behind its
+/// session: `/secure/orders/{order_id}/note`, whose script writes to
+/// `/secure/api/orders/{order_id}/note`.
+pub(crate) fn secure_pages() -> Router<AppState> {
+    Router::new().route("/secure/orders/{order_id}/note", get(secure_page))
 }
 
 pub(crate) async fn report(State(state): State<AppState>) -> axum::Json<NotesReport> {
@@ -135,8 +154,17 @@ fn not_found() -> Response {
 }
 
 async fn page(State(state): State<AppState>, Path(order_id): Path<String>) -> Response {
+    note_page(&state, &order_id, "").await
+}
+
+async fn secure_page(State(state): State<AppState>, Path(order_id): Path<String>) -> Response {
+    note_page(&state, &order_id, "/secure").await
+}
+
+/// The note's page, whose script writes under `prefix`.
+async fn note_page(state: &AppState, order_id: &str, prefix: &str) -> Response {
     let mut inner = state.lock().await;
-    let Some(order) = inner.store.order(&order_id) else {
+    let Some(order) = inner.store.order(order_id) else {
         return (
             StatusCode::NOT_FOUND,
             Html("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><title>Not found - Example Orders</title></head><body><main><h1>No such order</h1></main></body></html>\n".to_owned()),
@@ -169,7 +197,7 @@ async fn page(State(state): State<AppState>, Path(order_id): Path<String>) -> Re
            event.preventDefault();\n\
            const token = document.querySelector('meta[name=\"{TOKEN_META}\"]').content;\n\
            const note = event.target.elements.note.value;\n\
-           const response = await fetch(\"/api/orders/\" + encodeURIComponent({quoted}) + \"/note\", {{\n\
+           const response = await fetch(\"{prefix}/api/orders/\" + encodeURIComponent({quoted}) + \"/note\", {{\n\
              method: \"PUT\", headers: {{\"Content-Type\": \"application/json\", \"X-CSRF-Token\": token}},\n\
              body: JSON.stringify({{note}}),\n\
            }});\n\
