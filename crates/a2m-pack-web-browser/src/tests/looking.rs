@@ -458,3 +458,49 @@ async fn a_password_is_never_read_and_a_known_secret_never_leaves() {
     drop(tab);
     stand.end().await;
 }
+
+/// A section that has a name is a region, and one without a name is
+/// generic, as the HTML accessibility mapping says: a release that wraps
+/// a form in a named card gives a screen model a region to place its
+/// fields in (package 9.1).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_named_section_is_a_region_and_an_unnamed_one_is_not() {
+    let stand = Stand::with_browser("regions");
+    let browser = stand.open(&profile("clerk")).await;
+    let tab = must(browser.acting_tab(&environment(), &data_pages()).await);
+    let page = page_of(
+        "<!doctype html><title>Cards</title>\
+         <section aria-labelledby=t><h2 id=t>Line Item Details</h2><input aria-label=Quantity></section>\
+         <section aria-label=Notes><input aria-label=Note></section>\
+         <section><input aria-label=Other></section>",
+    );
+    must(tab.page.goto_text(&page, soon()).await);
+    let card = Query::role("region", "Line Item Details");
+    must(
+        tab.locate(&textbox("Quantity").within(card.clone()), soon())
+            .await,
+    );
+    must(
+        tab.locate(
+            &textbox("Note").within(Query::role("region", "Notes")),
+            soon(),
+        )
+        .await,
+    );
+    assert_eq!(
+        tab.locate(&textbox("Note").within(card), soon())
+            .await
+            .unwrap_err(),
+        BrowserError::NotFound
+    );
+    // The third section has no name, and is not a region of an empty one.
+    assert_eq!(
+        tab.locate(&textbox("Other").within(Query::role("region", "")), soon())
+            .await
+            .unwrap_err(),
+        BrowserError::NotFound
+    );
+    must(tab.locate(&textbox("Other"), soon()).await);
+    drop(tab);
+    stand.end().await;
+}

@@ -82,6 +82,12 @@
       return INPUT_ROLES[type] || "textbox";
     }
     if (tag === "select") return el.multiple || el.size > 1 ? "listbox" : "combobox";
+    // A section is a region only when it has a name of its own, as the
+    // HTML accessibility mapping says; an unnamed one is generic.
+    if (tag === "section") {
+      const named = byIds(el, "aria-labelledby") || norm(el.getAttribute("aria-label"));
+      return named ? "region" : "generic";
+    }
     return TAG_ROLES[tag] || "generic";
   }
 
