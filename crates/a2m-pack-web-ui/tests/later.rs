@@ -221,12 +221,17 @@ async fn an_export_that_finishes_later_is_waited_for_and_an_undeclared_download_
         .await;
     // The browser says a moment after the click that it will not keep the
     // file; the run hears it at the start of the next step at the latest.
-    let stopped = match first {
-        Err(stopped) => stopped,
+    // Heard in the click's own run, the click was sent; heard at the start
+    // of the next run's step, that step sent nothing, and says so.
+    let (stopped, true_to_its_run) = match first {
+        Err(stopped) => {
+            let true_to_its_run = stopped.sent != Sent::NotSent;
+            (stopped, true_to_its_run)
+        }
         Ok(_) => {
             let wait = &scene.binding("example_export_start").act[1..2];
             let third = Write::new(&["later", "after"]).await;
-            scene
+            let stopped = scene
                 .run(
                     &handle,
                     &mut prepared,
@@ -235,11 +240,13 @@ async fn an_export_that_finishes_later_is_waited_for_and_an_undeclared_download_
                     Some(third.authority()),
                 )
                 .await
-                .unwrap_err()
+                .unwrap_err();
+            let true_to_its_run = stopped.sent == Sent::NotSent;
+            (stopped, true_to_its_run)
         }
     };
     handle.release(prepared, true).await;
-    assert_ne!(stopped.sent, Sent::NotSent, "{stopped}");
+    assert!(true_to_its_run, "{stopped}");
     assert!(
         stopped
             .failure
