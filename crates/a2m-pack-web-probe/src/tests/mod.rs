@@ -40,6 +40,7 @@ use crate::{SURFACE_KIND, WebProbePack};
 
 mod rules;
 mod scouting;
+mod sign_in;
 
 /// A made-up secret, in a form no real one has.
 const SECRET: &str = "secret-for-tests-7f3a9c";

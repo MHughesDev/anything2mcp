@@ -12,8 +12,8 @@
 //! The product crate registers the pack with one call, [`add_to`], and
 //! gives it the cell of browsers it also gives the web pack's drivers.
 //!
-//! Not built yet, and so not declared in the pack's manifest: `web_auth`
-//! beyond naming a sign-in wall, `web_declared`, the watching tab and the
+//! Not built yet, and so not declared in the pack's manifest:
+//! `web_declared`, the watching tab and the
 //! capture of a person's own use, scenario steps, dependencies between
 //! requests, the front-end logic mark, and the platform profiles. Of the
 //! requests a page's own scripts make, only those with GET to the
@@ -42,7 +42,10 @@ use a2m_core::{Failure, Value};
 use a2m_pack_web_browser::{BrowserSettings, SharedBrowsers};
 use a2m_provider::{DiscovererName, Pack, PackContext, Registrar, RegistryBuilder};
 
-pub use discover::{EMPTY_INTERFACE, INTERFACE_RULES, InterfaceRule, Marker, REFUSED_ORIGINS};
+pub use discover::{
+    EMPTY_INTERFACE, INTERFACE_RULES, InterfaceRule, Marker, REFUSED_ORIGINS, SIGN_IN_SIGNS,
+    SIGN_IN_WORDS,
+};
 pub use infer::{Answer, Endpoint, Exchange, Segment, Tier, infer_endpoints};
 pub use look::{
     ACTION_WORDS, DISCOVERY_ACCOUNT, FOCUS_PATHS, FOCUS_READY_TEXT, FOCUS_TIER_TWO,
@@ -62,6 +65,8 @@ pub const WEB_PROBE: &str = "web_probe";
 pub const WEB_SNAPSHOT: &str = "web_snapshot";
 /// The discoverer that captures exchanges and infers endpoints.
 pub const WEB_CAPTURE: &str = "web_capture";
+/// The discoverer that classifies how a surface asks for a sign-in.
+pub const WEB_AUTH: &str = "web_auth";
 
 /// The most pages one discovery looks at, unless a setting says
 /// otherwise.
@@ -136,9 +141,13 @@ impl Pack for WebProbePack {
         )?;
         to.discoverer(
             Arc::new(discover::WebCapture(
-                parts,
+                Arc::clone(&parts),
                 DiscovererName::new(WEB_CAPTURE)?,
             )),
+            Arc::new(describe::WebDescriber),
+        )?;
+        to.discoverer(
+            Arc::new(discover::WebAuth(parts, DiscovererName::new(WEB_AUTH)?)),
             Arc::new(describe::WebDescriber),
         )?;
         Ok(())

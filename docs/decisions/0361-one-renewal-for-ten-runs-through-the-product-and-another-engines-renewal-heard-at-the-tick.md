@@ -1,4 +1,4 @@
-# 0399. One renewal for ten runs through the product, and another engine's renewal heard at the tick
+# 0361. One renewal for ten runs through the product, and another engine's renewal heard at the tick
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), in package 2.5. The owner had not read this record when it was merged.
 

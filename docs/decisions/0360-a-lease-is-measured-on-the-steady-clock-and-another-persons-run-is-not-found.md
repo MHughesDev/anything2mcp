@@ -1,4 +1,4 @@
-# 0399. A lease is measured on the steady clock, and another person's run is not found
+# 0360. A lease is measured on the steady clock, and another person's run is not found
 
 **Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), in package 3.10. The owner had not read this record when it was merged.
 

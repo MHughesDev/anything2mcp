@@ -13,7 +13,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    Coverage, Digest, EvidenceLevel, Failure, Finding, FindingKind, LimitationCode, Value,
+    Coverage, Digest, EvidenceLevel, Failure, FailureClass, Finding, FindingKind, LimitationCode,
+    Value,
 };
 use a2m_pack_web_browser::{
     Address, BrowserError, Deadline, EXCHANGES_KEPT, Look, ObserveTab, RawValue, ReadWhat,
@@ -25,7 +26,6 @@ use a2m_provider::{
 };
 use serde_json::Value as Json;
 
-use crate::SURFACE_KIND;
 use crate::infer::{Answer, Exchange, infer_endpoints, matched_requests};
 use crate::look::{
     Arrival, Claim, Core, FOCUS_TIER_TWO, Place, Standing, failure, json_body, link, link_target,
@@ -33,6 +33,7 @@ use crate::look::{
 };
 use crate::screen;
 use crate::shape::{Shape, object};
+use crate::{SURFACE_KIND, codes};
 
 /// The methods of a request. Anything else an observing tab reports is a
 /// thing the page made, such as a socket.
@@ -372,6 +373,149 @@ impl WebProbe {
 }
 
 impl Discoverer for WebProbe {
+    fn name(&self) -> DiscovererName {
+        self.1.clone()
+    }
+
+    fn suits(&self, surface: &SurfaceDescription) -> bool {
+        suits_web(surface)
+    }
+
+    fn discover<'a>(
+        &'a self,
+        _port: &'a dyn SandboxPort,
+        scope: &'a DiscoveryScope<'a>,
+        out: &'a mut dyn FindingSink,
+    ) -> BoxFuture<'a, Result<DiscoveryReport, Failure>> {
+        Box::pin(self.look(scope, out))
+    }
+}
+
+// ---- web_auth ----
+
+/// The names of the signs of a sign-in that `web_auth` classifies, as the
+/// finding's `sign_in` holds them. They are the session keeper's names
+/// for them (`a2m_auth::SignInSign`), which turns them into a
+/// recommendation; a test of the product holds the two lists equal.
+pub const SIGN_IN_SIGNS: &[&str] = &["password_form", "other_origin", "challenge", "code_step"];
+
+/// The words of an address that reads as a sign-in page. A page at such an
+/// address that shows no field this pack classifies is a sign-in no rule
+/// covers: `sign_in_unrecognized`, never a guess (rule 7).
+pub const SIGN_IN_WORDS: &[&str] = &["sign-in", "signin", "sign_in", "login", "log-in", "logon"];
+
+/// Whether a path reads as a sign-in page.
+fn reads_as_a_sign_in(path: &str) -> bool {
+    path.to_ascii_lowercase()
+        .split(['/', '?', '#', '.'])
+        .any(|part| SIGN_IN_WORDS.contains(&part))
+}
+
+/// `web_auth`: how the surface's start page asks for a sign-in, from the
+/// page's structure and where it ended alone (decisions 0254 and 0321).
+/// It classifies a password form, a move to another origin, an answer of
+/// status 401, and a field for a one-time code. It reads no field's value,
+/// types nothing, and sends no form: its tab is an observing tab, which
+/// fails every request that is not a read. A second factor that does not
+/// show on the page is `unknown`, never guessed.
+pub(crate) struct WebAuth(pub(crate) Arc<Parts>, pub(crate) DiscovererName);
+
+impl WebAuth {
+    async fn look(
+        &self,
+        scope: &DiscoveryScope<'_>,
+        out: &mut dyn FindingSink,
+    ) -> Result<DiscoveryReport, Failure> {
+        let Parts { core, kinds } = &*self.0;
+        let (address, start) = Core::start(scope)?;
+        let tab = core.tab(scope).await?;
+        let arrival = core.arrive(&tab, &address, &start, scope).await?;
+        let code_field = || async {
+            crate::look::present(
+                &tab,
+                &crate::look::css("input[autocomplete=one-time-code]"),
+                scope,
+            )
+            .await
+        };
+        let (sign, code) = match &arrival.standing {
+            Standing::SignIn("other_origin") => ("other_origin", false),
+            Standing::SignIn("status_401") => ("challenge", false),
+            Standing::SignIn(_) => ("password_form", code_field().await?),
+            Standing::Blocked(code) => {
+                return Err(Failure::new(
+                    FailureClass::EdgeBlocked,
+                    code.clone(),
+                    "The surface stopped answering as itself; how it signs in was not seen.",
+                    "Look at the surface in a browser, and ask its owner before trying again.",
+                ));
+            }
+            Standing::Open if code_field().await? => ("code_step", true),
+            Standing::Open if reads_as_a_sign_in(&arrival.ended.path) => {
+                return Err(Failure::new(
+                    FailureClass::UnknownVariant,
+                    codes::SIGN_IN_UNRECOGNIZED,
+                    "The surface's start page reads as a sign-in, and shows neither a password field, nor a field for a one-time code, nor a move to another origin: no rule of this pack classifies it.",
+                    "Say how the surface signs in: declare it in `auth.yaml` with `draft.write`, or ask a person which method it is.",
+                ));
+            }
+            Standing::Open => {
+                // Nothing asks for a sign-in: there is nothing to classify.
+                return Ok(DiscoveryReport {
+                    coverage: Coverage::Partial,
+                    ..DiscoveryReport::default()
+                });
+            }
+        };
+        let identity_origin = if sign == "other_origin" {
+            Json::from(arrival.ended.origin.clone())
+        } else {
+            Json::Null
+        };
+        let found = object([
+            ("format", Json::from("1")),
+            ("sign_in", Json::from(sign)),
+            (
+                "second_factor",
+                Json::from(if code { "asked" } else { "unknown" }),
+            ),
+            (
+                "redirected",
+                Json::Bool(arrival.asked.plain() != arrival.ended.plain()),
+            ),
+            ("identity_origin", identity_origin),
+            ("status", arrival.status.map_or(Json::Null, Json::from)),
+            ("submitted", Json::Bool(false)),
+        ]);
+        let mut limitations = vec![(
+            LimitationCode::NotExercised,
+            "The sign-in was classified from the page's structure and where it ended; no field was read and nothing was sent.".to_owned(),
+        )];
+        if !code {
+            limitations.push((
+                LimitationCode::SingleVariant,
+                "A second factor, a passkey, or a link sent by mail does not show before a sign-in is sent: whether one follows is not known, and a person says.".to_owned(),
+            ));
+        }
+        out.found(core.finding(
+            scope,
+            arrival.asked.subject(scope.redact)?,
+            &kinds.sign_in_method,
+            &found,
+            &Claim {
+                level: EvidenceLevel::Inferred,
+                limitations,
+                parents: Vec::new(),
+            },
+        )?)?;
+        Ok(DiscoveryReport {
+            coverage: Coverage::Partial,
+            ..DiscoveryReport::default()
+        })
+    }
+}
+
+impl Discoverer for WebAuth {
     fn name(&self) -> DiscovererName {
         self.1.clone()
     }
