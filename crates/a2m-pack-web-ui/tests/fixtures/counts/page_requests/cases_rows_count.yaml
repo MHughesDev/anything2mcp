@@ -1,0 +1,24 @@
+# The route counts with `op: count` and archives with `op: archive`; a
+# person asserts that the request with `op: count`, for an open or a closed
+# status, and only that, changes nothing (decision 0394).
+endpoint: cases_rows_count
+surface: app
+method: POST
+path: "/api/cases/rows/count"
+page: "/cases/rows-count"
+effect: read
+read_asserted: true
+request_encoding: json
+request_schema:
+  type: object
+  additionalProperties: false
+  required: [status, op]
+  properties:
+    status: {type: string, enum: [open, closed]}
+    op: {type: string, enum: [count]}
+response_schema:
+  type: object
+  required: [count, first]
+  properties:
+    count: {type: integer}
+    first: {type: string}
