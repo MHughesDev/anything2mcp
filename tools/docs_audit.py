@@ -200,6 +200,9 @@ def main():
     for k, v in md.items():
         for code in re.findall(r"`anything2mcp ([a-z]+(?: [a-z]+)?)[^`]*`", v):
             words = code.split()
+            # `bridge` is the old name of `stdio` (decision 0330), which history keeps.
+            if words[0] == "bridge" and k.startswith(kept_as_history + ("docs/architecture/page/",)):
+                continue
             if words[0] not in known:
                 note("commands", f"{k}: `anything2mcp {words[0]}` is not a shortcut, process command, or noun")
             elif len(words) == 2 and words[0] in nouns and words[0] not in shortcuts and f"{words[0]}.{words[1]}" not in actions:

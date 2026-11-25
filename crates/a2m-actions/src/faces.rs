@@ -652,7 +652,7 @@ pub const SHORTCUTS: &[Shortcut] = &[
 ];
 
 /// The process commands: they start a long-lived role and are not actions.
-pub const PROCESS_COMMANDS: &[&str] = &["serve", "runner", "bridge"];
+pub const PROCESS_COMMANDS: &[&str] = &["serve", "runner", "stdio"];
 
 /// The line a command prints for what the system itself said, apart from
 /// the failure's sentence and its next step, marked as the system's words.

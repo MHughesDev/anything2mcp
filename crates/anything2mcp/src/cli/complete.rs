@@ -113,7 +113,7 @@ impl Words {
         for word in process_commands() {
             let about = match word {
                 "serve" => "Run the local engine in the foreground.",
-                "bridge" => "The program an MCP client starts.",
+                "stdio" => "The program an MCP client starts.",
                 COMPLETION_COMMAND => "Print a completion script for a shell.",
                 _ => "Not built in this build.",
             };

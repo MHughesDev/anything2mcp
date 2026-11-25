@@ -351,7 +351,7 @@ fn launch(start: &Launch) -> std::io::Result<Child> {
 }
 
 /// Waits for a child the client started, off the async threads, so that a
-/// client that lives on, such as the bridge, leaves no ended process
+/// client that lives on, such as the stdio proxy, leaves no ended process
 /// behind it.
 fn reap(mut child: Child) {
     std::thread::spawn(move || {

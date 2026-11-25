@@ -168,7 +168,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Sign-in mode | The old name of the sign-in kind ([decision 0330](../decisions/0330-every-name-says-what-the-part-is-in-plain-words.md)). An entry of `auth.yaml` keeps the key `mode`. Package N0b renamed it in the code and the documents in force; what is stored keeps it, as [decision 0402](../decisions/0402-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md) says |
 | Snapshot | A compact view of the current page or window, built from the accessibility tree |
 | Source | A reader that turns a file or another system's output into validated records |
-| Stdio proxy | The small program an MCP client starts with `anything2mcp bridge`, which carries MCP messages between standard input and output and the running engine and holds no logic. Not a bridge, which is an access kind |
+| Stdio proxy | The small program an MCP client starts with `anything2mcp stdio`, which carries MCP messages between standard input and output and the running engine and holds no logic. Not the bridge, which is an access kind |
 | Step | One fixed instruction in a compiled target, carried out by a driver |
 | Step trace | One structured record per step of a run |
 | Subject | What a finding or a piece of evidence is about, as one tagged identity: a file by digest, an address, a process, a session, a device, or unknown with a reason |

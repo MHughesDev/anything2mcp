@@ -1,5 +1,5 @@
 //! `client.connect` (decision 0219): the configuration block an MCP client
-//! needs to start `anything2mcp bridge` for this project.
+//! needs to start `anything2mcp stdio` for this project.
 //!
 //! No client is special. The one profile this build knows is `generic`: the
 //! block is printed, and no file is written. Every other profile is data,
@@ -200,7 +200,7 @@ fn write_whole(file: &Path, text: &str) -> Result<(), Failure> {
 
 handler!(
     /// `client.connect`: the configuration an MCP client needs to start the
-    /// bridge for this project, printed, or set in the client's file a
+    /// stdio proxy for this project, printed, or set in the client's file a
     /// profile names, as a local person's act.
     client_connect,
     |kernel, call| {
@@ -224,14 +224,14 @@ handler!(
         let mut args = vec![
             json!("--project"),
             json!(project.display().to_string()),
-            json!("bridge"),
+            json!("stdio"),
         ];
         if toolset != "use" {
             args.extend([json!("--toolset"), json!(toolset)]);
         }
         let mut entry = json!({"command": program.display().to_string(), "args": args});
         // An engine whose folders are all under one home was given it by
-        // `A2M_HOME`: the client is given it too, or the bridge it starts
+        // `A2M_HOME`: the client is given it too, or the stdio proxy it starts
         // would look for another engine. Never the passphrase.
         let paths = kernel.paths();
         if let Some(home) = paths

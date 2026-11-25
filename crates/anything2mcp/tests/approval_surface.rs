@@ -35,7 +35,7 @@ use a2m_local::{
 use a2m_logs::{Clock, SystemClock};
 use anything2mcp::cli::{Finished, Host, run_with};
 use anything2mcp::{EngineOptions, LocalEngine};
-use common::served::{Bridge, PATIENCE, stateless};
+use common::served::{PATIENCE, StdioProxy, stateless};
 use common::{Machine, Surface};
 use example_app::harness::TestApp;
 use serde_json::{Value as Json, json};
@@ -456,8 +456,8 @@ async fn a_person_approves_on_the_page_and_no_program_on_the_machine_can() {
     // No tool an agent can call approves, in either toolset: none is
     // listed, and a call of one by a guessed name is refused.
     for toolset in ["use", "build"] {
-        let mut bridge = Bridge::start(&machine, &["bridge", &format!("--toolset={toolset}")]);
-        let listed = bridge.ask(&stateless(1, "tools/list", json!({})));
+        let mut stdio = StdioProxy::start(&machine, &["stdio", &format!("--toolset={toolset}")]);
+        let listed = stdio.ask(&stateless(1, "tools/list", json!({})));
         let tools = listed["result"]["tools"].as_array().unwrap();
         assert!(!tools.is_empty(), "{listed}");
         for tool in tools {
@@ -465,7 +465,7 @@ async fn a_person_approves_on_the_page_and_no_program_on_the_machine_can() {
             assert!(!name.contains("approv"), "{toolset}: {name}");
         }
         for (id, name) in [(2, "a2m_run_approve"), (3, "a2m_approval_record")] {
-            let called = bridge.ask(&stateless(
+            let called = stdio.ask(&stateless(
                 id,
                 "tools/call",
                 json!({"name": name, "arguments": {"run_id": run}}),
@@ -476,7 +476,7 @@ async fn a_person_approves_on_the_page_and_no_program_on_the_machine_can() {
             );
             assert!(refused.is_string(), "{toolset}: {called}");
         }
-        let (code, _, said) = bridge.close();
+        let (code, _, said) = stdio.close();
         assert_eq!(code, Some(0), "{said}");
     }
     // Nor does the registry the program is built from hold an action that

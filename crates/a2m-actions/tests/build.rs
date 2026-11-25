@@ -3705,7 +3705,7 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
 /// client's file is a person's act, shown first, keeps every other entry,
 /// and refuses a file it cannot read.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_client_is_given_the_bridge_by_a_profile_and_its_other_entries_are_kept() {
+async fn a_client_is_given_the_stdio_proxy_by_a_client_profile_and_its_other_entries_are_kept() {
     let world = World::open().await;
     let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
 
@@ -3721,7 +3721,7 @@ async fn a_client_is_given_the_bridge_by_a_profile_and_its_other_entries_are_kep
     // on macOS or in its short form on Windows.
     let project = a2m_provider::resolved_path(world.project.path()).unwrap();
     assert_eq!(args[1], project.display().to_string());
-    assert_eq!(args[2], "bridge");
+    assert_eq!(args[2], "stdio");
     assert!(printed["block"]["anything2mcp"]["command"].is_string());
     // The engine's home is given by `A2M_HOME`, and the client is told it;
     // no passphrase is in the block.

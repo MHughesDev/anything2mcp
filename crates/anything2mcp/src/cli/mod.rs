@@ -5,7 +5,7 @@
 //! program starts: `anything2mcp <noun> <verb> [arguments]` for every
 //! action with a command face, and the shortcuts, which are data. The
 //! process commands are written by hand: `serve` is the local engine and
-//! `bridge` the stdio proxy of an MCP client; `runner` is named and not
+//! `stdio` the stdio proxy of an MCP client; `runner` is named and not
 //! built.
 //!
 //! A command is a thin client of the local engine: it sends each action

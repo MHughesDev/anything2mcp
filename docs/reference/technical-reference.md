@@ -860,7 +860,7 @@ Every action in the [action catalog](action-catalog.md) is a command of the form
 | Kind | Commands |
 | --- | --- |
 | Shortcuts | `init`, `add`, `learn`, `lint`, `try`, `test`, `ready`, `publish`, `status`, `call`, `run`, `diff`, `connect`, `doctor`, `docs`; a shortcut is offered only when every step is built, so `bundle`, `rollback`, and `migrate` wait for their actions |
-| Process commands | `serve`, `runner`, `bridge`, `completion` |
+| Process commands | `serve`, `runner`, `stdio`, `completion` |
 
 On a local machine no command approves a write; see spec section 222. On a server, approvals are given in the console or a chat card after the approver signs in.
 

@@ -663,8 +663,8 @@ impl Tree {
                  one by itself. `--passphrase-from-stdin` reads the vault's passphrase from \
                  standard input, to its end, instead of from the environment.",
             ),
-            "bridge" => (
-                format!("{PROGRAM} bridge [--toolset use|build]"),
+            "stdio" => (
+                format!("{PROGRAM} stdio [--toolset use|build]"),
                 "A process command: it starts a long-lived role and is not an action.",
                 "The program an MCP client starts: it copies MCP messages between its standard \
                  input and output and the local engine's MCP endpoint.\nStandard output carries \
@@ -770,7 +770,7 @@ pub(crate) fn process_flags(word: &str) -> &'static [(&'static str, &'static str
             "--passphrase-from-stdin",
             "Read the vault's passphrase from standard input, to its end.",
         )],
-        "bridge" => &[("--toolset", "The built-in toolset to serve: use or build.")],
+        "stdio" => &[("--toolset", "The built-in toolset to serve: use or build.")],
         _ => &[],
     }
 }

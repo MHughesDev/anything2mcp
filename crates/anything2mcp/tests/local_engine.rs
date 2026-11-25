@@ -1,8 +1,8 @@
 //! The front doors, joined: `serve` as the local engine, a command as its
-//! thin client, and `bridge` as the stdio proxy of an MCP client.
+//! thin client, and `stdio` as the stdio proxy of an MCP client.
 //!
 //! The first two tests run the real program: `serve` is a child process on
-//! a temporary data directory, and commands and a bridge are further
+//! a temporary data directory, and commands and a stdio proxy are further
 //! children that find it over the local channel. The third runs the same
 //! local engine inside the test, with the real channel, the real person
 //! surface, both routers, and the kernel, because the program ships no
@@ -27,7 +27,7 @@ use a2m_local::{
 };
 use anything2mcp::cli::{Finished, Host, run_with};
 use anything2mcp::{EngineOptions, LocalEngine, PASSPHRASE_VARIABLE};
-use common::served::{Bridge, PATIENCE, Served, object, output, request, stateless};
+use common::served::{PATIENCE, Served, StdioProxy, object, output, request, stateless};
 use common::{Machine, Surface};
 use example_app::harness::TestApp;
 use serde_json::{Value as Json, json};
@@ -256,30 +256,31 @@ fn assert_lists_tools(answer: &Json) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_bridge_answers_with_the_failure_until_an_engine_runs_and_then_reads_in_both_revisions() {
+async fn a_stdio_proxy_answers_with_the_failure_until_an_engine_runs_and_then_reads_in_both_revisions()
+ {
     let app = TestApp::start().await.unwrap();
     let machine = published(&app).await;
     let read = json!({"name": ORDER_GET, "arguments": {"order_id": "A-100"}});
 
-    // No engine runs. The bridge stays, and answers a request with the
+    // No engine runs. The stdio proxy stays, and answers a request with the
     // failure and what to do, so that its caller is not left waiting.
-    let mut bridge = Bridge::start(&machine, &["bridge"]);
-    let refused = bridge.ask(&stateless(1, "tools/list", json!({})));
+    let mut stdio = StdioProxy::start(&machine, &["stdio"]);
+    let refused = stdio.ask(&stateless(1, "tools/list", json!({})));
     assert_eq!(refused["error"]["code"], -32000, "{refused}");
     let data = &refused["error"]["data"];
     assert_eq!(data["code"], "engine_unreachable", "{refused}");
     assert!(data.to_string().contains("anything2mcp serve"), "{refused}");
 
-    // An engine is started. The same bridge carries the next request.
+    // An engine is started. The same stdio proxy carries the next request.
     let served = Served::start(&machine);
 
     // The stateless revision: no handshake, every request names it.
-    assert_lists_tools(&bridge.ask(&stateless(2, "tools/list", json!({}))));
-    assert_read(&bridge.ask(&stateless(3, "tools/call", read.clone())));
+    assert_lists_tools(&stdio.ask(&stateless(2, "tools/list", json!({}))));
+    assert_read(&stdio.ask(&stateless(3, "tools/call", read.clone())));
 
-    // The handshake revision, on a bridge of its own, as a client of that
+    // The handshake revision, on a stdio proxy of its own, as a client of that
     // revision starts one.
-    let mut older = Bridge::start(&machine, &["bridge", "--toolset", "use"]);
+    let mut older = StdioProxy::start(&machine, &["stdio", "--toolset", "use"]);
     let hello = older.ask(&request(
         1,
         "initialize",
@@ -295,19 +296,19 @@ async fn a_bridge_answers_with_the_failure_until_an_engine_runs_and_then_reads_i
     assert_read(&older.ask(&request(3, "tools/call", read)));
 
     // The other built-in toolset is served at its own endpoint.
-    let mut build = Bridge::start(&machine, &["bridge", "--toolset=build"]);
+    let mut build = StdioProxy::start(&machine, &["stdio", "--toolset=build"]);
     let listed = build.ask(&stateless(1, "tools/list", json!({})));
     assert!(listed["result"]["tools"].is_array(), "{listed}");
 
-    // When its input ends a bridge ends, with nothing more on standard
+    // When its input ends a stdio proxy ends, with nothing more on standard
     // output. The one that started with no engine said so on standard
     // error, and nowhere else.
-    let (code, left, said) = bridge.close();
+    let (code, left, said) = stdio.close();
     assert_eq!(code, Some(0), "{said}");
     assert!(left.is_empty(), "{left:?}");
     assert!(said.contains("anything2mcp serve"), "{said}");
-    for bridge in [older, build] {
-        let (code, left, said) = bridge.close();
+    for stdio in [older, build] {
+        let (code, left, said) = stdio.close();
         assert_eq!(code, Some(0), "{said}");
         assert!(left.is_empty(), "{left:?}");
         assert!(said.is_empty(), "{said}");
@@ -983,7 +984,7 @@ async fn a_read_leaves_one_run_row_and_its_events() {
     assert_eq!(code, Some(0), "{printed}");
 }
 
-/// An MCP client, through `bridge`, reads what a command reads, and the
+/// An MCP client, through `stdio`, reads what a command reads, and the
 /// tool list it is shown is the registry's built-in tools and the
 /// published tools of the machine, and nothing hand-written (roadmap
 /// package 1.5; the MCP part of the parity check of spec section 220).
@@ -1001,8 +1002,8 @@ async fn an_mcp_client_reads_what_a_command_reads_and_its_tool_list_is_the_regis
     let by_command = object(&done)["result"]["result"].clone();
 
     // The same read, by an MCP client.
-    let mut bridge = Bridge::start(&machine, &["bridge"]);
-    let called = bridge.ask(&stateless(
+    let mut stdio = StdioProxy::start(&machine, &["stdio"]);
+    let called = stdio.ask(&stateless(
         1,
         "tools/call",
         json!({"name": ORDER_GET, "arguments": {"order_id": "A-100"}}),
@@ -1018,7 +1019,7 @@ async fn an_mcp_client_reads_what_a_command_reads_and_its_tool_list_is_the_regis
     // others are the machine's published tools, each named for its target.
     let registry = anything2mcp::action_registry().unwrap();
     let faces = a2m_actions::mcp_tools(&registry, a2m_actions::BuiltInToolset::Use);
-    let listed = bridge.ask(&stateless(2, "tools/list", json!({})));
+    let listed = stdio.ask(&stateless(2, "tools/list", json!({})));
     let tools = listed["result"]["tools"].as_array().unwrap();
     for tool in tools {
         let name = tool["name"].as_str().unwrap();
@@ -1040,7 +1041,7 @@ async fn an_mcp_client_reads_what_a_command_reads_and_its_tool_list_is_the_regis
         );
     }
 
-    let (code, _, said) = bridge.close();
+    let (code, _, said) = stdio.close();
     assert_eq!(code, Some(0), "{said}");
     let stop = output(machine.program(&["engine", "stop"])).await;
     assert_eq!(stop.status.code(), Some(0), "{stop:?}");

@@ -44,12 +44,12 @@ a2m-policy = { path = "../a2m-policy" }
 a2m-provider = { path = "../a2m-provider" }
 a2m-logs = { path = "../a2m-logs" }
 a2m-vault = { path = "../a2m-vault" }
-# The routers of the front doors are joined here, and the bridge keeps a
+# The routers of the front doors are joined here, and the stdio proxy keeps a
 # connection for as long as the body of its answer is read.
 axum.workspace = true
 futures-core.workspace = true
 serde_json.workspace = true
-# `serve` stops on the operating system's signal; `bridge` copies standard
+# `serve` stops on the operating system's signal; `stdio` copies standard
 # input and output.
 tokio = { workspace = true, features = ["io-std", "io-util", "signal"] }
 # The engine's log lines of its own start and stop, through the subscriber

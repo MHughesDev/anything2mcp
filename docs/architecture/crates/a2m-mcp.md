@@ -82,9 +82,9 @@ pub async fn stdio_proxy<U, R, W>(upstream: U, toolset: &ToolsetName, input: R, 
     -> Result<(), Failure>;
 ```
 
-The proxy is started by `bridge`, a process command of the product crate, which connects through `a2m-local` and wraps the link's `send` in a closure. The two role crates do not depend on each other. Client profiles are not built, so no type for them exists yet.
+The proxy is started by `stdio`, a process command of the product crate, which connects through `a2m-local` and wraps the link's `send` in a closure. The two role crates do not depend on each other. Client profiles are not built, so no type for them exists yet.
 
-**How the product crate composes it.** For each of `use` and `build`: `McpService::new(kernel.clone(), toolset, McpSettings::from_settings(kernel.settings())?)`, nested at `mcp_path(&toolset)` in the router the local channel serves. The mount puts the caller on each request: an `McpPeer` with the user the channel saw, or the `Caller` it already had the kernel check for the REST router. Beside the caller it puts the `ProjectFolder` the client end stated, when it stated one; the endpoint hands it to `Request::in_project_folder` with every dispatch, and nothing in a message can set it. `bridge` names the folder it was started in, or the one `--project` gives, on every request it carries. For `bridge`: `stdio_proxy(move |request| link.send(request), &toolset, stdin, stdout)`, and exit status 0 when it returns well.
+**How the product crate composes it.** For each of `use` and `build`: `McpService::new(kernel.clone(), toolset, McpSettings::from_settings(kernel.settings())?)`, nested at `mcp_path(&toolset)` in the router the local channel serves. The mount puts the caller on each request: an `McpPeer` with the user the channel saw, or the `Caller` it already had the kernel check for the REST router. Beside the caller it puts the `ProjectFolder` the client end stated, when it stated one; the endpoint hands it to `Request::in_project_folder` with every dispatch, and nothing in a message can set it. `stdio` names the folder it was started in, or the one `--project` gives, on every request it carries. For `stdio`: `stdio_proxy(move |request| link.send(request), &toolset, stdin, stdout)`, and exit status 0 when it returns well.
 
 ## Revisions
 
@@ -239,7 +239,7 @@ Not built. The same `McpService` is mounted at `/mcp/<toolset>` on the network l
 
 | Caller | Uses |
 | --- | --- |
-| `anything2mcp` | `McpService` mounted on the local channel and the network listener; `stdio_proxy` for `bridge` |
+| `anything2mcp` | `McpService` mounted on the local channel and the network listener; `stdio_proxy` for `stdio` |
 
 It calls `a2m-actions` for the registry, `dispatch`, the check of a caller, and the redactor.
 

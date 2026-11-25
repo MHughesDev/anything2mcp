@@ -127,7 +127,7 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | `reach.list` | The reaches a person has named: label, the names of the facts each states, whether it is in force here, and the person's own entries; no digest | The person | No | N3 |
 | `browser.install` | Fetch a pinned browser | Local user | No | 1, not built |
 | `plugin.install`, `plugin.list` | Manage plug-ins | Admin | No | 8, not built |
-| `client.connect` | Give the configuration an MCP client needs to start the bridge: printed for `generic`, or set in the file a client profile names, shown first, by a local person | Local user | No | 5 |
+| `client.connect` | Give the configuration an MCP client needs to start the stdio proxy: printed for `generic`, or set in the file a client profile names, shown first, by a local person | Local user | No | 5 |
 | `trace.show` | View a run's evidence | Auditor | No | 1 |
 | `trace.export` | Export a run's evidence | Auditor | No | 1, not built |
 | `action.search`, `action.describe`, `action.run` | Reach any action without listing it | Any | use and build | 5 |
@@ -167,5 +167,5 @@ These start a long-lived role and are not actions.
 | --- | --- |
 | `serve` | A server in the configured deployment shape |
 | `runner` | A runner that dials a control plane |
-| `bridge` | The link an SDK or a stdio MCP client uses to reach the local engine |
+| `stdio` | The link an SDK or a stdio MCP client uses to reach the local engine |
 | `completion` | Nothing: prints a completion script for a shell, answered by the program itself |

@@ -7,7 +7,7 @@
 //!
 //! The local engine ([`LocalEngine`]) is the kernel of one machine served
 //! on the local channel: `anything2mcp serve` runs it, a command is its
-//! thin client, and `anything2mcp bridge` is the stdio proxy an MCP client
+//! thin client, and `anything2mcp stdio` is the stdio proxy an MCP client
 //! starts. When no engine runs, a command runs one inside its own process
 //! ([`Engine`]). The server and runner roles are not here yet.
 //!

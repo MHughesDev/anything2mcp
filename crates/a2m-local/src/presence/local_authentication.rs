@@ -296,7 +296,7 @@ mod system {
     // SAFETY: the declaration is the one in `CGSession.h`. The function
     // takes nothing and returns a dictionary the caller owns, or null when
     // the caller runs in no window-server session. A `CFDictionaryRef` is
-    // toll-free bridged to `NSDictionary`.
+    // toll-free through_the_stdio_proxy to `NSDictionary`.
     unsafe extern "C" {
         safe fn CGSessionCopyCurrentDictionary() -> *mut NSDictionary<NSString, AnyObject>;
     }

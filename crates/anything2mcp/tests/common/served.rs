@@ -1,5 +1,5 @@
 //! The real program as child processes: `serve` as the local engine, a
-//! command run to its end, and `bridge` driven by raw protocol messages.
+//! command run to its end, and `stdio` driven by raw protocol messages.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -164,18 +164,18 @@ pub fn object(output: &Output) -> Json {
     })
 }
 
-/// The real program's `bridge`, driven by raw protocol messages over its
+/// The real program's `stdio`, driven by raw protocol messages over its
 /// standard streams.
-pub struct Bridge {
+pub struct StdioProxy {
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     answers: Receiver<String>,
 }
 
-impl Bridge {
+impl StdioProxy {
     pub fn start(machine: &Machine, args: &[&str]) -> Self {
         let mut command = machine.program(args);
-        // The bridge holds no key and opens no store: it only copies.
+        // The stdio proxy holds no key and opens no store: it only copies.
         command
             .env_remove(PASSPHRASE_VARIABLE)
             .stdin(Stdio::piped());
@@ -199,7 +199,7 @@ impl Bridge {
         let line = self
             .answers
             .recv_timeout(PATIENCE)
-            .expect("the bridge answered");
+            .expect("the stdio proxy answered");
         let message: Json = serde_json::from_str(&line)
             .unwrap_or_else(|_| panic!("standard output held something else: {line}"));
         assert_eq!(message["jsonrpc"], "2.0", "{line}");
@@ -234,7 +234,7 @@ impl Bridge {
     }
 }
 
-impl Drop for Bridge {
+impl Drop for StdioProxy {
     fn drop(&mut self) {
         drop(self.stdin.take());
         if let Some(mut child) = self.child.take() {
