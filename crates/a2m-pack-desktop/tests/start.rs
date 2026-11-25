@@ -371,7 +371,10 @@ async fn a_started_program_that_publishes_nothing_is_stopped_by_the_deadline() {
 #[tokio::test]
 async fn a_start_is_not_built_here_and_starts_nothing() {
     let folder = Folder::new("start-elsewhere");
-    let program = std::env::current_exe().unwrap();
+    // A copy of this program that nothing runs: the test binary itself
+    // runs, and serves the stand, so it would be found running.
+    let program = folder.path().join("example-desk-idle");
+    std::fs::copy(std::env::current_exe().unwrap(), &program).unwrap();
     let Some(scene) = Started::new("start-elsewhere", &program, "    start: true\n") else {
         return;
     };
