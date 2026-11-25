@@ -448,3 +448,5 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0454 | [What breaks follows where it leads on the publish page, and is named in the answer too](0454-what-breaks-follows-where-it-leads-on-the-publish-page-and-is-named-in-the-answer-too.md) | Accepted (design decision) |
 | 0456 | [The first release leaves out what its first hour never meets, and a shortcut is offered only when every step is built](0456-the-first-release-leaves-out-what-its-first-hour-never-meets-and-a-shortcut-is-offered-only-when-built.md) | Accepted (design decision) |
 | 0455 | [A release keeps only the settings it built and the failure codes something raises](0455-a-release-keeps-only-the-settings-it-built-and-the-failure-codes-something-raises.md) | Accepted (design decision) |
+| 0457 | [A publish of named tools compiles only their files](0457-a-publish-of-named-tools-compiles-only-their-files.md) | Accepted (design decision) |
+| 0458 | [An answer that did its part and waits for a person is `ok`](0458-an-answer-that-did-its-part-and-waits-for-a-person-is-ok.md) | Accepted (design decision) |

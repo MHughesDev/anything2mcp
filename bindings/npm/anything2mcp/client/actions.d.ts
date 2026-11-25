@@ -359,6 +359,7 @@ export type ProviderListInput = Record<string, never>;
  */
 export interface PublishRequestInput {
   target: string;
+  tools?: string[];
   version?: string;
 }
 
@@ -550,6 +551,7 @@ export interface TargetStatusInput {
  */
 export interface TestRunInput {
   target: string;
+  tools?: string[];
 }
 
 /**
@@ -660,6 +662,7 @@ export interface VersionDiffInput {
 export interface VersionPublishInput {
   target: string;
   compiled_target_hash?: string;
+  tools?: string[];
   version?: string;
 }
 

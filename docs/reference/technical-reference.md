@@ -870,6 +870,10 @@ On a local machine no command approves a write; see spec section 222. On a serve
 | Machine output | One JSON object on standard output with `--json` or when output is not a terminal |
 | Success | `{"ok": true, "action", "result", "warnings", "next"}` |
 | Failure | `{"ok": false, "error": {"code", "class", "message", "fix"}}` |
+| `ok` | True when the answer carries no error and either it succeeded, or its exit class is person needed and it is not the answer of a run that rests on a person ([decision 0458](../decisions/0458-an-answer-that-did-its-part-and-waits-for-a-person-is-ok.md)) |
+| Waiting for a person's act | `{"ok": true, "action", "result", "warnings", "next"}` with exit code 3 and the result's `state`: an authoring or admin action whose own part is done (`draft.ready`, `publish.request`, `binding.promote` of a write, `watch.create`, `capture.start`, `scout.run` stopped for a sign-in) |
+| A run that rests on a person | `{"ok": false, "action", "result", "warnings", "next"}` with exit code 3 and no error: a write waiting for its approval, a run waiting for a sign-in or an answer, from `tool.call`, `run.get`, `run.resume`, or `action.run` of them. Nothing was written |
+| Refused for want of a person | A failure, with exit code 3 |
 | Exit codes | 0 success; 1 action failed; 2 malformed command; 3 a person is needed; 4 engine unreachable |
 | Large results | Written under `.anything2mcp/out/`; the result carries path, size, and summary |
 | Prompts | None when output is not a terminal |

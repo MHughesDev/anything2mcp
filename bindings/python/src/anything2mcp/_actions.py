@@ -917,6 +917,7 @@ class Actions:
         self,
         *,
         target: str,
+        tools: Optional[List[str]] = None,
         version: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
@@ -929,6 +930,7 @@ class Actions:
             "publish.request",
             {
                 "target": target,
+                "tools": tools,
                 "version": version,
             },
             idempotency_key,
@@ -1360,13 +1362,21 @@ class Actions:
         self,
         *,
         target: str,
+        tools: Optional[List[str]] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """Run the publish gates on a target's drafts and return the evidence.
 
         The engine action is ``test.run``.
         """
-        return self._action("test.run", {"target": target}, idempotency_key)
+        return self._action(
+            "test.run",
+            {
+                "target": target,
+                "tools": tools,
+            },
+            idempotency_key,
+        )
 
     def tool_call(
         self,
@@ -1604,6 +1614,7 @@ class Actions:
         *,
         target: str,
         compiled_target_hash: Optional[str] = None,
+        tools: Optional[List[str]] = None,
         version: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
@@ -1617,6 +1628,7 @@ class Actions:
             {
                 "target": target,
                 "compiled_target_hash": compiled_target_hash,
+                "tools": tools,
                 "version": version,
             },
             idempotency_key,

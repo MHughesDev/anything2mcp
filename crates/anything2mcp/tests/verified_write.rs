@@ -89,6 +89,8 @@ async fn a_write_rests_is_approved_by_a_person_and_is_written_and_verified_exact
         .agent(&["tool", "call", UPSERT, "--input", INPUT])
         .await;
     assert_eq!(rested.finished.code, 3, "{:?}", rested.finished);
+    // A write that waits for its approval has written nothing, so it is
+    // never `ok` (decision 0458).
     assert_eq!(rested.json["ok"], false);
     let result = rested.result();
     assert_eq!(result["status"], "needs_approval", "{result}");

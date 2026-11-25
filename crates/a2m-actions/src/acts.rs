@@ -705,12 +705,22 @@ impl Kernel {
             input.get("version").and_then(Json::as_str),
         )
         .await?;
-        let compiled = crate::handlers::build::compile_in(
+        // A publish of some tools compiles only their files (decision
+        // 0457); the page shows that compiled target, and the press
+        // compiles it again from the same input.
+        let tools: Option<Vec<String>> = input.get("tools").and_then(Json::as_array).map(|list| {
+            list.iter()
+                .filter_map(Json::as_str)
+                .map(str::to_owned)
+                .collect()
+        });
+        let compiled = crate::handlers::build::compile_chosen_in(
             self,
             folder.clone(),
             &target,
             CompileMode::Publish,
             version,
+            tools,
         )
         .await?
         .map_err(|problems| crate::offline::publish_refusal(&target, problems))?;

@@ -36,6 +36,7 @@ const DRAFTED_HELP: &str =
     "Who drafted the change, where that is known; the author cannot be the second administrator.";
 
 const TARGET: &str = "The target's name.";
+const CHOSEN_TOOLS: &str = "Only these drafted tools, by name: the version holds them and what they need, and no other operation, pipeline, test, or fixture. Every drafted tool when left out.";
 const RUN: &str = "The run's identifier, as an earlier result gave it.";
 const LIMIT: &str = "The most entries to return.";
 const OFFSET_HELP: &str = "How many entries to skip.";
@@ -633,6 +634,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .done(),
         act("test.run", "Run the publish gates on a target's drafts and return the evidence.", BUILDER, Build, "3", Observe)
             .pos("target", TEXT, TARGET)
+            .opt("tools", LIST, "Only the gates a publish of these drafted tools runs, by name, as `publish.request` with `tools` compiles them. Every drafted tool when left out.")
             .long_running()
             .done(),
         act("fixture.record", "Record an offline test's fixture from one real read, every value scrubbed by rule, and the test that replays it.", BUILDER, No, "3", Change)
@@ -661,7 +663,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .done(),
         act("draft.ready", "Make every drafted read a trial in this project read a value through ready to publish: record its offline test and fixture, promote its first binding, run the publish gates, and ask a person to publish, each step by its own action. A write, a pipeline, and a read with no trial are left alone, each with its reason.", BUILDER, Build, "5", Change)
             .pos("target", TEXT, TARGET)
-            .opt("tools", LIST, "The drafted reads to make ready, by name; every drafted tool is looked at when left out. A named tool that cannot be made ready refuses the call, and nothing is done.")
+            .opt("tools", LIST, "The drafted reads to make ready and publish, by name; every drafted tool is looked at, and published, when left out. A named tool that cannot be made ready refuses the call, and nothing is done. Named, the publish holds only these, as `publish.request` with `tools` asks.")
             .opt("version", TEXT, "The version's label for the publish asked for. The next number when left out.")
             .long_running()
             .writes()
@@ -672,6 +674,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                 .required("failed", list_of(any_map()))
                 .optional("gates", any_map())
                 .required("publish", any_map())
+                .optional("state", text())
                 .required("text", text()))
             .example(r#"{"target": "example"}"#)
             .example(r#"{"target": "example", "tools": ["example_order_get"]}"#)
@@ -722,6 +725,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
         act("publish.request", "Submit a target's drafts for a person's review. Publishing itself is a person's act.", BUILDER, Build, "5", Change)
             .pos("target", TEXT, TARGET)
             .opt("version", TEXT, "The version's label. The next number when left out.")
+            .opt("tools", LIST, CHOSEN_TOOLS)
             .writes()
             .output(published().optional("state", text()))
             .asks_a_person()
@@ -813,6 +817,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .pos("target", TEXT, TARGET)
             .opt("version", TEXT, "The version's label. The next number when left out.")
             .opt("compiled_target_hash", TEXT, "The hash of the compiled target the drafts must compile to. A publish shown to a person on a page carries the one they read.")
+            .opt("tools", LIST, CHOSEN_TOOLS)
             .writes()
             .person(PersonNeed::Presence)
             .output(published())

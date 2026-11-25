@@ -53,13 +53,13 @@ This is a design draft. The list is settled action by action as each phase build
 | `draft.delete` | Remove draft files of the project, one or several, all or none; a published version keeps its copy | Builder | build | 5 |
 | `draft.lint` | Compile drafts and report every problem | Builder | build | 1 |
 | `draft.try` | Run a draft binding in the sandbox | Builder | build | 5 |
-| `test.run` | Run the publish gates and return evidence | Builder | build | 3 |
+| `test.run` | Run the publish gates and return evidence; with `tools`, the gates of a publish of only those tools ([decision 0457](../decisions/0457-a-publish-of-named-tools-compiles-only-their-files.md)) | Builder | build | 3 |
 | `fixture.record` | Record a read's offline test and fixture from one real read in the sandbox, every value scrubbed by rule | Builder | No | 3 |
-| `draft.ready` | Every drafted read a trial in this project read a value through, made ready to publish: its offline test and fixture recorded, its first binding promoted on the fixture's own trial, the publish gates run, and a person asked to publish, each step by the action that does it, for the same caller. A write, a pipeline, and a read no trial read through are left alone, each with its reason and the step that moves it on; a call that names one is refused before anything is done ([decision 0401](../decisions/0401-the-steps-between-a-proven-read-and-a-publish-are-one-action.md), [decision 0443](../decisions/0443-draft-ready-asks-for-the-publish-and-takes-the-callers-own-trial.md)) | Builder | build | 5 |
+| `draft.ready` | Every drafted read a trial in this project read a value through, made ready to publish: its offline test and fixture recorded, its first binding promoted on the fixture's own trial, the publish gates run, and a person asked to publish, each step by the action that does it, for the same caller. A write, a pipeline, and a read no trial read through are left alone, each with its reason and the step that moves it on; a call that names one is refused before anything is done. With `tools`, it publishes only the reads named, and `tools` under `publish` says what the version holds ([decision 0457](../decisions/0457-a-publish-of-named-tools-compiles-only-their-files.md)). Waiting for the person's press, it answers `ok: true`, exit code 3, with `state: needs_person` and a text that starts `Succeeded:` ([decision 0458](../decisions/0458-an-answer-that-did-its-part-and-waits-for-a-person-is-ok.md); [decision 0401](../decisions/0401-the-steps-between-a-proven-read-and-a-publish-are-one-action.md), [decision 0443](../decisions/0443-draft-ready-asks-for-the-publish-and-takes-the-callers-own-trial.md)) | Builder | build | 5 |
 | `shadow.report` | How often a shadow binding matched, and where it differed | Builder | build | 4 |
 | `target.show` | Print a target's compiled target as text | Builder | No | 1 |
 | `version.diff` | Compare two versions and classify each change | Builder | No | 5 |
-| `publish.request` | Submit a version for human review | Builder | build | 5 |
+| `publish.request` | Submit a version for human review; with `tools`, a version of only those tools ([decision 0457](../decisions/0457-a-publish-of-named-tools-compiles-only-their-files.md)) | Builder | build | 5 |
 
 ## Providers and discovery
 
@@ -82,7 +82,7 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 
 | Action | Purpose | Who | Listed | Phase |
 | --- | --- | --- | --- | --- |
-| `version.publish` | Publish a reviewed version; a person, never an agent | Publisher | No | 5 |
+| `version.publish` | Publish a reviewed version; a person, never an agent; with `tools`, of only those tools ([decision 0457](../decisions/0457-a-publish-of-named-tools-compiles-only-their-files.md)) | Publisher | No | 5 |
 | `binding.promote` | Make a drafted operation's first binding verified on the evidence of its tests and a trial, or a shadow binding on its run of exact matches; for a write or a shadow binding, a person | Publisher | No | 4 |
 | `version.activate` | Move a toolset to a version, through the candidate stage | Publisher | No | 6 |
 | `version.rollback` | Make an earlier version current | Publisher | No | 5 |
@@ -145,7 +145,7 @@ Single-word commands for people. Each is a fixed sequence of the actions above a
 
 | Shortcut | Does |
 | --- | --- |
-| `init` | Create a project and the guidance file; choose a profile |
+| `init` | Make the folder a project: write `anything2mcp.toml`, the guidance as `AGENTS.md`, the `targets` folder, and a `.gitignore`, each only where it is not there; the command does it itself, with no action beneath it ([decision 0164](../decisions/0164-the-authoring-actions-served-through-the-engine.md)) |
 | `add <name>` | `target.add`, `scout.run`, `scout.report`; takes `--address` and `--kind` for `target.add` and `--description <file>` for `scout.run` (a description of the system in the project's `sources` folder, handed over as `spec.import` hands it). It ends at the report, whose `next` is `session.login` only where a read waits for a sign-in; each proven read in the report carries the `draft.try` call that reads it ([decision 0306](../decisions/0306-the-short-path-is-add-then-a-trial-and-only-a-built-action-is-listed-up-front.md)) |
 | `learn` | `capture.start`, `capture.stop`, `endpoints.infer`, then drafts |
 | `lint`, `try`, `test` | `draft.lint`, `draft.try`, `test.run` |

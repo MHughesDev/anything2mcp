@@ -610,6 +610,14 @@ pub(crate) fn shown(report: &Json) -> Output {
             json!({"target": target}),
             "a read waits for a sign-in; the person signs in, then the scout runs again",
         )
+    } else if list(&report["content"]["tried"]["tools"]).any(|tool| tool["state"] == "proven") {
+        // The reads the scout proved go to a publish in one action
+        // (package 5.6c); what it could not decide waits apart from them.
+        Next::new(
+            "draft.ready",
+            json!({"target": target}),
+            "to record the offline test and fixture of each read the scout proved, promote its binding, run the publish gates, and ask a person to publish, in one action; `tools` names the reads to publish when not all are wanted",
+        )
     } else if open > 0 {
         Next::new(
             "unknown.list",

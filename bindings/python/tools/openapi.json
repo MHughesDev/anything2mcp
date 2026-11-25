@@ -6164,6 +6164,9 @@
              },
              "type": "array"
             },
+            "state": {
+             "type": "string"
+            },
             "target": {
              "type": "string"
             },
@@ -6287,6 +6290,9 @@
               "type": "object"
              },
              "type": "array"
+            },
+            "state": {
+             "type": "string"
             },
             "target": {
              "type": "string"
@@ -16445,6 +16451,12 @@
          "target": {
           "type": "string"
          },
+         "tools": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
          "version": {
           "type": "string"
          }
@@ -24512,6 +24524,12 @@
         "properties": {
          "target": {
           "type": "string"
+         },
+         "tools": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
          }
         },
         "required": [
@@ -29543,6 +29561,12 @@
          },
          "target": {
           "type": "string"
+         },
+         "tools": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
          },
          "version": {
           "type": "string"

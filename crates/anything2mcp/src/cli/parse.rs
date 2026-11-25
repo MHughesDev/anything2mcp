@@ -642,7 +642,13 @@ impl Tree {
         out.push('\n');
         out.push_str(&paragraphs(shortcut.does, width));
         if shortcut.steps.is_empty() {
-            out.push_str("\nNo action is beneath it yet.\n");
+            out.push('\n');
+            out.push_str(&wrap(
+                "",
+                "The command does this itself, in the folder, and starts no engine: no action of the engine is beneath it.",
+                0,
+                width,
+            ));
             return out;
         }
         if !shortcut.options.is_empty() {

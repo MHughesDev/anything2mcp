@@ -74,6 +74,7 @@ Single-word commands remain for people: `init`, `add`, `learn`, `lint`, `try`, `
 - With `--json`, or whenever output is not going to a terminal, a command prints exactly one JSON object to standard output. Text meant for people goes to standard error.
 - Success: `{"ok": true, "action": ..., "result": ..., "warnings": [...], "next": {...}}`.
 - Failure: `{"ok": false, "error": {"code": ..., "class": ..., "message": ..., "fix": ...}}`, using the failure classes and codes in the [technical reference](../../reference/technical-reference.md#command-output-contract).
+- An authoring or admin action whose own part is done and whose remaining step is a person's act, such as a publish asked for, is a success with exit code 3: `ok: true`, and the result's `state` says what it waits on. A run that rests on a person, such as a write waiting for its approval, is `ok: false` with exit code 3 and its result: nothing was written. A call refused for want of a person is a failure with exit code 3 ([decision 0458](../../decisions/0458-an-answer-that-did-its-part-and-waits-for-a-person-is-ok.md)).
 - `next` names the most useful following action and its arguments, so an agent that has read nothing else can still proceed.
 
 **Exit codes.**
