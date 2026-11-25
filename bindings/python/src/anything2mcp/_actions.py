@@ -2,7 +2,7 @@
 
 Written by ``tools/generate_actions.py`` from ``tools/openapi.json``, the
 OpenAPI document the engine serves at ``/api/v1/openapi.json`` (engine
-version 0.0.1). A test fails when this file differs from what the
+version 0.1.0). A test fails when this file differs from what the
 generator writes from that document. To change a method, change the action
 in the engine, save the new document, and run the generator.
 

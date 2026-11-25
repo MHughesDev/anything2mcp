@@ -21,7 +21,7 @@ exclude = ["spikes"]
 # Every crate shares these. The version is the one number of the whole product;
 # the audit checks that the pip package carries the same one (spec section 41).
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/MHughesDev/anything2mcp"

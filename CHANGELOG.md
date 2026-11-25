@@ -6,7 +6,14 @@ The design's own history is in the [decision records](docs/decisions/README.md),
 
 ## [Unreleased]
 
-Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS, and Linux; nothing has been tried against a real system, and nothing is published to a package registry.
+## [0.1.0] - 2026-11-25
+
+The first published version, a **preview**, before version 1.0 ([decision 0476](docs/decisions/0476-version-0-1-is-a-preview-and-the-checks-a-person-makes-move-to-before-1-0.md)). Built and tested against the built-in test stands on Windows, macOS, and Linux. Until 1.0 a minor version may break. What this preview has not had yet:
+
+- The presence prompt and the approval page have been passed by a person on Linux only. On macOS and Windows they are built and tested in CI with a stand-in for the person, and fail closed: an act that needs a person is not done when no prompt can be shown.
+- The first hour, from an empty folder to a published tool an agent calls, is measured as machine time, not with a person at the keyboard.
+- No copy test has been run from a Windows or a macOS machine, and nothing has been tried against a real business application.
+- Not built: a shared server, plug-ins, MCP over HTTP, remote runners, ten of the twelve publish gates, and the drafting of writes.
 
 ### Added
 
@@ -429,7 +436,8 @@ A safety review read each crate against its design and the ten rules, and every 
 
 ## [0.0.1]
 
-The first version of the pip package. It was a placeholder to hold the name; it now holds the pre-alpha software described above under Unreleased. Not yet published.
+The first version of the pip package. It was a placeholder to hold the name; the software it now holds is version 0.1.0, above. Never published.
 
-[Unreleased]: https://github.com/MHughesDev/anything2mcp/commits/main
+[Unreleased]: https://github.com/MHughesDev/anything2mcp/compare/v0.1.0...main
+[0.1.0]: https://github.com/MHughesDev/anything2mcp/releases/tag/v0.1.0
 [0.0.1]: https://github.com/MHughesDev/anything2mcp/tree/main/bindings/python

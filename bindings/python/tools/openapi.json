@@ -83,7 +83,7 @@
  "info": {
   "description": "Every route is generated from an action of the registry. The body of every answer is the whole response: ok, action, then result, warnings, and next, or error.",
   "title": "Anything2MCP REST interface",
-  "version": "0.0.1"
+  "version": "0.1.0"
  },
  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
  "openapi": "3.1.0",

@@ -9,7 +9,7 @@ build-backend = "maturin"
 [project]
 name = "anything2mcp"
 # The one version of the product; the audit holds it to Cargo.toml.
-version = "0.0.1"
+version = "0.1.0"
 description = "Turn existing software and systems into deterministic, verified MCP tools: the anything2mcp program and a thin Python client of its local engine."
 readme = "README.md"
 requires-python = ">=3.9"
