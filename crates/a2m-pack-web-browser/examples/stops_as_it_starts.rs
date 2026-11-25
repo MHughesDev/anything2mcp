@@ -3,6 +3,12 @@
 //! It writes, to the file its `--log-file=` argument names, the line such a
 //! browser writes, and the line in `STOP_LINE_FOR_TESTS` when that is set,
 //! and exits without answering over its pipe.
+//!
+//! With `STOP_ORDER_FOR_TESTS=read_end_closed_first`, on Linux and macOS, it
+//! closes the end of its pipe it reads from (descriptor 3) once it has
+//! written its log, then sends one byte on the end it writes to (descriptor
+//! 4) and waits to be stopped. A launch that waits for that byte writes its
+//! first request to a pipe nobody reads, so the write fails, every time.
 
 use std::io::Write as _;
 
@@ -31,5 +37,41 @@ fn main() -> std::process::ExitCode {
     if file.write_all(text.as_bytes()).is_err() {
         return std::process::ExitCode::from(4);
     }
+    if std::env::var("STOP_ORDER_FOR_TESTS").as_deref() == Ok("read_end_closed_first") {
+        return read_end_closed_first();
+    }
     std::process::ExitCode::from(1)
+}
+
+/// Closes the pipe's end this program reads from, says so on the end it
+/// writes to, and waits to be stopped, holding that end open so that the
+/// engine never reads the pipe's end before its write fails.
+#[cfg(unix)]
+fn read_end_closed_first() -> std::process::ExitCode {
+    let said = *b"1";
+    #[allow(
+        unsafe_code,
+        reason = "closing and writing to the descriptors the launch placed has no safe form"
+    )]
+    // SAFETY: descriptors 3 and 4 are the two pipe ends the launch placed
+    // on this program before it started; nothing else in this program owns
+    // or uses them, so closing 3 leaves no handle dangling, and the write
+    // reads one byte from a live local buffer of that length.
+    let (closed, written) = unsafe {
+        (
+            libc::close(3),
+            libc::write(4, said.as_ptr().cast(), said.len()),
+        )
+    };
+    if closed != 0 || written != 1 {
+        return std::process::ExitCode::from(5);
+    }
+    loop {
+        std::thread::park();
+    }
+}
+
+#[cfg(not(unix))]
+fn read_end_closed_first() -> std::process::ExitCode {
+    std::process::ExitCode::from(6)
 }
