@@ -81,8 +81,22 @@ async fn asked(parts: &mut Parts) -> Result<Asked, Failure> {
                 "Use the `run_id` an earlier result gave.",
             )
         })?;
+    let (after, limit, stream) = followed(parts, EVENTS_PAGE)?;
+    Ok(Asked {
+        run,
+        after,
+        limit,
+        stream,
+    })
+}
+
+/// What a request to follow something asks for, from its query and its
+/// headers: `after` and `limit` (1 to `most`) from the query, the last
+/// event a reconnecting client saw from its `Last-Event-ID`, which then
+/// stands in place of `after`, and whether it accepts a stream.
+pub(crate) fn followed(parts: &Parts, most: u32) -> Result<(u64, u32, bool), Failure> {
     let mut after = 0;
-    let mut limit = EVENTS_PAGE;
+    let mut limit = most;
     let query = parts.uri.query().unwrap_or("");
     let mut seen = Vec::new();
     for pair in query.split('&').filter(|pair| !pair.is_empty()) {
@@ -98,7 +112,7 @@ async fn asked(parts: &mut Parts) -> Result<Asked, Failure> {
             value.parse::<u64>().map_err(|_| {
                 invalid(
                     format!("`{name}` is not a whole number."),
-                    "Give `after` as the number of the last event seen, and `limit` as a count.",
+                    "Give `after` as the number of the last one seen, and `limit` as a count.",
                 )
             })
         };
@@ -107,11 +121,11 @@ async fn asked(parts: &mut Parts) -> Result<Asked, Failure> {
             "limit" => {
                 limit = u32::try_from(number()?)
                     .ok()
-                    .filter(|count| (1..=EVENTS_PAGE).contains(count))
+                    .filter(|count| (1..=most).contains(count))
                     .ok_or_else(|| {
                         invalid(
-                            format!("`limit` is not between 1 and {EVENTS_PAGE}."),
-                            "Ask for fewer events, and for the next page after the last one.",
+                            format!("`limit` is not between 1 and {most}."),
+                            "Ask for fewer, and for the next page after the last one.",
                         )
                     })?;
             }
@@ -146,12 +160,7 @@ async fn asked(parts: &mut Parts) -> Result<Asked, Failure> {
                 .next()
                 .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("text/event-stream"))
         });
-    Ok(Asked {
-        run,
-        after,
-        limit,
-        stream,
-    })
+    Ok((after, limit, stream))
 }
 
 fn event_json(event: &RunEventView) -> Json {
@@ -231,7 +240,7 @@ pub(crate) async fn serve(
 
 /// Sends one line of a stream. `false` when the reader has gone, or has
 /// taken nothing for [`READER_PATIENCE`].
-async fn send(lines: &mpsc::Sender<Bytes>, line: impl Into<Bytes>) -> bool {
+pub(crate) async fn send(lines: &mpsc::Sender<Bytes>, line: impl Into<Bytes>) -> bool {
     matches!(
         tokio::time::timeout(READER_PATIENCE, lines.send(line.into())).await,
         Ok(Ok(()))
@@ -300,7 +309,7 @@ async fn follow(kernel: Kernel, caller: Caller, first: RunEvents, lines: mpsc::S
 }
 
 /// The lines of a stream as a body.
-struct Lines(mpsc::Receiver<Bytes>);
+pub(crate) struct Lines(pub(crate) mpsc::Receiver<Bytes>);
 
 impl futures_core::Stream for Lines {
     type Item = Result<Bytes, Infallible>;

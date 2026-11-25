@@ -34,7 +34,7 @@ use serde_json::{Map, Value as Json, json};
 
 use super::handler;
 use crate::codes;
-use crate::dispatch::{Call, Caller, ExitClass, Next, Output};
+use crate::dispatch::{Call, Caller, ExitClass, Next, Output, Principal};
 use crate::kernel::Kernel;
 use crate::runner::{CallerFacts, keep_run_call};
 use crate::tools::FoundTool;
@@ -100,6 +100,13 @@ fn millis(at: Timestamp) -> Json {
     json!(at.as_unix_millis())
 }
 
+/// The URI of the watch's MCP resource: its changes, read through
+/// `watch.changes` (decision 0999).
+#[must_use]
+pub fn watch_resource(id: WatchId) -> String {
+    crate::catalog::WATCH_RESOURCE.replace("{watch_id}", &id.to_string())
+}
+
 /// A watch as every `watch.*` action returns it. It holds no value a check
 /// read and not the input: the caller gave the input, and the values are in
 /// each check's run.
@@ -154,6 +161,7 @@ pub(crate) fn watch_json(row: &WatchRow) -> Json {
     if let Some(condition) = &row.condition {
         map.insert("condition".to_owned(), json!(condition.source));
     }
+    map.insert("resource".to_owned(), json!(watch_resource(row.id)));
     Json::Object(map)
 }
 
@@ -331,18 +339,7 @@ impl Kernel {
     /// answered as no watch at all, whatever role the caller holds: a watch
     /// reads under its person's session.
     async fn own_watch(&self, call: &Call, id: WatchId) -> Result<WatchRow, Failure> {
-        let person = person_of(&call.caller)?;
-        let workspace = call.caller.principal.workspace;
-        let row = self
-            .store()?
-            .read(move |tx| tx.watches().get(id))
-            .await
-            .map_err(|_| no_such_watch())?;
-        if row.workspace == workspace && row.acts_for == person {
-            Ok(row)
-        } else {
-            Err(no_such_watch())
-        }
+        self.watch_of(&call.caller.principal, id).await
     }
 
     /// The rate limit of a watch's surface, as a check's requests are
@@ -970,7 +967,13 @@ handler!(
             input: Some(stored),
             retention: RetentionClass::Long,
         };
-        let facts = CallerFacts::of(&call.caller, call.decision);
+        // The project folder the dispatcher checked at the ask is kept with
+        // the call, as `tool.call` keeps it: a check reads the files of the
+        // project the person asked from, such as a store's file under the
+        // root `project`, and the runner checks the folder again for each
+        // check. Without it a check of such a read is a gap,
+        // `project_folder_missing` (decision 0999).
+        let facts = CallerFacts::of(&call.caller, call.decision).with_project(call.project.clone());
         store
             .write(Durability::Synced, move |tx| {
                 keep_run_call(tx, &kept, stored, &facts)
@@ -1078,6 +1081,8 @@ handler!(
             .sched()?
             .confirm_watch(id, person, current, limit)
             .await?;
+        // A follower of the watch is told of its confirmation.
+        kernel.run_changed();
         Ok(Output::ok(watch_json(&confirmed)).then(Next::new(
             "watch.changes",
             json!({"watch_id": id.to_string(), "wait_seconds": 60}),
@@ -1112,23 +1117,104 @@ handler!(
     }
 );
 
-handler!(
-    /// `watch.changes`: the changes after a number, waiting for the first.
-    /// A change names a record only from a run of the caller's own person.
-    watch_changes,
-    |kernel, call| {
-        let id = watch_id(&call)?;
-        let person = person_of(&call.caller)?;
-        // Only a watch of the caller's own person is answered.
-        kernel.own_watch(&call, id).await?;
-        let after = u64::try_from(call.int("after").unwrap_or(0)).unwrap_or(0);
-        let limit = u32::try_from(call.int("limit").unwrap_or(i64::from(CHANGES_PAGE)))
-            .unwrap_or(CHANGES_PAGE)
-            .clamp(1, CHANGES_PAGE);
-        let wait =
-            Duration::from_secs(u64::try_from(call.int("wait_seconds").unwrap_or(0)).unwrap_or(0));
-        let store = kernel.store()?.clone();
-        let mut notice = kernel.run_watch();
+/// A page of a watch's changes, as `watch.changes`, the watch's MCP
+/// resource, and the REST change stream give it (decision 0999).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WatchChanges {
+    /// The watch.
+    pub watch: WatchId,
+    /// Its state when the page was read.
+    pub state: WatchState,
+    /// The changes after the number asked for, oldest first, each as
+    /// `watch.changes` shows one: its `seq`, kind, time, checks and their
+    /// runs, outputs, reason, failure, missed due times, and the record it
+    /// names. Never a value.
+    pub changes: Vec<Json>,
+    /// The number to ask after next: the last change given, or the number
+    /// asked after when there was none.
+    pub last: u64,
+    /// Whether no change after `last` was stored when the page was read.
+    pub complete: bool,
+}
+
+impl WatchChanges {
+    /// Whether nothing more will come: the watch has ended and every change
+    /// it recorded is given. Its end is its last change.
+    #[must_use]
+    pub fn over(&self) -> bool {
+        self.state == WatchState::Ended && self.complete
+    }
+
+    /// The page as `watch.changes` returns it.
+    #[must_use]
+    pub fn to_json(&self) -> Json {
+        json!({
+            "watch_id": self.watch.to_string(),
+            "state": self.state.as_str(),
+            "changes": self.changes,
+            "after": self.last,
+            "complete": self.complete,
+        })
+    }
+}
+
+impl Kernel {
+    /// The watch `id`, when it acts for the person `caller` acts for; any
+    /// other is answered as no watch at all, whatever role the caller
+    /// holds.
+    async fn watch_of(&self, caller: &Principal, id: WatchId) -> Result<WatchRow, Failure> {
+        let person = caller.person().ok_or_else(|| {
+            codes::policy(
+                codes::PERSON_REQUIRED,
+                "A watch acts for a person, and this caller acts for none.",
+                "Call as a person, or as an agent acting for one.",
+            )
+        })?;
+        let workspace = caller.workspace;
+        let row = self
+            .store()?
+            .read(move |tx| tx.watches().get(id))
+            .await
+            .map_err(|_| no_such_watch())?;
+        if row.workspace == workspace && row.acts_for == person {
+            Ok(row)
+        } else {
+            Err(no_such_watch())
+        }
+    }
+
+    /// The changes of a watch of the caller's person after the change
+    /// numbered `after`, at most `limit` and never more than 100, waiting
+    /// up to `wait` for the first when there is none yet and the watch has
+    /// not ended. A change names a record only from a run of the caller's
+    /// own person.
+    ///
+    /// This is what `watch.changes` answers. A door that follows a watch,
+    /// its MCP subscription and its REST stream, calls it again and again
+    /// without a decision for each page, as a run's events are followed:
+    /// it shows the caller only a watch of the person it acts for, which
+    /// is what every `watch.*` action shows it (decision 0234).
+    ///
+    /// # Errors
+    ///
+    /// `policy`/`person_required` for a caller acting for no person;
+    /// `input`/`not_found` for a watch of another person or none; the
+    /// store's failures.
+    pub async fn watch_changes(
+        &self,
+        caller: &Principal,
+        id: WatchId,
+        after: u64,
+        limit: u32,
+        wait: Duration,
+    ) -> Result<WatchChanges, Failure> {
+        self.watch_of(caller, id).await?;
+        let Some(person) = caller.person() else {
+            return Err(no_such_watch());
+        };
+        let limit = limit.clamp(1, CHANGES_PAGE);
+        let store = self.store()?.clone();
+        let mut notice = self.run_watch();
         let give_up = tokio::time::sleep(wait);
         tokio::pin!(give_up);
         let (row, changes, runs) = loop {
@@ -1202,22 +1288,78 @@ handler!(
                     json!({"first": missed.first.as_unix_millis(), "last": missed.last.as_unix_millis(), "count": missed.count}),
                 );
             }
-            if let Some(record) = record_of(kernel, person, &row, change, run).await {
+            // A record is found in the check's run, or, for one the check
+            // no longer saw (removed, unseen), in the run of the check it
+            // was compared with.
+            let older = change.older_check.and_then(|seq| runs.get(&seq).copied());
+            let mut record = record_of(self, person, &row, change, run).await;
+            if record.is_none() {
+                record = record_of(self, person, &row, change, older).await;
+            }
+            if let Some(record) = record {
                 map.insert("record".to_owned(), record);
             }
             shown.push(Json::Object(map));
         }
-        let mut output = Output::ok(json!({
-            "watch_id": id.to_string(),
-            "state": row.state.as_str(),
-            "changes": shown,
-            "after": last,
-            "complete": complete,
-        }));
-        if row.state != WatchState::Ended {
+        Ok(WatchChanges {
+            watch: id,
+            state: row.state,
+            changes: shown,
+            last,
+            complete,
+        })
+    }
+
+    /// The number of the last change a watch of the caller's person has
+    /// recorded, and whether it has ended: where a follower that wants only
+    /// what comes next starts. Reads the change rows alone, a page at a
+    /// time.
+    ///
+    /// # Errors
+    ///
+    /// As [`Kernel::watch_changes`].
+    pub async fn watch_last_change(
+        &self,
+        caller: &Principal,
+        id: WatchId,
+    ) -> Result<(u64, WatchState), Failure> {
+        self.watch_of(caller, id).await?;
+        self.store()?
+            .read(move |tx| {
+                let state = tx.watches().get(id)?.state;
+                let mut last = 0;
+                loop {
+                    let page = tx.watches().changes(id, last, 1000)?;
+                    match page.last() {
+                        Some(change) => last = change.seq,
+                        None => return Ok((last, state)),
+                    }
+                }
+            })
+            .await
+    }
+}
+
+handler!(
+    /// `watch.changes`: the changes after a number, waiting for the first.
+    /// A change names a record only from a run of the caller's own person.
+    watch_changes,
+    |kernel, call| {
+        let id = watch_id(&call)?;
+        let after = u64::try_from(call.int("after").unwrap_or(0)).unwrap_or(0);
+        let limit = u32::try_from(call.int("limit").unwrap_or(i64::from(CHANGES_PAGE)))
+            .unwrap_or(CHANGES_PAGE)
+            .clamp(1, CHANGES_PAGE);
+        let wait =
+            Duration::from_secs(u64::try_from(call.int("wait_seconds").unwrap_or(0)).unwrap_or(0));
+        let page = kernel
+            .watch_changes(&call.caller.principal, id, after, limit, wait)
+            .await?;
+        let mut output = Output::ok(page.to_json());
+        if page.state != WatchState::Ended {
             output = output.then(Next::new(
                 "watch.changes",
-                json!({"watch_id": id.to_string(), "after": last, "wait_seconds": 60}),
+                json!({"watch_id": id.to_string(), "after": page.last, "wait_seconds": 60}),
                 "to be told of the next changes",
             ));
         }
@@ -1237,6 +1379,7 @@ handler!(
                 tx.watches().pause(id, WatchReason::PausedByPerson)
             })
             .await?;
+        kernel.run_changed();
         Ok(Output::ok(watch_json(&paused)))
     }
 );
@@ -1251,6 +1394,7 @@ handler!(
             .store()?
             .write(Durability::Synced, move |tx| tx.watches().resume(id))
             .await?;
+        kernel.run_changed();
         kernel.inner.wake.notify_one();
         Ok(Output::ok(watch_json(&resumed)))
     }

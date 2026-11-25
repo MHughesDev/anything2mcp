@@ -316,6 +316,124 @@ impl McpResultFace {
     }
 }
 
+/// An MCP resource template of one action (decision 0999): what
+/// `resources/templates/list` gives, and what `resources/read` of a URI it
+/// matches dispatches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpResourceFace {
+    /// The action a read of the resource dispatches.
+    pub action: String,
+    /// The template, as RFC 6570 writes it: the URI with `{field}` for a
+    /// field of one segment, then `{?field,...}` for the fields its query
+    /// may give.
+    pub uri_template: String,
+    /// A short name, the action's.
+    pub name: String,
+    /// A title for people.
+    pub title: String,
+    /// What a read of it gives: the action's summary.
+    pub description: String,
+    /// What its one item of contents is: always JSON, the action's result.
+    pub mime_type: &'static str,
+}
+
+/// What every resource's contents are: the JSON of its action's result.
+pub const RESOURCE_MIME_TYPE: &str = "application/json";
+
+/// The MCP resource template of one action, when it has one.
+#[must_use]
+pub fn mcp_resource(def: &ActionDef) -> Option<McpResourceFace> {
+    let template = def.resource?;
+    let mut uri_template = template.uri.to_owned();
+    if !template.query.is_empty() {
+        uri_template.push_str(&format!("{{?{}}}", template.query.join(",")));
+    }
+    Some(McpResourceFace {
+        action: def.name.to_string(),
+        uri_template,
+        name: def.name.to_string(),
+        title: template.title.to_owned(),
+        description: def.summary.clone(),
+        mime_type: RESOURCE_MIME_TYPE,
+    })
+}
+
+/// The resource templates of every action that has one, in catalog order,
+/// for every toolset alike: a resource is read by the action's rights,
+/// checked at the read, as a tool is called by them.
+#[must_use]
+pub fn mcp_resources(registry: &ActionRegistry) -> Vec<McpResourceFace> {
+    registry
+        .iter()
+        .filter(|def| def.faces.mcp)
+        .filter_map(mcp_resource)
+        .collect()
+}
+
+/// Whether a part of a URI is one this face takes: unreserved characters
+/// only, so that nothing is decoded and no segment holds a `/`.
+fn plain_part(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~".contains(&byte))
+}
+
+impl ActionRegistry {
+    /// The action a resource's URI is read with, and the input the URI
+    /// fills: each `{field}` of the template from its one segment, as text,
+    /// and each query field as the field's type takes it. A URI that no
+    /// template matches exactly, that names a query field twice or one the
+    /// template does not take, or whose parts hold anything but unreserved
+    /// characters, is no resource (rule 7): nothing is decoded or guessed.
+    #[must_use]
+    pub fn by_resource_uri(
+        &self,
+        uri: &str,
+    ) -> Option<(&ActionDef, serde_json::Map<String, Json>)> {
+        let (path, query) = uri.split_once('?').unwrap_or((uri, ""));
+        self.iter().filter(|def| def.faces.mcp).find_map(|def| {
+            let template = def.resource?;
+            let mut input = serde_json::Map::new();
+            let wanted: Vec<&str> = template.uri.split('/').collect();
+            let given: Vec<&str> = path.split('/').collect();
+            if wanted.len() != given.len() {
+                return None;
+            }
+            for (want, part) in wanted.iter().zip(&given) {
+                match want
+                    .strip_prefix('{')
+                    .and_then(|rest| rest.strip_suffix('}'))
+                {
+                    Some(field) => {
+                        if !plain_part(part) {
+                            return None;
+                        }
+                        input.insert(field.to_owned(), json!(part));
+                    }
+                    None if want == part => {}
+                    None => return None,
+                }
+            }
+            for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+                let (name, value) = pair.split_once('=')?;
+                if !template.query.contains(&name) || input.contains_key(name) || !plain_part(value)
+                {
+                    return None;
+                }
+                let field = def.input.field(name)?;
+                let value = match field.ty {
+                    FieldType::Int { .. } => json!(value.parse::<i64>().ok()?),
+                    FieldType::Bool => json!(value.parse::<bool>().ok()?),
+                    _ => json!(value),
+                };
+                input.insert(name.to_owned(), value);
+            }
+            Some((def, input))
+        })
+    }
+}
+
 /// One REST route of an action.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RestRouteFace {

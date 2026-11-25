@@ -22,6 +22,7 @@ pub mod codes;
 mod http;
 mod protocol;
 mod proxy;
+mod resources;
 mod settings;
 mod tools;
 

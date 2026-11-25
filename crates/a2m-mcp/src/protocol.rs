@@ -3,8 +3,10 @@
 //! A request arrives here checked: it is one JSON-RPC request from a
 //! caller the kernel let in, and the revision it is of is known. What is
 //! served is small: the handshake and `ping` of revision 2025-11-25,
-//! `server/discover` of revision 2026-07-28, and `tools/list` and
-//! `tools/call` in both. Everything else is an unknown method.
+//! `server/discover` and `subscriptions/listen` of revision 2026-07-28,
+//! and `tools/list`, `tools/call`, `resources/templates/list`,
+//! `resources/list`, and `resources/read` in both. Everything else is an
+//! unknown method.
 //!
 //! A result of the stateless revision says its type and names the server
 //! in its `_meta`; a result of the handshake revision carries neither. A
@@ -25,6 +27,7 @@ use tokio::task::JoinHandle;
 
 use crate::codes;
 use crate::http::{Answer, error_message, rpc_error};
+use crate::resources;
 use crate::settings::Revision;
 use crate::tools::{Asker, Called, Core, Following, Follows, KEY_META, Rendered, Route, ToolEntry};
 
@@ -34,7 +37,7 @@ const SERVER_NAME: &str = "anything2mcp";
 const SERVER_INFO_KEY: &str = "io.modelcontextprotocol/serverInfo";
 /// How long a client may keep what discovery or a tool list said, in
 /// milliseconds.
-const TTL_MS: u64 = 60_000;
+pub(crate) const TTL_MS: u64 = 60_000;
 /// How long a message of a stream waits for its reader to take it. A
 /// reader that keeps its connection open and reads nothing for this long
 /// is treated as gone: what follows its call stops, and the dispatch,
@@ -44,9 +47,15 @@ fn server_info() -> Json {
     json!({"name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION")})
 }
 
-/// A capability is named only when it is served.
-fn capabilities() -> Json {
-    json!({"tools": {}})
+/// A capability is named only when it is served. Resources are read in
+/// both revisions; only the stateless one subscribes to them, through
+/// `subscriptions/listen` (decision 0999).
+fn capabilities(stateless: bool) -> Json {
+    if stateless {
+        json!({"tools": {}, "resources": {"subscribe": true}})
+    } else {
+        json!({"tools": {}, "resources": {}})
+    }
 }
 
 fn instructions(core: &Core) -> String {
@@ -83,7 +92,11 @@ fn instructions_for(toolset: &str, fields: &[String]) -> String {
 }
 
 /// A result as the revision of its request wants it.
-fn result(stateless: bool, mut body: Map<String, Json>, mut meta: Map<String, Json>) -> Json {
+pub(crate) fn result(
+    stateless: bool,
+    mut body: Map<String, Json>,
+    mut meta: Map<String, Json>,
+) -> Json {
     if stateless {
         body.insert("resultType".to_owned(), json!("complete"));
         meta.insert(SERVER_INFO_KEY.to_owned(), server_info());
@@ -94,11 +107,11 @@ fn result(stateless: bool, mut body: Map<String, Json>, mut meta: Map<String, Js
     Json::Object(body)
 }
 
-fn response(id: &Json, result: Json) -> Json {
+pub(crate) fn response(id: &Json, result: Json) -> Json {
     json!({"jsonrpc": "2.0", "id": id, "result": result})
 }
 
-fn object(value: Json) -> Map<String, Json> {
+pub(crate) fn object(value: Json) -> Map<String, Json> {
     match value {
         Json::Object(map) => map,
         _ => Map::new(),
@@ -133,6 +146,10 @@ pub(crate) async fn serve(
         ("server/discover", true) => Answer::Message(StatusCode::OK, response(id, discover(core))),
         ("tools/list", _) => list(core, &asker, params, id, stateless).await,
         ("tools/call", _) => call(core, asker, params, id, stateless).await,
+        ("resources/templates/list", _) => resources::templates(core, id, stateless),
+        ("resources/list", _) => resources::list(id, stateless),
+        ("resources/read", _) => resources::read(core, &asker, params, id, stateless).await,
+        ("subscriptions/listen", true) => resources::listen(core, asker, params, id).await,
         _ => unknown_method(id),
     }
 }
@@ -142,7 +159,7 @@ pub(crate) async fn serve(
 fn initialize(core: &Core) -> Json {
     json!({
         "protocolVersion": Revision::Handshake.as_str(),
-        "capabilities": capabilities(),
+        "capabilities": capabilities(false),
         "serverInfo": server_info(),
         "instructions": instructions(core),
     })
@@ -152,7 +169,7 @@ fn discover(core: &Core) -> Json {
     let versions: Vec<&str> = core.settings.revisions.iter().map(|r| r.as_str()).collect();
     let body = object(json!({
         "supportedVersions": versions,
-        "capabilities": capabilities(),
+        "capabilities": capabilities(true),
         "serverInfo": server_info(),
         "instructions": instructions(core),
         "ttlMs": TTL_MS,

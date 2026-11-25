@@ -21,7 +21,9 @@ use a2m_actions::{
     HealthState, Kernel, KernelParts, Paths, PersonSurface, PresenceAsk, PresenceProof, SessionAsk,
     Settings, SignInAsk, StorePlace, SurfaceLink,
 };
-use a2m_api::{ApiSettings, OPENAPI_PATH, RUN_EVENTS_PATH, openapi, router, served_routes};
+use a2m_api::{
+    ApiSettings, OPENAPI_PATH, RUN_EVENTS_PATH, WATCH_CHANGES_PATH, openapi, router, served_routes,
+};
 use a2m_auth::PersonAnswer;
 use a2m_core::{Failure, FailureClass, Timestamp};
 use a2m_logs::{Clock, ManualClock};
@@ -689,9 +691,9 @@ async fn the_openapi_document_describes_every_route_and_nothing_else() {
     // action does not have: the router reaches that action, whose
     // dispatcher refuses the input before anything runs.
     for (method, path) in &described {
-        // The two routes that dispatch no action: the document's own, and
-        // a run's events, which has a test of its own.
-        if path == OPENAPI_PATH || path == RUN_EVENTS_PATH {
+        // The three routes that dispatch no action: the document's own, a
+        // run's events, and a watch's changes, which have tests of their own.
+        if path == OPENAPI_PATH || path == RUN_EVENTS_PATH || path == WATCH_CHANGES_PATH {
             assert!(doc["paths"][path]["get"].get("x-action").is_none());
             continue;
         }
@@ -895,6 +897,50 @@ async fn a_runs_events_are_read_from_a_number_and_streamed_until_the_run_settles
     assert_eq!(status, 401);
     assert_refusal(&body, "policy", "caller_missing");
     let (status, body) = world.post(&events_of(&run), &json!({})).await;
+    assert_eq!(status, 405);
+    assert_refusal(&body, "input", "method_not_allowed");
+    world.close().await;
+}
+
+/// A watch's changes (decision 0999): no action's route, like a run's
+/// events, and refused as an ordinary answer, never as the start of a
+/// stream, for a watch that is not the caller's person's, an identifier
+/// that is no watch's, a query it does not take, and no caller.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_watchs_changes_are_refused_for_a_watch_that_is_not_the_callers() {
+    let world = World::ready().await;
+    let changes_of = |watch: &str| format!("/api/v1/watches/{watch}/changes");
+    let nobody = "watch_01a213bb3e4170feb32df88a89d5a283";
+    for accept in ["application/json", "text/event-stream"] {
+        let (status, body) = world
+            .raw(
+                world
+                    .http
+                    .get(format!("{}{}", world.base, changes_of(nobody)))
+                    .header("accept", accept),
+            )
+            .await;
+        assert_eq!(status, 400, "{accept}: {body}");
+        assert_refusal(&body, "input", "not_found");
+    }
+    let (status, body) = world.get(&changes_of("r_not_a_watch")).await;
+    assert_eq!(status, 400, "{body}");
+    assert_refusal(&body, "input", "schema_invalid");
+    for query in ["zz_not_a_field=1", "after=one", "limit=0", "limit=101"] {
+        let (status, body) = world.get(&format!("{}?{query}", changes_of(nobody))).await;
+        assert_eq!(status, 400, "{query}: {body}");
+        assert_refusal(&body, "input", "query_invalid");
+    }
+    let (status, body) = world
+        .raw(
+            world
+                .http
+                .get(format!("{}/bare{}", world.base, changes_of(nobody))),
+        )
+        .await;
+    assert_eq!(status, 401);
+    assert_refusal(&body, "policy", "caller_missing");
+    let (status, body) = world.post(&changes_of(nobody), &json!({})).await;
     assert_eq!(status, 405);
     assert_refusal(&body, "input", "method_not_allowed");
     world.close().await;

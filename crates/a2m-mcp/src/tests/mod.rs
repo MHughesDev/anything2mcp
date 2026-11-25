@@ -14,5 +14,6 @@ mod engine;
 mod checklist;
 mod door;
 mod lost;
+mod resources;
 mod wire;
 mod world;
