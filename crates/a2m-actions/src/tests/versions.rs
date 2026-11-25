@@ -1,4 +1,4 @@
-//! `version.rollback` (decision 0999): a person makes another published
+//! `version.rollback` (decision 0470): a person makes another published
 //! version current, the store is read back before the answer says so, an
 //! agent's call and a call nobody answers change nothing, and a store that
 //! cannot commit leaves the version in force as it was.

@@ -1,4 +1,4 @@
-# 0998. A run's trace is summarized for its person, and exported as one file in the working folder
+# 0469. A run's trace is summarized for its person, and exported as one file in the working folder
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged.
 

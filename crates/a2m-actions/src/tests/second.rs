@@ -531,7 +531,7 @@ async fn a_secret_comes_from_standard_input_and_only_a_shortcut_whose_steps_are_
     // `add` registers the target, scouts it, and shows the report, which
     // asks for a sign-in only where a read waits for one (decision 0306);
     // `diff` is built (package YL1); `init` has no step and is offered.
-    // `rollback` is built (decision 0999).
+    // `rollback` is built (decision 0470).
     for word in ["init", "add", "diff", "rollback", "learn", "ready"] {
         assert!(words(&offered).contains(&word), "{word}");
     }

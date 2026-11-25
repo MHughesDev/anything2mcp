@@ -1,4 +1,4 @@
-# 0997. Which actions with no handler serve one machine, and what each waits on
+# 0468. Which actions with no handler serve one machine, and what each waits on
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged.
 
@@ -12,7 +12,7 @@ Decision 0465 has agents build the actions with no handler that serve one machin
 
 ## Decision
 
-**Built now**, with their records: `version.rollback` ([decision 0999](0999-a-rollback-is-a-persons-act-and-moves-to-any-version-a-person-published.md)), `run.trace` and `trace.export` ([decision 0998](0998-a-runs-trace-is-summarized-for-its-person-and-exported-as-one-file-in-the-working-folder.md)), and `component.list`. Section 203 and section 220 specify `component.list` in full: each requirement looked for at its manifest's fixed places, with the path, the digest, and whether the digest is known. It shares one check with the availability that `provider.list` reports (`component_state` in `a2m-provider`).
+**Built now**, with their records: `version.rollback` ([decision 0470](0470-a-rollback-is-a-persons-act-and-moves-to-any-version-a-person-published.md)), `run.trace` and `trace.export` ([decision 0469](0469-a-runs-trace-is-summarized-for-its-person-and-exported-as-one-file-in-the-working-folder.md)), and `component.list`. Section 203 and section 220 specify `component.list` in full: each requirement looked for at its manifest's fixed places, with the path, the digest, and whether the digest is known. It shares one check with the availability that `provider.list` reports (`component_state` in `a2m-provider`).
 
 **Serve one machine, and wait on a choice or a part not built.** Each stays unbuilt, with this reason:
 

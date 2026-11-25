@@ -1,4 +1,4 @@
-//! `run.trace` and `trace.export` (spec section 217; decision 0998): the
+//! `run.trace` and `trace.export` (spec section 217; decision 0469): the
 //! summary names each step and each kept capture and holds no value; the
 //! export is one file in the project's working folder, read back before its
 //! digest is given, with a registered secret never in it, and never written

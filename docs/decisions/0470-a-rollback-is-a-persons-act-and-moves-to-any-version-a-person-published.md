@@ -1,4 +1,4 @@
-# 0999. A rollback is a person's act, and moves to any version a person published
+# 0470. A rollback is a person's act, and moves to any version a person published
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged.
 

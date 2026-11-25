@@ -1,5 +1,5 @@
 //! Which published version of a target runs now: `version.rollback`
-//! (decision 0999).
+//! (decision 0470).
 //!
 //! A rollback stores nothing new. It moves the mark of the version that runs
 //! now to another version a person published, writes the audit entry in the

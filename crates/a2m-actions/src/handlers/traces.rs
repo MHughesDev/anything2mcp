@@ -1,5 +1,5 @@
 //! A run's evidence as a summary and as a file: `run.trace` and
-//! `trace.export` (spec section 217, "Formats and tools"; decision 0998).
+//! `trace.export` (spec section 217, "Formats and tools"; decision 0469).
 //!
 //! `run.trace` is for the run's own person, as `run.get` is, and gives each
 //! step's kind, outcome, and time with references to its captures, never a
