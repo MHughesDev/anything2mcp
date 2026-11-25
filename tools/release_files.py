@@ -9,6 +9,7 @@ Usage, from the repository root:
     python3 tools/release_files.py changelog V          # exit 1 unless CHANGELOG.md is ready to release V
     python3 tools/release_files.py notes V              # print the changelog's section for V
     python3 tools/release_files.py workflow             # exit 1 unless release.yml builds and gates every piece
+    python3 tools/release_files.py ci RUNS.json SHA     # exit 1 unless CI passed on SHA, from GitHub's list of runs
     ... --root DIR                                      # work on another copy of the repository
 
 `archive` makes the standalone archive of one target from the binary taken out of that target's wheel,
@@ -30,7 +31,13 @@ same binary in its wheel, its npm package, and its archive.
 matrix leaves out a target or adds one, when the pull-request paths leave out a file the release is
 built from, or when any job that may write anywhere (a registry, the release page, an attestation) is
 not one of the publish jobs, gated on `decide` saying to publish and run in a GitHub environment, after
-every file of the release has been built and checked. Standard library only; Python 3.11 or newer.
+every file of the release has been built and checked, or when the `decide` job does not ask GitHub, with
+`actions: read` held by that job alone, whether CI passed on the commit, after deciding to publish.
+
+`ci` reads the list of runs GitHub gives for `GET /repos/OWNER/REPO/actions/workflows/ci.yml/runs` with
+`head_sha=SHA` and `branch=main`, and passes only when the newest run on `main` of that very commit,
+started by a push or by hand (a run of a pull request tests its merge ref, another commit), is completed
+with the conclusion `success`. Standard library only; Python 3.11 or newer.
 """
 import gzip
 import hashlib
@@ -77,6 +84,13 @@ GATE = "needs.decide.outputs.publish == 'true'"
 # What the release is built from; a pull request that changes one runs the workflow.
 PATHS = ("bindings/python/**", "bindings/npm/**", WORKFLOW, NOTICES, "tools/release_files.py",
          "tools/check_packages.py")
+# What `decide` holds, and what its step that asks for CI's result must carry.
+DECIDE_PERMISSIONS = {"contents": "read", "actions": "read"}
+CI_STEP = ("actions/workflows/ci.yml/runs", 'head_sha="$GITHUB_SHA"', "-f branch=main",
+           "tools/release_files.py ci", "exit 1")
+CI_STEP_ENV = {"GH_TOKEN": "${{ github.token }}", "PUBLISH": "${{ steps.decide.outputs.publish }}"}
+# The runs of CI that test the commit itself: on main, started by a push or by hand (decision 0372).
+CI_EVENTS = ("push", "workflow_dispatch")
 DEFAULT_MTIME = 315532800  # 1980-01-01, the earliest a zip can date a member
 
 
@@ -413,7 +427,45 @@ def workflow_problems(root):
         for need in {"decide"} | PUBLISH[name]:
             if need not in needs:
                 problems.append(f"`{name}` does not wait for `{need}`")
+    for name, job in jobs.items():
+        perms = job.get("permissions")
+        if name != "decide" and isinstance(perms, dict) and "actions" in perms:
+            problems.append(f"`{name}` holds `actions`, which only `decide` may hold")
+    if "decide" in jobs:
+        problems.extend(decide_problems(jobs["decide"]))
     return problems
+
+
+def decide_problems(job):
+    problems = []
+    if job.get("permissions") != DECIDE_PERMISSIONS:
+        problems.append("`decide` does not hold `contents: read` and `actions: read` alone, to ask how CI ended")
+    steps = [s for s in job.get("steps") or [] if isinstance(s, dict)]
+    ids = [s.get("id") for s in steps]
+    at = ids.index("decide") if "decide" in ids else len(steps)
+    asks = [i for i, s in enumerate(steps)
+            if all(part in (s.get("run") or "") for part in CI_STEP) and s.get("env") == CI_STEP_ENV]
+    if not asks:
+        problems.append("`decide` has no step that asks GitHub whether CI passed on the commit and refuses it if not")
+    elif asks[0] < at:
+        problems.append("`decide` asks how CI ended before it has decided whether to publish")
+    return problems
+
+
+def ci_verdict(runs, sha):
+    """Whether CI passed on `sha`, from GitHub's list of the CI workflow's runs, and why."""
+    mine = [r for r in (runs or {}).get("workflow_runs") or []
+            if isinstance(r, dict) and r.get("head_sha") == sha and r.get("head_branch") == "main"
+            and r.get("event") in CI_EVENTS]
+    if not mine:
+        return False, f"CI has no run on main for {sha}, by a push or by hand"
+    run = max(mine, key=lambda r: (r.get("created_at") or "", r.get("id") or 0))
+    where = f"CI's run {run.get('id')} ({run.get('event')}, attempt {run.get('run_attempt', 1)}) on {sha}"
+    if run.get("status") != "completed":
+        return False, f"{where} is {run.get('status')}, not completed"
+    if run.get("conclusion") != "success":
+        return False, f"{where} ended {run.get('conclusion')}, not success"
+    return True, f"{where} ended success"
 
 
 # ---- main -----------------------------------------------------------------------------------------
@@ -447,6 +499,15 @@ def main(argv):
             return 1
         sys.stdout.write(text)
         return 0
+    elif command == "ci":
+        try:
+            runs = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            print(f"error: the list of CI's runs does not read: {error}")
+            return 1
+        passed, why = ci_verdict(runs, argv[3])
+        print(why)
+        return 0 if passed else 1
     elif command == "workflow":
         faults = workflow_problems(root)
     else:
