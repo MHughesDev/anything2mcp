@@ -479,7 +479,16 @@ async fn a_person_s_use_is_captured_in_a_watching_tab_and_drafted_held_on_the_di
         "held/page_requests/api_orders_totals.yaml",
         "held/operations/api_orders_totals_request.yaml",
     ] {
-        assert!(held.contains(&file), "{file}: {held:?}");
+        // The whole report and every finding's kind and subject, so that a
+        // capture that missed an exchange names which one (macOS, 2026-11-25).
+        let seen: Vec<String> = findings
+            .iter()
+            .map(|one| format!("{} {:?}", one.kind().as_str(), one.subject()))
+            .collect();
+        assert!(
+            held.contains(&file),
+            "{file}: {held:?}\nfindings: {seen:#?}\nreport: {report}"
+        );
     }
     let totals =
         std::fs::read_to_string(folder.join("held/page_requests/api_orders_totals.yaml")).unwrap();
