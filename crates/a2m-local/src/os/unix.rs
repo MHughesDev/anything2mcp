@@ -203,14 +203,37 @@ pub(crate) async fn connect(
         }
     }
     let stream = reached(UnixStream::connect(&place.socket).await)?;
-    served_by(server_user(&stream).as_deref(), expected)?;
+    let server = match stream.peer_cred() {
+        Ok(cred) => Some(cred.uid().to_string()),
+        // The engine closed the connection before the question: on macOS
+        // the kernel then has no peer to name. That is an engine that went
+        // away with nothing sent, as `reached` says of a reset, and is
+        // trusted no more than before.
+        Err(error) if gone(&error) => return Err(ConnectError::Lost),
+        Err(_) => None,
+    };
+    served_by(server.as_deref(), expected)?;
     Ok(stream)
+}
+
+/// Whether reading a connected socket's peer failed because the other end
+/// already closed it: not connected (`ENOTCONN`), reset, aborted, or, as
+/// macOS answers for a socket whose peer is gone, `EINVAL`.
+fn gone(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotConnected
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::BrokenPipe
+    ) || error.raw_os_error() == Some(22)
 }
 
 /// The user of the process that serves a connected socket, as the kernel
 /// reports it for the client's own end: the peer credentials of the
 /// listening socket, which are its creator's. `None` when the kernel's
 /// answer could not be read.
+#[cfg(test)]
 pub(crate) fn server_user(stream: &UnixStream) -> Option<String> {
     stream.peer_cred().ok().map(|cred| cred.uid().to_string())
 }
