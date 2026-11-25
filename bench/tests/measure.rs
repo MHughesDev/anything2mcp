@@ -4,6 +4,7 @@
 //! request for its JSON, and a listing names the published tool.
 
 use a2m_bench::harness::{MonotonicClock, Plan};
+use a2m_bench::marks::{CALL_OUTSIDE_RUN, CALL_OVERHEAD, WARM_TAB};
 use a2m_bench::measure::{
     API_OPERATION, COLD_BROWSER_START, HTTP_OPERATION, IDLE_MEMORY, LIST_TOOLS,
     PAGE_HTTP_OPERATION, START_TO_READY, TOTALS_ORDER, UI_STEP, api_read_once, page_http_read_once,
@@ -41,6 +42,38 @@ async fn each_measured_scenario_runs_and_holds_what_it_reads()
         let read = results.iter().find(|r| r.name == name).ok_or(name)?;
         assert!(read.baseline.is_some() && read.overhead.is_some(), "{name}");
     }
+    Ok(())
+}
+
+/// The two numbers taken from the trace's time marks (decision 0481): each
+/// call's stored trace carries marks that hold together, or the scenario
+/// fails, and a number comes from every measured call. Asked for alone, the
+/// time outside the run is measured by itself.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_marked_scenarios_take_their_numbers_from_each_runs_trace()
+-> Result<(), Box<dyn std::error::Error>> {
+    let names: Vec<String> = [CALL_OVERHEAD, CALL_OUTSIDE_RUN, WARM_TAB]
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
+    let results = run_named(&names, &SMALL, &MonotonicClock::start()).await?;
+    assert_eq!(
+        results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        [CALL_OVERHEAD, CALL_OUTSIDE_RUN, WARM_TAB]
+    );
+    for result in &results {
+        assert_eq!(result.operation.count, 3, "{}", result.name);
+        assert!(result.operation.min_ns > 0, "{}", result.name);
+        assert_eq!((&result.baseline, &result.overhead), (&None, &None));
+    }
+    let alone = run_named(
+        &[CALL_OUTSIDE_RUN.to_owned()],
+        &SMALL,
+        &MonotonicClock::start(),
+    )
+    .await?;
+    assert_eq!(alone.len(), 1);
+    assert_eq!(alone[0].name, CALL_OUTSIDE_RUN);
     Ok(())
 }
 

@@ -154,6 +154,69 @@ pub struct PassStart {
     pub prepare: Duration,
 }
 
+/// Where the time of one run attempt went, as the engine marked it: the
+/// whole attempt, and the share of it spent waiting on each part of the
+/// control plane (decision 0481). Written in the trace's end line and never
+/// in the signature, as every timing is.
+///
+/// The marks cover what the engine itself waits on, from the start of the
+/// attempt to the end of its trace. What happens before the job reaches the
+/// engine (the front door, the scheduler's claim) and after its trace ends
+/// (storing the trace, the run's finish) is outside them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TimeMarks {
+    /// The whole attempt, in microseconds: from the engine's start of the
+    /// job to the end of its trace.
+    pub run_us: u64,
+    /// The policy engine's decisions: the guard's question and an approval's
+    /// check.
+    #[serde(default, skip_serializing_if = "Mark::is_empty")]
+    pub policy: Mark,
+    /// The scheduler's grants: rate budgets and record locks.
+    #[serde(default, skip_serializing_if = "Mark::is_empty")]
+    pub scheduling: Mark,
+    /// The session keeper's leases, and its hearing of a sign of expiry.
+    #[serde(default, skip_serializing_if = "Mark::is_empty")]
+    pub session: Mark,
+    /// The ledger's records: the run's events, each intent, act,
+    /// read-back, and settling, the preview, and the evidence kept.
+    #[serde(default, skip_serializing_if = "Mark::is_empty")]
+    pub ledger: Mark,
+    /// The loading of the compiled target.
+    #[serde(default, skip_serializing_if = "Mark::is_empty")]
+    pub loading: Mark,
+}
+
+impl TimeMarks {
+    /// The time of the three parts budgeted together in spec section 225:
+    /// the policy check, the scheduling, and the ledger write.
+    #[must_use]
+    pub const fn policy_scheduling_and_ledger_us(&self) -> u64 {
+        self.policy
+            .took_us
+            .saturating_add(self.scheduling.took_us)
+            .saturating_add(self.ledger.took_us)
+    }
+}
+
+/// The calls made to one part of the control plane during an attempt, and
+/// the time they took together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Mark {
+    /// How many calls.
+    pub calls: u32,
+    /// Their time together, in microseconds.
+    pub took_us: u64,
+}
+
+impl Mark {
+    /// True when no call was made.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.calls == 0 && self.took_us == 0
+    }
+}
+
 /// Why the engine chose the binding it chose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

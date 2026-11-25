@@ -9,6 +9,7 @@ The design's own history is in the [decision records](docs/decisions/README.md),
 ### Added
 
 - On Windows, the desktop pack starts the application a desktop surface allows (`start: true`), by its declared path with its digest checked, when none of it runs, and waits for its window by the system's event of a window shown; one that shows no window by the deadline is stopped. On macOS a start still stops as `start_not_built` ([decision 0480](docs/decisions/0480-the-desktop-pack-starts-an-application-on-windows-by-the-event-of-a-window-shown-and-not-yet-on-macos.md)).
+- A run's step trace now ends with its time marks: the whole attempt, and the calls the engine made to the policy engine, the scheduler, the session keeper, the ledger, and the loading of the compiled target, with their time. They are an optional entry, `marks`, of the trace's end line; the schema stays at version 1, a trace written before reads as before, and the marks are not in the signature. `trace export` writes them with the trace. The benchmark gains `call_overhead`, `warm_tab`, and `call_outside_run`, read from these marks.
 
 ## [0.1.0] - 2026-11-25
 
