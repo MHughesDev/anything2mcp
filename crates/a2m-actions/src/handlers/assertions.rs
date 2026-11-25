@@ -1,4 +1,4 @@
-//! `assertion.confirm` (decision 0999): a person confirms, on the engine's
+//! `assertion.confirm` (decision 0475): a person confirms, on the engine's
 //! page, the reads a target's drafts assert, so that a try of the drafts in
 //! an environment of kind `test` may let a page send them.
 //!
@@ -59,7 +59,7 @@ fn addresses(compiled_target: &CompiledTarget, asserted: &AssertedReview) -> Vec
     found
 }
 
-/// The digest of one asserted read as a page shows it (decision 0999,
+/// The digest of one asserted read as a page shows it (decision 0475,
 /// point 2).
 pub(crate) fn digest_of(
     target: &TargetName,
@@ -214,7 +214,7 @@ impl Kernel {
     }
 
     /// The asserted reads of the compiled drafts that a stored confirmation
-    /// covers, for the engine to hand a trial's driver (decision 0999,
+    /// covers, for the engine to hand a trial's driver (decision 0475,
     /// point 3). A store that cannot be read covers none.
     pub(crate) async fn confirmed_reads_of(
         &self,
@@ -289,7 +289,7 @@ impl Kernel {
 
 handler!(
     /// `assertion.confirm`: the person confirms the reads the drafts of a
-    /// target assert (decision 0999). Only with a proof of presence; the
+    /// target assert (decision 0475). Only with a proof of presence; the
     /// drafts are compiled again, and the digests must be the ones the
     /// page showed.
     assertion_confirm,

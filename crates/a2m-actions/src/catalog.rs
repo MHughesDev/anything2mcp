@@ -684,7 +684,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .example(r#"{"target": "example", "tool": "example_order_get", "input": {"order_id": "A-100"}}"#)
             .done(),
         // A person's confirmation of the drafts' asserted reads, for a try
-        // before a publish (decision 0999). Not listed: a person's act.
+        // before a publish (decision 0475). Not listed: a person's act.
         act("assertion.confirm", "Confirm the reads a target's drafts assert, as the person, so that a try of the drafts in an environment of kind `test` may let a page send them. A person's act, carried out on the engine's page, never an agent's.", Who::Person, No, "5", Change)
             .pos("target", TEXT, TARGET)
             .opt("assertions", LIST, "The digests of the asserted reads to confirm. A confirmation shown on a page carries the ones the person read; the drafts as they are when left out.")

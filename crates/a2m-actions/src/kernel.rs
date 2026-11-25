@@ -1110,7 +1110,7 @@ impl Kernel {
 pub(crate) const COMPILED_TARGETS_KEPT: usize = 64;
 /// A drafted compiled target kept for a trial: its target and hash, the
 /// compiled target, and the asserted reads of it its person confirmed
-/// (decision 0999).
+/// (decision 0475).
 pub(crate) type KeptDraft = (
     (TargetName, Digest),
     Arc<CompiledTarget>,

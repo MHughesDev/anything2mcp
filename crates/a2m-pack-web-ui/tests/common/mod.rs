@@ -365,7 +365,7 @@ pub struct Scene {
     pub compiled_target: CompiledTarget,
     pub surface: SurfaceRef,
     pub destinations: Destinations,
-    /// What the kernel says its person confirmed (decision 0999); none
+    /// What the kernel says its person confirmed (decision 0475); none
     /// unless a test sets it.
     pub confirmed: a2m_provider::ConfirmedReads,
 }

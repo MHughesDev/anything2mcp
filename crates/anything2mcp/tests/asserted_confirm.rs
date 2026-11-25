@@ -1,4 +1,4 @@
-//! Faults of a person's confirmation of an asserted read (decision 0999),
+//! Faults of a person's confirmation of an asserted read (decision 0475),
 //! through the product, against the test application's case 39, whose
 //! cases page asks for its rows with `POST /api/cases/rows/search`.
 //!

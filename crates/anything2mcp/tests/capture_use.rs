@@ -900,7 +900,7 @@ fn assert_and_release(folder: &Path, held: &str) {
 }
 
 /// The test application's case 39 from a capture to a published read
-/// (decision 0999): a person's two visits are captured and drafted held;
+/// (decision 0475): a person's two visits are captured and drafted held;
 /// the person asserts the page's search and releases the drafts; the try
 /// stops until the person confirms the assertion on the engine's page;
 /// then the try reads the rows, `draft ready` records, promotes, and asks

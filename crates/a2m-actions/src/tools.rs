@@ -134,7 +134,7 @@ impl Kernel {
 
     /// The asserted reads its person confirmed of the drafted compiled
     /// target `hash` of `target` that a trial keeps; none for any other
-    /// compiled target (decision 0999).
+    /// compiled target (decision 0475).
     pub(crate) fn confirmed_reads_kept(
         &self,
         target: &TargetName,

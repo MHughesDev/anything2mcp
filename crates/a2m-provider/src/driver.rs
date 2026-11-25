@@ -171,14 +171,14 @@ pub struct PrepareContext<'a> {
     /// declare.
     pub supervisor: &'a ScopedSupervisor,
     /// The asserted reads of the drafts that their person confirmed on the
-    /// engine's page, for a try of the drafts (decision 0999). Empty for a
+    /// engine's page, for a try of the drafts (decision 0475). Empty for a
     /// published compiled target, which has its own rule, and wherever the
     /// control plane does not say.
     pub confirmed: ConfirmedReads,
 }
 
 /// The asserted reads a person confirmed on the engine's page for a try of
-/// the drafts (decision 0999), each by the file kind that asserts it, its
+/// the drafts (decision 0475), each by the file kind that asserts it, its
 /// surface, and its entry. The kernel puts in an entry only when the
 /// confirmation's digest covers the entry as the compiled target holds it,
 /// so a name here is the compiled target's own entry, unchanged since the

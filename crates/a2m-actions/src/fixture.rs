@@ -953,7 +953,7 @@ handler!(
         .await?
         .map_err(a2m_core::Failure::from)?;
         // The asserted reads of the drafts their person confirmed, which
-        // the recording's trial may let a page send (decision 0999).
+        // the recording's trial may let a page send (decision 0475).
         let confirmed = kernel
             .confirmed_reads_of(
                 &target,

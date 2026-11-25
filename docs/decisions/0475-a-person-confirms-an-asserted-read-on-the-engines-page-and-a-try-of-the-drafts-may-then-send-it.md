@@ -1,4 +1,4 @@
-# 0999. A person confirms an asserted read on the engine's page, and a try of the drafts may then send it
+# 0475. A person confirms an asserted read on the engine's page, and a try of the drafts may then send it
 
 **Status:** Accepted. Design decision, made by the worker on FT6d under the lead's brief. The owner had not read this record when it was written. It changes a public contract, the provider contract: `PrepareContext` gains `confirmed`, and `ControlPort` gains `confirmed_reads`, with a default.
 

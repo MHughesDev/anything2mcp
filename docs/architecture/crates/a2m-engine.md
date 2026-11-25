@@ -132,7 +132,7 @@ pub trait ControlPort: Send + Sync {
     /// The checked project folder of the request that started the run; `None` by default.
     fn project_folder(&self) -> Option<PathBuf> { None }
     /// The asserted reads of the compiled target `hash` names that its person confirmed on the engine's page, for a try of
-    /// the drafts (decision 0999), handed to the driver unchanged in `PrepareContext::confirmed`. None by default.
+    /// the drafts (decision 0475), handed to the driver unchanged in `PrepareContext::confirmed`. None by default.
     fn confirmed_reads(&self, hash: &Digest) -> ConfirmedReads { ConfirmedReads::none() }
     /// The files of the project's `inputs` folder the call that started a discovery hands it: each name a
     /// discoverer declares, to the path the call gave (`sources/...`). Empty by default (decision 0263).

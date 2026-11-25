@@ -430,7 +430,7 @@ pub trait ControlPort: Send + Sync {
 
     /// The asserted reads of the compiled target `hash` names that its
     /// person confirmed on the engine's page, for a try of the drafts
-    /// (decision 0999). The engine hands them to the driver unchanged, in
+    /// (decision 0475). The engine hands them to the driver unchanged, in
     /// `PrepareContext::confirmed`. A control plane answers them only for
     /// the drafts it keeps for a trial; none for a published compiled
     /// target, and none by default.

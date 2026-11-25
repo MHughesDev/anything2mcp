@@ -936,7 +936,7 @@ impl FileKind for RequestKind {
 
 /// The asserted reads of the surface a run is prepared for, and which of
 /// them the run hands its observing tab (decision 0394, point 4; decision
-/// 0999).
+/// 0475).
 ///
 /// They are handed under decision 0270's rule: from a published version,
 /// whose plan's version is not the draft version, in a live run or, in a

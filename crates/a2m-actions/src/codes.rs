@@ -131,10 +131,10 @@ a2m_core::failure_codes! {
         meaning "`draft.ready` was named a read that no trial in this project has read a value through: the newest finished scout did not prove it, and the caller has no completed trial of it made since (decision 0443).",
         next "Try the read with `draft.try` and an input it answers, or sign in where it waits for a sign-in, then call `draft.ready` again.";
     NOTHING_ASSERTED = Input, "nothing_asserted",
-        meaning "`assertion.confirm` was asked for a target whose drafts assert no read: no entry says `read_asserted: true` (decision 0999).",
+        meaning "`assertion.confirm` was asked for a target whose drafts assert no read: no entry says `read_asserted: true` (decision 0475).",
         next "Assert the read in its entry with `effect: read` and `read_asserted: true`, with an `enum` on the field that tells a read from a write, then ask again.";
     ASSERTION_CHANGED = Stale, "assertion_changed",
-        meaning "The reads a target's drafts assert changed between the confirmation's page and the person's press: what would be confirmed is not what the person read, so nothing was (decision 0999).",
+        meaning "The reads a target's drafts assert changed between the confirmation's page and the person's press: what would be confirmed is not what the person read, so nothing was (decision 0475).",
         next "Ask for the confirmation again, and confirm the reads as they are now.";
     CAPTURE_NOT_OFFERED = Input, "capture_not_offered",
         meaning "No enabled pack watches a person's use of the surface: no discoverer a person drives suits it, so no capture of it can be asked for.",

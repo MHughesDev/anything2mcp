@@ -7,7 +7,7 @@
 //! archives with `op: archive`; every proof asks the application's control
 //! interface what it stored and what it heard. Under the drafts, an entry
 //! its person confirmed on the engine's page is let through in a try in an
-//! environment of kind `test`, and nowhere else (decision 0999).
+//! environment of kind `test`, and nowhere else (decision 0475).
 
 #![allow(
     clippy::unwrap_used,
@@ -415,7 +415,7 @@ fn search_confirmed() -> ConfirmedReads {
 /// Under the drafts, the entry its person confirmed is let through in a try
 /// in an environment of kind `test`, and in no other place; a request that
 /// does not fit it, and a request of another page that writes, still stop
-/// the read and reach nothing (decision 0999).
+/// the read and reach nothing (decision 0475).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_confirmed_draft_lets_its_search_through_in_a_try_in_test_and_nowhere_else() {
     let app = TestApp::start().await.unwrap();

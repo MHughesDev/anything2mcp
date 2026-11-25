@@ -492,7 +492,7 @@ impl Kernel {
             // after a session ended is a new act (decision 0205). Nor is a
             // confirmation's: what it confirms is the drafts as they are
             // when it is asked, and a confirmation asked for again after
-            // they changed is a new act (decision 0999).
+            // they changed is a new act (decision 0475).
             let reuses = !matches!(def.name.as_str(), "session.login" | "assertion.confirm");
             if let Some(kept) = state
                 .kept
@@ -680,7 +680,7 @@ impl Kernel {
         }
         if def.name.as_str() == "assertion.confirm" {
             // What the person confirms is each asserted read of the drafts
-            // as they are now, pinned by its digest (decision 0999).
+            // as they are now, pinned by its digest (decision 0475).
             let (input, details) = self.assertion_lines(input, project).await?;
             return Ok((input, details, PublishShown::default(), Vec::new()));
         }

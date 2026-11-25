@@ -2058,7 +2058,7 @@ handler!(
             }
         };
         // The asserted reads of the drafts their person confirmed, which
-        // the trial may let a page send (decision 0999).
+        // the trial may let a page send (decision 0475).
         let confirmed = kernel
             .confirmed_reads_of(
                 &target,
@@ -2486,7 +2486,7 @@ pub(crate) async fn compiled_target_in(
         if let Some(compiled) = compiled {
             let compiled_target = std::sync::Arc::new(compiled.compiled_target);
             // A discovery's compiled target lets no asserted read through
-            // (decision 0999).
+            // (decision 0475).
             kernel.keep_draft(
                 target,
                 compiled.encoded.hash,
