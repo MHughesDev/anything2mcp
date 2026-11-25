@@ -5785,6 +5785,315 @@
     "x-sdk": true
    }
   },
+  "/api/v1/actions/draft.ready": {
+   "post": {
+    "operationId": "draft_ready",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "target": {
+          "type": "string"
+         },
+         "tools": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
+         "version": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "target"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "failed": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "gates": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "left_alone": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "publish": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ready": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "target": {
+             "type": "string"
+            },
+            "text": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "target",
+            "ready",
+            "left_alone",
+            "failed",
+            "publish",
+            "text"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "failed": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "gates": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "left_alone": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "publish": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ready": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "target": {
+             "type": "string"
+            },
+            "text": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "target",
+            "ready",
+            "left_alone",
+            "failed",
+            "publish",
+            "text"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Make every drafted read a trial in this project read a value through ready to publish: record its offline test and fixture, promote its first binding, run the publish gates, and ask a person to publish, each step by its own action. A write, a pipeline, and a read with no trial are left alone, each with its reason.",
+    "x-action": "draft.ready",
+    "x-sdk": true
+   }
+  },
   "/api/v1/actions/draft.try": {
    "post": {
     "operationId": "draft_try",

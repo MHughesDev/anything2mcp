@@ -601,6 +601,12 @@ pub const SHORTCUTS: &[Shortcut] = &[
         options: &[],
     },
     Shortcut {
+        word: "ready",
+        does: "Record the offline test and fixture of every drafted read that was tried, promote its first binding, run the publish gates, and ask a person to publish.",
+        steps: &[step("draft.ready", Some("target"))],
+        options: &[],
+    },
+    Shortcut {
         word: "publish",
         does: "Submit a version for review, then wait for a person.",
         steps: &[step("publish.request", Some("target"))],

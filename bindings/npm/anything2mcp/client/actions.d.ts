@@ -175,6 +175,15 @@ export interface DraftReadInput {
 }
 
 /**
+ * The input of `draft.ready`.
+ */
+export interface DraftReadyInput {
+  target: string;
+  tools?: string[];
+  version?: string;
+}
+
+/**
  * The input of `draft.try`.
  */
 export interface DraftTryInput {
@@ -1041,6 +1050,15 @@ export declare abstract class Actions {
    * `draft.read`.
    */
   draftRead(input: DraftReadInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Make every drafted read a trial in this project read a value through ready to
+   * publish: record its offline test and fixture, promote its first binding, run the
+   * publish gates, and ask a person to publish, each step by its own action. A write, a
+   * pipeline, and a read with no trial are left alone, each with its reason. The engine
+   * action is `draft.ready`.
+   */
+  draftReady(input: DraftReadyInput, options?: CallOptions): Promise<Response>;
 
   /**
    * Run one draft binding in the sandbox, where writes go only to declared test

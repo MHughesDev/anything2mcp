@@ -121,6 +121,12 @@ a2m_core::failure_codes! {
     PROMOTION_UNPROVEN = Input, "promotion_unproven",
         meaning "A promotion whose evidence is missing: an offline test of the operation that is missing or did not pass, or a read no trial proved at `executed` (decision 0189).",
         next "Write or correct the operation's offline test, run `test.run`, and promote again.";
+    NOT_MADE_READY_NOT_A_READ = Input, "not_made_ready_not_a_read",
+        meaning "`draft.ready` was named a tool that is a write or a pipeline: it makes reads ready alone, and leaves a write's test, fixture, and promote to be done by hand and by a person (decision 0999).",
+        next "Write the write's offline test and fixture with `draft.write`, run `test.run`, and have a person promote its binding; or leave it out of `tools`.";
+    NOT_MADE_READY_UNTRIED = Input, "not_made_ready_untried",
+        meaning "`draft.ready` was named a read that no trial in this project has read a value through: the newest finished scout did not prove it, and the caller has no completed trial of it made since (decision 0999).",
+        next "Try the read with `draft.try` and an input it answers, or sign in where it waits for a sign-in, then call `draft.ready` again.";
     CAPTURE_NOT_OFFERED = Input, "capture_not_offered",
         meaning "No enabled pack watches a person's use of the surface: no discoverer a person drives suits it, so no capture of it can be asked for.",
         next "Scout the target with `scout.run` instead, or enable a pack whose discoverer a person drives.";

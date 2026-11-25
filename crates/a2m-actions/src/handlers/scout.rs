@@ -607,6 +607,8 @@ handler!(
 #[derive(Debug, Clone)]
 struct Scout {
     id: RunId,
+    /// When it finished, by the store's clock; `None` while it goes on.
+    finished_at: Option<i64>,
 }
 
 /// The key a scout is kept under beside its person and target: the
@@ -647,10 +649,11 @@ fn newest_scout(
         ],
     )?;
     for row in rows {
-        let done = row.opt_int(1)?.is_some();
-        if done == finished {
+        let finished_at = row.opt_int(1)?;
+        if finished_at.is_some() == finished {
             return Ok(Some(Scout {
                 id: row.text(0)?.parse()?,
+                finished_at,
             }));
         }
         if !finished {
@@ -670,6 +673,45 @@ pub(crate) async fn proven_by_scout(
     target: &TargetName,
     tool: &str,
 ) -> Result<Option<Json>, Failure> {
+    let Some(tried) = scout_tried(kernel, call, target).await? else {
+        return Ok(None);
+    };
+    Ok(tried
+        .entries
+        .iter()
+        .find(|entry| {
+            entry["tool"] == tool && entry["state"] == "proven" && entry["level"] == "executed"
+        })
+        .map(|entry| {
+            json!({
+                "by": "scout",
+                "scout_id": tried.scout.to_string(),
+                "level": "executed",
+                "tries": entry["tries"],
+                "binding": entry["binding"],
+            })
+        }))
+}
+
+/// What the newest finished scout of a target tried, as its try stage
+/// stored it, already redacted.
+pub(crate) struct ScoutTried {
+    /// The scout.
+    pub(crate) scout: RunId,
+    /// When it finished, by the store's clock.
+    pub(crate) finished_at: a2m_core::Timestamp,
+    /// One entry for each drafted read: its `tool`, `state`, `binding`,
+    /// and, for a proven read, the `call` that reads it.
+    pub(crate) entries: Vec<Json>,
+}
+
+/// The try stage of the newest finished scout of the target by the
+/// caller's person, in the call's project: `None` when there is none.
+pub(crate) async fn scout_tried(
+    kernel: &Kernel,
+    call: &Call,
+    target: &TargetName,
+) -> Result<Option<ScoutTried>, Failure> {
     let principal = &call.caller.principal;
     let (workspace, person) = (principal.workspace, principal.principal.id);
     let (named, project) = (target.clone(), project_key(call));
@@ -679,29 +721,23 @@ pub(crate) async fn proven_by_scout(
             let Some(scout) = newest_scout(tx, &workspace, &person, &named, &project, true)? else {
                 return Ok(None);
             };
-            Ok(Some((scout.id, stored_stages(tx, scout.id)?)))
+            let stages = stored_stages(tx, scout.id)?;
+            Ok(Some((scout, stages)))
         })
         .await?;
     let Some((scout, stages)) = stages else {
         return Ok(None);
     };
-    Ok(stages
+    let entries = stages
         .get(&6)
         .and_then(|tried| tried["tools"].as_array())
-        .into_iter()
-        .flatten()
-        .find(|entry| {
-            entry["tool"] == tool && entry["state"] == "proven" && entry["level"] == "executed"
-        })
-        .map(|entry| {
-            json!({
-                "by": "scout",
-                "scout_id": scout.to_string(),
-                "level": "executed",
-                "tries": entry["tries"],
-                "binding": entry["binding"],
-            })
-        }))
+        .cloned()
+        .unwrap_or_default();
+    Ok(Some(ScoutTried {
+        scout: scout.id,
+        finished_at: a2m_core::Timestamp::from_unix_millis(scout.finished_at.unwrap_or(0)),
+        entries,
+    }))
 }
 
 fn stored_stages(tx: &mut Tx<'_>, scout: RunId) -> Result<BTreeMap<u8, Json>, Failure> {
@@ -1830,7 +1866,13 @@ handler!(
                         SqlValue::from(project.as_str()),
                     ],
                 )?;
-                Ok((Scout { id }, None))
+                Ok((
+                    Scout {
+                        id,
+                        finished_at: None,
+                    },
+                    None,
+                ))
             })
             .await?;
         // The files of a scout that goes on were checked when it began; a
