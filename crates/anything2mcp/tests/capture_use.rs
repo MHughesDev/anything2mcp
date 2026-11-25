@@ -844,3 +844,236 @@ async fn a_person_s_two_visits_to_a_page_that_keeps_its_state_draft_its_unnamed_
         assert!(request.contains(field), "{field}: {request}");
     }
 }
+
+const ASSERTED_CHILD: &str = "capture_use::a_person_asserts_the_held_request_of_a_captured_page_confirms_it_and_its_read_is_tried_made_ready_and_published_on_the_display_it_is_given";
+const CASES_READ: &str = "example_cases_rows_by_post_cases_list";
+
+/// The person's press on the engine's page at `link`, past the prompt:
+/// what the page said after.
+async fn pressed(http: &reqwest::Client, link: &str) -> String {
+    let text = http.get(link).send().await.unwrap().text().await.unwrap();
+    let origin = link[..link.find("/act/").unwrap()].to_owned();
+    http.post(format!("{link}/confirm"))
+        .header("origin", &origin)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("once={}", once_of(&text)))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap()
+}
+
+/// The person's release of the held page request: its question answered
+/// with their assertion, `effect: read` and `read_asserted: true`, the
+/// values of the body that read named under `enum`, and the field every
+/// answer holds named `required` (decisions 0392, point 4, and 0298).
+fn assert_and_release(folder: &Path, held: &str) {
+    let from = folder.join(held);
+    let text = std::fs::read_to_string(&from).unwrap();
+    let mut out = String::new();
+    for line in text.lines() {
+        let key = line.trim_start().split(':').next().unwrap_or_default();
+        match key {
+            "effect" if line.contains("open_question") => {
+                out.push_str("effect: read\nread_asserted: true\n");
+            }
+            "required" if line.contains("open_question") => {
+                out.push_str("  required: [rows]\n");
+            }
+            _ => {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    for (field, value) in [("op", "search"), ("status", "open")] {
+        let shape = format!("    {field}:\n      type: \"string\"\n");
+        assert!(out.contains(&shape), "{field}: {out}");
+        out = out.replace(&shape, &format!("{shape}      enum: [\"{value}\"]\n"));
+    }
+    let to = folder.join(held.strip_prefix("held/").unwrap());
+    std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+    std::fs::write(&to, out).unwrap();
+    std::fs::remove_file(&from).unwrap();
+}
+
+/// The test application's case 39 from a capture to a published read
+/// (decision 0999): a person's two visits are captured and drafted held;
+/// the person asserts the page's search and releases the drafts; the try
+/// stops until the person confirms the assertion on the engine's page;
+/// then the try reads the rows, `draft ready` records, promotes, and asks
+/// for the publish, the person publishes, and the call reads the rows. No
+/// file is written by hand but the person's release of the held drafts.
+#[test]
+fn a_person_asserts_the_held_request_of_a_captured_page_confirms_it_and_its_read_is_tried_made_ready_and_published()
+ {
+    on_a_display(ASSERTED_CHILD);
+}
+
+/// Run only by the test above, in a child process that has a display.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "run by its test of the same name in a child process"]
+async fn a_person_asserts_the_held_request_of_a_captured_page_confirms_it_and_its_read_is_tried_made_ready_and_published_on_the_display_it_is_given()
+ {
+    let app = TestApp::start().await.unwrap();
+    let seeded = app.case_rows().await.unwrap();
+    let desk = Desk::new(&app);
+    let prompt = Arc::new(Passed(AtomicU32::new(0)));
+    let local = desk.engine(&prompt).await;
+    let serving = tokio::spawn(local.serve());
+    let http = browser();
+    let mut steps = vec![WalkStep::Linger(LINGER)];
+    for _ in 0..2 {
+        steps.extend(visit(ROWS));
+        steps.extend([WalkStep::Go(LAST.to_owned()), WalkStep::Linger(LINGER)]);
+    }
+    app.set_person_walk(&steps).await.unwrap();
+    begun(&desk, &http).await;
+    heard(&app, &format!("POST {ROWS_SEARCH}"), 2).await;
+    heard(&app, &format!("GET {LAST}"), 3).await;
+    let content = stopped(&desk).await;
+    let searched = app.case_rows().await.unwrap().received.len();
+
+    // The page request and the table's read, drafted held.
+    let held: Vec<String> = content["drafted"]["held_back"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|path| path.as_str().unwrap().to_owned())
+        .collect();
+    let files = [
+        "held/page_requests/api_cases_rows_search.yaml",
+        "held/screens/cases_rows_by_post_cases.yaml",
+        "held/operations/cases_rows_by_post_cases_list.yaml",
+    ];
+    for file in files {
+        assert!(held.iter().any(|one| one == file), "{file}: {held:?}");
+    }
+    let folder = desk.project.path().join("targets").join("example");
+
+    // The person asserts the search and releases the three drafts; the
+    // screen's one question is what shows the page is ready.
+    assert_and_release(&folder, files[0]);
+    release(
+        &folder,
+        files[1],
+        &[("ready", "{visible: {text: \"Loaded.\"}}")],
+    );
+    release(&folder, files[2], &[]);
+    let asserted =
+        std::fs::read_to_string(folder.join("page_requests/api_cases_rows_search.yaml")).unwrap();
+    assert!(asserted.contains("read_asserted: true"), "{asserted}");
+
+    // The try stops: the assertion is in a file, and a file is no
+    // person's act. Its next step names the confirmation.
+    let refused = |tried: &Json| {
+        assert_eq!(tried["result"]["status"], "failed", "{tried}");
+        let failure = tried["result"]["failure"].to_string() + &tried["error"].to_string();
+        assert!(failure.contains("page_write_refused"), "{tried}");
+        assert!(failure.contains("assertion.confirm"), "{tried}");
+    };
+    let (_, tried) = desk
+        .run(&["draft", "try", "example", "--tool", CASES_READ])
+        .await;
+    refused(&tried);
+
+    // The agent asks for the confirmation: the person's page waits, and
+    // until the person presses the try still stops.
+    let (code, asked) = desk.run(&["assertion", "confirm", "example"]).await;
+    assert_eq!(code, Some(3), "{asked}");
+    assert_eq!(asked["result"]["state"], "needs_person", "{asked}");
+    let link = asked["result"]["link"].as_str().unwrap().to_owned();
+    let (_, tried) = desk
+        .run(&["draft", "try", "example", "--tool", CASES_READ])
+        .await;
+    refused(&tried);
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 1, "only the capture's");
+
+    // The page names the request as the publish page does, and what the
+    // press lets.
+    let page = http.get(&link).send().await.unwrap().text().await.unwrap();
+    for words in [
+        "assertion.confirm",
+        "/api/cases/rows/search",
+        "`op`, a `string`, one of `search`",
+        "`status`, a `string`, one of `open`",
+        "the only evidence that this request changes nothing",
+        "an environment of kind `test`",
+    ] {
+        assert!(
+            page.contains(&words.replace('`', "&#96;")) || page.contains(words),
+            "{words}: {page}"
+        );
+    }
+    let said = pressed(&http, &link).await;
+    assert!(said.contains("was carried out as you, once"), "{said}");
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 2);
+
+    // The try reads the open rows the application holds.
+    let open: Vec<Json> = seeded
+        .rows
+        .iter()
+        .filter(|row| row.status == "open")
+        .map(|row| json!(row.case_id))
+        .collect();
+    assert_eq!(open.len(), 2);
+    let tried = desk
+        .ok(&["draft", "try", "example", "--tool", CASES_READ])
+        .await;
+    assert_eq!(tried["result"]["status"], "completed", "{tried}");
+    assert_eq!(tried["result"]["result"]["case"], json!(open), "{tried}");
+
+    // `draft ready` records the fixture from a trial, promotes the binding
+    // on it, passes the gates, and asks the person to publish.
+    let (code, ready) = desk
+        .run(&["draft", "ready", "example", "--version", "1.0.0"])
+        .await;
+    assert_eq!(code, Some(3), "{ready}");
+    let result = &ready["result"];
+    assert_eq!(result["failed"], json!([]), "{ready}");
+    assert_eq!(result["ready"][0]["tool"], CASES_READ, "{ready}");
+    assert_eq!(result["ready"][0]["fixture"], "recorded", "{ready}");
+    assert_eq!(result["ready"][0]["binding"], "promoted", "{ready}");
+    assert_eq!(result["gates"]["passed"], true, "{ready}");
+    assert_eq!(result["publish"]["state"], "needs_person", "{ready}");
+    let link = result["publish"]["link"].as_str().unwrap().to_owned();
+    let said = pressed(&http, &link).await;
+    assert!(said.contains("was carried out as you, once"), "{said}");
+    assert_eq!(prompt.0.load(Ordering::SeqCst), 3);
+
+    // The published read, called, reads the rows.
+    let called = desk
+        .ok(&["call", CASES_READ, "--input", &json!({}).to_string()])
+        .await;
+    assert_eq!(called["result"]["status"], "completed", "{called}");
+    assert_eq!(called["result"]["result"]["case"], json!(open), "{called}");
+
+    let (code, _) = desk.run(&["engine", "stop"]).await;
+    assert_eq!(code, Some(0));
+    assert_eq!(serving.await.unwrap(), StopReason::Asked);
+
+    // The route heard searches and never an archive; no row changed, and
+    // nothing was written.
+    let after = app.case_rows().await.unwrap();
+    assert_eq!(after.rows, seeded.rows);
+    assert!(after.received.len() > searched, "{after:?}");
+    assert!(after.received.iter().all(|op| op == "search"), "{after:?}");
+    assert!(app.writes().await.unwrap().is_empty());
+    // No file of the target says `verified` but the one the promote wrote.
+    let mut written = Vec::new();
+    texts_under(&folder, &mut written);
+    let verified: Vec<String> = written
+        .iter()
+        .filter(|(_, text)| {
+            text.contains("status: verified") || text.contains("status: \"verified\"")
+        })
+        .map(|(path, _)| path.display().to_string())
+        .collect();
+    assert_eq!(verified.len(), 1, "{verified:?}");
+    assert!(
+        verified[0].ends_with("cases_rows_by_post_cases_list.yaml"),
+        "{verified:?}"
+    );
+}
