@@ -655,9 +655,17 @@ fn parse_rows(text: &str, rows: &Rows) -> Option<Vec<Vec<String>>> {
     let mut lines = text
         .split('\n')
         .map(|line| line.strip_suffix('\r').unwrap_or(line));
+    // A heading is compared as a person reads it: a table library's sort
+    // words are not its own (decision 0474, point 2).
+    let heading = |line: &str| -> Option<Vec<String>> {
+        cells(line)
+            .iter()
+            .map(|cell| crate::heading::words(cell))
+            .collect()
+    };
     loop {
         let line = lines.next()?;
-        if cells(line) == rows.header {
+        if heading(line).as_ref() == Some(&rows.header) {
             break;
         }
         if line.contains('\t') {
@@ -1130,7 +1138,23 @@ impl Session {
                 ));
             }
             let frame = fingerprint.and_then(|print| print.frame.as_ref());
-            let element = match self.tab().locate(&locator.query_in(frame), deadline).await {
+            // An element the page gives no name, or a heading found by its
+            // level, is looked for only inside its section, where it must
+            // be the one; and an element that is its section is that one
+            // element of the page (decision 0473, point 3).
+            let own_section = fingerprint.is_some_and(|print| print.section == *locator);
+            let nameless = fingerprint.is_some()
+                && !own_section
+                && match &locator.by {
+                    crate::model::LocateBy::Role { name, .. } => name.is_empty(),
+                    crate::model::LocateBy::Heading(_) => true,
+                    _ => false,
+                };
+            let query = match fingerprint {
+                Some(print) if nameless => locator.query_inside(&print.section),
+                _ => locator.query_in(frame),
+            };
+            let element = match self.tab().locate(&query, deadline).await {
                 Ok(element) => element,
                 Err(BrowserError::NotFound) => continue,
                 Err(error) => return Err(browser_failure(&error, what)),
@@ -1145,16 +1169,18 @@ impl Session {
                 };
                 // The locator matched exactly one element of the page, so a
                 // match inside the section is that element.
-                match self
-                    .tab()
-                    .locate(&locator.query_inside(&fingerprint.section), deadline)
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(BrowserError::NotFound | BrowserError::Ambiguous { .. }) => {
-                        return Err(mismatch("it is not inside its section"));
+                if !nameless && !own_section {
+                    match self
+                        .tab()
+                        .locate(&locator.query_inside(&fingerprint.section), deadline)
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(BrowserError::NotFound | BrowserError::Ambiguous { .. }) => {
+                            return Err(mismatch("it is not inside its section"));
+                        }
+                        Err(error) => return Err(browser_failure(&error, what)),
                     }
-                    Err(error) => return Err(browser_failure(&error, what)),
                 }
                 if let Some(text) = &fingerprint.near_text {
                     let near = Locator {
@@ -1525,7 +1551,11 @@ impl Session {
             let (element, locator) = self
                 .find(&what, &rows.locate, rows.fingerprint.as_ref(), deadline)
                 .await?;
-            let text = match self.tab().read(&element, &ReadWhat::Text, deadline).await {
+            let reading = match &rows.items {
+                Some(role) => ReadWhat::Items { role: role.clone() },
+                None => ReadWhat::Text,
+            };
+            let text = match self.tab().read(&element, &reading, deadline).await {
                 Ok(RawValue::Text(text)) => text,
                 Ok(_) => {
                     return Err(browser_failure(
@@ -1535,7 +1565,18 @@ impl Session {
                 }
                 Err(error) => return Err(browser_failure(&error, &what)),
             };
-            let table = parse_rows(&text, rows).ok_or_else(|| {
+            let table = if rows.items.is_some() {
+                // Each item is one line, its text, and one row of one cell.
+                Some(
+                    text.split('\n')
+                        .filter(|line| !line.trim().is_empty())
+                        .map(|line| vec![line.trim().to_owned()])
+                        .collect(),
+                )
+            } else {
+                parse_rows(&text, rows)
+            };
+            let table = table.ok_or_else(|| {
                 StepFailure::answered(fail(
                     &codes::row::FINGERPRINT_MISMATCH,
                     format!(
@@ -2895,6 +2936,7 @@ mod tests {
             fingerprint: None,
             header: vec!["Order".to_owned(), "Customer".to_owned()],
             columns: BTreeMap::new(),
+            items: None,
         };
         let cell = |text: &str| text.to_owned();
         assert_eq!(
@@ -2913,5 +2955,18 @@ mod tests {
         assert_eq!(parse_rows("Order\tClient\nA-100\tAcme\n", &rows), None);
         assert_eq!(parse_rows("Order\tCustomer\nA-100\n", &rows), None);
         assert_eq!(parse_rows("All orders\n", &rows), None);
+        // A table library's sort words on a heading are not the heading's
+        // (decision 0474, point 2); a heading with no words left is none.
+        assert_eq!(
+            parse_rows(
+                "Order Order: Activate to sort\tCustomer: activate to sort column ascending\nA-100\tAcme\n",
+                &rows
+            ),
+            Some(vec![vec![cell("A-100"), cell("Acme")]])
+        );
+        assert_eq!(
+            parse_rows("Order\tActivate to sort\nA-100\tAcme\n", &rows),
+            None
+        );
     }
 }

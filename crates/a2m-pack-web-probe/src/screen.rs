@@ -200,10 +200,98 @@ pub fn link_names(snapshot: &Snapshot) -> (Vec<&str>, u64) {
 
 /// What makes two snapshots one screen: each named table with its column
 /// headings, each labelled value, and each part of the page they are in,
-/// with their depths. `None` when the snapshot holds neither a named table
-/// nor a labelled value, or was cut short: such pages are never joined.
+/// with their depths. A snapshot that holds neither a named table nor a
+/// labelled value has the signature of a record (decision 0473, point 2):
+/// every element's role and depth, a heading's level, and the name of each
+/// part of the page, and no other name, when it holds a heading. `None`
+/// when it holds none of these, or was cut short: such pages are never
+/// joined.
 #[must_use]
 pub fn signature(found: &Json) -> Option<String> {
+    tables_and_labels(found).or_else(|| record(found))
+}
+
+/// What starts the signature of a record.
+const RECORD_FORM: &str = "record ";
+
+/// Whether a signature is of a record's form.
+#[must_use]
+pub fn of_a_record(signature: &str) -> bool {
+    signature.starts_with(RECORD_FORM)
+}
+
+/// The signature of a record: the page's whole structure, with no name but
+/// a part's.
+fn record(found: &Json) -> Option<String> {
+    if found.get("cut").and_then(Json::as_bool) != Some(false) {
+        return None;
+    }
+    let mut kept = Vec::new();
+    let mut headed = false;
+    for one in found.get("elements")?.as_array()? {
+        let role = one.get("role").and_then(Json::as_str).unwrap_or_default();
+        headed |= role == "heading";
+        let name = if SECTION_ROLES.contains(&role) {
+            one.get("name").cloned().unwrap_or(Json::Null)
+        } else {
+            Json::Null
+        };
+        kept.push(Json::Array(vec![
+            one.get("depth").cloned().unwrap_or(Json::Null),
+            Json::from(role),
+            one.get("level").cloned().unwrap_or(Json::Null),
+            name,
+        ]));
+    }
+    headed.then(|| format!("{RECORD_FORM}{}", Json::Array(kept)))
+}
+
+/// Marks, in the snapshot of the first page of a screen of a record's
+/// form, each heading whose name the pages do not share: its name is the
+/// record's value, so it is kept as its type, with `varies` (decision 0473,
+/// point 2). The pages' elements are in one order, as their signature
+/// says.
+pub fn mark_varying(first: &mut Json, pages: &[&Json]) {
+    let names = |found: &Json, at: usize| -> Option<String> {
+        found
+            .get("elements")?
+            .get(at)?
+            .get("name")
+            .and_then(Json::as_str)
+            .map(str::to_owned)
+    };
+    let Some(count) = first.get("elements").and_then(Json::as_array).map(Vec::len) else {
+        return;
+    };
+    for at in 0..count {
+        let role = first["elements"][at]
+            .get("role")
+            .and_then(Json::as_str)
+            .unwrap_or_default();
+        if role != "heading" {
+            continue;
+        }
+        let mine = names(first, at);
+        if pages.iter().all(|page| names(page, at) == mine) {
+            continue;
+        }
+        if let Some(Json::Object(element)) =
+            first.get_mut("elements").and_then(|list| list.get_mut(at))
+        {
+            let shown = element
+                .remove("name")
+                .and_then(|name| name.as_str().map(type_of_text))
+                .unwrap_or("text");
+            element.insert("name_type".to_owned(), Json::from(shown));
+            element.insert("varies".to_owned(), Json::Bool(true));
+            let kept = crate::shape::sorted(std::mem::take(element));
+            *element = kept;
+        }
+    }
+}
+
+/// The signature of named tables and labelled values.
+fn tables_and_labels(found: &Json) -> Option<String> {
     if found.get("cut").and_then(Json::as_bool) != Some(false) {
         return None;
     }

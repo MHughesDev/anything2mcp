@@ -158,6 +158,14 @@
     return "";
   }
 
+  // The level of a heading: its `aria-level`, or the number of its tag.
+  function levelOf(el) {
+    const stated = Number.parseInt(el.getAttribute("aria-level") || "", 10);
+    if (Number.isInteger(stated)) return stated;
+    const tag = /^h([1-6])$/.exec(el.localName);
+    return tag ? Number(tag[1]) : 2;
+  }
+
   // The cells of a row, in order: its own, not those of a row inside it.
   const CELL_ROLES = new Set(["cell", "gridcell", "columnheader", "rowheader"]);
   const cellsOf = (row) => [...walk(row)].filter((el) => el !== row && CELL_ROLES.has(roleOf(el)));
@@ -174,6 +182,8 @@
         return (el) => el.getAttribute("data-testid") === by.id;
       case "title":
         return (el) => norm(el.getAttribute("title")) === by.text;
+      case "heading":
+        return (el) => !hiddenFromTree(el) && roleOf(el) === "heading" && levelOf(el) === by.level;
       case "css":
         // A selector on the `value` attribute would tell, match by match,
         // what a password input was served with. On a page that holds one,
@@ -318,6 +328,18 @@
         if (el.localName !== "select") return { absent: true };
         value = el.selectedOptions.length ? norm(el.selectedOptions[0].textContent) : "";
         break;
+      case "items": {
+        // Each element of the role inside, not inside another of it below.
+        const items = [...walk(el)].filter((item) => {
+          if (item === el || !rendered(item) || hiddenFromTree(item) || roleOf(item) !== what.role) return false;
+          for (let up = item.parentElement; up && up !== el; up = up.parentElement) {
+            if (roleOf(up) === what.role) return false;
+          }
+          return true;
+        });
+        value = items.map((item) => norm(item.textContent)).join("\n");
+        break;
+      }
       case "cell": {
         const cell = cellsOf(el)[what.index];
         if (!cell) return { absent: true };

@@ -781,7 +781,15 @@ impl WebSnapshot {
                 Some(group) if group.pages.iter().min() != Some(&at) => continue,
                 Some(group) => {
                     let first = &seen[group.pages[0]];
-                    let mut fields = first.1.as_object().cloned().unwrap_or_default();
+                    let mut first_found = first.1.clone();
+                    let record_form =
+                        screen::signature(&first.1).is_some_and(|sig| screen::of_a_record(&sig));
+                    if record_form {
+                        let pages: Vec<&Json> =
+                            group.pages.iter().map(|page| &seen[*page].1).collect();
+                        screen::mark_varying(&mut first_found, &pages);
+                    }
+                    let mut fields = first_found.as_object().cloned().unwrap_or_default();
                     // Every page of the group may have tried other origins.
                     let refused: BTreeSet<&str> = group
                         .pages
@@ -813,8 +821,13 @@ impl WebSnapshot {
                     limitations.push((
                             LimitationCode::Sampled,
                             format!(
-                                "Matched from {} pages whose addresses differ in one segment and whose tables and labelled values are the same; the snapshot is of the first.",
-                                group.pages.len()
+                                "Matched from {} pages whose addresses differ in one segment and whose {} the same; the snapshot is of the first.",
+                                group.pages.len(),
+                                if record_form {
+                                    "structures are, but for the names of their headings, which are kept as types where they differ"
+                                } else {
+                                    "tables and labelled values are"
+                                }
                             ),
                         ));
                     let pattern = Place {

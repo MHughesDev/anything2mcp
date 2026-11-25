@@ -30,6 +30,7 @@ struct Settings {
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
         .route("/reset", post(reset))
+        .route("/orders", get(stored_orders))
         .route("/orders/{order_id}", get(stored_order))
         .route("/orders/{order_id}/items/{item_code}", get(stored_item))
         .route("/writes", get(writes))
@@ -117,6 +118,12 @@ async fn reset(State(state): State<AppState>) -> StatusCode {
 }
 
 /// Exactly what is stored for an order, or `null`.
+/// Every order as stored, in the order the store keeps them.
+async fn stored_orders(State(state): State<AppState>) -> Json<Value> {
+    let inner = state.lock().await;
+    Json(json!({"stored": inner.store.orders().collect::<Vec<_>>()}))
+}
+
 async fn stored_order(State(state): State<AppState>, Path(order_id): Path<String>) -> Json<Value> {
     let inner = state.lock().await;
     Json(json!({"stored": inner.store.order(&order_id)}))

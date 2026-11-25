@@ -279,13 +279,10 @@ fn walk() -> Vec<WalkStep> {
     steps
 }
 
-/// A person uses the application in a watching tab through the product,
-/// and what was captured is drafted, held. A window needs a screen: the
-/// engine runs in a child process of this test binary with the display of
-/// a virtual screen of its own. Where no screen can be had the test says so
-/// and passes, unless `A2M_REQUIRE_DESKTOP=1`.
-#[test]
-fn a_person_s_use_is_captured_in_a_watching_tab_and_drafted_held() {
+/// Runs the child test `child` of this binary with the display of a virtual
+/// screen of its own, as a window needs one. Where no screen can be had the
+/// test says so and passes, unless `A2M_REQUIRE_DESKTOP=1`.
+fn on_a_display(child: &str) {
     let screen = match Screen::start() {
         Ok(screen) => screen,
         Err(why) if !screen_required() => {
@@ -294,26 +291,36 @@ fn a_person_s_use_is_captured_in_a_watching_tab_and_drafted_held() {
         }
         Err(why) => panic!("no screen, and A2M_REQUIRE_DESKTOP=1 says one must be had: {why}"),
     };
-    let mut child = Command::new(std::env::current_exe().unwrap());
-    child.args([
-        WINDOW_CHILD,
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command.args([
+        child,
         "--exact",
         "--ignored",
         "--test-threads=1",
         "--nocapture",
     ]);
-    child.env_remove("WAYLAND_DISPLAY");
+    command.env_remove("WAYLAND_DISPLAY");
     match screen.display() {
-        Some(display) => child.env("DISPLAY", display),
-        None => child.env_remove("DISPLAY"),
+        Some(display) => command.env("DISPLAY", display),
+        None => command.env_remove("DISPLAY"),
     };
-    let output = child.output().unwrap();
+    let output = command.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success() && stdout.contains("1 passed"),
         "the child did not capture the person's use:\n{stdout}\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// A person uses the application in a watching tab through the product,
+/// and what was captured is drafted, held. A window needs a screen: the
+/// engine runs in a child process of this test binary with the display of
+/// a virtual screen of its own. Where no screen can be had the test says so
+/// and passes, unless `A2M_REQUIRE_DESKTOP=1`.
+#[test]
+fn a_person_s_use_is_captured_in_a_watching_tab_and_drafted_held() {
+    on_a_display(WINDOW_CHILD);
 }
 
 /// Run only by the test above, in a child process that has a display.
@@ -541,5 +548,299 @@ async fn a_person_s_use_is_captured_in_a_watching_tab_and_drafted_held_on_the_di
     texts_under(desk.project.path(), &mut files);
     for (path, text) in &files {
         assert!(!text.contains(PLANTED), "{}", path.display());
+    }
+}
+
+/// The agent asks for a capture, and the person begins it on the engine's
+/// page, past the prompt.
+async fn begun(desk: &Desk, http: &reqwest::Client) {
+    let (code, asked) = desk.run(&["capture", "start", "example"]).await;
+    assert_eq!(code, Some(3), "{asked}");
+    let link = asked["result"]["link"].as_str().unwrap().to_owned();
+    let text = http.get(&link).send().await.unwrap().text().await.unwrap();
+    let origin = link[..link.find("/act/").unwrap()].to_owned();
+    let said = http
+        .post(format!("{link}/confirm"))
+        .header("origin", &origin)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("once={}", once_of(&text)))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(said.contains("Stop recording"), "{said}");
+}
+
+/// Waits until the application has heard `line` `times` times.
+async fn heard(app: &TestApp, line: &str, times: usize) {
+    let waited = tokio::time::timeout(Duration::from_secs(90), async {
+        loop {
+            let heard = app.seen().await.unwrap();
+            if heard.iter().filter(|one| *one == line).count() >= times {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await;
+    assert!(
+        waited.is_ok(),
+        "the person's walk did not reach `{line}` {times} times"
+    );
+}
+
+/// The agent ends the capture; what it drafted, by the scout report.
+async fn stopped(desk: &Desk) -> Json {
+    let stopped = desk.ok(&["capture", "stop", "example"]).await;
+    let stopped = &stopped["result"];
+    assert_eq!(stopped["state"], "ended", "{stopped}");
+    let scout = stopped["report"]["scout_id"].as_str().unwrap().to_owned();
+    let read = desk
+        .ok(&["scout", "report", "example", "--scout", &scout])
+        .await;
+    read["result"]["content"].clone()
+}
+
+/// The person's release of one held draft: each line that holds an open
+/// question is given the answer of its key, and the file is moved to its
+/// place (decision 0298, point 5).
+fn release(folder: &Path, held: &str, answers: &[(&str, &str)]) {
+    let from = folder.join(held);
+    let text = std::fs::read_to_string(&from).unwrap();
+    let mut out = String::new();
+    for line in text.lines() {
+        let key = line.trim_start().split(':').next().unwrap_or_default();
+        if line.contains("open_question") {
+            let indent = &line[..line.len() - line.trim_start().len()];
+            let answer = answers
+                .iter()
+                .find(|(asked, _)| *asked == key)
+                .unwrap_or_else(|| panic!("no answer for `{key}`: {text}"))
+                .1;
+            out.push_str(&format!("{indent}{key}: {answer}\n"));
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    let to = folder.join(held.strip_prefix("held/").unwrap());
+    std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+    std::fs::write(&to, out).unwrap();
+    std::fs::remove_file(&from).unwrap();
+}
+
+const LISTED: &str = "/orders/listed";
+const LIST_READ: &str = "example_orders_listed_items_list";
+const RECORD_READ: &str = "example_orders_record_get";
+const PAGES_CHILD: &str = "capture_use::a_person_s_use_of_pages_drawn_on_the_server_drafts_a_list_and_a_record_held_that_a_person_releases_and_tries_on_the_display_it_is_given";
+const KEPT_CHILD: &str = "capture_use::a_person_s_two_visits_to_a_page_that_keeps_its_state_draft_its_unnamed_table_and_its_held_request_on_the_display_it_is_given";
+
+/// A person's use of a list of links and of two records headed by their
+/// values, through the product (decision 0473): both reads are drafted
+/// held, a person releases them, and a try of each returns what the
+/// application holds.
+#[test]
+fn a_person_s_use_of_pages_drawn_on_the_server_drafts_a_list_and_a_record_held_that_a_person_releases_and_tries()
+ {
+    on_a_display(PAGES_CHILD);
+}
+
+/// Run only by the test above, in a child process that has a display.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "run by its test of the same name in a child process"]
+async fn a_person_s_use_of_pages_drawn_on_the_server_drafts_a_list_and_a_record_held_that_a_person_releases_and_tries_on_the_display_it_is_given()
+ {
+    let app = TestApp::start().await.unwrap();
+    let desk = Desk::new(&app);
+    let prompt = Arc::new(Passed(AtomicU32::new(0)));
+    let local = desk.engine(&prompt).await;
+    let serving = tokio::spawn(local.serve());
+    let http = browser();
+    let mut steps = vec![WalkStep::Linger(LINGER)];
+    for page in [
+        LISTED,
+        "/orders/A-100/record",
+        LISTED,
+        "/orders/A-101/record",
+        LISTED,
+    ] {
+        steps.extend([WalkStep::Go(page.to_owned()), WalkStep::Linger(LINGER)]);
+    }
+    app.set_person_walk(&steps).await.unwrap();
+    begun(&desk, &http).await;
+    heard(&app, &format!("GET {LISTED}"), 3).await;
+    let content = stopped(&desk).await;
+
+    // Both reads are drafted held, each with its screen.
+    let held: Vec<String> = content["drafted"]["held_back"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|path| path.as_str().unwrap().to_owned())
+        .collect();
+    let files = [
+        "held/screens/orders_listed_items.yaml",
+        "held/operations/orders_listed_items_list.yaml",
+        "held/screens/orders_record.yaml",
+        "held/operations/orders_record_get.yaml",
+    ];
+    for file in files {
+        assert!(held.iter().any(|one| one == file), "{file}: {held:?}");
+    }
+    assert_eq!(content["drafted"]["written"], json!([]), "{content}");
+    let folder = desk.project.path().join("targets").join("example");
+    let list = std::fs::read_to_string(folder.join(files[0])).unwrap();
+    assert!(list.contains("gives the list no accessible name"), "{list}");
+    let record = std::fs::read_to_string(folder.join(files[2])).unwrap();
+    assert!(
+        record.contains("url: \"/orders/{order_id}/record\""),
+        "{record}"
+    );
+    assert!(
+        record.contains("the heading is the record's own value"),
+        "{record}"
+    );
+
+    // The person answers each question with what the question names, and
+    // releases the drafts.
+    let ready = "{visible: {role: main, name: \"\"}}";
+    release(
+        &folder,
+        files[0],
+        &[("ready", ready), ("locate", "[{role: list, name: \"\"}]")],
+    );
+    release(
+        &folder,
+        files[2],
+        &[("ready", ready), ("locate", "[{heading: 1}]")],
+    );
+    release(&folder, files[1], &[]);
+    release(&folder, files[3], &[]);
+
+    // Each read, tried, returns what the application holds.
+    let tried = desk
+        .ok(&["draft", "try", "example", "--tool", LIST_READ])
+        .await;
+    assert_eq!(tried["result"]["status"], "completed", "{tried}");
+    let ids: Vec<Json> = app
+        .stored_orders()
+        .await
+        .unwrap()
+        .iter()
+        .map(|order| json!(order.order_id))
+        .collect();
+    assert_eq!(tried["result"]["result"]["items"], json!(ids), "{tried}");
+    let order = app.stored_order("A-102").await.unwrap().unwrap();
+    let tried = desk
+        .ok(&[
+            "draft",
+            "try",
+            "example",
+            "--tool",
+            RECORD_READ,
+            "--input",
+            r#"{"order_id": "A-102"}"#,
+        ])
+        .await;
+    assert_eq!(tried["result"]["status"], "completed", "{tried}");
+    assert_eq!(
+        tried["result"]["result"]["heading"],
+        json!(order.customer),
+        "{tried}"
+    );
+    assert_eq!(
+        tried["result"]["result"]["values"],
+        json!([
+            order.order_id,
+            example_app::listed::status_words(order.status)
+        ]),
+        "{tried}"
+    );
+
+    let (code, _) = desk.run(&["engine", "stop"]).await;
+    assert_eq!(code, Some(0));
+    assert_eq!(serving.await.unwrap(), StopReason::Asked);
+    // Nothing was written.
+    assert!(app.writes().await.unwrap().is_empty());
+}
+
+/// Two visits of a person to a page whose table has no name and whose
+/// request adds what the browser kept after the first visit, through the
+/// product (decision 0474): the table's read and the page request are
+/// drafted held.
+#[test]
+fn a_person_s_two_visits_to_a_page_that_keeps_its_state_draft_its_unnamed_table_and_its_held_request()
+ {
+    on_a_display(KEPT_CHILD);
+}
+
+/// Run only by the test above, in a child process that has a display.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "run by its test of the same name in a child process"]
+async fn a_person_s_two_visits_to_a_page_that_keeps_its_state_draft_its_unnamed_table_and_its_held_request_on_the_display_it_is_given()
+ {
+    const KEPT: &str = "/cases/rows-kept";
+    let app = TestApp::start().await.unwrap();
+    let desk = Desk::new(&app);
+    let prompt = Arc::new(Passed(AtomicU32::new(0)));
+    let local = desk.engine(&prompt).await;
+    let serving = tokio::spawn(local.serve());
+    let http = browser();
+    let mut steps = vec![WalkStep::Linger(LINGER)];
+    for _ in 0..2 {
+        steps.extend(visit(KEPT));
+        steps.extend([WalkStep::Go(LAST.to_owned()), WalkStep::Linger(LINGER)]);
+    }
+    app.set_person_walk(&steps).await.unwrap();
+    begun(&desk, &http).await;
+    // The surface's address leads to the list of orders first; the walk
+    // ends there after its second visit.
+    heard(&app, "POST /api/cases/rows/kept", 2).await;
+    heard(&app, &format!("GET {LAST}"), 3).await;
+    let content = stopped(&desk).await;
+    let (code, _) = desk.run(&["engine", "stop"]).await;
+    assert_eq!(code, Some(0));
+    assert_eq!(serving.await.unwrap(), StopReason::Asked);
+    assert_eq!(
+        counted(app.seen().await.unwrap())
+            .get("POST /api/cases/rows/kept")
+            .copied(),
+        Some(2)
+    );
+
+    let held: Vec<String> = content["drafted"]["held_back"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|path| path.as_str().unwrap().to_owned())
+        .collect();
+    let folder = desk.project.path().join("targets").join("example");
+    // The table with no name, by its headings as a person reads them.
+    for file in [
+        "held/screens/cases_rows_kept_table.yaml",
+        "held/operations/cases_rows_kept_table_list.yaml",
+        "held/page_requests/api_cases_rows_kept.yaml",
+    ] {
+        assert!(held.iter().any(|one| one == file), "{file}: {held:?}");
+    }
+    let screen =
+        std::fs::read_to_string(folder.join("held/screens/cases_rows_kept_table.yaml")).unwrap();
+    assert!(
+        screen.contains("  header:\n    - \"Order\"\n    - \"Customer\"\n"),
+        "{screen}"
+    );
+    assert!(!screen.contains("Activate"), "{screen}");
+    // The page's request, seen twice and counted in one shape: held, with
+    // its effect asked and every field of the later body in its schema.
+    let request =
+        std::fs::read_to_string(folder.join("held/page_requests/api_cases_rows_kept.yaml"))
+            .unwrap();
+    assert!(request.contains("method: \"POST\""), "{request}");
+    assert!(request.contains("effect: {open_question:"), "{request}");
+    assert!(request.contains("additionalProperties: false"), "{request}");
+    for field in ["draw:", "start:", "length:", "order:"] {
+        assert!(request.contains(field), "{field}: {request}");
     }
 }

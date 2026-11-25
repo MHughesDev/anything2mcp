@@ -101,7 +101,7 @@ Brought by the web pack, and by the desktop pack for desktop surfaces.
 | `frame` | A declared frame path, when the screen is inside a frame: a list of locators, outermost first, each looked for inside the one before. Every locator of the screen, and every section of a fingerprint, is then looked for inside the frame. Only a frame of the page's own origin can be entered |
 | `fields` | Map of field name to a field (below) |
 | `actions` | Map of action name to an action (below) |
-| `rows` | For a table: its `locate` and `fingerprint`, its `header`, the text of every heading in order, and its `columns`, each a name with the `header` it is under and its `type`. An output that is a list takes the column of its name. Finding one row by its key is not built |
+| `rows` | For a table: its `locate` and `fingerprint`, its `header`, the text of every heading in order as a person reads it, and its `columns`, each a name with the `header` it is under and its `type`. A heading is compared without a table library's sort sentence after a colon ([decision 0474](../decisions/0474-a-capture-drafts-a-table-with-no-name-by-its-headings-as-a-person-reads-them-and-counts-what-the-browser-kept-as-one-shape.md)). Or, for items rather than a table, `items: listitem` or `items: paragraph`, no `header`, and one column with no `header`: each element of that role inside the element found is one row, its text ([decision 0473](../decisions/0473-a-capture-drafts-a-list-of-items-of-one-shape-and-a-record-headed-by-its-value-held.md)). An output that is a list takes the column of its name. Finding one row by its key is not built |
 | `variants` | Named states that can appear, such as a confirmation dialog, each with a condition `when` and a handling: `confirm`, `dismiss`, `stop`, or `absent`, which says the record the screen shows does not exist. As built: `when` is `{visible: locator}`, and the handling is `stop`, `absent`, `confirm`, or `dismiss`; the last two name an action of the screen in `with`. `confirm` answers a question the page asks of the action just performed, once; `dismiss` closes a state that is in the way, before the step goes on ([decision 0350](../decisions/0350-the-phase-1-cases-of-the-interface-driver-frames-answered-questions-native-dialogs-two-more-controls-and-what-the-grid-still-needs.md)) |
 
 **Field.**
@@ -130,7 +130,7 @@ Brought by the web pack, and by the desktop pack for desktop surfaces.
 
 ### Locators
 
-Tried in order; the first that matches exactly one element and passes the fingerprint wins.
+Tried in order; the first that matches exactly one element and passes the fingerprint wins. A locator is matched over the whole page and then held inside its fingerprint's section, with two exceptions: one by role with `name: ""`, or by `heading`, is matched only inside the section, where it must be the one; and one that is its own section is that one element of the page ([decision 0473](../decisions/0473-a-capture-drafts-a-list-of-items-of-one-shape-and-a-record-headed-by-its-value-held.md), point 3).
 
 | Locator | Matches by |
 | --- | --- |
@@ -140,6 +140,7 @@ Tried in order; the first that matches exactly one element and passes the finger
 | `{text}` | Visible text, exact unless `contains: true` |
 | `{test_id}` | A test identifier attribute, when the application has stable ones |
 | `{title}` | Title or tooltip text |
+| `{heading}` | The one heading of the level given, 1 to 6, whatever it is named: a record's heading that is its own value ([decision 0473](../decisions/0473-a-capture-drafts-a-list-of-items-of-one-shape-and-a-record-headed-by-its-value-held.md)) |
 | `{css}` | A selector; allowed only last in the list, and flagged by the linter |
 | `within` | Added to any locator to limit it to a named region of the screen |
 

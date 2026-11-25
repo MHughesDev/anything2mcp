@@ -279,6 +279,13 @@ pub enum By {
         /// The title.
         text: String,
     },
+    /// The one heading of this level, whatever it is named: a record's
+    /// page whose heading is the record's own value is found by it, never
+    /// by the value (decision 0473).
+    Heading {
+        /// The heading's level, 1 to 6.
+        level: u32,
+    },
     /// A selector. The last resort.
     Css {
         /// The selector.
@@ -428,6 +435,15 @@ pub enum ReadWhat {
     Attribute {
         /// The attribute's name.
         name: String,
+    },
+    /// The text of each element of one role inside the element, and not
+    /// inside another of that role below it, in the page's order, each with
+    /// its white space collapsed, one to a line: the items of a list, or
+    /// the paragraphs of a part of a page (decision 0473). One item never
+    /// spans two lines.
+    Items {
+        /// The role of each item: `listitem` or `paragraph`.
+        role: String,
     },
     /// The text of one cell of a row, counted from zero among its cells.
     Cell {
