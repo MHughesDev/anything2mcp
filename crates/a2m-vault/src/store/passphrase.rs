@@ -81,14 +81,21 @@ impl PassphraseRoute {
 /// The salt of the derivation: random, not secret, one per installation. It
 /// is kept beside the key records, and the same one is given at every start.
 /// [`PassphraseSalt::load_or_create`] keeps it in a file and makes it once.
+///
+/// It carries the cost its root is derived with (decision 0438): a root is
+/// always derived with the cost the salt's file records, never with the
+/// build's constant, which is the cost of a new salt only.
 #[derive(Clone, PartialEq, Eq)]
-pub struct PassphraseSalt([u8; PassphraseSalt::LENGTH]);
+pub struct PassphraseSalt {
+    salt: [u8; PassphraseSalt::LENGTH],
+    cost: Cost,
+}
 
 impl PassphraseSalt {
     /// The number of bytes in a salt.
     pub const LENGTH: usize = 16;
 
-    /// A new salt, for a new installation.
+    /// A new salt, for a new installation, with this build's cost.
     ///
     /// # Errors
     ///
@@ -96,23 +103,38 @@ impl PassphraseSalt {
     pub fn generate(random: &dyn RandomSource) -> Result<Self, Failure> {
         let mut salt = [0u8; Self::LENGTH];
         random.fill(&mut salt)?;
-        Ok(Self(salt))
+        Ok(Self {
+            salt,
+            cost: STANDARD,
+        })
     }
 
-    /// A salt read back from where it was kept.
+    /// A salt read back from where it was kept as its bytes alone, as every
+    /// build before decision 0438 kept it: its cost is that of those builds,
+    /// 64 MiB and three passes on one lane.
     #[must_use]
     pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-        Self(bytes)
+        Self {
+            salt: bytes,
+            cost: STANDARD,
+        }
     }
 
     /// The salt's bytes, for keeping.
     #[must_use]
     pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {
-        &self.0
+        &self.salt
     }
 
     /// The salt kept in `file`, made and written there when the file is
     /// missing. The directory is made when it is missing too.
+    ///
+    /// The file is read in two forms (decision 0438). Sixteen bare bytes, as
+    /// every earlier build wrote, are format 0, read with the cost of those
+    /// builds and never rewritten. Anything else is one line of text that
+    /// records the format, the algorithm and its version, the memory, the
+    /// passes, the lanes, and the salt; a new file is always written that
+    /// way, with this build's cost.
     ///
     /// Two engines that start at the same moment on a fresh installation
     /// must end with one salt: two salts are two roots, and what was wrapped
@@ -126,11 +148,12 @@ impl PassphraseSalt {
     ///
     /// `busy`/`randomness_unavailable` when the source fails;
     /// `busy`/`key_store_unreachable` when the file cannot be read, made, or
-    /// locked, or holds something that is not a salt.
+    /// locked, or holds something that is not a salt; and, with a next step
+    /// that names a build that reads it, when it records a format, an
+    /// algorithm, or a cost this build does not derive with. A refused file
+    /// is left as it is.
     pub async fn load_or_create(file: &Path, random: &dyn RandomSource) -> Result<Self, Failure> {
-        let unusable =
-            || failure::unreachable("the salt of its passphrase could not be read or kept");
-        if let Some(salt) = read_salt(file).map_err(|_| unusable())? {
+        if let Some(salt) = read_salt(file)? {
             return Ok(salt);
         }
         // Made before the lock is taken, and used only if the file is still
@@ -140,60 +163,180 @@ impl PassphraseSalt {
         tokio::task::spawn_blocking(move || make_salt(&file, &made))
             .await
             .map_err(|_| unusable())?
-            .map_err(|_| unusable())
+    }
+
+    /// The file's text in the recorded form, format 1: one line, ended by a
+    /// line feed.
+    fn to_record(&self) -> String {
+        format!(
+            "{FIELD_FORMAT}={RECORDED_FORMAT} {FIELD_ALGORITHM}={ALGORITHM} {FIELD_VERSION}={VERSION} {FIELD_MEMORY}={} {FIELD_PASSES}={} {FIELD_LANES}={} {FIELD_SALT}={}\n",
+            self.cost.memory_kib,
+            self.cost.passes,
+            self.cost.lanes,
+            crate::hex::encode(&self.salt),
+        )
+    }
+
+    /// What a salt file holds: format 0 for sixteen bare bytes, else the
+    /// recorded form.
+    fn from_file(bytes: &[u8]) -> Result<Self, Failure> {
+        if let Ok(salt) = <[u8; Self::LENGTH]>::try_from(bytes) {
+            return Ok(Self::from_bytes(salt));
+        }
+        let text = std::str::from_utf8(bytes).map_err(|_| unusable())?;
+        let line = text.strip_suffix('\n').ok_or_else(unusable)?;
+        let mut fields = line.split(' ');
+        let mut next = |name: &str| {
+            fields
+                .next()
+                .and_then(|field| field.strip_prefix(name))
+                .and_then(|field| field.strip_prefix('='))
+                .ok_or_else(unusable)
+        };
+        // The format is read first: a later format may lay out the rest
+        // another way, and is refused as one this build does not read.
+        if next(FIELD_FORMAT)? != RECORDED_FORMAT {
+            return Err(failure::salt_unsupported());
+        }
+        if next(FIELD_ALGORITHM)? != ALGORITHM || next(FIELD_VERSION)? != VERSION {
+            return Err(failure::salt_unsupported());
+        }
+        let memory_kib = decimal(next(FIELD_MEMORY)?)?;
+        let passes = decimal(next(FIELD_PASSES)?)?;
+        let lanes = decimal(next(FIELD_LANES)?)?;
+        let salt = next(FIELD_SALT)?;
+        if fields.next().is_some() {
+            return Err(unusable());
+        }
+        let salt = crate::hex::decode(salt)
+            .and_then(|salt| <[u8; Self::LENGTH]>::try_from(salt).ok())
+            .ok_or_else(unusable)?;
+        let cost = Cost {
+            memory_kib,
+            passes,
+            lanes,
+        };
+        if !cost.is_supported() {
+            return Err(failure::salt_unsupported());
+        }
+        Ok(Self { salt, cost })
     }
 }
 
+/// The format a new salt file is written in.
+const RECORDED_FORMAT: &str = "1";
+/// The one algorithm this build derives with, and its version.
+const ALGORITHM: &str = "argon2id";
+const VERSION: &str = "0x13";
+/// The fields of format 1, in the order they are written and read.
+const FIELD_FORMAT: &str = "format";
+const FIELD_ALGORITHM: &str = "algorithm";
+const FIELD_VERSION: &str = "version";
+const FIELD_MEMORY: &str = "memory_kib";
+const FIELD_PASSES: &str = "passes";
+const FIELD_LANES: &str = "lanes";
+const FIELD_SALT: &str = "salt";
+
+/// The failure for a salt file that cannot be read or kept, or holds
+/// something that is not a salt.
+fn unusable() -> Failure {
+    failure::unreachable("the salt of its passphrase could not be read or kept")
+}
+
+/// A number in a salt file: decimal digits alone, at least one.
+fn decimal(text: &str) -> Result<u32, Failure> {
+    if text.is_empty() || !text.bytes().all(|digit| digit.is_ascii_digit()) {
+        return Err(unusable());
+    }
+    text.parse().map_err(|_| unusable())
+}
+
 /// The salt in `file`, or `None` when there is no such file.
-fn read_salt(file: &Path) -> io::Result<Option<PassphraseSalt>> {
+fn read_salt(file: &Path) -> Result<Option<PassphraseSalt>, Failure> {
     match fs::read(file) {
-        Ok(bytes) => <[u8; PassphraseSalt::LENGTH]>::try_from(bytes.as_slice())
-            .map(|salt| Some(PassphraseSalt(salt)))
-            .map_err(|_| io::Error::from(io::ErrorKind::InvalidData)),
+        Ok(bytes) => PassphraseSalt::from_file(&bytes).map(Some),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
+        Err(_) => Err(unusable()),
     }
 }
 
 /// Under the creation lock: the salt another engine wrote meanwhile, or
 /// `made`, written whole and moved into place.
-fn make_salt(file: &Path, made: &PassphraseSalt) -> io::Result<PassphraseSalt> {
+fn make_salt(file: &Path, made: &PassphraseSalt) -> Result<PassphraseSalt, Failure> {
+    let written = || -> io::Result<()> {
+        let mut partial = file.as_os_str().to_owned();
+        partial.push(".new");
+        let mut writing = fs::File::create(&partial)?;
+        writing.write_all(made.to_record().as_bytes())?;
+        writing.sync_all()?;
+        drop(writing);
+        fs::rename(&partial, file)
+    };
     if let Some(folder) = file.parent() {
-        fs::create_dir_all(folder)?;
+        fs::create_dir_all(folder).map_err(|_| unusable())?;
     }
-    let _held = CreationLock::take(&creation::lock_file_beside(file))?;
+    let _held = CreationLock::take(&creation::lock_file_beside(file)).map_err(|_| unusable())?;
     if let Some(salt) = read_salt(file)? {
         return Ok(salt);
     }
-    let mut partial = file.as_os_str().to_owned();
-    partial.push(".new");
-    let mut writing = fs::File::create(&partial)?;
-    writing.write_all(&made.0)?;
-    writing.sync_all()?;
-    drop(writing);
-    fs::rename(&partial, file)?;
-    read_salt(file)?.ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
+    written().map_err(|_| unusable())?;
+    read_salt(file)?.ok_or_else(unusable)
 }
 
 impl fmt::Debug for PassphraseSalt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("PassphraseSalt(16 bytes)")
+        write!(
+            f,
+            "PassphraseSalt(16 bytes, {ALGORITHM} {} KiB, {} passes, {} lanes)",
+            self.cost.memory_kib, self.cost.passes, self.cost.lanes
+        )
     }
 }
 
 /// What one derivation costs.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Cost {
     memory_kib: u32,
     passes: u32,
+    lanes: u32,
+}
+
+impl Cost {
+    /// The most memory a recorded cost may ask for: 4 GiB.
+    const MOST_MEMORY_KIB: u32 = 4 * 1024 * 1024;
+    /// The most passes, and the most lanes, a recorded cost may ask for.
+    const MOST_PASSES: u32 = 64;
+    const MOST_LANES: u32 = 16;
+
+    /// Whether this build derives with this cost: one the algorithm accepts,
+    /// and no larger than this build will spend on one start. A file that
+    /// asks for more is refused, not derived with less.
+    fn is_supported(self) -> bool {
+        self.memory_kib <= Self::MOST_MEMORY_KIB
+            && (1..=Self::MOST_PASSES).contains(&self.passes)
+            && (1..=Self::MOST_LANES).contains(&self.lanes)
+            && self.params().is_ok()
+    }
+
+    fn params(self) -> Result<Params, argon2::Error> {
+        Params::new(
+            self.memory_kib,
+            self.passes,
+            self.lanes,
+            Some(KeyMaterial::LENGTH + 16),
+        )
+    }
 }
 
 /// 64 MiB and three passes on one thread: the second recommended setting of
 /// the Argon2 standard, with one lane so that the cost is the same on every
-/// machine.
+/// machine. The cost of a new salt file, and of a file of sixteen bare
+/// bytes, which every build before decision 0438 derived with. Changing it
+/// changes new installations only.
 const STANDARD: Cost = Cost {
     memory_kib: 64 * 1024,
     passes: 3,
+    lanes: 1,
 };
 
 /// The root back end for a passphrase.
@@ -225,7 +368,8 @@ impl PassphraseKeyStore {
         failure::passphrase_missing(variable)
     }
 
-    /// Derives the root from `passphrase` and `salt`. This takes on the order
+    /// Derives the root from `passphrase` and `salt`, with the cost `salt`
+    /// records (decision 0438). At this build's cost this takes on the order
     /// of a second and 64 MiB of memory, on a blocking thread.
     ///
     /// # Errors
@@ -241,16 +385,6 @@ impl PassphraseKeyStore {
         passphrase: &Secret,
         salt: &PassphraseSalt,
     ) -> Result<Self, Failure> {
-        Self::derive_at(route, passphrase, salt, STANDARD, Arc::new(OsRandom)).await
-    }
-
-    async fn derive_at(
-        route: PassphraseRoute,
-        passphrase: &Secret,
-        salt: &PassphraseSalt,
-        cost: Cost,
-        random: Arc<dyn RandomSource>,
-    ) -> Result<Self, Failure> {
         if route != PassphraseRoute::Enabled {
             return Err(failure::passphrase_not_enabled());
         }
@@ -258,21 +392,24 @@ impl PassphraseKeyStore {
             return Err(failure::passphrase_too_short());
         }
         let passphrase = Zeroizing::new(passphrase.expose().as_bytes().to_vec());
-        let salt = salt.0;
+        let PassphraseSalt { salt, cost } = salt.clone();
         let root = tokio::task::spawn_blocking(move || derive_root(&passphrase, &salt, cost))
             .await
             .map_err(|_| failure::unreachable("the passphrase derivation did not finish"))??;
-        Ok(Self { root, random })
+        Ok(Self {
+            root,
+            random: Arc::new(OsRandom),
+        })
     }
 }
 
-/// Argon2id over the passphrase and salt: 32 bytes of key, then 16 bytes that
-/// identify the root, so that a wrong passphrase is recognized as such.
+/// Argon2id over the passphrase and salt, at `cost`: 32 bytes of key, then
+/// 16 bytes that identify the root, so that a wrong passphrase is recognized
+/// as such.
 fn derive_root(passphrase: &[u8], salt: &[u8], cost: Cost) -> Result<LocalRoot, Failure> {
     let cannot = || failure::unreachable("the passphrase derivation could not run");
     let mut derived = Zeroizing::new([0u8; KeyMaterial::LENGTH + 16]);
-    let params =
-        Params::new(cost.memory_kib, cost.passes, 1, Some(derived.len())).map_err(|_| cannot())?;
+    let params = cost.params().map_err(|_| cannot())?;
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
         .hash_password_into(passphrase, salt, derived.as_mut_slice())
         .map_err(|_| cannot())?;
@@ -321,7 +458,17 @@ mod tests {
     const QUICK: Cost = Cost {
         memory_kib: 8,
         passes: 1,
+        lanes: 1,
     };
+
+    /// `salt` with the quick cost, so that a test that is about the salt
+    /// does not spend a full derivation on it.
+    fn quick(salt: &PassphraseSalt) -> PassphraseSalt {
+        PassphraseSalt {
+            salt: salt.salt,
+            cost: QUICK,
+        }
+    }
 
     fn binding() -> Binding {
         Binding {
@@ -332,12 +479,10 @@ mod tests {
     }
 
     async fn store(passphrase: &str, salt: &PassphraseSalt) -> PassphraseKeyStore {
-        PassphraseKeyStore::derive_at(
+        PassphraseKeyStore::derive(
             PassphraseRoute::Enabled,
             &Secret::new(passphrase),
-            salt,
-            QUICK,
-            Arc::new(OsRandom),
+            &quick(salt),
         )
         .await
         .unwrap()
@@ -383,7 +528,209 @@ mod tests {
 
     #[test]
     fn the_standard_cost_is_accepted_by_the_derivation() {
-        assert!(Params::new(STANDARD.memory_kib, STANDARD.passes, 1, Some(48)).is_ok());
+        assert!(STANDARD.is_supported());
+        assert!(QUICK.is_supported());
+    }
+
+    /// A fixed passphrase, and the salt 0, 1, ..., 15.
+    const FIXED_PASSPHRASE: &str = "example fixed passphrase";
+    const FIXED_SALT: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+
+    /// The root every build before decision 0438 derived from the fixed
+    /// passphrase and salt at 64 MiB, three passes, one lane: its key
+    /// store entry (format, identifier, key), taken from those builds'
+    /// code before this package changed it.
+    const ROOT_BEFORE_0438: &str = "01142ea25e001a34a41bb9ea835bcb1b41e81f6cd051b0e989c61f3eaff70a4dbe0f9a2a9dbd1dba1f3878f5476751e313";
+
+    async fn root_of(salt: &PassphraseSalt) -> String {
+        let store = PassphraseKeyStore::derive(
+            PassphraseRoute::Enabled,
+            &Secret::new(FIXED_PASSPHRASE),
+            salt,
+        )
+        .await
+        .unwrap();
+        crate::hex::encode(&store.root.to_entry())
+    }
+
+    /// Decision 0438, point 3. A file of sixteen bare bytes, as earlier
+    /// builds wrote it, gives the root those builds gave, and is not
+    /// rewritten.
+    #[tokio::test]
+    async fn a_salt_of_sixteen_bare_bytes_gives_the_root_earlier_builds_gave() {
+        let folder = Folder::new();
+        let file = folder.0.join("vault.salt");
+        fs::write(&file, FIXED_SALT).unwrap();
+        let salt = PassphraseSalt::load_or_create(&file, &OsRandom)
+            .await
+            .unwrap();
+        assert_eq!(salt.cost, STANDARD);
+        assert_eq!(salt, PassphraseSalt::from_bytes(FIXED_SALT));
+        assert_eq!(root_of(&salt).await, ROOT_BEFORE_0438);
+        assert_eq!(fs::read(&file).unwrap(), FIXED_SALT);
+    }
+
+    /// Decision 0438, point 1. A new file is the recorded form, with this
+    /// build's cost, and reads back as the salt it was made from.
+    #[tokio::test]
+    async fn a_new_salt_file_records_the_algorithm_and_the_cost() {
+        let folder = Folder::new();
+        let file = folder.0.join("vault.salt");
+        let made = PassphraseSalt::load_or_create(&file, &OsRandom)
+            .await
+            .unwrap();
+        let text = String::from_utf8(fs::read(&file).unwrap()).unwrap();
+        assert_eq!(
+            text,
+            format!(
+                "format=1 algorithm=argon2id version=0x13 memory_kib=65536 passes=3 lanes=1 salt={}\n",
+                crate::hex::encode(made.as_bytes())
+            )
+        );
+        assert_eq!(made.cost, STANDARD);
+        let again = PassphraseSalt::load_or_create(&file, &OsRandom)
+            .await
+            .unwrap();
+        assert_eq!(again, made);
+        // The same salt and cost in either form give the same root.
+        let fixed = PassphraseSalt::from_bytes(FIXED_SALT);
+        assert_eq!(
+            PassphraseSalt::from_file(fixed.to_record().as_bytes()).unwrap(),
+            fixed
+        );
+        assert_eq!(
+            root_of(&PassphraseSalt::from_file(fixed.to_record().as_bytes()).unwrap()).await,
+            ROOT_BEFORE_0438
+        );
+    }
+
+    /// Decision 0438, point 2. A file whose cost is not the constant gives
+    /// the root that cost gives, which is not the constant's.
+    #[tokio::test]
+    async fn a_root_is_derived_with_the_cost_its_file_records() {
+        let folder = Folder::new();
+        let file = folder.0.join("vault.salt");
+        fs::write(
+            &file,
+            format!(
+                "format=1 algorithm=argon2id version=0x13 memory_kib=32 passes=2 lanes=2 salt={}\n",
+                crate::hex::encode(&FIXED_SALT)
+            ),
+        )
+        .unwrap();
+        let salt = PassphraseSalt::load_or_create(&file, &OsRandom)
+            .await
+            .unwrap();
+        let recorded = Cost {
+            memory_kib: 32,
+            passes: 2,
+            lanes: 2,
+        };
+        assert_eq!(salt.cost, recorded);
+        let expected = derive_root(FIXED_PASSPHRASE.as_bytes(), &FIXED_SALT, recorded).unwrap();
+        let got = root_of(&salt).await;
+        assert_eq!(got, crate::hex::encode(&expected.to_entry()));
+        assert_ne!(got, ROOT_BEFORE_0438);
+        // A key wrapped under it opens under it again, from the same file.
+        let key = KeyMaterial::generate(&OsRandom).unwrap();
+        let first = PassphraseKeyStore::derive(
+            PassphraseRoute::Enabled,
+            &Secret::new(FIXED_PASSPHRASE),
+            &salt,
+        )
+        .await
+        .unwrap();
+        let wrapped = first.wrap(&key, &binding()).await.unwrap();
+        let reread = PassphraseSalt::load_or_create(&file, &OsRandom)
+            .await
+            .unwrap();
+        let again = PassphraseKeyStore::derive(
+            PassphraseRoute::Enabled,
+            &Secret::new(FIXED_PASSPHRASE),
+            &reread,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            again.unwrap(&wrapped, &binding()).await.unwrap().expose(),
+            key.expose()
+        );
+    }
+
+    /// Decision 0438, point 4. A format, an algorithm, a version, or a cost
+    /// this build does not read is refused by name, with the fix to use a
+    /// build that reads it; a file that is not a salt at all is refused as
+    /// such. Neither is read as today's cost, and the file is left as it is.
+    #[tokio::test]
+    async fn a_salt_file_this_build_does_not_read_is_refused_and_derives_nothing() {
+        let salt = crate::hex::encode(&FIXED_SALT);
+        let unsupported = [
+            format!(
+                "format=2 algorithm=argon2id version=0x13 memory_kib=65536 passes=3 lanes=1 salt={salt}\n"
+            ),
+            "format=2 something else entirely\n".to_owned(),
+            format!(
+                "format=1 algorithm=scrypt version=0x13 memory_kib=65536 passes=3 lanes=1 salt={salt}\n"
+            ),
+            format!(
+                "format=1 algorithm=argon2id version=0x10 memory_kib=65536 passes=3 lanes=1 salt={salt}\n"
+            ),
+            format!(
+                "format=1 algorithm=argon2id version=0x13 memory_kib=4194305 passes=3 lanes=1 salt={salt}\n"
+            ),
+            format!(
+                "format=1 algorithm=argon2id version=0x13 memory_kib=65536 passes=0 lanes=1 salt={salt}\n"
+            ),
+            format!(
+                "format=1 algorithm=argon2id version=0x13 memory_kib=65536 passes=3 lanes=0 salt={salt}\n"
+            ),
+            format!(
+                "format=1 algorithm=argon2id version=0x13 memory_kib=4 passes=3 lanes=1 salt={salt}\n"
+            ),
+        ];
+        let malformed = [
+            format!(
+                "format=1 algorithm=argon2id version=0x13 memory_kib=65536 passes=3 lanes=1 salt={salt}"
+            ),
+            format!(
+                "format=1 algorithm=argon2id version=0x13 memory_kib=+65536 passes=3 lanes=1 salt={salt}\n"
+            ),
+            format!(
+                "format=1 algorithm=argon2id version=0x13 memory_kib=65536 passes=3 salt={salt}\n"
+            ),
+            format!(
+                "format=1 algorithm=argon2id version=0x13 memory_kib=65536 passes=3 lanes=1 salt={salt} more=1\n"
+            ),
+            "format=1 algorithm=argon2id version=0x13 memory_kib=65536 passes=3 lanes=1 salt=00ff\n"
+                .to_owned(),
+            format!(
+                "format=1 algorithm=argon2id version=0x13 memory_kib=99999999999 passes=3 lanes=1 salt={salt}\n"
+            ),
+            "algorithm=argon2id format=1\n".to_owned(),
+            String::new(),
+        ];
+        let folder = Folder::new();
+        let file = folder.0.join("vault.salt");
+        for (text, by_name) in unsupported
+            .iter()
+            .map(|text| (text, true))
+            .chain(malformed.iter().map(|text| (text, false)))
+        {
+            fs::write(&file, text).unwrap();
+            let refused = PassphraseSalt::load_or_create(&file, &OsRandom)
+                .await
+                .err()
+                .unwrap_or_else(|| panic!("read as a salt: {text:?}"));
+            assert_eq!(refused.code(), &failure::KEY_STORE_UNREACHABLE, "{text:?}");
+            assert_eq!(refused.class(), a2m_core::FailureClass::Busy);
+            assert_eq!(
+                refused.next_step().contains("a build that reads"),
+                by_name,
+                "{text:?}"
+            );
+            assert!(!refused.message().contains(&salt));
+            assert_eq!(fs::read(&file).unwrap(), text.as_bytes());
+        }
     }
 
     /// Audit finding V-4. An empty passphrase, and any shorter than the
@@ -437,8 +784,9 @@ mod tests {
             started.push(engine.await.unwrap());
         }
         let kept = fs::read(&file).unwrap();
+        let kept_salt = PassphraseSalt::from_file(&kept).unwrap();
         for (salt, engine, _, _) in &started {
-            assert_eq!(salt.as_bytes().as_slice(), kept.as_slice());
+            assert_eq!(salt, &kept_salt);
             for (_, _, key, wrapped) in &started {
                 let unwrapped = engine.unwrap(wrapped, &binding()).await;
                 assert!(unwrapped.is_ok_and(|opened| opened.expose() == key.expose()));
@@ -448,7 +796,8 @@ mod tests {
         let again = PassphraseSalt::load_or_create(&file, &OsRandom)
             .await
             .unwrap();
-        assert_eq!(again.as_bytes().as_slice(), kept.as_slice());
+        assert_eq!(again, kept_salt);
+        assert_eq!(fs::read(&file).unwrap(), kept);
     }
 
     #[tokio::test]
@@ -546,7 +895,8 @@ mod tests {
                 .map(|child| kept(child.wait_with_output().unwrap()))
                 .collect();
             assert_eq!(salts[0], salts[1]);
-            assert_eq!(salts[0], crate::hex::encode(&fs::read(&file).unwrap()));
+            let kept = PassphraseSalt::from_file(&fs::read(&file).unwrap()).unwrap();
+            assert_eq!(salts[0], crate::hex::encode(kept.as_bytes()));
         }
     }
 }
