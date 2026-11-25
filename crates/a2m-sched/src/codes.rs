@@ -22,6 +22,7 @@
 //! - `run_reconciling` does: the scheduler hands the reconcile out itself,
 //!   and it ends without anyone acting.
 //! - `watch_too_many` does not: the person ends a watch first.
+//! - `canary_too_many` does not: the person ends a canary first.
 //! - `watch_over_budget_share` does not: the watch asks for a longer
 //!   interval, or another watch on the surface is ended.
 
@@ -86,6 +87,22 @@ a2m_core::failure_codes! {
         meaning "A resume found the run's reconcile as its one job: what is in doubt is settled first.",
         next "Wait for the reconcile to end, then resume the run again.",
         passes by_itself;
+    // The codes of a canary (decision 0999). Its interval, its end, and its
+    // share of a surface are held to a watch's limits, and refused with the
+    // codes of a watch below.
+    CANARY_NOT_A_READ = Policy, "canary_not_a_read",
+        meaning "A canary was asked for an operation that is not a read; a canary sends reads alone.",
+        next "Ask for a canary of a published operation whose effect is `read`.";
+    CANARY_TOO_MANY = Busy, "canary_too_many",
+        meaning "The person has as many canaries as they may have.",
+        next "End a canary, then ask again.",
+        passes not_by_itself;
+    CANARY_NOT_ASKED = Policy, "canary_not_asked",
+        meaning "Only a canary that is asked can be confirmed; this one is confirmed already or has ended.",
+        next "Call `canary.get` to see where it stands, and ask for a new canary if it has ended.";
+    CANARY_VERSION_CHANGED = Policy, "canary_version_changed",
+        meaning "The target's published version is not the one the canary was asked under, so what it would send is not what its person was shown.",
+        next "Ask for a new canary of the version published now.";
     // The codes of a watch: the last four rows, which `WATCH_CODES` lists.
     WATCH_INTERVAL_TOO_SHORT = Input, "watch_interval_too_short",
         meaning "A watch's interval is below the floor, or not a whole number of seconds.",

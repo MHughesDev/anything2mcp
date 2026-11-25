@@ -795,15 +795,19 @@ impl Scheduler {
                     // the caller's own reads (decision 0247), and spends the
                     // share its surface keeps for watches, however many
                     // requests it sends (decision 0262).
+                    // A canary's check is held the same (decision 0999).
                     let run = tables::job_row(tx, lease.job)?.run;
-                    let check = match run {
-                        Some(run) => tx.watches().check_of_run(run)?,
-                        None => None,
+                    let (check, canary) = match run {
+                        Some(run) => (
+                            tx.watches().check_of_run(run)?,
+                            crate::canary::of_run(tx, run)?,
+                        ),
+                        None => (None, None),
                     };
                     let mut each: Vec<(BudgetKey, u32)> = keys
                         .into_iter()
                         .map(|key| {
-                            let reserve = if check.is_some() {
+                            let reserve = if check.is_some() || canary.is_some() {
                                 limits.reserve_percent
                             } else {
                                 0
@@ -814,6 +818,8 @@ impl Scheduler {
                     if let Some((watch, _)) = check {
                         let row = tx.watches().get(watch)?;
                         each.push((crate::watch::share_key(tx, &default, &limits, &row)?, 0));
+                    } else if let Some(row) = canary {
+                        each.push((crate::canary::share_key(tx, &default, &limits, &row)?, 0));
                     }
                     let take = budget::take_each(tx, &default, &each, want, false)?;
                     Ok((take, lease_until))
