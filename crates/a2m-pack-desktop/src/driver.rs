@@ -12,8 +12,9 @@
 //! | `invoke` | Finds the action's element, proves the process again, refuses to act when the window already shows the action's confirmation or a refusal, does the element's named action (on Windows UI Automation's `Invoke`, on macOS `AXPress`, each for the action `click` only), and waits, by the application's signals, for the confirmation, a refusal the screen declares, or the end of the application |
 //! | `snapshot` | The shape of every window of the application: roles, the names that are the window's shape, the structure. Never a value |
 //!
-//! Nothing here starts a program, and nothing reaches another application:
-//! the back end asks the system which process owns each application's
+//! Nothing here starts a program but the surface's own, when the surface
+//! states `start: true`, in a run, on Linux and Windows (decisions 0467 and
+//! 0480), and nothing reaches another application: the back end asks the system which process owns each application's
 //! connection (the bus daemon on Linux) or window (Windows), or which
 //! process runs the program (the process table on macOS), and asks an
 //! application nothing until it is proven to be the program the surface
@@ -1245,8 +1246,10 @@ impl DesktopDriver {
     /// until the prepare's deadline (decision 0467). Only in a run, only
     /// when no process runs the program, and only a program the provider's
     /// check passes; the supervisor checks the digest the surface states.
-    /// One that publishes nothing by the deadline is stopped.
-    #[cfg(target_os = "linux")]
+    /// One that publishes nothing by the deadline is stopped. On Windows
+    /// the wait is for a window of the program to be shown, by the system's
+    /// event of a window shown by any process (decision 0480).
+    #[cfg(any(target_os = "linux", windows))]
     async fn start(
         &self,
         cx: &PrepareContext<'_>,
@@ -1284,7 +1287,9 @@ impl DesktopDriver {
             .ok_or_else(|| codes::not_usable("its surface declares no program to start"))?;
         let env = match &self.session {
             // A session of a test's own: its bus, and nothing of the
-            // engine's environment.
+            // engine's environment. Linux only: only there has a session a
+            // bus.
+            #[cfg(target_os = "linux")]
             Some(address) => EnvAllowlist {
                 pass: Vec::new(),
                 set: vec![(
@@ -1292,6 +1297,8 @@ impl DesktopDriver {
                     address.as_ref().into(),
                 )],
             },
+            #[cfg(not(target_os = "linux"))]
+            Some(_) => return Err(codes::not_usable("a session of a test's own is Linux's")),
             None => EnvAllowlist {
                 pass: crate::start::PASSED
                     .iter()
@@ -1332,7 +1339,13 @@ impl DesktopDriver {
                 .await
             {
                 Ok(app) => return Ok(app),
+                // Not yet: on Linux it has not published itself, or its
+                // toolkit has not yet seen the accessibility switch; on
+                // Windows it shows no window yet.
+                #[cfg(target_os = "linux")]
                 Err(AxError::NotRunning | AxError::AccessibilityOff) => {}
+                #[cfg(windows)]
+                Err(AxError::NotRunning) => {}
                 Err(error) => {
                     let _ = cx.supervisor.stop(id).await;
                     return Err(unsent(&error, program));
@@ -1352,9 +1365,10 @@ impl DesktopDriver {
         }
     }
 
-    /// On Windows and macOS nothing is started in this version: neither
-    /// back end has an event that says a new application appeared.
-    #[cfg(not(target_os = "linux"))]
+    /// On macOS nothing is started in this version: its back end has no
+    /// event that says a new application's window appeared (decision
+    /// 0480).
+    #[cfg(not(any(target_os = "linux", windows)))]
     async fn start(
         &self,
         _cx: &PrepareContext<'_>,

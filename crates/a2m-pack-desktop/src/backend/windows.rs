@@ -24,7 +24,11 @@
 //! thread that set it. Standard controls send these events themselves, and
 //! UI Automation sends its own events through the same mechanism. The
 //! listener never looks at what an event says: it wakes the wait, which
-//! reads afresh.
+//! reads afresh. A wait for an application the driver started (decision
+//! 0480) listens the same way to one event of every process of the desktop
+//! but the engine's, a window shown, and looks only at whether the object
+//! shown is a window itself; the wait then lists the top-level windows
+//! again, as at attach.
 //!
 //! **Reads only.** Every call to UI Automation goes through [`ask`], which
 //! makes only the members of [`READ_MEMBERS`]; each one reads, and none
@@ -53,7 +57,9 @@ use std::time::Duration;
 
 use a2m_provider::{Deadline, resolved_path};
 use tokio::sync::oneshot;
-use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, FILETIME, HANDLE, HWND, LPARAM};
+use windows::Win32::Foundation::{
+    CloseHandle, E_ACCESSDENIED, FILETIME, HANDLE, HWND, LPARAM, STILL_ACTIVE,
+};
 use windows::Win32::Security::{
     EqualSid, GetTokenInformation, PSID, TOKEN_ELEVATION, TOKEN_INFORMATION_CLASS, TOKEN_QUERY,
     TOKEN_USER, TokenElevation, TokenUser,
@@ -61,11 +67,12 @@ use windows::Win32::Security::{
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
+use windows::Win32::System::ProcessStatus::K32EnumProcesses;
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, GetProcessTimes, OpenProcess,
-    OpenProcessToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-    QueryFullProcessImageNameW,
+    GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, GetExitCodeProcess,
+    GetProcessTimes, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::Win32::System::Variant::{VARIANT, VT_BOOL, VariantClear};
 use windows::Win32::UI::Accessibility::{
@@ -76,9 +83,10 @@ use windows::Win32::UI::Accessibility::{
     UIA_PROPERTY_ID, UIA_ValuePatternId, UnhookWinEvent,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, GetMessageW, GetWindowThreadProcessId, IsWindow,
-    IsWindowVisible, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, TranslateMessage,
-    WINEVENT_OUTOFCONTEXT, WM_QUIT,
+    CHILDID_SELF, DispatchMessageW, EVENT_OBJECT_SHOW, EnumWindows, GetMessageW,
+    GetWindowThreadProcessId, IsWindow, IsWindowVisible, MSG, OBJID_WINDOW, PM_NOREMOVE,
+    PeekMessageW, PostThreadMessageW, TranslateMessage, WINEVENT_OUTOFCONTEXT,
+    WINEVENT_SKIPOWNPROCESS, WM_QUIT,
 };
 use windows::core::{BOOL, BSTR, HRESULT, Interface, PWSTR};
 
@@ -215,6 +223,41 @@ const EVENT_RANGES: &[(u32, u32)] = &[
     (0x4E00, 0x4EFF),
     (0x7500, 0x75FF),
 ];
+
+/// The one event a wait for a started application listens to, from every
+/// process of the desktop: an object shown. The listener wakes the wait
+/// only when the object is a window itself, not a part of one; the wait
+/// then lists the top-level windows again, as at attach (decision 0480).
+const SHOWN_RANGES: &[(u32, u32)] = &[(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW)];
+
+/// The most processes one listing of the process table takes.
+const MOST_PROCESSES: usize = 100_000;
+
+/// What a listener hears: the events of one process, or the windows shown
+/// by any.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Heed {
+    /// Every event of [`EVENT_RANGES`] of this process.
+    Process(u32),
+    /// A window shown, by any process but this one.
+    WindowsShown,
+}
+
+impl Heed {
+    /// The events to hook, the process they are of (0 for every process),
+    /// the hook's flags, and the function the system calls back.
+    fn hooks(self) -> (&'static [(u32, u32)], u32, u32, WinEventCallback) {
+        match self {
+            Self::Process(process) => (EVENT_RANGES, process, WINEVENT_OUTOFCONTEXT, woke),
+            Self::WindowsShown => (
+                SHOWN_RANGES,
+                0,
+                WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+                window_shown,
+            ),
+        }
+    }
+}
 
 /// What a failed call to the system says, in words, with its code.
 fn said(what: &str, error: &windows::core::Error) -> AxError {
@@ -503,6 +546,45 @@ fn window_facts(window: isize) -> Option<(u32, bool)> {
         GetWindowThreadProcessId(window, Some(&raw mut process));
         Some((process, IsWindowVisible(window).as_bool()))
     }
+}
+
+/// Every process the system lists, by number.
+#[allow(unsafe_code)] // one call into the system, explained below
+fn processes() -> Vec<u32> {
+    let mut room = 1_024_usize;
+    loop {
+        let mut listed = vec![0_u32; room];
+        let bytes = u32::try_from(room * size_of::<u32>()).unwrap_or(u32::MAX);
+        let mut used = 0_u32;
+        // SAFETY: `listed` is writable for `bytes` bytes and outlives the
+        // call, which writes at most that many and says how many it wrote
+        // into `used`, which is ours.
+        let done = unsafe { K32EnumProcesses(listed.as_mut_ptr(), bytes, &raw mut used) };
+        if !done.as_bool() {
+            return Vec::new();
+        }
+        let got = used as usize / size_of::<u32>();
+        // A full buffer may have left some out: ask again with more room.
+        if got < room || room >= MOST_PROCESSES {
+            listed.truncate(got.min(room));
+            listed.retain(|process| *process != 0);
+            return listed;
+        }
+        room = (room * 4).min(MOST_PROCESSES);
+    }
+}
+
+/// Whether a process has not yet exited. One the system no longer lets be
+/// asked has.
+#[allow(unsafe_code)] // one call into the system, explained below
+fn still_running(process: u32) -> bool {
+    let Ok(opened) = open(process) else {
+        return false;
+    };
+    let mut code = 0_u32;
+    // SAFETY: the handle is open; the call writes one number into `code`,
+    // which is ours.
+    unsafe { GetExitCodeProcess(opened.0, &raw mut code) }.is_ok() && code == STILL_ACTIVE.0 as u32
 }
 
 /// The digest of a program file, as a surface states one.
@@ -1049,6 +1131,9 @@ impl Drop for Watch {
     }
 }
 
+/// A function the system calls back for an event a hook was set for.
+type WinEventCallback = extern "system" fn(HWINEVENTHOOK, u32, HWND, i32, i32, u32, u32);
+
 thread_local! {
     /// The listener thread's way to wake its watch.
     static WAKE: std::cell::RefCell<Option<tokio::sync::mpsc::Sender<()>>> =
@@ -1074,11 +1159,35 @@ extern "system" fn woke(
     });
 }
 
-/// The listener thread: hooks the events of one process, says so, and
-/// pumps its messages until told to quit.
+/// Called by the system, on the listener's thread, for each object shown
+/// by any process but this one. It reads only which kind of object the
+/// event is about, and wakes the wait for a window itself, not for a part
+/// of one.
+extern "system" fn window_shown(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    _window: HWND,
+    object: i32,
+    child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    if object != OBJID_WINDOW.0 || child != CHILDID_SELF as i32 {
+        return;
+    }
+    WAKE.with(|wake| {
+        if let Some(wake) = wake.borrow().as_ref() {
+            // A wake already waiting is enough: the wait reads afresh.
+            let _ = wake.try_send(());
+        }
+    });
+}
+
+/// The listener thread: hooks the events `heed` names, says so, and pumps
+/// its messages until told to quit.
 #[allow(unsafe_code)] // calls into the system, explained below
 fn listen(
-    process: u32,
+    heed: Heed,
     wake: tokio::sync::mpsc::Sender<()>,
     ready: oneshot::Sender<Result<u32, AxError>>,
 ) {
@@ -1087,22 +1196,14 @@ fn listen(
     // SAFETY: `message` is ours. Peeking makes this thread's message
     // queue, so that a quit posted to it is never lost.
     let _ = unsafe { PeekMessageW(&raw mut message, None, 0, 0, PM_NOREMOVE) };
+    let (ranges, process, flags, callback) = heed.hooks();
     let mut hooks = Vec::new();
-    for (low, high) in EVENT_RANGES {
-        // SAFETY: an out-of-context hook loads nothing into the application
-        // and calls `woke`, a function of this program, on this thread,
-        // for the events of `process` only.
-        let hook = unsafe {
-            SetWinEventHook(
-                *low,
-                *high,
-                None,
-                Some(woke),
-                process,
-                0,
-                WINEVENT_OUTOFCONTEXT,
-            )
-        };
+    for (low, high) in ranges {
+        // SAFETY: an out-of-context hook loads nothing into any other
+        // program and calls `callback`, a function of this program, on this
+        // thread, for the events of `process` only, or of every process but
+        // this one when `process` is 0.
+        let hook = unsafe { SetWinEventHook(*low, *high, None, Some(callback), process, 0, flags) };
         if hook.is_invalid() {
             for made in hooks {
                 // SAFETY: a hook this thread set, removed once.
@@ -1456,12 +1557,48 @@ impl Look {
     /// Begins listening to the application's events, on a thread of the
     /// watch's own; returns once the hooks are set.
     pub(crate) async fn watch(&self, app: &App) -> Result<Watch, AxError> {
-        let process = app.process;
+        Self::listening(Heed::Process(app.process)).await
+    }
+
+    /// Whether any process of the engine's own user runs `program`, from
+    /// the process table alone: the driver starts no second copy of a
+    /// program that runs and shows no window (decision 0467). A process
+    /// whose user cannot be read, or every process when the engine's own
+    /// user cannot be, counts as the engine's: no start is made on a doubt.
+    pub(crate) fn program_runs(&self, program: &str) -> bool {
+        let Ok(want) = resolved_path(Path::new(program)) else {
+            return false;
+        };
+        let me = me().ok();
+        processes().into_iter().any(|process| {
+            let runs = image_of(process)
+                .and_then(|image| resolved_path(&image).ok())
+                .is_some_and(|image| image == want);
+            if !runs || !still_running(process) {
+                return false;
+            }
+            match (&me, open(process).and_then(|opened| token_of(opened.0))) {
+                (Some(me), Ok(theirs)) => theirs.same_user(&me.token),
+                _ => true,
+            }
+        })
+    }
+
+    /// Begins listening to what says a started application may have shown
+    /// its window: a window shown by any process of the desktop but the
+    /// engine's (decision 0480). A wait lists the top-level windows again on
+    /// each, as at attach, and never decides from an event.
+    pub(crate) async fn arrivals(&self) -> Result<Watch, AxError> {
+        Self::listening(Heed::WindowsShown).await
+    }
+
+    /// Starts a listener thread for `heed`; returns once its hooks are set.
+    async fn listening(heed: Heed) -> Result<Watch, AxError> {
         let (wake, events) = tokio::sync::mpsc::channel(1);
         let (said_ready, ready) = oneshot::channel();
         std::thread::Builder::new()
             .name("a2m-desktop-events".to_owned())
-            .spawn(move || listen(process, wake, said_ready))
+            .spawn(move || listen(heed, wake, said_ready))
             .map_err(|error| AxError::Lost(format!("starting the event listener: {error}")))?;
         match tokio::time::timeout(CALL_LIMIT, ready).await {
             Ok(Ok(Ok(thread))) => Ok(Watch { events, thread }),

@@ -6,6 +6,10 @@ The design's own history is in the [decision records](docs/decisions/README.md),
 
 ## [Unreleased]
 
+### Added
+
+- On Windows, the desktop pack starts the application a desktop surface allows (`start: true`), by its declared path with its digest checked, when none of it runs, and waits for its window by the system's event of a window shown; one that shows no window by the deadline is stopped. On macOS a start still stops as `start_not_built` ([decision 0480](docs/decisions/0480-the-desktop-pack-starts-an-application-on-windows-by-the-event-of-a-window-shown-and-not-yet-on-macos.md)).
+
 ## [0.1.0] - 2026-11-25
 
 The first published version, a **preview**, before version 1.0 ([decision 0476](docs/decisions/0476-version-0-1-is-a-preview-and-the-checks-a-person-makes-move-to-before-1-0.md)). Built and tested against the built-in test stands on Windows, macOS, and Linux. Until 1.0 a minor version may break. What this preview has not had yet:

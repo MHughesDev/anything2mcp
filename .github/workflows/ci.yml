@@ -868,6 +868,16 @@ jobs:
           set -o pipefail
           cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop --test write 2>&1 | tee write-tests.log
           grep -q "test result: ok. 7 passed; 0 failed; 0 ignored" write-tests.log
+      # The starts again, alone, for the same reason: the four tests of
+      # tests/start.rs that start the stand as a program of its own, and the
+      # stand's child (decision 0480).
+      - name: Test the desktop pack's starts against its stand, and count them
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop --test start 2>&1 | tee start-tests.log
+          grep -q "test result: ok. 5 passed; 0 failed; 0 ignored" start-tests.log
 
   desktop-macos:
     name: The desktop pack on macOS, against its stand
