@@ -14,7 +14,7 @@ use std::path::Path;
 
 use a2m_actions::{
     ActionRegistry, BuiltInToolset, Handler, PROCESS_COMMANDS, SHORTCUTS, command_faces, mcp_tools,
-    rest_routes, sdk_methods,
+    rest_routes, sdk_methods, shortcuts_offered,
 };
 
 fn document(relative: &str) -> String {
@@ -266,7 +266,9 @@ fn the_shortcuts_and_process_commands_are_those_of_the_catalog_and_add_no_action
             words.insert(word.split_whitespace().next().unwrap().to_owned());
         }
     }
-    let ours: BTreeSet<String> = SHORTCUTS
+    // The table lists the shortcuts offered, those whose every step is
+    // built (decision 0456), and no other.
+    let ours: BTreeSet<String> = shortcuts_offered(&registry)
         .iter()
         .map(|shortcut| shortcut.word.to_owned())
         .collect();
@@ -351,5 +353,59 @@ fn no_action_without_a_handler_is_listed_up_front_and_the_trial_is() {
     );
     for built in ["capture.start", "capture.stop"] {
         assert!(build.iter().any(|name| name == built), "{built}");
+    }
+}
+
+#[test]
+fn a_shortcut_is_offered_once_its_last_step_is_built_in_the_catalog() {
+    // Asked of the recorded catalog: what is offered follows what each
+    // entry says is built, and nothing else.
+    let registry = ActionRegistry::kernel_only();
+    let catalog = registry.catalog();
+    let built_in = |catalog: &a2m_actions::Catalog, action: &str| {
+        catalog
+            .actions
+            .iter()
+            .any(|entry| entry.name == action && entry.built)
+    };
+    for shortcut in SHORTCUTS {
+        assert_eq!(
+            shortcut.offered_where(|action| built_in(&catalog, action)),
+            shortcut.offered(&registry),
+            "{}",
+            shortcut.word
+        );
+    }
+    let withheld: Vec<_> = SHORTCUTS
+        .iter()
+        .filter(|shortcut| !shortcut.offered(&registry))
+        .collect();
+    assert!(!withheld.is_empty(), "no shortcut waits for a step today");
+    for shortcut in withheld {
+        // The catalog as it will be once the steps it waits for are built:
+        // the shortcut is offered, with nothing else changed.
+        let mut later = catalog.clone();
+        for entry in &mut later.actions {
+            if shortcut.steps.iter().any(|step| step.action == entry.name) {
+                entry.built = true;
+            }
+        }
+        assert!(
+            shortcut.offered_where(|action| built_in(&later, action)),
+            "{}",
+            shortcut.word
+        );
+        // And not while one of them is still unbuilt.
+        let last = shortcut.steps.last().unwrap().action;
+        for entry in &mut later.actions {
+            if entry.name == last {
+                entry.built = false;
+            }
+        }
+        assert!(
+            !shortcut.offered_where(|action| built_in(&later, action)),
+            "{}",
+            shortcut.word
+        );
     }
 }
