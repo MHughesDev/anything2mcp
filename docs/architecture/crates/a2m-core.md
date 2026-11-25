@@ -185,6 +185,8 @@ impl Decimal {
     pub fn checked_div(&self, divisor: &Self, places: u32, rounding: Rounding) -> Option<Self>;
     pub fn round(&self, places: u32, rounding: Rounding) -> Self;
     pub fn to_places(&self, places: u32, rounding: Rounding) -> String;   // also places, to_i64, abs, negated, is_zero, is_negative
+    pub fn with_places(&self, places: u32) -> Option<Self>;     // the same number padded to places; None, never rounded, when it has more
+    pub fn exact_text(&self) -> String;                         // no zeros after the last digit, whatever places it holds
 }
 pub struct Date(/* a day that exists, years 1 to 9999 */);       // new, year, month, day, to_days, from_days; text 2026-11-17
 pub struct Millis(i64);                                         // a length of time; may be negative
@@ -369,7 +371,7 @@ Contracts that the signatures do not show:
 - **A finding's level is `inferred` or `discovered` and nothing higher.** The constructor refuses the rest of the ladder; those levels belong to drafts and versions.
 - **A finding's `id` is a digest of its content,** computed here, so that the same observation has the same identifier on every machine. Display names and local paths are left out of it.
 - **An `Address` subject carries no credentials.** The constructor refuses an origin with user information in it.
-- **`Decimal` is exact.** Two decimals are equal when they are the same number, and are written alike. A sum, a difference, or a product is exact or it is refused; the wrapper never rounds to make a result fit. A division takes places and a rounding mode and is the true quotient correctly rounded.
+- **`Decimal` is exact.** Two decimals are equal when they are the same number, hash alike, and give the same canonical bytes, from their exact text. A decimal is written with the places it holds, which are its exact places unless `with_places` padded it or its stored form had more, so a result padded to its field type's places keeps them through the store ([decision 0444](../../decisions/0444-a-results-decimal-is-padded-to-the-places-its-field-type-states.md)); `CompiledFieldType::result_places` says which places those are. A sum, a difference, or a product is exact or it is refused; the wrapper never rounds to make a result fit. A division takes places and a rounding mode and is the true quotient correctly rounded.
 - **Kinds of value are never converted.** A whole number does not equal a decimal, and text does not equal a number. A choice is the text of its stored code.
 - **`Values` holds its names sorted.** The same named values are equal, encode to the same bytes, and have the same digest, whatever order they were added in. The order a person sees comes from the compiled target's schema.
 - **No type here can hold a secret except `Secret`.** `Value` has no secret variant: a secret is never a field's value.

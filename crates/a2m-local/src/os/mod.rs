@@ -26,6 +26,36 @@ pub(crate) use windows::{
     Listener, ServerStream, connect, current_user, open_output, prepare_dir, spawn_detached,
 };
 
+/// The test build's gate on the children this process starts. A child
+/// shares every file this process has open from the moment it is forked
+/// until it runs its program, which closes them; for that moment it holds
+/// every file lock this process holds, the engine lock among them, after
+/// this process has let go. An engine is one process and never takes its
+/// own lock again, so this matters only where many tests share one
+/// process: a test that lets a lock go and asks for it again holds the
+/// gate alone, and every start of a child in the tests holds it shared,
+/// so that no child is between its fork and its program while the lock is
+/// asked for.
+#[cfg(test)]
+pub(crate) mod children {
+    use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+    static GATE: RwLock<()> = RwLock::new(());
+
+    /// Held while a child is started, until the start has returned: by
+    /// then the child runs its own program, and the files it shared are
+    /// closed in it.
+    pub(crate) fn starting() -> RwLockReadGuard<'static, ()> {
+        GATE.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Held while a test lets a lock go and asks for it again: once it is
+    /// held, no child is between its fork and its program, and none starts.
+    pub(crate) fn none_starting() -> RwLockWriteGuard<'static, ()> {
+        GATE.write().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 /// The file name of the socket inside the runtime directory.
 #[cfg(unix)]
 const SOCKET_NAME: &str = "engine.sock";

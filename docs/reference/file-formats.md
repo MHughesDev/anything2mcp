@@ -75,7 +75,7 @@ Field types say how a value is formatted, normalized, compared, and classified. 
 | `base` (required) | `text`, `integer`, `decimal`, `money`, `measurement`, `date`, `datetime`, `time`, `boolean`, or `choice` |
 | `unit`, `display_unit` | For measurements: the unit stored and the unit shown |
 | `step` | The smallest increment, such as 1/16 inch |
-| `places`, `rounding` | Decimal places and rounding mode |
+| `places`, `rounding` | Decimal places and rounding mode. A value is rounded to the places by the mode, half to even unless stated, as it is normalized; a result shows a `decimal` or `money` value padded to them, `120.0` for one place ([decision 0444](../decisions/0444-a-results-decimal-is-padded-to-the-places-its-field-type-states.md)) |
 | `currency` | For money |
 | `format` | For a date or a time: the pattern the application displays and accepts, such as `MM/DD/YYYY` |
 | `timezone` | For dates and times: `fixed`, `user`, or a named zone. Only `UTC` and a fixed offset such as `+02:00` are built so far; a named zone or the `user` rule cannot be normalized yet |

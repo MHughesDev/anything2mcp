@@ -423,18 +423,26 @@ async fn trial_evidence(
         a2m_engine::BindingPin::from_json(tool, stored).as_ref() == Some(&found.pin)
     };
     if let Some(given) = call.text("run_id") {
-        let unproven = || {
+        let shown = format!("{} (`{}`)", found.file_position + 1, found.pin.mode);
+        // Each refusal says which part the named run lacks, and the try
+        // that gives a run that counts (package 5.6b).
+        let try_again = format!(
+            "Try that binding again with `draft.try` (target `{target}`, tool `{tool}`, mode `{}`, position {}) and pass the `run_id` it gives; or promote with no `run_id` when the newest scout proved it.",
+            found.pin.mode,
+            found.file_position + 1
+        );
+        let unproven = |why: String| {
             codes::input(
                 codes::PROMOTION_UNPROVEN,
                 format!(
-                    "The run named is not a completed trial of the binding {} (`{}`) of `{tool}` of `{target}`, as it is now, made from this project by this caller's person.",
-                    found.file_position + 1,
-                    found.pin.mode
+                    "The run `{given}` is not a completed trial of the binding {shown} of `{tool}` of `{target}` as it is now, made from this project by this caller's person: {why}."
                 ),
-                "Try that binding with `draft.try` (naming it by `mode` and `position`) and pass its `run_id`, or scout the target again.",
+                try_again.clone(),
             )
         };
-        let run: a2m_core::RunId = given.parse().map_err(|_| unproven())?;
+        let run: a2m_core::RunId = given
+            .parse()
+            .map_err(|_| unproven("it is not the name of a run".to_owned()))?;
         let read = kernel
             .store()?
             .read(move |tx| {
@@ -443,25 +451,43 @@ async fn trial_evidence(
                 Ok((row, stored))
             })
             .await
-            .map_err(|_| unproven())?;
+            .map_err(|_| {
+                unproven(
+                    "this engine's store holds no such run, so it has gone from the store or was made by another engine".to_owned(),
+                )
+            })?;
         let (row, stored) = read;
         let own = row.workspace == call.caller.principal.workspace
             && call.caller.principal.person() == Some(row.principal);
         let Some(stored) = stored else {
-            return Err(unproven());
+            return Err(unproven(
+                "the store no longer holds the call it was made with".to_owned(),
+            ));
         };
         // A trial carries the binding it ran; a call of the published tool
         // carries none, and is no trial of a draft.
         let ran_this = stored.caller.binding.as_ref().is_some_and(of_this);
         let same_project = stored.caller.project.is_some() && stored.caller.project == call.project;
-        if !own
-            || !ran_this
-            || !same_project
-            || row.tool_name != *tool
-            || row.target != *target
-            || row.state != a2m_core::RunState::Completed
-        {
-            return Err(unproven());
+        let why = if !own {
+            Some("it was made by another person".to_owned())
+        } else if row.tool_name != *tool || row.target != *target {
+            Some(format!(
+                "it is a run of `{}` of `{}`",
+                row.tool_name, row.target
+            ))
+        } else if stored.caller.binding.is_none() {
+            Some("it is a call of a published tool, not a trial of a draft".to_owned())
+        } else if !ran_this {
+            Some("it ran another binding, or this binding before what it does changed".to_owned())
+        } else if !same_project {
+            Some("it was made from another project folder".to_owned())
+        } else if row.state != a2m_core::RunState::Completed {
+            Some(format!("it is `{}`, not completed", row.state))
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            return Err(unproven(why));
         }
         return Ok(json!({
             "by": "run",

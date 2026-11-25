@@ -784,13 +784,10 @@ impl Kernel {
             // A person's act asked for by an agent is shown to the person
             // on a page of the person surface; a press there, and the
             // presence prompt it raises, carry it out (decision 0163).
-            let project = match request.project {
-                Some(stated) => match self.checked_project(&stated).await {
-                    Ok(folder) => (Some(folder), None),
-                    Err(refused) => (None, Some(refused)),
-                },
-                None => (None, None),
-            };
+            let project = self
+                .request_project(request.project)
+                .await
+                .map_err(|failure| Refused::after(failure, effect_class, decision))?;
             let output = self
                 .ask_person(&def, &request.caller, input, project)
                 .await
@@ -812,13 +809,10 @@ impl Kernel {
         // What is handed on is the folder as the check resolved it, with
         // every link followed, never the path as it was stated: a link in
         // the stated path that is changed after the check moves nothing.
-        let (project, project_refused) = match request.project {
-            Some(stated) => match self.checked_project(&stated).await {
-                Ok(folder) => (Some(folder), None),
-                Err(refused) => (None, Some(refused)),
-            },
-            None => (None, None),
-        };
+        let (project, project_refused) = self
+            .request_project(request.project)
+            .await
+            .map_err(|failure| Refused::after(failure, effect_class, decision))?;
         // A project file the engine does not apply is said, never passed
         // over in silence (decision 0241).
         let project_warning = match &project {
@@ -875,6 +869,37 @@ impl Kernel {
     /// # Errors
     ///
     /// `input`/`path_not_allowed`, with the reason.
+    /// The project folder a request states: checked, and held to this
+    /// engine's store (decision 0445). A folder that fails its check is not
+    /// handed on, and its refusal is kept for the actions that need one; a
+    /// folder worked from another store refuses the whole call, so that no
+    /// answer of this engine is taken for that project's.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`project_of_another_store`.
+    pub(crate) async fn request_project(
+        &self,
+        stated: Option<PathBuf>,
+    ) -> Result<(Option<PathBuf>, Option<Failure>), Failure> {
+        let Some(stated) = stated else {
+            return Ok((None, None));
+        };
+        let folder = match self.checked_project(&stated).await {
+            Ok(folder) => folder,
+            Err(refused) => return Ok((None, Some(refused))),
+        };
+        // A store in memory is gone when the engine closes: it names no
+        // project folder.
+        if let (true, Some(installation)) = (self.inner.store_on_disk, self.inner.installation) {
+            let (held, store) = (folder.clone(), installation.workspace.to_string());
+            tokio::task::spawn_blocking(move || crate::project::hold_to_store(&held, &store))
+                .await
+                .unwrap_or(Ok(()))?;
+        }
+        Ok((Some(folder), None))
+    }
+
     pub(crate) async fn checked_project(
         &self,
         stated: &std::path::Path,

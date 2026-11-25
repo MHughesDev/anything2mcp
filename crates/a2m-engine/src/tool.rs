@@ -497,7 +497,36 @@ pub(crate) fn output_value(
             output.ty.name()
         )));
     }
-    Ok(value)
+    // A number is padded to the places its field type states, and never
+    // rounded to them here: the normalizer has rounded it by the type's own
+    // rule, so a value with more places is one no rule gave (decision 0444).
+    let places = output
+        .field_type
+        .and_then(|index| loaded.compiled_target.field_type(index))
+        .and_then(a2m_core::CompiledFieldType::result_places);
+    match places {
+        Some(places) => padded(value, places).ok_or_else(|| {
+            unexpected(format!(
+                "The output `{}` of `{}` has more places than its field type's {places}.",
+                output.name, operation.name
+            ))
+        }),
+        None => Ok(value),
+    }
+}
+
+/// A number, or each number of a list, written with `places` digits after
+/// its point; anything else as it is. `None` when a number has more.
+fn padded(value: Value, places: u32) -> Option<Value> {
+    match value {
+        Value::Decimal(number) => number.with_places(places).map(Value::Decimal),
+        Value::List(items) => items
+            .into_iter()
+            .map(|item| padded(item, places))
+            .collect::<Option<Vec<_>>>()
+            .map(Value::List),
+        other => Some(other),
+    }
 }
 
 /// The fields of what a read returns, for the trace: the outputs that have

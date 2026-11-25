@@ -14,7 +14,7 @@ use std::path::Path;
 
 use super::handler;
 use crate::codes;
-use crate::dispatch::{Call, Next, Output};
+use crate::dispatch::{Call, ExitClass, Next, Output};
 use crate::kernel::{Kernel, note_published};
 
 /// The folder of a project that holds one folder per target.
@@ -324,6 +324,37 @@ pub(crate) async fn compile_in(
 /// that pass both are pointed at `ready`, the publish; otherwise the hint
 /// names the step that can succeed. Nothing is stored: an offline test runs
 /// in a store of its own.
+/// The `binding.promote` the drafts need before a publish, when the binding
+/// that would act for an operation is a `draft`: a published `draft`
+/// binding may not act, so a `next` that skipped it would lead to a version
+/// whose tools cannot run (package 5.6b). It names the first such
+/// operation, and its `when` names them all.
+pub(crate) fn promote_next(target: &TargetName, compiled: &Compiled) -> Option<Next> {
+    let waiting: Vec<(&a2m_core::CompiledOperation, &a2m_core::Mode)> = compiled
+        .compiled_target
+        .operations
+        .iter()
+        .filter_map(|operation| {
+            let binding =
+                a2m_engine::default_binding(operation).and_then(|at| operation.bindings.get(at))?;
+            (binding.status == a2m_core::BindingStatus::Draft).then_some((operation, &binding.mode))
+        })
+        .collect();
+    let (first, mode) = waiting.first()?;
+    let names: Vec<&str> = waiting
+        .iter()
+        .map(|(operation, _)| operation.name.as_str())
+        .collect();
+    Some(Next::new(
+        "binding.promote",
+        json!({"target": target.as_str(), "tool": first.name.as_str(), "mode": mode.as_str()}),
+        &format!(
+            "before the publish: a published `draft` binding may not act, and the binding that would act is a draft for {}. For a read the newest scout did not prove, add the `run_id` of a completed `draft.try` of it. `draft.ready` takes every tried read through these steps at once",
+            names.join(", ")
+        ),
+    ))
+}
+
 pub(crate) async fn publish_next(
     kernel: &Kernel,
     call: &Call,
@@ -370,7 +401,7 @@ pub(crate) async fn publish_next(
         vault: kernel.inner.vault.clone(),
     };
     match crate::offline::run_gates(kernel, project_folder, target, &compiled, world, None).await {
-        Ok(gates) if gates.passed => ready,
+        Ok(gates) if gates.passed => promote_next(target, &compiled).unwrap_or(ready),
         Ok(_) => tests(
             "to see which offline tests did not pass, and correct them before a publish".to_owned(),
         ),
@@ -966,6 +997,36 @@ handler!(
             input.insert("version".to_owned(), json!(version));
         }
         let project = (call.project.clone(), call.project_refused.clone());
-        kernel.ask_person(&def, &call.caller, input, project).await
+        let target = call.required("target")?.to_owned();
+        let output = kernel
+            .ask_person(&def, &call.caller, input.clone(), project)
+            .await?;
+        Ok(match output.exit {
+            // The page waits: the same request, asked again, says what the
+            // person did (package 5.6b).
+            ExitClass::PersonNeeded => output.then(Next::new(
+                "publish.request",
+                Json::Object(input),
+                "after the person has carried out the publish on its page; the same request then says what was published",
+            )),
+            // The person published: said as published, with its version,
+            // and nothing pending.
+            ExitClass::Succeeded => {
+                let mut output = output;
+                let version = output.result["version"].as_str().unwrap_or_default().to_owned();
+                if let Json::Object(result) = &mut output.result {
+                    result.insert("state".to_owned(), json!("published"));
+                }
+                output.warnings = vec![format!(
+                    "The person published version `{version}` of `{target}` on its page; it is the current version, and nothing waits. Asking again after the approval window, or with another `version`, asks for a new publish."
+                )];
+                output.then(Next::new(
+                    "tool.search",
+                    json!({"target": target}),
+                    "to see the published tools, then call one with `tool.call`",
+                ))
+            }
+            _ => output,
+        })
     }
 );

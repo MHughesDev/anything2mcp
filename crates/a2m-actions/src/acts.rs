@@ -469,7 +469,7 @@ impl Kernel {
             {
                 return match &kept.outcome {
                     Ok(output) => Ok(output.clone().warn(
-                        "This act was answered by its person on its page; this call did nothing more. Ask again after the approval window for a new act.",
+                        "Its person carried this act out on its page, and this is what it did; nothing waits for anyone. The same ask after the approval window is a new act.",
                     )),
                     Err(failure) => Err(failure.clone()),
                 };

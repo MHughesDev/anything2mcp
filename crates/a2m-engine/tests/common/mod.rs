@@ -1431,6 +1431,25 @@ fn field_type(
     u32::try_from(compiled_target.field_types.len() - 1).unwrap()
 }
 
+/// Adds a field type of an exact number with `places`, rounded half to
+/// even, as a target's `types.yaml` states one; gives its index.
+pub fn decimal_type(compiled_target: &mut CompiledTarget, name: &str, places: u32) -> u32 {
+    let at = field_type(
+        compiled_target,
+        name,
+        &FieldRule::Decimal {
+            places,
+            rounding: Rounding::HalfEven,
+            mark: DecimalMark::Point,
+        },
+        Sensitivity::Internal,
+    );
+    let added = &mut compiled_target.field_types[at as usize];
+    added.places = Some(places);
+    added.rounding = Some(Rounding::HalfEven);
+    at
+}
+
 pub fn step(kind: &str, args: &[(&str, ExprIndex)], commits: bool, lookup: bool) -> Step {
     Step {
         kind: StepKind::new(kind).unwrap(),

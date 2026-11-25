@@ -570,6 +570,20 @@ impl Pages {
         }
     }
 
+    /// Whether a page that was asked for at `asked` and ended at `ended` is
+    /// a page of its own. A page that redirected to an address already
+    /// looked at, or waiting to be, is that page and not another: it is
+    /// looked at once, under the address it ended at, so that one page seen
+    /// twice is never taken for two pages of one screen at addresses that
+    /// differ in a key. The address it ended at is then counted as seen, so
+    /// a link to it is not followed again.
+    fn own_page(&mut self, asked: &Address, ended: Option<&str>) -> bool {
+        match ended {
+            Some(ended) if ended != asked.as_str() => self.seen.insert(ended.to_owned()),
+            _ => true,
+        }
+    }
+
     /// The next page, or nothing when none is left or a bound was hit. A
     /// bound that is hit is named, and what was left is counted.
     fn next(&mut self, max_pages: u64, scope: &DiscoveryScope<'_>) -> Option<(Address, u32, bool)> {
@@ -689,6 +703,9 @@ impl WebSnapshot {
                 // A page a link led to that does not stand open is not
                 // read, and the discovery carries on with the others.
                 pages.report.dropped += 1;
+                continue;
+            }
+            if !pages.own_page(&address, arrival.ended_address.as_deref()) {
                 continue;
             }
             let mut limitations = vec![single_variant("The screen")];

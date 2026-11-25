@@ -230,7 +230,7 @@ impl Scope {
                 Value::Text(match part {
                     Value::Text(text) => text.clone(),
                     Value::Int(number) => number.to_string(),
-                    Value::Decimal(number) => number.to_string(),
+                    Value::Decimal(number) => number.exact_text(),
                     Value::Date(date) => date.to_string(),
                     Value::Bool(flag) => flag.to_string(),
                     Value::Instant(moment) => moment.as_unix_millis().to_string(),
