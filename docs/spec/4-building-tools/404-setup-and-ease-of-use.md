@@ -14,7 +14,7 @@ anything2mcp tool call <tool> --input '{...}'       # one of them
 anything2mcp connect [<profile>]                    # print the MCP client block; a profile kept as data writes it into that client's file
 ```
 
-A system with no description that the scout can read is learned from the person's own use: `anything2mcp learn <name>` asks for a capture, the person begins and ends it on the engine's page, and `anything2mcp capture stop <name>` scouts what it saw. Until package LS1 is built, `learn` ends the capture it asks for before the person can begin it, so `anything2mcp capture start <name>` is the call to use. `anything2mcp serve` runs the engine as a server in the configured profile, which is after the first release.
+A system with no description that the scout can read is learned from the person's own use: `anything2mcp learn <name>` asks for a capture, the person begins and ends it on the engine's page, and `anything2mcp capture stop <name>` scouts what it saw. `anything2mcp serve` runs the engine as a server in the configured profile, which is after the first release.
 
 Principles behind the commands:
 

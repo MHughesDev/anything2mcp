@@ -141,19 +141,19 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 
 ## Shortcuts
 
-Single-word commands for people. Each is a fixed sequence of the actions above and adds no behavior.
+Single-word commands for people. Each is a fixed sequence of the actions above and adds no behavior. A shortcut is offered only when every one of its steps is built ([decision 0456](../decisions/0456-the-first-release-leaves-out-what-its-first-hour-never-meets-and-a-shortcut-is-offered-only-when-built.md)); this table lists those that are. `bundle`, `rollback`, and `migrate`, each the `version` action of its name, are defined and not offered, because their actions are not built; each joins this table with its action's handler.
 
 | Shortcut | Does |
 | --- | --- |
 | `init` | Make the folder a project: write `anything2mcp.toml`, the guidance as `AGENTS.md`, the `targets` folder, and a `.gitignore`, each only where it is not there; the command does it itself, with no action beneath it ([decision 0164](../decisions/0164-the-authoring-actions-served-through-the-engine.md)) |
 | `add <name>` | `target.add`, `scout.run`, `scout.report`; takes `--address` and `--kind` for `target.add` and `--description <file>` for `scout.run` (a description of the system in the project's `sources` folder, handed over as `spec.import` hands it). It ends at the report, whose `next` is `session.login` only where a read waits for a sign-in; each proven read in the report carries the `draft.try` call that reads it ([decision 0306](../decisions/0306-the-short-path-is-add-then-a-trial-and-only-a-built-action-is-listed-up-front.md)) |
-| `learn` | `capture.start`, `capture.stop`, `endpoints.infer`, then drafts |
+| `learn <name>` | `capture.start`: asks for a capture of the person's own use and gives the page where the person begins and ends it; `capture.stop` afterwards says how it ended and scouts what it found ([decision 0451](../decisions/0451-a-capture-is-scouted-when-capture-stop-finds-it-ended-and-a-scout-that-saw-nothing-does-not-answer-ok.md)) |
 | `lint`, `try`, `test` | `draft.lint`, `draft.try`, `test.run` |
 | `ready <name>` | `draft.ready`: a read-only tool that was tried is then `add`, `ready`, and a person's press ([decision 0443](../decisions/0443-draft-ready-asks-for-the-publish-and-takes-the-callers-own-trial.md)) |
 | `publish` | `publish.request`, then waits for a person |
 | `status` | `target.status` |
 | `call`, `run` | `tool.call` for an operation or a pipeline |
-| `diff`, `bundle`, `rollback`, `migrate` | The matching `version` actions |
+| `diff` | `version.diff` |
 | `connect <client>` | `client.connect` |
 | `doctor` | `doctor.run` |
 | `docs <topic>` | `docs.get` |
