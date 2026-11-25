@@ -13,13 +13,13 @@ a2m-pack-web-browser = { path = "../a2m-pack-web-browser" }
 a2m-provider = { path = "../a2m-provider" }
 a2m-telemetry = { path = "../a2m-telemetry" }
 serde_json.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 a2m-pack-web-browser = { path = "../a2m-pack-web-browser", features = ["test-support"] }
 axum.workspace = true
 example-app = { path = "../../targets/example-app" }
 reqwest.workspace = true
-tokio.workspace = true
 
 [lints]
 workspace = true

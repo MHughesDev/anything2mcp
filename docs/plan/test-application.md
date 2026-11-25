@@ -146,6 +146,8 @@ The application stand has pages whose own script reads from the JSON interface a
 - `/invitations/{token}` holds a long random text in its address, and its script sends that text in a request's path and as a bare entry of a query.
 - `/cases/rows-by-post` (case 39) asks for its rows with `POST` and a JSON body, from an address that reads or writes by the body's `op` ([decision 0394](../decisions/0394-an-asserted-read-of-a-web-surface-is-a-page-request-matched-by-one-shared-shape-and-shown-at-publish.md)).
 
+The application stand can stand for a person using it in a window the engine watches and never drives ([decision 0442](../decisions/0442-a-persons-use-is-watched-by-web-use-and-what-it-saw-twice-is-drafted-held.md)): a test sets a walk with `POST /__control/person/walk` (`TestApp::set_person_walk`), and while one is set every page carries a script that takes its steps in order across pages, kept in the tab's session storage: go to a path, wait for a text, linger, type into a form, submit it, send a JSON body by `POST`. `DELETE` on the same path ends it.
+
 The application stand also has a TLS side, behind its feature `tls` ([decision 0157](../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)): it serves the application over TLS and over plain HTTP at once, with one store behind both, so a test asks the plain control address what was stored. A `TestAuthority` made at test time signs a good certificate, one for another name, and one that expired in 2000; a second authority stands for an unknown one. A `TlsFront` puts TLS in front of the MCP stand.
 
 ## What Phase 0 delivers

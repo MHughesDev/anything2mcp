@@ -162,6 +162,12 @@ code = "value_unreadable"
 class = "unknown_variant"
 code = "shape_unsupported"
 
+# A file whose bytes a sync program keeps elsewhere, which is neither read
+# nor replaced (decision 0430).
+[[failure_codes]]
+class = "policy"
+code = "file_not_on_this_machine"
+
 [[failure_codes]]
 class = "policy"
 code = "file_protected"

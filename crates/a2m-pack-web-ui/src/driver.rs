@@ -20,12 +20,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
-use a2m_core::{AccountName, Digest, EffectClass, Failure, Identity, Secret, Step, Value};
+use a2m_core::{AccountName, Digest, EffectClass, Failure, Identity, Secret, Step, Value, Values};
 use a2m_pack_web_browser::{
     ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, DialogAnswer, Dispatch,
     Element, Input, Key, Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey,
-    Query, RawValue, ReadWhat, Reason, RequestShape, Snapshot, SnapshotLimits, Visibility,
-    looks_like_an_action, path_by_structure, plain_segment,
+    Query, RawValue, ReadWhat, Reason, RequestShape, SafeRequests, Snapshot, SnapshotLimits,
+    Visibility, looks_like_an_action, path_by_structure, plain_segment,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -285,6 +285,51 @@ struct Session {
     /// The surface's asserted reads, and whether the observing tab was
     /// handed them.
     asserted: AssertedReads,
+    /// How to open the observing tab again when its browser is lost.
+    reopen: Reopen,
+    /// The steps that brought the observing tab's page where it is: the
+    /// last `goto` in that tab, with its arguments, and each `wait` there
+    /// since. Empty until such a `goto`, and after a `goto` in the acting
+    /// tab.
+    since_goto: Vec<(Step, Values)>,
+}
+
+/// What opens the observing tab again, in a new browser started from the
+/// same profile, when the browser it was in is lost (decision 0424): the
+/// browsers, and the tab's setup, with the session's state, which is placed
+/// again into the new browser. Nothing here signs in: the state is the one
+/// the run's lease handed over.
+pub(crate) struct Reopen {
+    browsers: Browsers,
+    setup: TabSetup,
+}
+
+impl Reopen {
+    pub(crate) fn new(browsers: Browsers, setup: TabSetup) -> Self {
+        Self { browsers, setup }
+    }
+
+    /// Places the session's state into the profile's browser, which the
+    /// browser engine starts afresh from the same data directory once the
+    /// browser it had is lost, and opens a new observing tab there, with
+    /// the same environment, origins, and asserted reads (decision 0424).
+    pub(crate) async fn observing_tab(
+        &self,
+        safe: &SafeRequests,
+        deadline: Deadline,
+    ) -> Result<ObserveTab, StepFailure> {
+        self.setup.place_state(&self.browsers, deadline).await?;
+        self.browsers
+            .observer()
+            .observing_tab(
+                &self.setup.profile,
+                &self.setup.environment,
+                safe,
+                &self.setup.origins,
+            )
+            .await
+            .map_err(|error| browser_failure(&error, "the opening of a tab in a new browser"))
+    }
 }
 
 /// The origin of a `web` surface: a scheme, a host, and perhaps a port.
@@ -685,6 +730,73 @@ impl Session {
             (TabKind::Act, Some(acting)) => Tab::Act(acting),
             _ => Tab::Observe(&self.looking),
         }
+    }
+
+    /// Whether `step` runs in the observing tab: a `goto` that reaches its
+    /// screen there, or any other step after one.
+    fn in_observing_tab(&self, step: &Step) -> Result<bool, StepFailure> {
+        if step.kind != GOTO {
+            return Ok(self.on == TabKind::Observe);
+        }
+        Ok(self.to_act.is_none() || tab_for(step, &self.gotos)? != TabKind::Act)
+    }
+
+    /// Keeps what brought the observing tab's page where it is, after a
+    /// step that was done: a `goto` there starts the list, a `goto` in the
+    /// acting tab empties it, and a `wait` in the observing tab is added.
+    fn remember(&mut self, step: &Step, input: &StepInput<'_>) {
+        if step.kind == GOTO {
+            self.since_goto.clear();
+            if self.on == TabKind::Observe {
+                self.since_goto.push((step.clone(), input.args.clone()));
+            }
+        } else if step.kind == WAIT && self.on == TabKind::Observe && !self.since_goto.is_empty() {
+            self.since_goto.push((step.clone(), input.args.clone()));
+        }
+    }
+
+    /// When the browser of the observing tab is lost and `step` runs in
+    /// that tab: places the session's state into a new browser started from
+    /// the same profile, opens the observing tab there, and, for a step that
+    /// is not a `goto`, brings its page back where it was by the `goto` and
+    /// the `wait` steps that brought it there, done again (decision 0424).
+    /// The tab can only read, so doing them again changes nothing in the
+    /// system. Nothing here signs in: the state placed is the one the run's
+    /// lease handed over, and a page that shows a declared sign of expiry
+    /// stops as it would have the first time. A step in the acting tab is
+    /// never helped: that tab was in the lost browser too, and a write is
+    /// never sent again.
+    async fn recover(&mut self, step: &Step, input: &StepInput<'_>) -> Result<(), StepFailure> {
+        if !self.looking.browser_lost() || !self.in_observing_tab(step)? {
+            return Ok(());
+        }
+        self.looking = self
+            .reopen
+            .observing_tab(&self.asserted.safe_requests(&self.origin), input.deadline)
+            .await?;
+        if step.kind == GOTO {
+            return Ok(());
+        }
+        let steps = self.since_goto.clone();
+        for (done, args) in &steps {
+            let again = StepInput::new(args, input.deadline);
+            let outcome = if done.kind == GOTO {
+                self.goto(done, &again).await?
+            } else {
+                self.wait(done, &again).await?
+            };
+            if let StepOutcome::Absent(_) = outcome {
+                return Err(StepFailure::not_sent(fail(
+                    &codes::row::UNEXPECTED_PAGE,
+                    format!(
+                        "The browser was lost, and the page reached again in a new browser shows a state that says the record is absent, which it did not show before, at the `{}` step done again.",
+                        done.kind
+                    ),
+                    "Run the tool again; the page changed while the browser was started again.",
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// The tab for a `goto`, opened when it is the acting tab and not open
@@ -2375,14 +2487,8 @@ impl UiDriver {
     ) -> Result<Session, StepFailure> {
         let setup = tab_setup(cx, lease)?;
         setup.place_state(&self.browsers, cx.deadline).await?;
-        let TabSetup {
-            origin,
-            profile,
-            environment,
-            origins,
-            state: _,
-            commit,
-        } = setup;
+        let origin = setup.origin.clone();
+        let commit = setup.commit;
         let surface = &cx.surface.surface;
         let mut sections = BTreeMap::new();
         for (position, section) in cx.compiled_target.packs.iter().enumerate() {
@@ -2417,10 +2523,10 @@ impl UiDriver {
             .browsers
             .observer()
             .observing_tab(
-                &profile,
-                &environment,
+                &setup.profile,
+                &setup.environment,
                 &asserted.safe_requests(&origin),
-                &origins,
+                &setup.origins,
             )
             .await
             .map_err(|error| browser_failure(&error, "the opening of a tab"))?;
@@ -2469,10 +2575,12 @@ impl UiDriver {
             on: TabKind::Observe,
             to_act: may_act.then(|| ToAct {
                 browsers: self.browsers.clone(),
-                profile,
-                environment,
-                origins,
+                profile: setup.profile.clone(),
+                environment: setup.environment.clone(),
+                origins: setup.origins.clone(),
             }),
+            reopen: Reopen::new(self.browsers.clone(), setup),
+            since_goto: Vec::new(),
             gotos,
             origin,
             sections,
@@ -2513,6 +2621,9 @@ impl Driver for UiDriver {
             if let Some(failure) = session.refused(&what) {
                 return Err(StepFailure::not_sent(failure));
             }
+            // A read goes on in a new browser of the same profile when the
+            // observing tab's browser was lost (decision 0424).
+            session.recover(step, input).await?;
             let done = if step.kind == GOTO {
                 session.goto(step, input).await
             } else if step.kind == WAIT {
@@ -2536,6 +2647,9 @@ impl Driver for UiDriver {
             // a save it followed is in doubt.
             let what = format!("the end of a `{}` step", step.kind);
             let Some(failure) = session.refused(&what) else {
+                if let Ok(StepOutcome::Done(_)) = &done {
+                    session.remember(step, input);
+                }
                 return done;
             };
             Err(if step.commits {

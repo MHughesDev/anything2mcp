@@ -807,7 +807,7 @@ async fn every_dispatch_records_one_decision_and_a_refusal_carries_its_four_part
     // An action in the catalog that is not built answers with one named
     // failure, after its decision was recorded.
     let not_built = world
-        .call("capture.start", json!({"target": "example"}))
+        .call("endpoints.infer", json!({"target": "example"}))
         .await;
     let error = not_built.error.clone().unwrap();
     assert_eq!(

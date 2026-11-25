@@ -36,6 +36,15 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         names,
         ["web_auth", "web_capture", "web_probe", "web_snapshot"]
     );
+    // The discoverer a person drives is given to a capture job alone
+    // (decision 0392, point 2).
+    let watching: Vec<String> = first
+        .registry
+        .capture_discoverers_for(&Bench::description(address))
+        .iter()
+        .map(|handle| handle.declared().name.to_string())
+        .collect();
+    assert_eq!(watching, [crate::WEB_USE]);
     // No discoverer claims more than `discovered`, and none suits a surface
     // that is not reached over http.
     for handle in first.registry.discoverers_for(&Bench::description(address)) {
@@ -171,6 +180,7 @@ fn get(path: &str, answer: serde_json::Value) -> Exchange {
         credential_headers: Vec::new(),
         set_headers: Vec::new(),
         query_left_out: false,
+        body: None,
     }
 }
 
@@ -194,6 +204,7 @@ fn tier_one_takes_identifiers_by_form_and_tier_two_only_when_asked() {
             credential_headers: Vec::new(),
             set_headers: Vec::new(),
             query_left_out: false,
+            body: None,
         },
     ];
 

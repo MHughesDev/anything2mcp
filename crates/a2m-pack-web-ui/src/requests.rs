@@ -828,9 +828,51 @@ impl FileKind for RequestKind {
     /// one that is (decision 0206): a write entry, and an asserted read, are
     /// written by a person (decision 0394, point 2).
     fn writes(&self, doc: &Located<Doc>) -> bool {
-        !(doc.text("method") == Some("GET")
-            && doc.text("effect") == Some("read")
-            && doc.get("read_asserted").is_none())
+        let read_by_get = doc.text("method") == Some("GET") && doc.text("effect") == Some("read");
+        // A request by a method that may write, drafted from a capture with
+        // an open question in place of its effect (decision 0392, point 4):
+        // it is held, the loader reads nothing in the holding folder, and it
+        // reads or writes only once a person states its effect.
+        let effect_asked = doc.text("method") != Some("GET")
+            && doc
+                .get("effect")
+                .and_then(|effect| effect.get("open_question"))
+                .is_some();
+        !((read_by_get || effect_asked) && doc.get("read_asserted").is_none())
+    }
+
+    /// A page request marked `effect: read`, by a method other than `GET`,
+    /// with `read_asserted: true`: its name, method, path, and the fields
+    /// of its body, for the publish page (decision 0394, point 5). An entry
+    /// whose body cannot be read is refused by `compile`, so nothing is
+    /// published from it; it is named here with the fields that could be.
+    fn asserts(&self, doc: &Located<Doc>) -> Vec<a2m_files::AssertedRead> {
+        let method = doc.text("method").unwrap_or_default();
+        if method == "GET"
+            || doc.text("effect") != Some("read")
+            || doc.get("read_asserted").and_then(Located::as_bool) != Some(true)
+        {
+            return Vec::new();
+        }
+        let fields = asserted_read(doc, method, &mut Diagnostics::new())
+            .and_then(|read| read.body)
+            .map(|body| {
+                body.fields
+                    .into_iter()
+                    .map(|(name, field)| a2m_files::AssertedField {
+                        name,
+                        kind: field.kind.word().to_owned(),
+                        one_of: field.one_of,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        vec![a2m_files::AssertedRead {
+            entry: doc.text("endpoint").unwrap_or_default().to_owned(),
+            method: method.to_owned(),
+            path: doc.text("path").unwrap_or_default().to_owned(),
+            fields,
+        }]
     }
 
     fn names(&self, doc: &Located<Doc>) -> Vec<Located<DefinedName>> {

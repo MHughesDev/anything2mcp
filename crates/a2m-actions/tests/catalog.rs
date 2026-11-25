@@ -304,7 +304,11 @@ fn no_action_without_a_handler_is_listed_up_front_and_the_trial_is() {
         .map(|def| def.name.to_string())
         .collect();
     assert!(build.iter().any(|name| name == "draft.try"), "{build:?}");
-    for unbuilt in ["capture.start", "capture.stop", "endpoints.infer"] {
-        assert!(!build.iter().any(|name| name == unbuilt), "{unbuilt}");
+    assert!(
+        !build.iter().any(|name| name == "endpoints.infer"),
+        "{build:?}"
+    );
+    for built in ["capture.start", "capture.stop"] {
+        assert!(build.iter().any(|name| name == built), "{built}");
     }
 }

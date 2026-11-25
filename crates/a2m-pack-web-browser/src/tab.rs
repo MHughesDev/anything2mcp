@@ -4269,6 +4269,35 @@ impl ObserveTab {
         Self { page }
     }
 
+    /// Whether the browser this tab is in is lost: its link is closed,
+    /// because its process ended or the engine closed it, or this tab has
+    /// itself seen its page crash or its target go while the engine had not
+    /// released it. Every call on the tab fails from then on, and a tab
+    /// opened again for the profile is in a new browser started from the
+    /// same data directory.
+    ///
+    /// A tab can see its loss before the link ends: on Windows, a browser
+    /// killed with its children ends its renderers and its pipe in no set
+    /// order, and the pipe can end after the step that saw the loss. So a
+    /// tab that saw itself lost closes the link here, and the next open of
+    /// the profile finds the browser exited and starts a new one, whatever
+    /// the order in which the pipe and the process end. A page that
+    /// crashed in a browser that still runs costs that browser: a step
+    /// cannot tell the two apart without waiting, and the tab can only
+    /// read.
+    #[must_use]
+    pub fn browser_lost(&self) -> bool {
+        if self.page.client.closed().is_some() {
+            return true;
+        }
+        let seen = !self.page.released.load(Ordering::SeqCst)
+            && matches!(*self.page.status.borrow(), Status::Crashed | Status::Gone);
+        if seen {
+            self.page.client.close();
+        }
+        seen
+    }
+
     /// What this tab refused since the last call, oldest first: a request
     /// whose method could change the system, by its method; a move of the
     /// tab that its page started (`NAVIGATION`); a window its page opened,

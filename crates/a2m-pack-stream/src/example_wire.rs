@@ -66,9 +66,11 @@ impl Protocol for ExampleProtocol {
         deadline: Deadline,
     ) -> Wire<'a, Box<dyn Link>> {
         Box::pin(async move {
-            // The token goes in the clear, so plain TCP goes to this
-            // machine's own loopback address and nowhere else, as for NATS.
-            let address = crate::wire::plain_tcp_address(address)?;
+            // Plain TCP carries the session's credential in the clear, so a
+            // connection that carries one goes to this machine's own
+            // loopback address and nowhere else; one that carries none goes
+            // to the surface's address (decision 0435).
+            let dial = crate::wire::plain_tcp_dial(address, credential.is_some())?;
             let unreachable = || {
                 error(
                     WireErrorKind::Unreachable,
@@ -76,7 +78,7 @@ impl Protocol for ExampleProtocol {
                     "the broker did not accept a connection",
                 )
             };
-            let stream = tokio::time::timeout_at(deadline.at(), TcpStream::connect(address))
+            let stream = tokio::time::timeout_at(deadline.at(), dial.connect())
                 .await
                 .map_err(|_| unreachable())?
                 .map_err(|_| unreachable())?;
@@ -334,6 +336,8 @@ fn facts_of(value: &Json) -> Result<ChannelFacts, WireError> {
             .and_then(Json::as_str)
             .and_then(Shape::from_word),
         key_field: text_of(value.get("key_field")),
+        // The test broker keys a message by a field of its body.
+        key_from_subject: false,
         schema: value
             .get("schema")
             .filter(|schema| !schema.is_null())
@@ -614,6 +618,28 @@ mod tests {
             }
         });
         address
+    }
+
+    /// The token goes in the clear: with it, a connection goes to this
+    /// machine's loopback address written as an IP address and nowhere
+    /// else, and anything else is refused before it is opened (decisions
+    /// 0197 and 0435).
+    #[tokio::test]
+    async fn a_token_goes_in_plain_text_only_to_the_loopback_address() {
+        let deadline = Deadline::after(Duration::from_secs(10));
+        let token = Credential::Token(a2m_core::Secret::new("example-token-for-tests"));
+        for address in ["localhost:1", "192.0.2.10:4222", "broker.internal:4222"] {
+            let refused = ExampleProtocol
+                .connect(address, Some(&token), deadline)
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(
+                (refused.kind, refused.sent),
+                (WireErrorKind::Transport, Sent::NotSent),
+                "{address}"
+            );
+        }
     }
 
     #[tokio::test]

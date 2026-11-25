@@ -37,6 +37,7 @@ mod escapes;
 mod hanging;
 mod launching;
 mod looking;
+mod memory;
 mod observing;
 mod quiet;
 mod state;
@@ -332,6 +333,15 @@ fn every_code_has_one_class_and_the_conversions_use_them() {
         (
             BrowserError::LaunchFailed(LaunchReason::NotOwned("x".to_owned())),
             Some((FailureClass::UnknownVariant, codes::BROWSER_NOT_OWNED)),
+        ),
+        (
+            BrowserError::LaunchFailed(LaunchReason::MemoryShort(crate::MemoryShort {
+                held: None,
+                ceiling: 1,
+                retry: Duration::from_secs(1),
+                why: Some("x".to_owned()),
+            })),
+            Some((FailureClass::Busy, codes::MEMORY_SHORT)),
         ),
         (
             BrowserError::LaunchFailed(LaunchReason::NoAnswer("x".to_owned())),

@@ -66,6 +66,7 @@ export type BrowserInstallInput = Record<string, never>;
  */
 export interface CaptureStartInput {
   target: string;
+  capture?: string;
   surface?: string;
 }
 
@@ -74,6 +75,7 @@ export interface CaptureStartInput {
  */
 export interface CaptureStopInput {
   target: string;
+  capture?: string;
 }
 
 /**
@@ -170,6 +172,15 @@ export interface DraftLintInput {
 export interface DraftReadInput {
   file: string;
   target: string;
+}
+
+/**
+ * The input of `draft.ready`.
+ */
+export interface DraftReadyInput {
+  target: string;
+  tools?: string[];
+  version?: string;
 }
 
 /**
@@ -950,13 +961,15 @@ export declare abstract class Actions {
   browserInstall(input?: BrowserInstallInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Begin recording actions and traffic on a surface, redacted as it is recorded. The
-   * engine action is `capture.start`.
+   * Ask for a capture of your person's own use of a surface. Nothing records until the
+   * person begins it on the engine's page; then only the structure of what they use is
+   * kept, never a value. The engine action is `capture.start`.
    */
   captureStart(input: CaptureStartInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * End the recording and store it. The engine action is `capture.stop`.
+   * End a capture you asked for, or read how it ended, and store what it found as
+   * findings. The engine action is `capture.stop`.
    */
   captureStop(input: CaptureStopInput, options?: CallOptions): Promise<Response>;
 
@@ -1037,6 +1050,15 @@ export declare abstract class Actions {
    * `draft.read`.
    */
   draftRead(input: DraftReadInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Make every drafted read a trial in this project read a value through ready to
+   * publish: record its offline test and fixture, promote its first binding, run the
+   * publish gates, and ask a person to publish, each step by its own action. A write, a
+   * pipeline, and a read with no trial are left alone, each with its reason. The engine
+   * action is `draft.ready`.
+   */
+  draftReady(input: DraftReadyInput, options?: CallOptions): Promise<Response>;
 
   /**
    * Run one draft binding in the sandbox, where writes go only to declared test

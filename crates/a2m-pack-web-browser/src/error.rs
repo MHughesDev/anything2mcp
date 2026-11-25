@@ -11,7 +11,8 @@ use a2m_core::{Failure, FailureClass, FailureCode};
 ///
 /// Whether a `busy` code passes by itself, and why: `browser_unavailable`
 /// does not, because a person must install a browser or name one in the
-/// settings first.
+/// settings first; `memory_short` does, because a browser past its limit is
+/// recycled between runs and the work in flight ends.
 pub mod codes {
     use a2m_core::FailureCode;
 
@@ -20,6 +21,10 @@ pub mod codes {
             meaning "No browser program was found.",
             next "Install Chrome, Edge, or Chromium, or name the browser program in the settings.",
             passes not_by_itself;
+        MEMORY_SHORT = Busy, "memory_short",
+            meaning "The engine's browsers hold their memory ceiling or more, or one of them could not be measured, so no new browser work is started (decision 0425).",
+            next "Call again after the wait the failure gives; a browser past its own limit is recycled between runs. If it persists, close other work on the machine, or raise the ceiling in the settings.",
+            passes by_itself;
         BROWSER_NOT_OWNED = UnknownVariant, "browser_not_owned",
             meaning "The program that started is not a browser this crate can own.",
             next "Check the browser program named in the settings, and its version.";
@@ -112,6 +117,38 @@ pub enum LaunchReason {
     NoAnswer(String),
     /// The data directory could not be made inside the profile root.
     DataDirectory(Failure),
+    /// Memory runs short: the engine's browsers hold their ceiling or
+    /// more, or one could not be measured. Nothing was started, and no
+    /// browser was handed out (decision 0425).
+    MemoryShort(MemoryShort),
+}
+
+/// What an open refused because memory runs short found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryShort {
+    /// What the engine's browsers hold together, in bytes; `None` when one
+    /// of them could not be measured.
+    pub held: Option<u64>,
+    /// The ceiling, in bytes.
+    pub ceiling: u64,
+    /// How long the caller is told to wait before it asks again.
+    pub retry: std::time::Duration,
+    /// Why a browser could not be measured, when one could not.
+    pub why: Option<String>,
+}
+
+impl fmt::Display for MemoryShort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (self.held, &self.why) {
+            (Some(held), _) => write!(
+                f,
+                "the engine's browsers hold {held} bytes, at or past the ceiling of {} bytes",
+                self.ceiling
+            ),
+            (None, Some(why)) => write!(f, "an open browser could not be measured: {why}"),
+            (None, None) => f.write_str("an open browser could not be measured"),
+        }
+    }
 }
 
 /// The shape of a request an observing tab refused: its method and where it
@@ -252,6 +289,15 @@ impl BrowserError {
                 format!("The program that was started is not a browser the engine can own: {why}."),
                 "Check the browser program named in the settings, and its version.",
             )),
+            Self::LaunchFailed(LaunchReason::MemoryShort(short)) => Some(
+                Failure::new(
+                    FailureClass::Busy,
+                    codes::MEMORY_SHORT,
+                    format!("Memory runs short: {short}, so no new browser work is started."),
+                    "Call again after the wait given; a browser past its own limit is recycled between runs. If it persists, close other work on the machine, or raise `memory_ceiling` in the settings.",
+                )
+                .with_retry_after(short.retry),
+            ),
             Self::LaunchFailed(LaunchReason::NoAnswer(why)) => Some(Failure::new(
                 FailureClass::Transient,
                 codes::TIMEOUT,
@@ -356,6 +402,9 @@ impl fmt::Display for BrowserError {
                 }
                 LaunchReason::NoAnswer(why) => {
                     write!(f, "the browser was started and closed again: {why}")
+                }
+                LaunchReason::MemoryShort(short) => {
+                    write!(f, "memory runs short: {short}; nothing was started")
                 }
                 LaunchReason::NotOwned(why) => {
                     write!(

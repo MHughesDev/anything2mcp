@@ -2365,7 +2365,7 @@
    "group": "Pack",
    "where": "a2m-pack-web-browser, a2m-pack-web-ui, a2m-pack-web-probe",
    "state": "p",
-   "text": "Drives a web application through a browser the engine owns, with its own profile. It finds controls by a screen model, reads and sets them, and can make the page's own requests. Reads and some writes are built; many widget drivers, the capture of a person's use, and the asserted read of a page that reads by POST are not.",
+   "text": "Drives a web application through a browser the engine owns, with its own profile. It finds controls by a screen model, reads and sets them, and can make the page's own requests. Reads and some writes are built, and a page that reads by POST is read through a request a person asserted; many widget drivers and the capture of a person's use are not.",
    "weighing": [
     "Whether requests made from inside the page are worth keeping: the first measurement did not show them faster than reading the screen."
    ],

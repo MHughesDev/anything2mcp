@@ -44,6 +44,13 @@ async fn a_surface_is_added_with_the_fields_its_kind_declares_and_checked_before
         "{:?}",
         bare.finished
     );
+    // Field test 7: the fix names the fields, which is where a missing one
+    // is given, and not only the address and the kind.
+    assert!(
+        bare.error()["fix"].as_str().unwrap().contains("--fields"),
+        "{:?}",
+        bare.finished
+    );
     assert!(!folder.exists());
 
     // A field the kind does not declare is refused the same way, and so is

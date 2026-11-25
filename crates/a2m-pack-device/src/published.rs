@@ -286,6 +286,27 @@ pub(crate) struct Drafted {
 impl Drafted {
     /// The output type of its read: text is marked untrusted, a scaled
     /// number is an exact decimal, and a raw number an integer.
+    /// What a scaled number's read says of its precision: the places its
+    /// scale gives, so that two reads of one map say the same of theirs
+    /// (field test 8, finding 51). Nothing for a number that is not scaled.
+    /// The places are said in the description, because a target's field
+    /// type is not the drafter's to write (decision 0441).
+    fn places_said(&self) -> String {
+        let Some(scale) = &self.scale else {
+            return String::new();
+        };
+        match Decimal::parse(scale).map(|scale| scale.places()) {
+            Ok(0) => format!(" Its values are whole numbers, as the map's scale `{scale}` gives."),
+            Ok(1) => format!(
+                " Its values are exact to 1 decimal place, the places of the map's scale `{scale}`."
+            ),
+            Ok(places) => format!(
+                " Its values are exact to {places} decimal places, the places of the map's scale `{scale}`."
+            ),
+            Err(_) => String::new(),
+        }
+    }
+
     fn output_type(&self) -> &'static str {
         if self.data == "text" {
             UNTRUSTED_TEXT
@@ -768,6 +789,7 @@ impl DraftingRule for ReadsFromPublished {
                 continue;
             }
             let ty = register.output_type();
+            let places = register.places_said();
             let (output_type, unit) = match (&register.unit, ty) {
                 (_, UNTRUSTED_TEXT) => (DraftValue::text(ty), String::new()),
                 (Some(unit), _) => (
@@ -821,7 +843,7 @@ impl DraftingRule for ReadsFromPublished {
                     (
                         "description",
                         DraftValue::text(&format!(
-                            "Reads the register the published map names `{}`, of the map `{map_name}`, from the device on the link.{unit} Drafted by rule from a published map: nothing was read from the device to draft it, and a device whose model or firmware is outside the map stops the read. Its name is provisional.",
+                            "Reads the register the published map names `{}`, of the map `{map_name}`, from the device on the link.{unit}{places} Drafted by rule from a published map: nothing was read from the device to draft it, and a device whose model or firmware is outside the map stops the read. Its name is provisional.",
                             register.name
                         )),
                     ),

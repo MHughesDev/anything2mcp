@@ -887,18 +887,20 @@ async fn a_server_that_refuses_the_session_or_asks_for_tls_or_is_not_on_this_mac
     );
     assert_eq!(scene.stand.connects().len(), 1);
 
-    // An address that is not this machine's own: nothing is opened.
-    let far = Scene::at(
-        TestNats::start().await.unwrap(),
-        Some("192.0.2.10:4222".to_owned()),
-    )
-    .await;
-    let elsewhere = far.try_prepare(Posture::Live, None).await.err().unwrap();
+    // A session that carries a credential goes in plain text to this
+    // machine's loopback address only: that is held where the credential
+    // meets the wire, in `nats_wire`'s own test, as the tests here run with
+    // no session. A server that asks for TLS is refused at any address.
+    let stand = TestNats::start().await.unwrap();
+    stand.set_tls_required(true);
+    let named = format!("localhost:{}", stand.address().port());
+    let near = Scene::at(stand, Some(named)).await;
+    let refused = near.try_prepare(Posture::Live, None).await.err().unwrap();
     assert_eq!(
         (
-            elsewhere.failure.class().to_string(),
-            elsewhere.failure.code().to_string(),
-            elsewhere.sent
+            refused.failure.class().to_string(),
+            refused.failure.code().to_string(),
+            refused.sent
         ),
         (
             "policy".to_owned(),
@@ -906,18 +908,34 @@ async fn a_server_that_refuses_the_session_or_asks_for_tls_or_is_not_on_this_mac
             Sent::NotSent
         )
     );
+}
 
-    // A name is not a loopback address, even one that leads to the stand
-    // (decision 0197): refused before the stand hears anything.
+/// Field test 7, finding 43: a broker that asks for no sign-in, at an
+/// address that is not this machine's loopback address written as an IP
+/// address, was refused as `transport_refused`, "would carry the session in
+/// plain text", though its session carries no credential. A connection
+/// that carries none goes to the surface's address, here a name that leads
+/// to the stand (decision 0435); one that carries a credential still goes
+/// to the loopback address only.
+#[tokio::test]
+async fn a_broker_that_asks_for_no_sign_in_is_reached_at_an_address_off_the_loopback() {
     let stand = TestNats::start().await.unwrap();
     let named = format!("localhost:{}", stand.address().port());
-    let near = Scene::at(stand, Some(named)).await;
-    let refused = near.try_prepare(Posture::Live, None).await.err().unwrap();
-    assert_eq!(
-        (refused.failure.code().to_string(), refused.sent),
-        ("transport_refused".to_owned(), Sent::NotSent)
+    let scene = Scene::at(stand, Some(named)).await;
+    let steps = scene.binding("example_order_status_get").act.clone();
+    let (handle, mut prepared) = scene.reading().await;
+    let observed = done(
+        read(&handle, &mut prepared, &steps, &key_arg("A-100"))
+            .await
+            .unwrap(),
     );
-    assert!(near.stand.connects().is_empty());
+    assert!(handle.release(prepared, false).await.complete);
+    assert_eq!(text(&observed, "status"), "submitted");
+    // The server heard one connection, which presented nothing.
+    let connects = scene.stand.connects();
+    assert_eq!(connects.len(), 1);
+    assert_eq!(connects[0].presented, "none");
+    assert!(connects[0].accepted);
 }
 
 // ---- 5. discovery ----
@@ -1033,8 +1051,8 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
     let report = a2m_files::Drafter::new(scene.registry.compiler_set(), &TargetRoot::new(&root))
         .draft(&kept.0)
         .unwrap();
-    // A stream states no key and holds no schema: a look at each, which
-    // states what every look returns, and no read of one key.
+    // A stream holds no schema: a look at each, which states what every
+    // look returns, and no read of one key.
     let lists: Vec<&str> = report
         .written
         .iter()
@@ -1045,37 +1063,15 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
         lists,
         [
             "operations/orders_events_list.yaml",
+            "operations/orders_status_list.yaml",
             "operations/orders_work_list.yaml"
         ]
     );
-    // The retained channel holds the question, and the look at it names the
-    // channel, so both wait in the holding folder and neither is in place
-    // (decision 0298).
-    let held_files: Vec<&str> = report.held.iter().map(|path| path.as_str()).collect();
-    assert_eq!(
-        held_files,
-        [
-            "held/channels/orders_status.yaml",
-            "held/operations/orders_status_list.yaml"
-        ]
-    );
-    assert!(!root.join("channels/orders_status.yaml").exists());
-    assert!(!root.join("operations/orders_status_list.yaml").exists());
-    // No drafted file asks what a message is; the one question left is the
-    // key of the retained channel, which the server does not name.
-    let asked: Vec<&str> = report
-        .open_questions
-        .iter()
-        .map(|question| question.file.as_str())
-        .collect();
-    assert_eq!(asked, ["held/channels/orders_status.yaml"], "{asked:?}");
-    // A person answers the key in the held channel and moves the held
-    // files out to their places.
-    common::answer_keys(&root.join("held"));
-    for file in &held_files {
-        let place = file.strip_prefix("held/").unwrap();
-        std::fs::rename(root.join(file), root.join(place)).unwrap();
-    }
+    // The retained stream keys by subject, which its subjects state, so
+    // nothing waits in the holding folder and nothing is asked (finding 44
+    // of the field tests).
+    assert!(report.held.is_empty(), "{report:?}");
+    assert!(report.open_questions.is_empty(), "{report:?}");
     scene.compiled_target = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
         Ok(compiled) => compiled.compiled_target,
         Err(problems) => panic!("the drafts do not compile:\n{problems}"),
@@ -1134,6 +1130,235 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
         assert_eq!(scene.stand.messages(stream).len(), *count);
     }
     assert_eq!(scene.stand.stream(SEED_WORK).unwrap().consumers.len(), 1);
+}
+
+/// Field test 7, finding 44: a stream that keeps one message a subject was
+/// held on "which field of a message is its key?", though the server keys
+/// it by the last token of the subject, as the stream's subjects state, and
+/// its list, which needs no key, was held with it. The drafter now takes
+/// the subject as the key where the stream stores subjects below the
+/// channel's, and asks only of a stream that does not: one that stores the
+/// channel's subject alone states no key at all.
+#[tokio::test]
+async fn a_retained_stream_keyed_by_subject_is_drafted_with_the_subject_as_its_key() {
+    use a2m_core::{Archetype, Failure, Finding, SurfaceKind};
+    use a2m_provider::{DiscoveryScope, FindingSink, ReadOnlyPort, SurfaceDescription};
+
+    struct Kept(Vec<Finding>);
+    impl FindingSink for Kept {
+        fn found(&mut self, finding: Finding) -> Result<(), Failure> {
+            self.0.push(finding);
+            Ok(())
+        }
+    }
+
+    let mut scene = Scene::start().await;
+    // A retained stream whose one subject is the channel's own: the server
+    // keeps one message, and nothing says what a key would be.
+    scene.stand.declare_stream(
+        StreamSpec::new("SINGLE_LEVEL", ["example.single.level"]).one_per_subject(),
+    );
+    let description = SurfaceDescription {
+        kind: SurfaceKind::new("broker").unwrap(),
+        archetype: Archetype::Stream,
+        address: scene.surface.surface.address.clone(),
+        facts: Values::new(),
+    };
+    let discoverer = scene.registry.discoverers_for(&description).remove(0);
+    let (handle, prepared) = scene.try_prepare(Posture::Discovery, None).await.unwrap();
+    let port = ReadOnlyPort::new(handle, prepared);
+    let focus = Values::new();
+    let scope = DiscoveryScope {
+        surface: &scene.surface,
+        bounds: discoverer.declared().bounds,
+        deadline: Deadline::after(Duration::from_secs(20)),
+        paths: &CheckedPaths::none(),
+        redact: &Planted,
+        focus: &focus,
+    };
+    let mut kept = Kept(Vec::new());
+    discoverer.discover(&port, &scope, &mut kept).await.unwrap();
+    let (handle, prepared) = port.into_parts();
+    handle.release(prepared, false).await;
+
+    let folder = Folder::new("nats-keyed-by-subject");
+    let root = folder.path().join("target");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(
+        nats_root().path().join("target.yaml"),
+        root.join("target.yaml"),
+    )
+    .unwrap();
+    let report = a2m_files::Drafter::new(scene.registry.compiler_set(), &TargetRoot::new(&root))
+        .draft(&kept.0)
+        .unwrap();
+    // The stream keyed by subject is in place, with its list, and holds no
+    // question; the one question left is the stream that states no key.
+    let channel = std::fs::read_to_string(root.join("channels/orders_status.yaml")).unwrap();
+    let key: Vec<&str> = channel
+        .lines()
+        .skip_while(|line| !line.starts_with("key:"))
+        .take_while(|line| line.starts_with("key:") || line.starts_with(' '))
+        .collect();
+    assert!(
+        key.iter()
+            .any(|line| line.contains("from:") && line.contains("subject")),
+        "{channel}"
+    );
+    assert!(!channel.contains("open_question"), "{channel}");
+    assert!(root.join("operations/orders_status_list.yaml").exists());
+    let held: Vec<&str> = report.held.iter().map(|path| path.as_str()).collect();
+    assert_eq!(
+        held,
+        [
+            "held/channels/single_level.yaml",
+            "held/operations/single_level_list.yaml"
+        ],
+        "{report:?}"
+    );
+    let asked: Vec<&str> = report
+        .open_questions
+        .iter()
+        .map(|question| question.file.as_str())
+        .collect();
+    assert_eq!(asked, ["held/channels/single_level.yaml"], "{asked:?}");
+
+    // What was drafted in place compiles, and its list returns what the
+    // server holds, as its control interface says.
+    scene.compiled_target = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
+        Ok(compiled) => compiled.compiled_target,
+        Err(problems) => panic!("the drafts do not compile:\n{problems}"),
+    };
+    let (handle, mut prepared) = scene.reading().await;
+    let steps = scene.binding("example_orders_status_list").act.clone();
+    let observed = done(
+        read(&handle, &mut prepared, &steps, &Values::new())
+            .await
+            .unwrap(),
+    );
+    handle.release(prepared, false).await;
+    let result = common::outputs_of(
+        &scene.compiled_target,
+        "example_orders_status_list",
+        &observed,
+    );
+    assert_eq!(
+        result.get("count"),
+        Some(&Value::Int(
+            i64::try_from(scene.stand.messages(SEED_STATUS).len()).unwrap()
+        ))
+    );
+
+    // A channel file that takes its key from the subject reads one key as
+    // the server holds it, whatever the binding names the key.
+    let written = folder.path().join("by-subject");
+    copy_tree(nats_root().path(), &written);
+    let channels = written.join("channels/orders.yaml");
+    let file = std::fs::read_to_string(&channels).unwrap();
+    std::fs::write(
+        &channels,
+        file.replacen(
+            "key: {field: order_id, type: identifier}",
+            "key: {from: subject, type: identifier}",
+            1,
+        ),
+    )
+    .unwrap();
+    scene.compiled_target = match common::compile(&scene.registry, &TargetRoot::new(&written)) {
+        Ok(compiled) => compiled.compiled_target,
+        Err(problems) => panic!("a channel keyed by subject does not compile:\n{problems}"),
+    };
+    let steps = scene.binding("example_order_status_get").act.clone();
+    let (handle, mut prepared) = scene.reading().await;
+    let observed = done(
+        read(&handle, &mut prepared, &steps, &key_arg("A-100"))
+            .await
+            .unwrap(),
+    );
+    handle.release(prepared, false).await;
+    assert_eq!(text(&observed, "status"), "submitted");
+    assert!(scene.stand.received().is_empty());
+}
+
+/// Field test 7: a read by key of a key the server holds no message for
+/// stopped the run as `output_unexpected`, as one that could be resumed. A
+/// read whose operation declares an output `found` answers it as a result,
+/// `found: false`, and every other output may then be absent (decision
+/// 0429, as decision 0348 is for the data pack). Without `found` the read
+/// keeps its old behaviour, and the read-back of a write is not changed.
+#[tokio::test]
+async fn a_read_that_declares_found_answers_a_key_with_no_message_as_found_false() {
+    let folder = Folder::new("nats-found");
+    let root = folder.path().join("target");
+    copy_tree(nats_root().path(), &root);
+    let operations = root.join("operations").join("order_status.yaml");
+    let mut text = std::fs::read_to_string(&operations).unwrap();
+    text.push_str(
+        "---\n\
+         operation: example_order_status_find\n\
+         title: Find the status of an order\n\
+         effect: read\n\
+         key: order_id\n\
+         inputs:\n  order_id: {type: identifier, description: \"Order number\"}\n\
+         outputs:\n  status: {type: text}\n  found: {type: boolean}\n\
+         bindings:\n  - mode: stream\n    verb: read\n    channel: orders.status\n    key: {order_id: input.order_id}\n\
+         description: >\n  Reads the last status the broker holds for one order, and says whether it holds one.\n",
+    );
+    std::fs::write(&operations, text).unwrap();
+    let mut scene = Scene::start().await;
+    scene.compiled_target = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
+        Ok(compiled) => compiled.compiled_target,
+        Err(problems) => panic!("the target does not compile:\n{problems}"),
+    };
+    let operation = |name: &str| {
+        scene
+            .compiled_target
+            .operations
+            .iter()
+            .find(|found| found.name.as_str() == name)
+            .unwrap()
+            .clone()
+    };
+    // `found` is the one output every result holds; the status the schema
+    // requires may now be absent, since a missing key returns none.
+    let find = operation("example_order_status_find");
+    let may_be_absent: Vec<(&str, bool)> = find
+        .outputs
+        .iter()
+        .map(|output| (output.name.as_str(), output.may_be_absent))
+        .collect();
+    assert_eq!(may_be_absent, [("status", true), ("found", false)]);
+    let get = operation("example_order_status_get");
+    assert!(get.outputs.iter().all(|output| !output.may_be_absent));
+
+    let (handle, mut prepared) = scene.reading().await;
+    let steps = scene.binding("example_order_status_find").act.clone();
+    // A key the server holds: its status, and `found: true`.
+    let held = done(
+        read(&handle, &mut prepared, &steps, &key_arg("A-100"))
+            .await
+            .unwrap(),
+    );
+    let result = common::outputs_of(&scene.compiled_target, "example_order_status_find", &held);
+    assert_eq!(result.get("found"), Some(&Value::Bool(true)));
+    assert_eq!(result.get("status"), Some(&Value::from("submitted")));
+    // A key it holds no message for: a result, `found: false`, no status.
+    let missing = done(
+        read(&handle, &mut prepared, &steps, &key_arg("Z-999"))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(missing.get("found"), Some(&Value::Bool(false)));
+    assert_eq!(missing.get("status"), None);
+    // The read that declares no `found` still says absent.
+    let steps = scene.binding("example_order_status_get").act.clone();
+    let outcome = read(&handle, &mut prepared, &steps, &key_arg("Z-999"))
+        .await
+        .unwrap();
+    assert!(matches!(outcome, StepOutcome::Absent(_)), "{outcome:?}");
+    handle.release(prepared, false).await;
+    assert!(scene.stand.received().is_empty());
+    assert!(scene.stand.deliveries().is_empty());
 }
 
 // ---- 6. the protocol is one interface; its limits are the compiler's ----
@@ -2334,7 +2559,9 @@ async fn a_message_field_named_as_a_secret_is_never_drafted_as_an_output() {
     );
     assert!(list.contains("order_id:"), "{list}");
     // The target compiles with them, and a look returns the other field.
-    common::answer_keys(&root.join("held"));
+    if root.join("held").exists() {
+        common::answer_keys(&root.join("held"));
+    }
     for file in &report.held {
         let place = file.as_str().strip_prefix("held/").unwrap();
         std::fs::rename(root.join(file.as_str()), root.join(place)).unwrap();

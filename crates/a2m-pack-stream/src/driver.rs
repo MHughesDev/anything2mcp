@@ -29,7 +29,7 @@ use serde::Deserialize;
 use crate::channel::{ChannelEntry, MessageSchema, Ownership, SECTION_FORMAT, Shape};
 use crate::codes::{self, shown, stopped};
 use crate::json::Json;
-use crate::lower::{ARG_BODY, ARG_CORRELATION, ARG_FROM, ARG_HEADER, ARG_KEY, StepDetail};
+use crate::lower::{ARG_BODY, ARG_CORRELATION, ARG_FROM, ARG_HEADER, ARG_KEY, FOUND, StepDetail};
 use crate::names::{
     BROKER, CHANNEL, MESSAGE_SCHEMA, PACK, STEP_ACKNOWLEDGE, STEP_AWAIT, STEP_BROWSE,
     STEP_CHANNELS, STEP_DESCRIBE, STEP_LATEST, STEP_POSITION, STEP_PUBLISH, STEP_SCAN,
@@ -352,7 +352,7 @@ fn wire_failure(redact: &dyn Redact, error: &WireError, what: &str) -> StepFailu
         WireErrorKind::Transport => (
             codes::TRANSPORT_REFUSED,
             format!("The connection to {what} was not opened: {}.", error.detail),
-            "Write the broker's address as this machine's loopback IP address (127.0.0.1 or [::1]), or use a build that speaks TLS to it.",
+            "A credential goes over plain TCP only to this machine's loopback IP address (127.0.0.1 or [::1]): write the broker's address as one, reach a broker that asks for no sign-in, or use a build that speaks TLS to it.",
         ),
         WireErrorKind::Unfit => (
             codes::VALUE_OUT_OF_RANGE,
@@ -591,6 +591,11 @@ impl Run {
         {
             return Err(changed("the broker takes the key from another field"));
         }
+        if entry.key_from_subject && facts.key_field.is_some() {
+            return Err(changed(
+                "the broker takes the key from a field of the message, not from the subject",
+            ));
+        }
         if entry.broker_dedupe {
             // The file says the broker refuses a repeated token. Where the
             // broker says otherwise, a resumed publish could store twice.
@@ -751,6 +756,7 @@ impl StreamDriver {
         &self,
         run: &mut Run,
         step: &Step,
+        detail: &StepDetail,
         input: &StepInput<'_>,
     ) -> Result<StepOutcome, StepFailure> {
         let (name, entry) = run.declared(step)?;
@@ -763,6 +769,11 @@ impl StreamDriver {
             .await
             .map_err(|error| wire_failure(&*self.redact, &error, "read the latest value"))?;
         let Some(message) = found else {
+            // A read whose operation declares `found` answers a key with no
+            // message as a result (decision 0429).
+            if detail.answers_missing {
+                return Ok(self.done(Values::new().with(FOUND, false)));
+            }
             return Ok(StepOutcome::Absent(Observed::default()));
         };
         if message.key.as_deref() != Some(key) {
@@ -773,7 +784,16 @@ impl StreamDriver {
                 "Report this; the driver has no rule for it.",
             ));
         }
-        Ok(self.done(run.record(&entry, &message)?))
+        let mut values = run.record(&entry, &message)?;
+        if detail.answers_missing {
+            if values.contains(FOUND) {
+                return Err(mismatch(
+                    "its body has a field named `found`, the name under which this read says whether the key held a message",
+                ));
+            }
+            values.insert(FOUND, Value::Bool(true));
+        }
+        Ok(self.done(values))
     }
 
     async fn browse(
@@ -1843,6 +1863,7 @@ fn facts_values(facts: &ChannelFacts) -> Values {
                 .map_or(Value::Null, |shape| Value::from(shape.as_str())),
         )
         .with("key_field", text(&facts.key_field))
+        .with("key_from_subject", facts.key_from_subject)
         .with("dedupe_header", text(&facts.dedupe_header))
         .with(
             "dedupe_window_ms",
@@ -1987,7 +2008,7 @@ impl Driver for StreamDriver {
                 step.payload.decode().map_err(StepFailure::not_sent)?
             };
             let result = if step.kind == STEP_LATEST {
-                self.latest(run, step, input).await
+                self.latest(run, step, &detail, input).await
             } else if step.kind == STEP_BROWSE {
                 self.browse(run, step, &detail, input).await
             } else if step.kind == STEP_SCAN {

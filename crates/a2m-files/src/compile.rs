@@ -31,7 +31,9 @@ use crate::register::{
     CompileMode, CompilerSet, Lowered, Lowering, Possible, StepChanges, StepCommits,
     SurfaceKindSpec,
 };
-use crate::review::{OpReview, PlaceReview, ReviewSummary, review_of};
+use crate::review::{
+    ASSERTED_NOTICE, AssertedReview, OpReview, PlaceReview, ReviewSummary, review_of,
+};
 use crate::schema::{JsonSchema, Reference, fix_for_unknown, shown};
 use crate::source::{
     Fingerprint, FingerprintPart, HiddenRule, Locate, OPERATION_READER, ReaderOptions, RowField,
@@ -107,6 +109,7 @@ pub fn compile(
         test_bindings: Vec::new(),
         tool_names: BTreeMap::new(),
         reviews: BTreeMap::new(),
+        asserted: Vec::new(),
     };
     compiler.run(version)
 }
@@ -207,6 +210,8 @@ struct Compiler<'a> {
     /// For the review summary: what each operation's packs stated, and its
     /// fixed place.
     reviews: BTreeMap<OperationName, OpReview>,
+    /// The reads the pack files assert, for the review summary.
+    asserted: Vec<AssertedReview>,
 }
 
 fn index(position: usize) -> u32 {
@@ -535,7 +540,11 @@ impl<'a> Compiler<'a> {
             packs: std::mem::take(&mut self.model.sections),
             tests: std::mem::take(&mut self.tests),
         };
-        let review = review_of(&compiled_target, &self.reviews);
+        let review = review_of(
+            &compiled_target,
+            &self.reviews,
+            std::mem::take(&mut self.asserted),
+        );
         match compiled_target.encode() {
             Ok(encoded) => Ok(Compiled {
                 compiled_target,
@@ -611,13 +620,17 @@ impl<'a> Compiler<'a> {
         {
             match TargetName::new(text) {
                 Ok(target) => self.model.target = Some(target),
-                Err(_) => self.error(
+                Err(error) => self.error(
                     codes::NAME_MALFORMED,
                     Stage::Validate,
                     &name.at,
-                    format!("`{}` is not a target name.", shown(text)),
-                    "Write one lowercase name of at most 32 characters, such as `example`."
-                        .to_owned(),
+                    format!("{error}."),
+                    if error.kept_for_a_device().is_some() {
+                        error.next_step()
+                    } else {
+                        "Write one lowercase name of at most 32 characters, such as `example`."
+                            .to_owned()
+                    },
                 ),
             }
         }
@@ -999,15 +1012,22 @@ impl<'a> Compiler<'a> {
         let mut names = BTreeSet::new();
         if let Some(environments) = doc.get("environments") {
             for entry in environments.entries() {
-                let Ok(name) = Environment::new(&entry.key.value) else {
-                    self.error(
-                        codes::NAME_MALFORMED,
-                        Stage::Validate,
-                        &entry.key.at,
-                        format!("`{}` is not an environment name.", shown(&entry.key.value)),
-                        "Write one lowercase name, such as `test`.".to_owned(),
-                    );
-                    continue;
+                let name = match Environment::new(&entry.key.value) {
+                    Ok(name) => name,
+                    Err(error) => {
+                        self.error(
+                            codes::NAME_MALFORMED,
+                            Stage::Validate,
+                            &entry.key.at,
+                            format!("{error}."),
+                            if error.kept_for_a_device().is_some() {
+                                error.next_step()
+                            } else {
+                                "Write one lowercase name, such as `test`.".to_owned()
+                            },
+                        );
+                        continue;
+                    }
                 };
                 let Some(kind) = entry
                     .value
@@ -1638,6 +1658,7 @@ impl<'a> Compiler<'a> {
                     continue;
                 };
                 let surface_kind = surface.kind.clone();
+                let surface_name = surface.name.clone();
                 let Some(owner) = set.file_kind(&file.kind, &surface_kind) else {
                     let kinds: Vec<&str> = set
                         .surface_kinds_of(&file.kind)
@@ -1700,6 +1721,19 @@ impl<'a> Compiler<'a> {
                     );
                     self.model.owners.insert(key.clone(), owner.pack.clone());
                     self.model.entries.entry(key).or_default().push(doc.clone());
+                    self.asserted
+                        .extend(
+                            owner
+                                .item
+                                .asserts(doc)
+                                .into_iter()
+                                .map(|read| AssertedReview {
+                                    kind: file.kind.clone(),
+                                    surface: surface_name.clone(),
+                                    read,
+                                    says: ASSERTED_NOTICE,
+                                }),
+                        );
                 }
             }
         }
@@ -2591,6 +2625,37 @@ impl<'a> Compiler<'a> {
         }
         if !fine {
             return None;
+        }
+        // A binding that states no status is `draft`, and neither a draft
+        // nor a retired binding acts in a published version: an operation
+        // with no other publishes a tool no call of can ever run (field
+        // test 7, finding 47). It is a warning in every compile, so `lint`
+        // says it and the person publishing sees it; it is not an error,
+        // because the offline tests that earn a draft binding its promotion
+        // are run on a publish compile (decision 0440).
+        if !bindings.iter().any(|binding| {
+            !matches!(
+                binding.status,
+                BindingStatus::Draft | BindingStatus::Retired
+            )
+        }) {
+            let at = doc
+                .get("bindings")
+                .map_or(&doc.at, |bindings| &bindings.at)
+                .clone();
+            self.problems.push(
+                Diagnostic::error(
+                    kernel(codes::NO_BINDING_MAY_ACT),
+                    Stage::Lint,
+                    &at,
+                    format!(
+                        "No binding of `{}` may act once it is published: a binding with no `status` is `draft`, and a `draft` or `retired` binding never acts, so a call of the tool fails.",
+                        info.name
+                    ),
+                    "Promote the binding with `anything2mcp binding promote` once its offline test passes, or write `status: verified` on a binding you have proven.",
+                )
+                .as_warning(),
+            );
         }
         // The order of the bindings is the file's where the operation says
         // `binding_order: listed`; otherwise each mode's rank in its

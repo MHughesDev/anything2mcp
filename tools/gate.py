@@ -3,9 +3,11 @@
 Usage: python3 tools/gate.py [--fast] [--shard K/N] [--cross]
 
 Runs, in order, and goes on after a failure so that one run shows every one:
-the documentation audit, the failure codes check, formatting, the lints of the
-whole workspace, and the tests of the whole workspace. `--fast` stops after the
-lints, for a check while work is in progress; a push waits for the full run.
+the documentation audit, the failure codes check, the reading of every workflow
+file as YAML, the check against every kept release's contract (decision 0437),
+formatting, the lints of the whole workspace, and the tests of the whole
+workspace. `--fast` stops after the lints, for a check while work is in
+progress; a push waits for the full run.
 
 `--shard K/N` splits the run over N machines: shard 1 runs the audits,
 formatting, the lints, and the doctests; every shard builds the tests of the
@@ -39,6 +41,8 @@ TOOLCHAIN = ("toolchain", ["rustup", "toolchain", "install"])
 STEPS = [
     ("documents", ["python3", "tools/docs_audit.py"]),
     ("failure codes", ["python3", "tools/failure_codes.py", "--check"]),
+    ("workflows", ["python3", "tools/check_workflows.py"]),
+    ("contracts", ["python3", "tools/contracts.py", "check"]),
     ("format", ["cargo", "fmt", "--all", "--check"]),
     ("lint", ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--keep-going", "--", "-D", "warnings"]),
     ("test", ["cargo", "test", "--workspace", "--locked", "--no-fail-fast"]),
@@ -181,13 +185,14 @@ def main(argv):
     env = dict(os.environ)
     env.setdefault("CARGO_PROFILE_DEV_DEBUG", "line-tables-only")
     env.setdefault("CARGO_TERM_COLOR", "never")
-    steps = [(name, command, {}) for name, command in (STEPS[:4] if "--fast" in argv else STEPS)]
+    before_tests = [step for step in STEPS if step[0] != "test"]
+    steps = [(name, command, {}) for name, command in (before_tests if "--fast" in argv else STEPS)]
     if "--shard" in argv:
         k, n = (int(x) for x in argv[argv.index("--shard") + 1].split("/"))
         if not 1 <= k <= n:
             print("--shard takes K/N with 1 <= K <= N")
             return 2
-        steps = [step for step in steps[:4] if k == 1] + ([("test", ("shard", k, n), {})] if "--fast" not in argv else [])
+        steps = [step for step in steps if step[0] != "test" and k == 1] + ([("test", ("shard", k, n), {})] if "--fast" not in argv else [])
     if "--cross" in argv:
         steps += cross_steps()
     steps = [(TOOLCHAIN[0], TOOLCHAIN[1], {})] + steps

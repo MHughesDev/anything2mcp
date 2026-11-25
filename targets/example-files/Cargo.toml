@@ -10,5 +10,10 @@ publish.workspace = true
 [dependencies]
 sha2.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# The offline attribute of the fault `NotOnThisMachine`, which the standard
+# library cannot set.
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
+
 [lints]
 workspace = true

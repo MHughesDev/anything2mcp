@@ -102,7 +102,9 @@ fn each_step_of_the_first_hour_is_named_in_the_guidance_file() {
     let named: BTreeSet<&str> = page.lines().flat_map(quoted).collect();
     // The steps, as the shortcuts name them: `init` has no action beneath
     // it (it writes this file); the others are made of actions.
-    for word in ["init", "add", "lint", "try", "test", "publish", "call"] {
+    for word in [
+        "init", "add", "lint", "try", "test", "ready", "publish", "call",
+    ] {
         let shortcut = SHORTCUTS
             .iter()
             .find(|shortcut| shortcut.word == word)

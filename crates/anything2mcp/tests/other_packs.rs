@@ -151,6 +151,63 @@ async fn a_device_is_read_through_the_device_pack() {
     world.close().await;
 }
 
+/// Field test 8, finding 50: the offline test of a device's update is
+/// answered from one file named for the map, a list of twelve answers in
+/// the order the file formats reference gives: the write's own six steps,
+/// the acknowledgement's two, and the read-back's four, the last holding
+/// the register's value as the write left it under the output's name. No
+/// device is reached; the test passes on what was sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_devices_update_is_tested_offline_from_twelve_answers_in_order() {
+    let machine = Machine::new("controlwrite", &[]);
+    let world = machine.open().await;
+    let linted = world.ok(&["draft", "lint", "example"]).await;
+    assert_eq!(linted["ok"], true, "{linted}");
+    let tested = world.ok(&["test", "example"]).await;
+    let test = tested["gates"][1]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|test| test["test"] == "heater_limit_set")
+        .cloned()
+        .unwrap_or_else(|| panic!("{tested}"));
+    assert_eq!(test["state"], "passed", "{tested}");
+    assert_eq!(test["path"], "sends", "{tested}");
+    assert_eq!(test["records"]["verified"], 1, "{tested}");
+    assert_eq!(test["steps"].as_array().unwrap().len(), 12, "{tested}");
+    assert!(
+        test["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|step| step == "controller.main"),
+        "{tested}"
+    );
+
+    // One answer fewer, and the step it lacked is named.
+    let answers = machine
+        .project
+        .path()
+        .join("targets/example/fixtures/heater_limit_set/controller.main.json");
+    let twelve: Json = serde_json::from_slice(&std::fs::read(&answers).unwrap()).unwrap();
+    let mut eleven = twelve.as_array().unwrap().clone();
+    eleven.remove(0);
+    std::fs::write(&answers, Json::Array(eleven).to_string()).unwrap();
+    let ran = world.agent(&["test", "example"]).await;
+    assert_ne!(ran.finished.code, 0, "{:?}", ran.finished);
+    let short = ran.result().clone();
+    let test = short["gates"][1]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|test| test["test"] == "heater_limit_set")
+        .cloned()
+        .unwrap_or_else(|| panic!("{short}"));
+    assert_eq!(test["state"], "failed", "{short}");
+    assert!(test.to_string().contains("fixture_no_answer"), "{short}");
+    world.close().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_broker_is_read_through_the_stream_pack() {
     let broker = TestBroker::start().await.unwrap();

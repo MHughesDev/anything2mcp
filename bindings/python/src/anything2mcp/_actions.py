@@ -43,6 +43,7 @@ ACTIONS = (
     "draft.delete",
     "draft.lint",
     "draft.read",
+    "draft.ready",
     "draft.try",
     "draft.write",
     "endpoints.infer",
@@ -287,11 +288,13 @@ class Actions:
         self,
         *,
         target: str,
+        capture: Optional[str] = None,
         surface: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Begin recording actions and traffic on a surface, redacted as it is
-        recorded.
+        """Ask for a capture of your person's own use of a surface. Nothing records
+        until the person begins it on the engine's page; then only the structure
+        of what they use is kept, never a value.
 
         The engine action is ``capture.start``.
         """
@@ -299,6 +302,7 @@ class Actions:
             "capture.start",
             {
                 "target": target,
+                "capture": capture,
                 "surface": surface,
             },
             idempotency_key,
@@ -308,13 +312,22 @@ class Actions:
         self,
         *,
         target: str,
+        capture: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """End the recording and store it.
+        """End a capture you asked for, or read how it ended, and store what it
+        found as findings.
 
         The engine action is ``capture.stop``.
         """
-        return self._action("capture.stop", {"target": target}, idempotency_key)
+        return self._action(
+            "capture.stop",
+            {
+                "target": target,
+                "capture": capture,
+            },
+            idempotency_key,
+        )
 
     def client_connect(
         self,
@@ -514,6 +527,32 @@ class Actions:
             {
                 "file": file,
                 "target": target,
+            },
+            idempotency_key,
+        )
+
+    def draft_ready(
+        self,
+        *,
+        target: str,
+        tools: Optional[List[str]] = None,
+        version: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Make every drafted read a trial in this project read a value through
+        ready to publish: record its offline test and fixture, promote its first
+        binding, run the publish gates, and ask a person to publish, each step
+        by its own action. A write, a pipeline, and a read with no trial are
+        left alone, each with its reason.
+
+        The engine action is ``draft.ready``.
+        """
+        return self._action(
+            "draft.ready",
+            {
+                "target": target,
+                "tools": tools,
+                "version": version,
             },
             idempotency_key,
         )

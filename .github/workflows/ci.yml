@@ -71,6 +71,13 @@ jobs:
       # shows every failure on this operating system.
       - name: Test
         run: cargo test --workspace --locked --no-fail-fast
+      # The browser's memory tests once more, with their output shown, so
+      # that this log holds each process's kind and figure and the browser's
+      # sum on this operating system, each line starting `a2m-memory:`
+      # (package OS4, decision 0425). It runs even when a test above failed.
+      - name: The memory figures of a browser
+        if: ${{ !cancelled() }}
+        run: 'cargo test -p a2m-pack-web-browser --locked tests::memory:: -- --nocapture --test-threads=1'
       # The compiled dependencies are stored when this lock file and toolchain
       # had none stored, before the release builds below: the workspace's own
       # crates are taken out first, since they change with every commit.
@@ -213,6 +220,17 @@ jobs:
         run: python3 tools/test_field_test.py
       - name: Prove the packaging check fails when a package holds another binary
         run: python3 tools/test_check_packages.py
+      # A workflow file GitHub cannot parse fails every run at once and says
+      # nothing; this reads each one, with the standard library alone.
+      - name: Read every workflow file as YAML
+        run: python3 tools/check_workflows.py
+      - name: Prove the workflow check fails on a file that does not read
+        run: python3 tools/test_check_workflows.py
+      # Every build against every release kept in contracts/ (decision 0437).
+      - name: Check the tree against every kept release's contract
+        run: python3 tools/contracts.py check
+      - name: Prove the contract check names each kind of break
+        run: python3 tools/test_contracts.py
 
   bindings:
     name: Wheel and npm packages on ${{ matrix.os }}
@@ -580,8 +598,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends xvfb
       - name: Test the browser base and the web pack, the window tests among them
         run: cargo test --locked --no-fail-fast -p a2m-pack-web-browser -p a2m-pack-web-ui
-      - name: Test the sign-in in a window through the product
-        run: cargo test --locked --no-fail-fast -p anything2mcp --test signed_in_web_read
+      - name: Test the sign-in and the capture of a person's use in a window through the product
+        run: cargo test --locked --no-fail-fast -p anything2mcp --test signed_in_web_read --test capture_use
 
   desktop-windows:
     name: The desktop pack on Windows, against its stand

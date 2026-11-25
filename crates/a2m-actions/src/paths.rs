@@ -2,7 +2,9 @@
 //! runner journal, and the store agree on paths.
 //!
 //! Each operating system's own conventions are followed. `A2M_HOME`
-//! overrides all of them with one directory. Nothing here touches the disk.
+//! overrides all of them with one directory. The layout is resolved from
+//! an environment and touches no disk; only [`Env::on_this_machine`] reads
+//! one folder's entry, the session manager's folder of the user on Linux.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -54,6 +56,13 @@ pub struct Env {
     pub os: OsFamily,
     /// The environment variables.
     pub vars: BTreeMap<String, String>,
+    /// The folder the system's session manager makes for this user's
+    /// runtime files, `/run/user/<uid>` on Linux, when it is a folder of
+    /// this user's that no other account may enter: the folder
+    /// `XDG_RUNTIME_DIR` names in a desktop session. It is read from the
+    /// machine by [`Env::on_this_machine`], and is `None` on every other
+    /// system; a test gives its own (decision 0432).
+    pub session_folder: Option<PathBuf>,
 }
 
 impl Env {
@@ -61,13 +70,30 @@ impl Env {
     /// is left out.
     #[must_use]
     pub fn of_process() -> Self {
-        Self {
-            os: OsFamily::current(),
-            vars: std::env::vars_os()
+        Self::on_this_machine(
+            std::env::vars_os()
                 .filter_map(|(name, value)| {
                     Some((name.into_string().ok()?, value.into_string().ok()?))
                 })
                 .collect(),
+        )
+    }
+
+    /// The environment of a process of this machine with these variables:
+    /// this program's family of operating system, and, on Linux, the
+    /// session manager's folder of this user when it is the user's and
+    /// closed. It reads that folder's entry on the disk, and nothing else.
+    #[must_use]
+    pub fn on_this_machine(vars: BTreeMap<String, String>) -> Self {
+        let os = OsFamily::current();
+        Self {
+            os,
+            vars,
+            session_folder: if os == OsFamily::Linux {
+                session_folder_of_this_user()
+            } else {
+                None
+            },
         }
     }
 
@@ -80,6 +106,7 @@ impl Env {
                 .iter()
                 .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
                 .collect(),
+            session_folder: None,
         }
     }
 
@@ -90,6 +117,30 @@ impl Env {
             .map(PathBuf::from)
             .filter(|path| path.is_absolute())
     }
+}
+
+/// The session manager's folder of the user this process runs as,
+/// `/run/user/<uid>`, when it is a folder of this user's that no other
+/// account may enter.
+fn session_folder_of_this_user() -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        let me = rustix::process::getuid().as_raw();
+        session_folder_at(&PathBuf::from(format!("/run/user/{me}")), me)
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+/// `folder`, when it is a folder, not a link, that the account `me` owns
+/// and no other account may enter or list. A test names a stand-in folder.
+#[cfg(unix)]
+fn session_folder_at(folder: &Path, me: u32) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt as _;
+    let entry = std::fs::symlink_metadata(folder).ok()?;
+    (entry.is_dir() && entry.uid() == me && entry.mode() & 0o077 == 0).then(|| folder.to_path_buf())
 }
 
 /// Where everything is kept.
@@ -209,9 +260,9 @@ impl Paths {
                     .join("Library")
                     .join("Application Support")
                     .join(APP_FOLDER);
-                let runtime = env
-                    .dir("TMPDIR")
-                    .map_or_else(|| support.join("run"), |tmp| tmp.join(APP_FOLDER));
+                // Not `TMPDIR`: it differs between one user's processes,
+                // and the system cleans it (decision 0432).
+                let runtime = support.join("run");
                 Ok(Self::of(
                     PathBuf::from("/Library/Application Support").join(APP_FOLDER),
                     support.clone(),
@@ -237,8 +288,11 @@ impl Paths {
                     .ok_or_else(|| missing("data"))?
                     .join(APP_FOLDER);
                 let cache = pick("XDG_CACHE_HOME", &[".cache"]).ok_or_else(|| missing("cache"))?;
+                // Without the variable, the folder it would have named,
+                // when the session manager made it (decision 0432).
                 let runtime = env
                     .dir("XDG_RUNTIME_DIR")
+                    .or_else(|| env.session_folder.clone())
                     .map_or_else(|| data.join("run"), |run| run.join(APP_FOLDER));
                 Ok(Self::of(
                     PathBuf::from("/etc").join(APP_FOLDER),
@@ -376,6 +430,100 @@ mod tests {
         assert_eq!(windows.config, roaming.join("anything2mcp"));
         assert_eq!(windows.data, local.join("anything2mcp"));
         assert!(Paths::resolve(&Env::with(OsFamily::Linux, &[])).is_err());
+    }
+
+    /// Decision 0432: on macOS the runtime folder is `run` in the data
+    /// folder, whatever `TMPDIR` says, so two processes of one user find
+    /// one socket, in a folder the system does not clean.
+    #[test]
+    fn on_macos_the_runtime_folder_is_in_the_data_folder_whatever_tmpdir_says() {
+        let home = absolute(&["Users", "pat"]);
+        let tmp = absolute(&["var", "folders", "xy", "T"]);
+        let without = Paths::resolve(&Env::with(
+            OsFamily::MacOs,
+            &[("HOME", home.to_str().unwrap())],
+        ))
+        .unwrap();
+        let with = Paths::resolve(&Env::with(
+            OsFamily::MacOs,
+            &[
+                ("HOME", home.to_str().unwrap()),
+                ("TMPDIR", tmp.to_str().unwrap()),
+            ],
+        ))
+        .unwrap();
+        assert_eq!(without.runtime, without.data.join("run"));
+        assert_eq!(with.runtime, without.runtime);
+        assert!(!with.runtime.starts_with(&tmp));
+    }
+
+    /// Decision 0432: on Linux without `XDG_RUNTIME_DIR`, the session
+    /// manager's folder of the user is the runtime folder's parent when it
+    /// is the user's and closed, as the variable would have named it; when
+    /// it is open to others, or missing, the runtime folder is `run` in the
+    /// data folder. The variable, where it is set, still wins.
+    #[cfg(unix)]
+    #[test]
+    fn on_linux_without_the_variable_the_session_folder_is_used_only_when_it_is_the_users_and_closed()
+     {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = std::env::temp_dir().join(format!("a2m-actions-session-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let session = root.join("run-user");
+        std::fs::create_dir_all(&session).unwrap();
+        std::fs::set_permissions(&session, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let home = root.join("home");
+        let home_text = home.to_str().unwrap();
+        let me = rustix::process::getuid().as_raw();
+        let resolved = |session_folder: Option<PathBuf>, vars: &[(&str, &str)]| {
+            let mut env = Env::with(OsFamily::Linux, vars);
+            env.session_folder = session_folder;
+            Paths::resolve(&env).unwrap()
+        };
+
+        let closed = super::session_folder_at(&session, me);
+        assert_eq!(closed.as_deref(), Some(session.as_path()));
+        let paths = resolved(closed, &[("HOME", home_text)]);
+        assert_eq!(paths.runtime, session.join("anything2mcp"));
+        // A process with the variable naming the same folder finds the
+        // same runtime folder.
+        let with_variable = resolved(
+            None,
+            &[
+                ("HOME", home_text),
+                ("XDG_RUNTIME_DIR", session.to_str().unwrap()),
+            ],
+        );
+        assert_eq!(with_variable.runtime, paths.runtime);
+        // The variable wins over the session folder.
+        let elsewhere = root.join("elsewhere");
+        let other = resolved(
+            Some(session.clone()),
+            &[
+                ("HOME", home_text),
+                ("XDG_RUNTIME_DIR", elsewhere.to_str().unwrap()),
+            ],
+        );
+        assert_eq!(other.runtime, elsewhere.join("anything2mcp"));
+
+        // Another account's folder is not the user's.
+        assert_eq!(super::session_folder_at(&session, me.wrapping_add(1)), None);
+        // Open to others: not used.
+        std::fs::set_permissions(&session, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let open = super::session_folder_at(&session, me);
+        assert_eq!(open, None);
+        let paths = resolved(open, &[("HOME", home_text)]);
+        assert_eq!(paths.runtime, paths.data.join("run"));
+        // A link in its place, to a closed folder of the user's: not used.
+        std::fs::set_permissions(&session, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&session, &link).unwrap();
+        assert_eq!(super::session_folder_at(&link, me), None);
+        // Missing: not used.
+        assert_eq!(super::session_folder_at(&root.join("missing"), me), None);
+        // `Env::with` reads nothing from the machine.
+        assert_eq!(Env::with(OsFamily::Linux, &[]).session_folder, None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Finding B4 of the sixth audit, decision 0273: a folder the engine

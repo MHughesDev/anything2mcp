@@ -1803,6 +1803,9 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "capture": {
+          "type": "string"
+         },
          "surface": {
           "type": "string"
          },
@@ -1841,8 +1844,60 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "act": {
+             "type": "string"
+            },
+            "asked_at": {
+             "type": "integer"
+            },
+            "began_at": {
+             "type": "integer"
+            },
+            "bound_seconds": {
+             "type": "integer"
+            },
+            "capture_id": {
+             "type": "string"
+            },
+            "compiled_target_hash": {
+             "type": "string"
+            },
+            "discoverers": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "ended_at": {
+             "type": "integer"
+            },
+            "ended_by": {
+             "enum": [
+              "asked",
+              "person",
+              "bound",
+              "not_begun",
+              "engine_closed",
+              "returned"
+             ]
+            },
+            "environment": {
+             "type": "string"
+            },
+            "expires_at": {
+             "type": "integer"
+            },
+            "findings": {
+             "type": "integer"
+            },
+            "link": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -1869,9 +1924,34 @@
               "when"
              ],
              "type": "object"
+            },
+            "person": {
+             "type": "string"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "recording",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "capture_id",
+            "target",
+            "surface",
+            "environment",
+            "compiled_target_hash",
+            "state",
+            "asked_at",
+            "bound_seconds"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -1913,8 +1993,60 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "act": {
+             "type": "string"
+            },
+            "asked_at": {
+             "type": "integer"
+            },
+            "began_at": {
+             "type": "integer"
+            },
+            "bound_seconds": {
+             "type": "integer"
+            },
+            "capture_id": {
+             "type": "string"
+            },
+            "compiled_target_hash": {
+             "type": "string"
+            },
+            "discoverers": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "ended_at": {
+             "type": "integer"
+            },
+            "ended_by": {
+             "enum": [
+              "asked",
+              "person",
+              "bound",
+              "not_begun",
+              "engine_closed",
+              "returned"
+             ]
+            },
+            "environment": {
+             "type": "string"
+            },
+            "expires_at": {
+             "type": "integer"
+            },
+            "findings": {
+             "type": "integer"
+            },
+            "link": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -1941,9 +2073,34 @@
               "when"
              ],
              "type": "object"
+            },
+            "person": {
+             "type": "string"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "recording",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "capture_id",
+            "target",
+            "surface",
+            "environment",
+            "compiled_target_hash",
+            "state",
+            "asked_at",
+            "bound_seconds"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -1975,7 +2132,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Begin recording actions and traffic on a surface, redacted as it is recorded.",
+    "summary": "Ask for a capture of your person's own use of a surface. Nothing records until the person begins it on the engine's page; then only the structure of what they use is kept, never a value.",
     "x-action": "capture.start",
     "x-sdk": true
    }
@@ -2002,6 +2159,9 @@
        "schema": {
         "additionalProperties": false,
         "properties": {
+         "capture": {
+          "type": "string"
+         },
          "target": {
           "type": "string"
          }
@@ -2037,8 +2197,60 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "act": {
+             "type": "string"
+            },
+            "asked_at": {
+             "type": "integer"
+            },
+            "began_at": {
+             "type": "integer"
+            },
+            "bound_seconds": {
+             "type": "integer"
+            },
+            "capture_id": {
+             "type": "string"
+            },
+            "compiled_target_hash": {
+             "type": "string"
+            },
+            "discoverers": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "ended_at": {
+             "type": "integer"
+            },
+            "ended_by": {
+             "enum": [
+              "asked",
+              "person",
+              "bound",
+              "not_begun",
+              "engine_closed",
+              "returned"
+             ]
+            },
+            "environment": {
+             "type": "string"
+            },
+            "expires_at": {
+             "type": "integer"
+            },
+            "findings": {
+             "type": "integer"
+            },
+            "link": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -2065,9 +2277,34 @@
               "when"
              ],
              "type": "object"
+            },
+            "person": {
+             "type": "string"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "recording",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "capture_id",
+            "target",
+            "surface",
+            "environment",
+            "compiled_target_hash",
+            "state",
+            "asked_at",
+            "bound_seconds"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -2109,8 +2346,60 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "act": {
+             "type": "string"
+            },
+            "asked_at": {
+             "type": "integer"
+            },
+            "began_at": {
+             "type": "integer"
+            },
+            "bound_seconds": {
+             "type": "integer"
+            },
+            "capture_id": {
+             "type": "string"
+            },
+            "compiled_target_hash": {
+             "type": "string"
+            },
+            "discoverers": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "ended_at": {
+             "type": "integer"
+            },
+            "ended_by": {
+             "enum": [
+              "asked",
+              "person",
+              "bound",
+              "not_begun",
+              "engine_closed",
+              "returned"
+             ]
+            },
+            "environment": {
+             "type": "string"
+            },
+            "expires_at": {
+             "type": "integer"
+            },
+            "findings": {
+             "type": "integer"
+            },
+            "link": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -2137,9 +2426,34 @@
               "when"
              ],
              "type": "object"
+            },
+            "person": {
+             "type": "string"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "recording",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "capture_id",
+            "target",
+            "surface",
+            "environment",
+            "compiled_target_hash",
+            "state",
+            "asked_at",
+            "bound_seconds"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -2171,7 +2485,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "End the recording and store it.",
+    "summary": "End a capture you asked for, or read how it ended, and store what it found as findings.",
     "x-action": "capture.stop",
     "x-sdk": true
    }
@@ -5468,6 +5782,315 @@
     },
     "summary": "Read one draft file of a target; stands in for a file system.",
     "x-action": "draft.read",
+    "x-sdk": true
+   }
+  },
+  "/api/v1/actions/draft.ready": {
+   "post": {
+    "operationId": "draft_ready",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "target": {
+          "type": "string"
+         },
+         "tools": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
+         "version": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "target"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "failed": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "gates": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "left_alone": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "publish": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ready": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "target": {
+             "type": "string"
+            },
+            "text": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "target",
+            "ready",
+            "left_alone",
+            "failed",
+            "publish",
+            "text"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "failed": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "gates": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "left_alone": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "publish": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "ready": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "target": {
+             "type": "string"
+            },
+            "text": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "target",
+            "ready",
+            "left_alone",
+            "failed",
+            "publish",
+            "text"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Make every drafted read a trial in this project read a value through ready to publish: record its offline test and fixture, promote its first binding, run the publish gates, and ask a person to publish, each step by its own action. A write, a pipeline, and a read with no trial are left alone, each with its reason.",
+    "x-action": "draft.ready",
     "x-sdk": true
    }
   },

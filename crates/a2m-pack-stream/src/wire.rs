@@ -85,6 +85,84 @@ pub(crate) fn plain_tcp_address(address: &str) -> Result<std::net::SocketAddr, W
     }
 }
 
+/// Where a plain TCP connection is made: an IP address, or a host name the
+/// resolver turns into one when the connection opens. Only a connection that
+/// carries no credential is ever made to a name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Dial {
+    /// An IP address with its port.
+    Address(std::net::SocketAddr),
+    /// A host name with its port, as the surface writes it.
+    Name(String, u16),
+}
+
+impl Dial {
+    /// Opens the connection. A name is resolved here and the addresses it
+    /// gives are tried in turn; the caller bounds the whole by its deadline.
+    pub(crate) async fn connect(&self) -> std::io::Result<tokio::net::TcpStream> {
+        match self {
+            Self::Address(address) => tokio::net::TcpStream::connect(address).await,
+            Self::Name(name, port) => tokio::net::TcpStream::connect((name.as_str(), *port)).await,
+        }
+    }
+}
+
+/// Where a plain TCP connection to the surface's `address` may go
+/// (decision 0435). A connection that carries the session's credential goes
+/// only where [`plain_tcp_address`] allows: this machine's loopback address,
+/// so that the credential never crosses a plain link to another machine. A
+/// connection that carries none, to a broker that asks for no sign-in, may
+/// go to any address a connection can be made to: an IP address with its
+/// port, or a host name with its port. What it carries is what the broker
+/// would show anyone on that network, and which address it goes to is the
+/// surface's, which a person registered for the target and the run's
+/// destinations hold (decision 0413, section 502); nothing a step sends can
+/// change it. An unspecified, multicast, or zoned address, an IPv4 address
+/// written inside IPv6, a spelling only a lenient parser widens (`127.1`),
+/// and a port of 0 are never one. Nothing is resolved or sent before this.
+pub(crate) fn plain_tcp_dial(address: &str, with_credential: bool) -> Result<Dial, WireError> {
+    if with_credential {
+        return plain_tcp_address(address).map(Dial::Address);
+    }
+    let refused = || WireError {
+        kind: WireErrorKind::Transport,
+        sent: Sent::NotSent,
+        detail: "plain TCP is used only to an IP address or a host name, with its port".to_owned(),
+    };
+    if let Ok(found) = address.parse::<std::net::SocketAddr>() {
+        let host = a2m_core::ScopedHost::of_socket_address(found);
+        let dialable = found.port() != 0
+            && !host.written_with_zone()
+            && !host.written_as_ipv4_in_ipv6()
+            && !matches!(
+                host.scope(),
+                a2m_core::AddressScope::Unspecified
+                    | a2m_core::AddressScope::Multicast
+                    | a2m_core::AddressScope::Unreadable
+            );
+        return if dialable {
+            Ok(Dial::Address(found))
+        } else {
+            Err(refused())
+        };
+    }
+    let Some((host, port)) = address.rsplit_once(':') else {
+        return Err(refused());
+    };
+    let port = (!port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| port.parse::<u16>().ok())
+        .flatten()
+        .filter(|port| *port != 0)
+        .ok_or_else(refused)?;
+    let scoped = a2m_core::ScopedHost::of_host(host);
+    match scoped.name() {
+        Some(name) if scoped.scope() == a2m_core::AddressScope::Name => {
+            Ok(Dial::Name(name.to_owned(), port))
+        }
+        _ => Err(refused()),
+    }
+}
+
 /// The session's credential, as a wire protocol presents it when a
 /// connection opens. It is used for that and kept nowhere.
 pub(crate) enum Credential {
@@ -121,6 +199,11 @@ pub(crate) struct ChannelFacts {
     pub shape: Option<Shape>,
     /// The field of the body the broker says the key is taken from.
     pub key_field: Option<String>,
+    /// Whether the broker keys a message by the last token of the subject
+    /// it is published on, below the channel's own subject: what the
+    /// channel's configuration states, as a stream's subjects do. A broker
+    /// that keys so takes no field of the body as the key.
+    pub key_from_subject: bool,
     /// A schema the broker holds for the body: a claim, not a check.
     pub schema: Option<Json>,
     /// The header whose repeated value the broker refuses.
@@ -399,6 +482,74 @@ mod tests {
             (refused.kind, refused.sent),
             (WireErrorKind::Transport, Sent::NotSent)
         );
+    }
+
+    /// Field test 7, finding 43: a broker that asks for no sign-in, on
+    /// another machine or in a container of its own, was refused because
+    /// plain TCP went to the loopback address only, though the rule is there
+    /// to keep a credential off a plain link. With no credential, a plain
+    /// connection is made to any address one can be made to; with one, the
+    /// loopback rule holds, unchanged.
+    #[test]
+    fn a_connection_that_carries_no_credential_may_go_to_another_address() {
+        for (good, dial) in [
+            (
+                "192.0.2.10:4222",
+                Dial::Address("192.0.2.10:4222".parse().unwrap()),
+            ),
+            (
+                "10.1.2.3:4222",
+                Dial::Address("10.1.2.3:4222".parse().unwrap()),
+            ),
+            (
+                "[2001:db8::1]:4222",
+                Dial::Address("[2001:db8::1]:4222".parse().unwrap()),
+            ),
+            (
+                "127.0.0.1:4222",
+                Dial::Address("127.0.0.1:4222".parse().unwrap()),
+            ),
+            ("localhost:4222", Dial::Name("localhost".to_owned(), 4222)),
+            (
+                "broker.internal:7400",
+                Dial::Name("broker.internal".to_owned(), 7400),
+            ),
+        ] {
+            assert_eq!(plain_tcp_dial(good, false), Ok(dial), "{good}");
+            if good != "127.0.0.1:4222" {
+                let refused = plain_tcp_dial(good, true).unwrap_err();
+                assert_eq!(
+                    (refused.kind, refused.sent),
+                    (WireErrorKind::Transport, Sent::NotSent),
+                    "{good}"
+                );
+            }
+        }
+        for bad in [
+            "0.0.0.0:4222",
+            "[::]:4222",
+            "224.0.0.1:4222",
+            "[::ffff:10.1.2.3]:4222",
+            "[fe80::1%1]:4222",
+            "127.1:4222",
+            "0x7f.0.0.1:4222",
+            "192.0.2.10:0",
+            "broker.internal:0",
+            "broker.internal:+42",
+            "broker.internal:65536",
+            "broker.internal",
+            "user@broker.internal:4222",
+            "broker internal:4222",
+            ":4222",
+            "",
+        ] {
+            let refused = plain_tcp_dial(bad, false).unwrap_err();
+            assert_eq!(
+                (refused.kind, refused.sent),
+                (WireErrorKind::Transport, Sent::NotSent),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

@@ -41,6 +41,9 @@ pub enum EntryKindFound {
     Link,
     /// A device, a pipe, or a socket: never opened.
     Other,
+    /// A file whose bytes are not on this machine: never read
+    /// (decision 0430).
+    NotOnThisMachine,
 }
 
 /// One entry of a folder, as discovery saw it.
@@ -92,6 +95,7 @@ impl FolderFound {
                         folder::Kind::Folder => EntryKindFound::Folder,
                         folder::Kind::Link => EntryKindFound::Link,
                         folder::Kind::Other => EntryKindFound::Other,
+                        folder::Kind::NotOnThisMachine => EntryKindFound::NotOnThisMachine,
                     },
                     name: entry.name,
                     size: entry.size,

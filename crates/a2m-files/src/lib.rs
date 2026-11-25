@@ -50,16 +50,17 @@ pub use load::{
     MOST_HELD_FILES, SourceFile, Sources, TargetRoot, held_files, load, load_files, read_held,
 };
 pub use register::{
-    CompileMode, CompiledSection, CompilerSet, CompilerSetBuilder, DEFAULT_MODE_RANK, DeclaredName,
-    DefinedName, DraftingRule, ExprSite, FileKind, FixedPlace, LintRule, Lowered, Lowering,
-    NoticeField, Possible, ProgramField, StepChanges, StepCommits, SurfaceKindSpec,
+    AssertedField, AssertedRead, CompileMode, CompiledSection, CompilerSet, CompilerSetBuilder,
+    DEFAULT_MODE_RANK, DeclaredName, DefinedName, DraftingRule, ExprSite, FileKind, FixedPlace,
+    LintRule, Lowered, Lowering, NoticeField, Possible, ProgramField, StepChanges, StepCommits,
+    SurfaceKindSpec,
 };
 pub use review::{
-    BindingReview, BindingStatement, BindingStates, CredentialShown, EnvironmentVariable,
-    LAUNCHER_NOTICE, NOT_STATED, PROBE_PENDING, PROVIDER_NOT_HELD, PlaceReview, ProbeReview,
-    ProgramRun, REACH_NOT_STATED, Reach, ReachGroup, ReviewItem, ReviewSummary, RunReview,
-    SCRIPT_NOTICE, SENT_TO_NOT_STATED, Sends, SentAddress, SentGroup, SentTo, SentToReview,
-    SignInReview, Statement, VariableValue,
+    ASSERTED_NOTICE, AssertedReview, BindingReview, BindingStatement, BindingStates,
+    CredentialShown, EnvironmentVariable, LAUNCHER_NOTICE, NOT_STATED, PROBE_PENDING,
+    PROVIDER_NOT_HELD, PlaceReview, ProbeReview, ProgramRun, REACH_NOT_STATED, Reach, ReachGroup,
+    ReviewItem, ReviewSummary, RunReview, SCRIPT_NOTICE, SENT_TO_NOT_STATED, Sends, SentAddress,
+    SentGroup, SentTo, SentToReview, SignInReview, Statement, VariableValue,
 };
 pub use schema::{Checked, JsonSchema, Misfit, Misfits, OPEN_QUESTION, Reference};
 pub use source::{

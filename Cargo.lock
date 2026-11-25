@@ -413,9 +413,11 @@ dependencies = [
  "a2m-provider",
  "a2m-telemetry",
  "example-app",
+ "libc",
  "serde",
  "serde_json",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -484,6 +486,7 @@ dependencies = [
  "example-cli",
  "example-decompiler",
  "getrandom 0.4.3",
+ "libc",
  "rustix",
  "serde",
  "serde_json",
@@ -1132,6 +1135,7 @@ name = "example-files"
 version = "0.0.1"
 dependencies = [
  "sha2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -42,7 +42,7 @@ use a2m_core::{Date, Digest, Value, Values};
 use a2m_provider::{HeldFolder, StepFailure};
 
 use crate::codes::{self, stop};
-use crate::open::{missing, not_allowed, unavailable};
+use crate::open::{missing, not_allowed, not_on_this_machine, unavailable};
 use crate::place::{Folder, Identity, Named, is_one_name};
 
 /// The longest entry name, in bytes: the most most file systems hold.
@@ -55,6 +55,10 @@ pub(crate) enum Kind {
     Folder,
     Link,
     Other,
+    /// A file whose bytes are not on this machine: listed with its name,
+    /// size, and time, which the system gives without a fetch, and never
+    /// read (decision 0430).
+    NotOnThisMachine,
 }
 
 impl Kind {
@@ -64,19 +68,25 @@ impl Kind {
             Self::Folder => "folder",
             Self::Link => "link",
             Self::Other => "other",
+            Self::NotOnThisMachine => "not_on_this_machine",
         }
     }
 
-    fn of(file_type: fs::FileType) -> Self {
-        if file_type.is_symlink() {
-            Self::Link
-        } else if file_type.is_dir() {
-            Self::Folder
-        } else if file_type.is_file() {
-            Self::File
-        } else {
-            Self::Other
+    /// The kind, as the provider contract tells it from what the system
+    /// said, with no link followed and nothing opened.
+    fn of(metadata: &fs::Metadata) -> Self {
+        match a2m_provider::EntryKind::of_metadata(metadata) {
+            a2m_provider::EntryKind::Link => Self::Link,
+            a2m_provider::EntryKind::Folder => Self::Folder,
+            a2m_provider::EntryKind::File => Self::File,
+            a2m_provider::EntryKind::NotOnThisMachine => Self::NotOnThisMachine,
+            a2m_provider::EntryKind::Absent | a2m_provider::EntryKind::Other => Self::Other,
         }
+    }
+
+    /// Whether the entry is a file, whether or not its bytes are here.
+    const fn is_a_file(self) -> bool {
+        matches!(self, Self::File | Self::NotOnThisMachine)
     }
 }
 
@@ -160,12 +170,12 @@ fn look(path: &Path, name: String) -> Result<Entry, StepFailure> {
             StepFailure::not_sent(unavailable("has an entry that cannot be looked at"))
         }
     })?;
-    let kind = Kind::of(metadata.file_type());
+    let kind = Kind::of(&metadata);
     Ok(Entry {
         name,
         kind,
-        size: (kind == Kind::File).then_some(metadata.len()),
-        modified: matches!(kind, Kind::File | Kind::Folder)
+        size: kind.is_a_file().then_some(metadata.len()),
+        modified: (kind.is_a_file() || kind == Kind::Folder)
             .then(|| metadata.modified().ok().and_then(moment))
             .flatten(),
     })
@@ -415,6 +425,7 @@ pub(crate) fn read(file: &Named, max_bytes: u64) -> Result<Option<Vec<u8>>, Step
     match checked.entry_kind() {
         Ok(a2m_provider::EntryKind::File) => {}
         Ok(a2m_provider::EntryKind::Absent) => return Err(missing()),
+        Ok(a2m_provider::EntryKind::NotOnThisMachine) => return Err(not_on_this_machine()),
         Ok(_) => {
             return Err(StepFailure::not_sent(not_allowed(
                 "it is a link, a folder, or a special file, and only a regular file's bytes are read",
@@ -883,6 +894,7 @@ fn delete_with(
                     _ => StepFailure::not_sent(not_allowed("its folder cannot be written to")),
                 })?;
         }
+        Kind::NotOnThisMachine => return Err(not_on_this_machine()),
         Kind::Link | Kind::Other => {
             return Err(StepFailure::not_sent(not_allowed(
                 "it is a link or a special file, and the file pack removes only a file or an empty folder",

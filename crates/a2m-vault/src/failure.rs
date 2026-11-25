@@ -22,6 +22,18 @@ pub(crate) fn unreachable(what: &'static str) -> Failure {
     )
 }
 
+/// The passphrase route's salt file records a format, an algorithm, or a
+/// cost this build does not derive with (decision 0438). Nothing is derived:
+/// another cost would give another root.
+pub(crate) fn salt_unsupported() -> Failure {
+    Failure::new(
+        FailureClass::Busy,
+        KEY_STORE_UNREACHABLE,
+        "The key store is not reachable: the salt file of its passphrase records a derivation this build does not read.",
+        "Start the engine with a build that reads the salt file's format; nothing was derived, and the file is left as it is.",
+    )
+}
+
 /// The root that wrapped a key is gone.
 pub(crate) fn entry_missing() -> Failure {
     Failure::new(

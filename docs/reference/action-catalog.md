@@ -9,7 +9,7 @@ The single list of everything a person, an agent, or a program can ask Anything2
 | REST | `POST /api/v1/actions/<noun>.<verb>` | `POST /api/v1/actions/target.probe` |
 | SDK | One method for each action, named from its noun and verb: `client.<noun>_<verb>()` in Python, `client.<noun><Verb>()` in Node | `client.target_probe()`, `client.targetProbe()` |
 
-This is a design draft. The list is settled action by action as each phase builds it; adding, renaming, or removing an action after its phase ships is a change to a public interface and needs a decision record.
+This is a design draft. The list is settled action by action as each phase builds it; adding, renaming, or removing an action after its phase ships is a change to a public interface and needs a decision record. An action's inputs and output are promised from the release that builds it: one with no handler is to carry `x-sdk: false` and get no client method, and each release's built actions are kept and checked against every later build ([decision 0437](../decisions/0437-what-a-release-publishes-is-kept-and-every-later-build-is-checked-against-it.md); package YL4 keeps and checks them, and no release is kept yet; package YL5 is not built, and today every action has a method in both clients).
 
 **Columns.** *Who* is the lowest role that may use the action on a server ([spec section 214](../spec/2-kernel/214-access-control-toolsets-and-tenancy.md)); on one machine the user holds every role. *Listed* says whether the MCP tool appears in a tool list (`use` or `build` toolset) or is reached through `a2m_action_run`. *Phase* is when it is built.
 
@@ -44,8 +44,8 @@ This is a design draft. The list is settled action by action as each phase build
 | `target.list` | Targets in the project and their versions | Builder | No | 5 |
 | `auth.detect` | The sign-in method, with evidence, and a recommended identity mode | Builder | build | 2 |
 | `screen.snapshot` | Compact accessibility snapshot of the current page or window | Builder | build | 1 |
-| `capture.start` | Begin recording actions and traffic, redacted | Builder | build | 4 |
-| `capture.stop` | End the recording and store it | Builder | build | 4 |
+| `capture.start` | Ask for a capture of the caller's person's own use of a surface: nothing records until the person begins it on the engine's page, past the presence prompt, where they are told what is kept; then only structure is kept, never a value ([decision 0392](../decisions/0392-a-page-that-reads-by-a-method-that-may-write-is-learned-from-a-persons-watched-use-and-read-through-an-asserted-request.md), point 2; [decision 0433](../decisions/0433-a-capture-is-asked-for-by-capture-start-begun-by-its-person-on-the-page-and-held-in-the-engines-memory.md)). The press on the page carries the capture's identifier, with the person's proof | Builder | build | 4 |
+| `capture.stop` | End a capture the caller asked for, or read how it ended: by the asker, by its person on its page, or at its discoverer's bound. What it found is stored as findings, read with `finding.list` | Builder | build | 4 |
 | `endpoints.infer` | Endpoint templates, schemas, and dependencies from recordings | Builder | build | 4 |
 | `spec.import` | A new scout of a target handed one file of the project's `sources` folder, a description the system publishes about itself: `scout.run` with `files` naming it `description`, and nothing more | Builder | build | 4 |
 | `draft.read` | Read a draft file; stands in for a file system | Builder | build | 5 |
@@ -55,6 +55,7 @@ This is a design draft. The list is settled action by action as each phase build
 | `draft.try` | Run a draft binding in the sandbox | Builder | build | 5 |
 | `test.run` | Run the publish gates and return evidence | Builder | build | 3 |
 | `fixture.record` | Record a read's offline test and fixture from one real read in the sandbox, every value scrubbed by rule | Builder | No | 3 |
+| `draft.ready` | Every drafted read a trial in this project read a value through, made ready to publish: its offline test and fixture recorded, its first binding promoted on the fixture's own trial, the publish gates run, and a person asked to publish, each step by the action that does it, for the same caller. A write, a pipeline, and a read no trial read through are left alone, each with its reason and the step that moves it on; a call that names one is refused before anything is done ([decision 0401](../decisions/0401-the-steps-between-a-proven-read-and-a-publish-are-one-action.md), [decision 0443](../decisions/0443-draft-ready-asks-for-the-publish-and-takes-the-callers-own-trial.md)) | Builder | build | 5 |
 | `shadow.report` | How often a shadow binding matched, and where it differed | Builder | build | 4 |
 | `target.show` | Print a target's compiled target as text | Builder | No | 1 |
 | `version.diff` | Compare two versions and classify each change | Builder | No | 5 |
@@ -148,6 +149,7 @@ Single-word commands for people. Each is a fixed sequence of the actions above a
 | `add <name>` | `target.add`, `scout.run`, `scout.report`; takes `--address` and `--kind` for `target.add` and `--description <file>` for `scout.run` (a description of the system in the project's `sources` folder, handed over as `spec.import` hands it). It ends at the report, whose `next` is `session.login` only where a read waits for a sign-in; each proven read in the report carries the `draft.try` call that reads it ([decision 0306](../decisions/0306-the-short-path-is-add-then-a-trial-and-only-a-built-action-is-listed-up-front.md)) |
 | `learn` | `capture.start`, `capture.stop`, `endpoints.infer`, then drafts |
 | `lint`, `try`, `test` | `draft.lint`, `draft.try`, `test.run` |
+| `ready <name>` | `draft.ready`: a read-only tool that was tried is then `add`, `ready`, and a person's press ([decision 0443](../decisions/0443-draft-ready-asks-for-the-publish-and-takes-the-callers-own-trial.md)) |
 | `publish` | `publish.request`, then waits for a person |
 | `status` | `target.status` |
 | `call`, `run` | `tool.call` for an operation or a pipeline |

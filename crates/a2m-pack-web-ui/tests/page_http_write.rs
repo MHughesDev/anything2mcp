@@ -838,6 +838,128 @@ async fn each_fault_of_a_write_stops_by_name_unsent_or_in_doubt_as_the_request_l
     secure.stand.end().await;
 }
 
+/// Decisions 0424 and 0428: a browser lost after a write's `goto` reached
+/// its page in the acting tab. The write's request is never sent from a
+/// tab opened in its place, however often it is tried, and the stand
+/// stores nothing; the read-back, which reads in the observing tab, goes on
+/// in a new browser of the same profile.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_lost_before_a_write_is_sent_never_sends_it_and_the_read_back_goes_on() {
+    let app = TestApp::start().await.unwrap();
+    let mode = page_http_mode();
+    let scene = scene("page-http-write-lost", &app, "", str::to_owned);
+    let supervisor = scene.stand.supervisor.clone();
+    let handle = scene.handle_of(&mode);
+    let binding = scene.binding_in(UPDATE, &mode).clone();
+    let kinds: Vec<&str> = binding.act.iter().map(|step| step.kind.as_str()).collect();
+    assert_eq!(kinds, ["goto", "request"]);
+    assert!(binding.act[1].commits);
+    let write = Write::new(&["A-100"]).await;
+    let inputs = note("A-100", "Never sent");
+    let (_, mut prepared) = scene
+        .try_prepare_in(&mode, Some(write.fence), Posture::Live)
+        .await
+        .unwrap();
+    let (token, record, key) = write.authority();
+    let step = |at: usize| {
+        let step = &binding.act[at];
+        (step, scene.args(step, &inputs))
+    };
+
+    // The write's `goto` reaches the page in the acting tab.
+    let (goto, args) = step(0);
+    let input = StepInput::new(&args, Deadline::after(Duration::from_secs(60))).for_record(
+        record,
+        Some(key),
+        None,
+    );
+    handle
+        .act(&mut prepared, goto, &input, Authority::Read)
+        .await
+        .unwrap();
+
+    // The browser is lost before the request is sent.
+    let running = supervisor.list();
+    assert!(!running.is_empty());
+    for process in &running {
+        common::kill(process.process);
+    }
+    let browsers = scene.stand.browsers.get().unwrap();
+    let gone = async {
+        while !browsers
+            .list()
+            .iter()
+            .all(|open| open.health == a2m_pack_web_browser::BrowserHealth::Exited)
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(60), gone)
+        .await
+        .unwrap();
+
+    // The request, tried as often as the engine would: it fails each time,
+    // no browser is started in its place, and the stand saw no PUT and
+    // stored nothing.
+    let (put, args) = step(1);
+    for _ in 0..3 {
+        let input = StepInput::new(&args, Deadline::after(Duration::from_secs(60))).for_record(
+            record,
+            Some(key),
+            None,
+        );
+        let failed = handle
+            .act(&mut prepared, put, &input, Authority::Write(token))
+            .await
+            .unwrap_err();
+        assert_eq!(failed.sent, Sent::NotSent, "{failed:?}");
+        assert_eq!(
+            class_and_code(&failed),
+            (FailureClass::Transient, "connection_lost")
+        );
+        // The supervisor still holds the killed process, which a new
+        // browser of the profile would reap: none was started.
+        assert!(
+            supervisor
+                .list()
+                .iter()
+                .all(|left| running.iter().any(|killed| killed.process == left.process))
+        );
+    }
+    let puts = app
+        .seen_all()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|line| line.starts_with("PUT "))
+        .count();
+    assert_eq!(puts, 0);
+    let stored = app.stored_notes().await.unwrap();
+    assert!(stored.writes.is_empty(), "{stored:?}");
+
+    // The read-back reads in the observing tab, which is opened again in a
+    // new browser of the same profile: it finds the note the stand holds.
+    let back = scene
+        .run(&handle, &mut prepared, &binding.read_back, &inputs, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        back.values.get("note"),
+        Some(&Value::from(stored.notes["A-100"].as_str()))
+    );
+    let now = supervisor.list();
+    assert_eq!(now.len(), 1);
+    assert!(
+        running
+            .iter()
+            .all(|killed| killed.process != now[0].process)
+    );
+    assert!(handle.release(prepared, true).await.complete);
+    assert_eq!(app.stored_notes().await.unwrap().writes.len(), 0);
+    scene.stand.end().await;
+    assert!(supervisor.list().is_empty());
+}
+
 /// Audit finding S4 (decision 0245): an answer that quotes the page's
 /// token in a spelling the page's scrub does not know, here in capitals,
 /// is withheld whole in the page. The write is in doubt, and no form of the

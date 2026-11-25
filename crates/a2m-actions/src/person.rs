@@ -687,6 +687,19 @@ impl ApprovalDesk {
         }
     }
 
+    /// Ends a capture of a person's use, as its person ends it on its page
+    /// (decision 0392, point 2). Ending one asks for no proof of presence:
+    /// it stops a recording and starts nothing. A capture that had ended
+    /// already is left as it is, so a second press is harmless.
+    ///
+    /// # Errors
+    ///
+    /// `input`/`not_found` when there is no such capture of `person`;
+    /// `busy`/`engine_degraded` once the kernel has closed.
+    pub fn end_capture(&self, capture: &str, person: PrincipalId) -> Result<(), Failure> {
+        self.acts.kernel()?.end_capture_by_person(capture, person)
+    }
+
     /// One run that waits at `needs_approval`, with the diff a person is
     /// asked about.
     ///

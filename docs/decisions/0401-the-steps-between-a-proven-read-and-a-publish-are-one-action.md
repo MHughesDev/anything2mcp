@@ -1,6 +1,6 @@
 # 0401. The steps between a proven read and a publish are one action
 
-**Status:** Accepted. Design decision, made by the design architect. The owner had not read this record when it was merged. Nothing in it is built.
+**Status:** Accepted. Design decision, made by the design architect. The owner had not read this record when it was merged. Points 1 and 4 are superseded by [decision 0443](0443-draft-ready-asks-for-the-publish-and-takes-the-callers-own-trial.md), and the rest is built by package S3.
 
 **Date:** 2026-11-24
 

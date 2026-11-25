@@ -115,8 +115,10 @@ async fn discovery_identifies_the_device_and_changes_nothing() {
             .any(|text| text.contains("example-controller"))
     );
 
-    // The draft: a map with the model and the firmware version the device
-    // reported, and no register, range, hazard, or unit.
+    // No draft: a device that lists no register gives no map, because a
+    // map with no register is nothing to try and stands beside the map
+    // the device's documentation gives (field test 8, finding 52). The
+    // report says why, and the folder holds nothing new.
     let folder = Folder::new("draft");
     std::fs::copy(
         common::fixtures().join("target.yaml"),
@@ -127,42 +129,20 @@ async fn discovery_identifies_the_device_and_changes_nothing() {
     let report = Drafter::new(scene.registry.compiler_set(), &root)
         .draft(&kept.0)
         .unwrap();
-    let written: Vec<&str> = report
-        .written
-        .iter()
-        .map(a2m_files::RelPath::as_str)
-        .collect();
-    assert_eq!(written, ["registers/example_controller.yaml"]);
+    assert!(report.written.is_empty(), "{:?}", report.written);
     assert!(report.kept_failing.is_empty(), "{:?}", report.kept_failing);
     assert!(report.open_questions.is_empty() && report.not_covered.is_empty());
-    let text = std::fs::read_to_string(
-        folder
-            .path()
-            .join("registers")
-            .join("example_controller.yaml"),
-    )
-    .unwrap();
+    let [not_drafted] = report.not_drafted.as_slice() else {
+        panic!("one finding not drafted, not {:?}", report.not_drafted);
+    };
+    assert_eq!(not_drafted.finding, finding.id());
     assert!(
-        text.contains("example-controller") && text.contains("2.4.0"),
-        "{text}"
+        not_drafted.reason.contains("published register map"),
+        "{}",
+        not_drafted.reason
     );
-    for never in ["hazard", "range", "access", "safe_state", "unit", "scale"] {
-        assert!(!text.contains(never), "{never} in:\n{text}");
-    }
-    // The same finding gives the same bytes.
-    Drafter::new(scene.registry.compiler_set(), &root)
-        .draft(&kept.0)
-        .unwrap();
-    assert_eq!(
-        std::fs::read_to_string(
-            folder
-                .path()
-                .join("registers")
-                .join("example_controller.yaml")
-        )
-        .unwrap(),
-        text
-    );
+    assert!(!not_drafted.reason.contains("example-controller"));
+    assert!(!folder.path().join("registers").exists());
 }
 
 /// A register map as a vendor publishes it, in the layout the pack reads.
@@ -372,6 +352,35 @@ async fn a_published_map_drafts_reads_that_read_the_stand_and_send_no_frame_to_d
     ] {
         assert!(!map.contains(never), "{never} in:\n{map}");
     }
+    // A scaled register's read states the places its scale gives, so two
+    // reads of one map say the same of their precision: a tenth is one
+    // place, a hundredth two (field test 8, finding 51).
+    let read_of = |name: &str| {
+        std::fs::read_to_string(
+            folder
+                .path()
+                .join("operations")
+                .join(format!("example_map_{name}_get.yaml")),
+        )
+        .unwrap()
+    };
+    let temperature = read_of("temperature");
+    assert!(
+        temperature.contains("exact to 1 decimal place, the places of the map's scale `0.1`"),
+        "{temperature}"
+    );
+    let dosing = read_of("dosing_rate");
+    assert!(
+        dosing.contains("exact to 2 decimal places, the places of the map's scale `0.01`"),
+        "{dosing}"
+    );
+    let uptime = std::fs::read_to_string(
+        folder
+            .path()
+            .join("held/operations/example_map_uptime_ticks_get.yaml"),
+    )
+    .unwrap();
+    assert!(!uptime.contains("decimal place"), "{uptime}");
     // The one question: the unit of the number whose unit the map does not
     // state, in the read of it alone.
     let questioned: Vec<&str> = report

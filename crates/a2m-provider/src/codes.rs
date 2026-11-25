@@ -75,6 +75,9 @@ a2m_core::failure_codes! {
     EFFECT_NOT_DECLARED = Policy, "effect_not_declared",
         meaning "A registration, a start, or a root beyond what the manifest declares.",
         next "Declare it in the provider's manifest, where a person can review it, or keep to what the manifest declares.";
+    FILE_NOT_ON_THIS_MACHINE = Policy, "file_not_on_this_machine",
+        meaning "A file's bytes are not on this machine: a sync program keeps them elsewhere, and reading or replacing the file would make it fetch them. Nothing was read or written.",
+        next "In the sync program's own settings, make the file kept on this machine, then try again.";
     SIGNATURE_INVALID = Policy, "signature_invalid",
         meaning "A plug-in's signature does not verify.",
         next "Install the plug-in again from its author, signed by a key this engine trusts.";

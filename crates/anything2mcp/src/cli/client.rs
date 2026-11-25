@@ -102,16 +102,32 @@ pub(crate) async fn find(
             Ok(link) => return Ok(Found::Engine(link)),
             Err(failure) if unreachable(&failure) => {
                 let lock_paths = paths.clone();
-                let taken = tokio::task::spawn_blocking(move || EngineLock::take(&lock_paths))
-                    .await
-                    .map_err(|_| {
-                        Failure::new(
-                            FailureClass::Busy,
-                            local_codes::CHANNEL_UNAVAILABLE,
-                            "The engine lock could not be taken: the task that took it stopped.",
-                            "Run the command again.",
-                        )
-                    })?;
+                let taken = tokio::task::spawn_blocking(move || {
+                    let taken = EngineLock::take(&lock_paths);
+                    // An engine of another runtime directory never answers
+                    // on this one's channel: it is not waited for, and its
+                    // refusal says where it is (decision 0432).
+                    let elsewhere = match &taken {
+                        Err(failure) if *failure.code() == local_codes::ENGINE_RUNNING => {
+                            EngineLock::elsewhere(&lock_paths).ok().flatten()
+                        }
+                        _ => None,
+                    };
+                    (taken, elsewhere)
+                })
+                .await
+                .map_err(|_| {
+                    Failure::new(
+                        FailureClass::Busy,
+                        local_codes::CHANNEL_UNAVAILABLE,
+                        "The engine lock could not be taken: the task that took it stopped.",
+                        "Run the command again.",
+                    )
+                })?;
+                let taken = match taken {
+                    (_, Some(elsewhere)) => return Err(elsewhere),
+                    (taken, None) => taken,
+                };
                 match taken {
                     Ok(lock) => return Ok(Found::Nothing(lock, refused)),
                     Err(failure) if *failure.code() != local_codes::ENGINE_RUNNING => {

@@ -232,7 +232,7 @@ Each is proven in `tests/` against the stand, which reports the bytes on disk th
 | A line form is named only where exactly one fits; a key naming a secret and a value shaped as a credential are told | `evidence.rs`, unit tests |
 | The drafter refuses a folder, a document, and an operation that write, each with its reason | `pack.rs`, `a_drafting_rule_that_drafts_a_folder_or_an_operation_that_writes_is_refused`, `a_drafting_rule_that_drafts_a_document_that_writes_is_refused` |
 
-Not proven here: a file held open without sharing, which only Windows shows. `a_file_held_without_sharing_is_busy` runs it there and ends early elsewhere. CI on Windows must show that test passing, and that the save tests pass with `rename` over an existing file.
+Not proven here: a file held open without sharing, which only Windows shows. `a_file_held_without_sharing_is_busy` runs it there and ends early elsewhere. CI on Windows must show that test passing, and that the save tests pass with `rename` over an existing file. A file whose bytes are not on this machine is the same: the stand marks one only on Windows, by the offline attribute, and `stand.rs`, `a_file_not_on_this_machine_is_neither_read_nor_written`, and `entries.rs`, `a_file_not_on_this_machine_is_listed_without_a_digest_and_never_read_or_replaced`, run there and end early elsewhere; a macOS dataless file is made only by a file provider, so the provider contract's unit test of the mapping is the proof on macOS, and a person's check on a machine with such a folder is owed (decision 0430).
 
 Also not proven, and why:
 

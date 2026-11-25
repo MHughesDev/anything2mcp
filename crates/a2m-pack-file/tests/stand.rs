@@ -1435,6 +1435,53 @@ async fn a_file_held_without_sharing_is_busy() {
     assert!(scene.stand.strays().unwrap().is_empty());
 }
 
+/// A document's file whose bytes are not on this machine is refused by a
+/// read and by a write before anything is read, and is left as it was
+/// (decision 0430). Only Windows lets the stand mark one; elsewhere the
+/// test ends here.
+#[tokio::test]
+async fn a_file_not_on_this_machine_is_neither_read_nor_written() {
+    let scene = Scene::new();
+    let away = Fault::NotOnThisMachine {
+        file: seed::STOCK_CSV.to_owned(),
+    };
+    if scene
+        .stand
+        .set_fault(away)
+        .is_err_and(|error| error.is_unsupported())
+    {
+        return;
+    }
+    let item = inputs(&[("item_code", text("EX-1002"))]);
+    let failure = scene
+        .read_operation("example_stock_get", &item)
+        .await
+        .unwrap_err();
+    assert_eq!(failure.sent, Sent::NotSent);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Policy, "file_not_on_this_machine")
+    );
+    let store = store().await;
+    let values = inputs(&[("item_code", text("EX-1002")), ("on_hand", Value::Int(38))]);
+    let failure = refused(write(&scene, &store, 1, "example_stock_set", &values, || {}).await);
+    assert_eq!(failure.sent, Sent::NotSent);
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Policy, "file_not_on_this_machine")
+    );
+    scene.stand.clear_faults().unwrap();
+    assert_eq!(
+        scene
+            .stand
+            .write_count(seed::STOCK_CSV)
+            .unwrap()
+            .content_changes,
+        0
+    );
+    assert!(scene.stand.strays().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn a_root_that_may_only_be_read_is_never_written() {
     let scene = Scene::with_access(Access::Read);

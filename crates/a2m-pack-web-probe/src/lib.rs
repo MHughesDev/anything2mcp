@@ -12,13 +12,17 @@
 //! The product crate registers the pack with one call, [`add_to`], and
 //! gives it the cell of browsers it also gives the web pack's drivers.
 //!
+//! A person's own use is captured by `web_use`, the discoverer a person
+//! drives: a capture job calls it once the person has begun the capture on
+//! the engine's page, and it reads a watching tab of the base, in which the
+//! engine sends nothing (decision 0392).
+//!
 //! Not built yet, and so not declared in the pack's manifest:
-//! `web_declared`, the watching tab and the
-//! capture of a person's own use, scenario steps, dependencies between
-//! requests, the front-end logic mark, and the platform profiles. Of the
-//! requests a page's own scripts make, only those with GET to the
-//! surface's origin are captured, by structure, as the observing tab
-//! records them.
+//! `web_declared`, scenario steps, dependencies between requests, the
+//! front-end logic mark, and the platform profiles. Of the requests a
+//! page's own scripts make while the engine explores, only those with GET
+//! to the surface's origin are captured, by structure, as the observing
+//! tab records them.
 //!
 //! A pack crate sees the kernel up to the provider contract and the base
 //! of its own pack; the layering table in
@@ -33,6 +37,7 @@ mod infer;
 mod look;
 mod screen;
 mod shape;
+mod watch;
 
 #[cfg(test)]
 mod tests;
@@ -47,13 +52,15 @@ pub use discover::{
     EMPTY_INTERFACE, INTERFACE_RULES, InterfaceRule, Marker, REFUSED_ORIGINS, SIGN_IN_SIGNS,
     SIGN_IN_WORDS,
 };
-pub use infer::{Answer, Endpoint, Exchange, Segment, Tier, infer_endpoints};
+pub use infer::{Answer, Body, Endpoint, Exchange, Segment, Tier, infer_endpoints};
 pub use look::{
     ACTION_WORDS, DISCOVERY_ACCOUNT, FOCUS_PATHS, FOCUS_READY_TEXT, FOCUS_TIER_TWO,
     looks_like_an_action,
 };
+pub use look::{WATCHING_ACCOUNT, WATCHING_NOTICE};
 pub use screen::{FIELD_ROLES, NAMED_ROLES, RECORD_ROLES};
 pub use shape::{Shape, type_of_text};
+pub use watch::SEEN_BY;
 
 /// The pack's name as a provider.
 pub const PACK: &str = "web_probe";
@@ -68,6 +75,9 @@ pub const WEB_SNAPSHOT: &str = "web_snapshot";
 pub const WEB_CAPTURE: &str = "web_capture";
 /// The discoverer that classifies how a surface asks for a sign-in.
 pub const WEB_AUTH: &str = "web_auth";
+/// The discoverer a person drives: what their own use of the surface
+/// shows, in a watching tab (decision 0392).
+pub const WEB_USE: &str = "web_use";
 
 /// The most pages one discovery looks at, unless a setting says
 /// otherwise.
@@ -149,7 +159,14 @@ impl Pack for WebProbePack {
             Arc::new(describe::WebDescriber),
         )?;
         to.discoverer(
-            Arc::new(discover::WebAuth(parts, DiscovererName::new(WEB_AUTH)?)),
+            Arc::new(discover::WebAuth(
+                Arc::clone(&parts),
+                DiscovererName::new(WEB_AUTH)?,
+            )),
+            Arc::new(describe::WebDescriber),
+        )?;
+        to.discoverer(
+            Arc::new(watch::WebUse(parts, DiscovererName::new(WEB_USE)?)),
             Arc::new(describe::WebDescriber),
         )?;
         Ok(())

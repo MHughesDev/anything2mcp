@@ -47,6 +47,104 @@ pub enum EntryKind {
     Link,
     /// Something else: a device, a pipe, a socket.
     Other,
+    /// A file whose bytes are not on this machine: on Windows a cloud
+    /// file's placeholder or an offline file, marked by the attribute of
+    /// recall on data access, of recall on open, or offline; on macOS a
+    /// dataless file, marked `SF_DATALESS`. Opening it would make the
+    /// system fetch its bytes through another program, so nothing reads or
+    /// replaces it (decision 0430). Linux has no such mark and reports none.
+    NotOnThisMachine,
+}
+
+/// The marks a system gives an entry, beside its type, that say whether
+/// its bytes are on this machine. Read without opening the entry, so
+/// reading them fetches nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    dead_code,
+    reason = "each system makes only its own marks; the mapping is tested over all of them on every system"
+)]
+pub(crate) enum Marks {
+    /// Windows' file attributes.
+    Windows(u32),
+    /// macOS's file flags (`st_flags`).
+    Macos(u32),
+    /// A system with no such mark.
+    None,
+}
+
+/// Windows' attribute of a file whose data is recalled when it is read.
+const RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
+/// Windows' attribute of an entry that is recalled when it is opened.
+const RECALL_ON_OPEN: u32 = 0x0004_0000;
+/// Windows' attribute of a file whose data is not available at once.
+const OFFLINE: u32 = 0x0000_1000;
+/// macOS's flag of a file whose bytes a file provider keeps elsewhere.
+const SF_DATALESS: u32 = 0x4000_0000;
+
+impl Marks {
+    /// Whether the marks say the bytes are elsewhere.
+    const fn bytes_elsewhere(self) -> bool {
+        match self {
+            Self::Windows(attributes) => {
+                attributes & (RECALL_ON_DATA_ACCESS | RECALL_ON_OPEN | OFFLINE) != 0
+            }
+            Self::Macos(flags) => flags & SF_DATALESS != 0,
+            Self::None => false,
+        }
+    }
+}
+
+impl EntryKind {
+    /// The kind of an entry the system's type calls `self`, given its
+    /// marks: a regular file whose bytes are elsewhere is
+    /// [`EntryKind::NotOnThisMachine`], and every other kind is what the
+    /// type says. A folder keeps its kind whatever its marks: decision 0430
+    /// is about files.
+    pub(crate) const fn with_marks(self, marks: Marks) -> Self {
+        match self {
+            Self::File if marks.bytes_elsewhere() => Self::NotOnThisMachine,
+            kind => kind,
+        }
+    }
+
+    /// The kind of an entry from what the system said of it without
+    /// following a link at its name, as [`std::fs::symlink_metadata`] gives
+    /// it: a link, a folder, a regular file, a file whose bytes are not on
+    /// this machine, or something else. Never [`EntryKind::Absent`].
+    #[must_use]
+    pub fn of_metadata(metadata: &fs::Metadata) -> Self {
+        let kind = metadata.file_type();
+        let basic = if kind.is_symlink() {
+            Self::Link
+        } else if kind.is_dir() {
+            Self::Folder
+        } else if kind.is_file() {
+            Self::File
+        } else {
+            Self::Other
+        };
+        basic.with_marks(marks_of(metadata))
+    }
+}
+
+/// The marks of an entry, from what the system said of it.
+fn marks_of(metadata: &fs::Metadata) -> Marks {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        Marks::Windows(metadata.file_attributes())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::macos::fs::MetadataExt as _;
+        Marks::Macos(metadata.st_flags())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = metadata;
+        Marks::None
+    }
 }
 
 /// The longest relative path, in bytes.
@@ -723,6 +821,18 @@ impl CheckedPath {
         )
     }
 
+    /// The file's bytes are not on this machine, and nothing reads or
+    /// replaces it (decision 0430).
+    fn not_on_this_machine(&self) -> Failure {
+        codes::failure(
+            &codes::row::FILE_NOT_ON_THIS_MACHINE,
+            format!(
+                "The file `{self}` is not on this machine: a sync program keeps its bytes elsewhere, and it is neither read nor replaced, so that nothing is fetched."
+            ),
+            "In the sync program's own settings, make the file kept on this machine, then try again.",
+        )
+    }
+
     /// The folder that holds the final name, as written, and that name.
     fn place(&self) -> Result<(&Path, &OsStr), Failure> {
         match (self.named.parent(), self.named.file_name()) {
@@ -765,11 +875,13 @@ impl CheckedPath {
         }
     }
 
-    /// Opens the file for reading.
+    /// Opens the file for reading. A file whose bytes are not on this
+    /// machine is refused before it is opened, so nothing is fetched.
     ///
     /// # Errors
     ///
-    /// `input`/`file_unavailable`; `input`/`path_not_allowed`.
+    /// `input`/`file_unavailable`; `input`/`path_not_allowed`;
+    /// `policy`/`file_not_on_this_machine`.
     pub fn open(&self) -> Result<fs::File, Failure> {
         self.still_inside()?;
         #[cfg(unix)]
@@ -783,6 +895,7 @@ impl CheckedPath {
                 .ok_or_else(|| self.unavailable("cannot be opened"))?;
             return match folder.kind(name) {
                 Ok(EntryKind::Link) => Err(self.outside()),
+                Ok(EntryKind::NotOnThisMachine) => Err(self.not_on_this_machine()),
                 _ => folder
                     .open(name)
                     .map_err(|_| self.unavailable("cannot be opened")),
@@ -803,10 +916,16 @@ impl CheckedPath {
             };
             return match folder.kind(name) {
                 Ok(EntryKind::Link) => Err(self.outside()),
+                Ok(EntryKind::NotOnThisMachine) => Err(self.not_on_this_machine()),
                 _ => folder
                     .open(name)
                     .map_err(|_| self.unavailable("cannot be opened")),
             };
+        }
+        if let Ok(found) = fs::symlink_metadata(&self.full)
+            && EntryKind::of_metadata(&found) == EntryKind::NotOnThisMachine
+        {
+            return Err(self.not_on_this_machine());
         }
         fs::File::open(&self.full).map_err(|_| self.unavailable("cannot be opened"))
     }
@@ -816,7 +935,7 @@ impl CheckedPath {
     /// # Errors
     ///
     /// `input`/`file_unavailable`, also when the file is larger;
-    /// `input`/`path_not_allowed`.
+    /// `input`/`path_not_allowed`; `policy`/`file_not_on_this_machine`.
     pub fn read(&self, max_bytes: u64) -> Result<Vec<u8>, Failure> {
         use std::io::Read as _;
         let file = self.open()?;
@@ -841,7 +960,8 @@ impl CheckedPath {
     ///
     /// `policy`/`effect_not_declared` for a path checked for reading;
     /// `input`/`file_unavailable`; `input`/`path_not_allowed`, also when a
-    /// link stands at the name.
+    /// link stands at the name; `policy`/`file_not_on_this_machine` when
+    /// the file at the name has its bytes elsewhere.
     pub fn write(&self, bytes: &[u8]) -> Result<(), Failure> {
         self.writable()?;
         let mut random = [0_u8; 16];
@@ -865,8 +985,10 @@ impl CheckedPath {
         let folder = self
             .folder_now(folder)?
             .ok_or_else(|| self.unavailable("cannot be written: its folder is not there"))?;
-        if matches!(folder.kind(name), Ok(EntryKind::Link)) {
-            return Err(self.through_a_link());
+        match folder.kind(name) {
+            Ok(EntryKind::Link) => return Err(self.through_a_link()),
+            Ok(EntryKind::NotOnThisMachine) => return Err(self.not_on_this_machine()),
+            _ => {}
         }
         // Made new, or not at all: what already stands at the name, a link
         // or a file, is left as it is and nothing is written.
@@ -1049,7 +1171,8 @@ impl CheckedPath {
     ///
     /// `policy`/`effect_not_declared` for a path checked for reading;
     /// `input`/`path_not_allowed`, also where a link stands at the name;
-    /// and the failures of [`CheckedPath::may_write`]'s kinds: locked, full,
+    /// `policy`/`file_not_on_this_machine` where the file at the name has
+    /// its bytes elsewhere; and the failures of [`CheckedPath::may_write`]'s kinds: locked, full,
     /// denied, missing.
     pub fn create_temporary(&self) -> Result<Temporary, Failure> {
         self.writable()?;
@@ -1061,8 +1184,10 @@ impl CheckedPath {
                 "Check that the file's folder exists.",
             )
         })?;
-        if matches!(folder.kind(name), Ok(EntryKind::Link)) {
-            return Err(self.through_a_link());
+        match folder.kind(name) {
+            Ok(EntryKind::Link) => return Err(self.through_a_link()),
+            Ok(EntryKind::NotOnThisMachine) => return Err(self.not_on_this_machine()),
+            _ => {}
         }
         let mut random = [0_u8; 16];
         getrandom::fill(&mut random).map_err(|_| {
@@ -1179,7 +1304,8 @@ impl CheckedPath {
     /// `input`/`path_missing`; `busy`/`path_locked` where another program
     /// holds it; `input`/`path_not_allowed`, also where a link stands at the
     /// name or the path is no regular file; `policy`/`effect_not_declared`
-    /// for a path checked for reading.
+    /// for a path checked for reading; `policy`/`file_not_on_this_machine`
+    /// where the file's bytes are elsewhere, before it is opened.
     pub fn may_write(&self) -> Result<bool, Failure> {
         self.writable()?;
         let (folder, name) = self.place()?;
@@ -1200,6 +1326,7 @@ impl CheckedPath {
                 ));
             }
             Ok(EntryKind::Link) => return Err(self.through_a_link()),
+            Ok(EntryKind::NotOnThisMachine) => return Err(self.not_on_this_machine()),
             Ok(_) => return Err(refuse(&self.relative, "it is not a regular file")),
             Err(error) => return Err(self.io_failure(&error, "cannot be looked at")),
         }
@@ -1440,7 +1567,8 @@ impl Temporary {
     /// # Errors
     ///
     /// `input`/`path_not_allowed` where a link stands at the name;
-    /// `input`/`file_unavailable` where the temporary file's name no longer
+    /// `policy`/`file_not_on_this_machine` where a file whose bytes are
+    /// elsewhere does; `input`/`file_unavailable` where the temporary file's name no longer
     /// holds the file this made, or the target's name does not hold it after
     /// the rename; `busy`/`path_locked` where another program holds the
     /// target; and the other kinds of a failed rename. The temporary file is
@@ -1450,8 +1578,10 @@ impl Temporary {
         let Some(name) = self.target.named.file_name().map(std::ffi::OsStr::to_owned) else {
             return Err(self.target.unavailable("is a root and not a file"));
         };
-        if matches!(self.folder.kind(&name), Ok(EntryKind::Link)) {
-            return Err(self.target.through_a_link());
+        match self.folder.kind(&name) {
+            Ok(EntryKind::Link) => return Err(self.target.through_a_link()),
+            Ok(EntryKind::NotOnThisMachine) => return Err(self.target.not_on_this_machine()),
+            _ => {}
         }
         let Some(own) = self.own.filter(|_| self.still_its_own()) else {
             return Err(self.target.unavailable(
@@ -1740,11 +1870,97 @@ mod tests {
         reason = "a test: a helper that cannot do its work stops the test"
     )]
 
+    use super::{
+        Access, EntryKind, Marks, OFFLINE, RECALL_ON_DATA_ACCESS, RECALL_ON_OPEN, RootName, Roots,
+        SF_DATALESS, marks_of, names_a_device, plain, plain_text, resolved_path,
+    };
+    use crate::codes;
+
+    /// The mapping from each system's marks to the kind of an entry, over
+    /// every bit that matters and some that do not, on every system
+    /// (decision 0430).
+    #[test]
+    fn a_file_whose_bytes_are_elsewhere_is_a_kind_of_its_own() {
+        const READ_ONLY: u32 = 0x0001;
+        const ARCHIVE: u32 = 0x0020;
+        const SPARSE: u32 = 0x0200;
+        const REPARSE_POINT: u32 = 0x0400;
+        const PINNED: u32 = 0x0008_0000;
+        const UNPINNED: u32 = 0x0010_0000;
+        const UF_HIDDEN: u32 = 0x0000_8000;
+        const SF_ARCHIVED: u32 = 0x0001_0000;
+        let away = EntryKind::NotOnThisMachine;
+        let file = EntryKind::File;
+        for (attributes, kind) in [
+            (0, file),
+            (READ_ONLY | ARCHIVE | SPARSE, file),
+            // A placeholder a sync program has kept on this machine.
+            (REPARSE_POINT | PINNED, file),
+            (OFFLINE, away),
+            (RECALL_ON_OPEN, away),
+            (RECALL_ON_DATA_ACCESS, away),
+            // A cloud file's placeholder, as a sync program leaves one.
+            (
+                REPARSE_POINT | UNPINNED | RECALL_ON_DATA_ACCESS | ARCHIVE,
+                away,
+            ),
+            (u32::MAX, away),
+        ] {
+            assert_eq!(
+                file.with_marks(Marks::Windows(attributes)),
+                kind,
+                "{attributes:#x}"
+            );
+        }
+        for (flags, kind) in [
+            (0, file),
+            (UF_HIDDEN | SF_ARCHIVED, file),
+            (SF_DATALESS, away),
+            (SF_DATALESS | UF_HIDDEN, away),
+            (u32::MAX, away),
+        ] {
+            assert_eq!(file.with_marks(Marks::Macos(flags)), kind, "{flags:#x}");
+        }
+        assert_eq!(file.with_marks(Marks::None), file);
+        // Only a regular file becomes one: every other kind keeps its own,
+        // whatever its marks.
+        for other in [
+            EntryKind::Absent,
+            EntryKind::Folder,
+            EntryKind::Link,
+            EntryKind::Other,
+            EntryKind::NotOnThisMachine,
+        ] {
+            for marks in [
+                Marks::Windows(u32::MAX),
+                Marks::Macos(u32::MAX),
+                Marks::Windows(0),
+                Marks::Macos(0),
+                Marks::None,
+            ] {
+                assert_eq!(other.with_marks(marks), other, "{other:?} {marks:?}");
+            }
+        }
+    }
+
+    /// A file written here has its bytes here, by the system's own marks.
+    #[test]
+    fn a_file_written_here_is_on_this_machine() {
+        let folder = std::env::temp_dir().join(format!("a2m-provider-here-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("here.txt");
+        std::fs::write(&path, b"here").unwrap();
+        let found = std::fs::symlink_metadata(&path).unwrap();
+        assert_eq!(EntryKind::of_metadata(&found), EntryKind::File);
+        assert!(!marks_of(&found).bytes_elsewhere());
+        let folder_found = std::fs::symlink_metadata(&folder).unwrap();
+        assert_eq!(EntryKind::of_metadata(&folder_found), EntryKind::Folder);
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
     use std::ffi::OsStr;
     use std::path::Path;
-
-    use super::{Access, RootName, Roots, names_a_device, plain, plain_text, resolved_path};
-    use crate::codes;
 
     #[test]
     fn a_verbatim_path_is_given_back_in_its_ordinary_form_where_that_names_the_same() {

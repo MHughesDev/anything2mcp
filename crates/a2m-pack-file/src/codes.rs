@@ -42,6 +42,9 @@ a2m_core::failure_codes! {
     SHAPE_UNSUPPORTED = UnknownVariant, "shape_unsupported",
         meaning "A shape of file, place, or value the pack has no rule for.",
         next "Change the document or the file so that the pack's rules cover it, or report the missing rule.";
+    FILE_NOT_ON_THIS_MACHINE = Policy, "file_not_on_this_machine",
+        meaning "A file's bytes are not on this machine: a sync program keeps them elsewhere, and reading or replacing the file would make it fetch them. Nothing was read or written.",
+        next "In the sync program's own settings, make the file kept on this machine, then try again.";
     FILE_PROTECTED = Policy, "file_protected",
         meaning "The file is encrypted, signed, or marked read-only.",
         next "Point the document at a file that is not protected, or remove the mark if the file is meant to be changed.";

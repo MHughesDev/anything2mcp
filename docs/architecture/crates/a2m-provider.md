@@ -62,6 +62,7 @@ verbs = ["read", "list", "update"]
 steps = ["open", "locate", "set", "read", "save"]
 commit_steps = ["save"]                  # the kinds that always save; the handle refuses one sent as a step that commits nothing. May be left out
 absence_steps = []                       # the kinds whose "absent", after the settle time, is authoritative: only a lookup of these alone may prove that a record with no key did not land (decision 0185). Empty by default
+prepare_within_ms = 180000               # the longest one `prepare` takes; the engine's default where left out; at most PREPARE_CEILING, ten minutes (decision 0427)
 rank = 40                                # default place in binding order when an operation states none; lower is tried first
 intent_window = 1                        # intents stored ahead of acting, by default
 session_reads = 4                        # parallel reads per session, by default
@@ -401,7 +402,8 @@ impl Roots {
 /// Whatever compares a path with a root's folder resolves it by this, and by nothing else.
 pub fn resolved_path(path: &Path) -> std::io::Result<PathBuf>;
 pub enum Access { Read, Write }
-pub enum EntryKind { Absent, File, Folder, Link, Other }
+pub enum EntryKind { Absent, File, Folder, Link, Other, NotOnThisMachine }  // the last: a file whose bytes are elsewhere (decision 0430)
+impl EntryKind { pub fn of_metadata(metadata: &std::fs::Metadata) -> Self; }  // from symlink_metadata, by the same rule
 #[derive(Clone)]
 pub struct CheckedPath { /* private; no public constructor */ }
 impl CheckedPath {
@@ -862,5 +864,6 @@ The codes are declared in this crate's `failure_codes!` table, the module `codes
 - Done (decision 0162): a save in steps. `CheckedPath::create_temporary` gives a `Temporary`, made new under a random name in the target's folder and handed back open; `write`, `flush`, `read_back` for the caller's check, `replace` (only the target's name, never through a link), then `CheckedPath::flush_folder`, each a call of its own; dropped before `replace`, it is removed. `CheckedPath::identity` gives a `FileIdentity` (device and file number; volume and file identifier on Windows, by one unsafe call). `CheckedPath::may_write` opens the file for writing and closes it, writing nothing. Failures tell `busy`/`path_locked`, `busy`/`disk_full`, `input`/`path_denied`, and `input`/`path_missing` apart. The Windows half was compiled and linted from a copy and not run; on Windows `flush_folder` does nothing more, because the file system journals a folder's names.
 - The contract's additions of decision 0162 are additions only: `Prepared::recorded` and `DriverHandle::act_recorded`, not a field of `StepInput`; the `acting` capture, not a field of `Observed`; what the system said on `Failure`, not on `StepFailure`; the project folder on `CheckedPaths`, not on `PrepareContext`. Each of those structs is built field by field in the packs, and a field would have broken every one. `StepInput::new` is there so that a field can be added once the packs build their inputs through it.
 - No first-party manifest lists `commit_steps`, so the handle checks nothing there yet.
+- Done (decision 0427): `prepare_within_ms` in a mode's manifest, refused at zero or past `PREPARE_CEILING`, and `DriverHandle::prepare_within()`, which the engine uses as the deadline of `prepare`. The web pack states three minutes for its modes; no other first-party manifest states one, so their drivers prepare under the engine's default.
 - Done (decision 0185): `absence_steps` in a mode's manifest, checked to be its own step kinds and none that always commits, and `DriverHandle::proves_absence(steps)`, true only for a non-empty list of steps that commit nothing and are all of such kinds. No first-party manifest lists one yet, so a record of identity `none` in doubt that its read-back does not find stays in doubt for a person in every pack today; a pack that can state it for a lookup adds the line to its manifest.
 - A mode's `exclusive` is carried by the registry and reported by the engine's `exclusive_needs`, and nothing submits it to the scheduler; see the scheduler's design.

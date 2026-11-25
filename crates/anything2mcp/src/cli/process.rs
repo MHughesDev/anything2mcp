@@ -5,7 +5,7 @@
 use std::io::Write;
 use std::sync::Arc;
 
-use a2m_actions::{BuiltInToolset, Env, ExitClass, OsFamily, PROGRAM, Paths, Response, codes};
+use a2m_actions::{BuiltInToolset, ExitClass, PROGRAM, Paths, Response, codes};
 use a2m_core::{Failure, FailureClass};
 use a2m_local::{ClientLabel, Connector, StopReason};
 use a2m_mcp::stdio_proxy;
@@ -47,10 +47,7 @@ fn say(line: &str) {
 }
 
 fn paths_of(host: &Host) -> Result<Paths, Failure> {
-    Paths::resolve(&Env {
-        os: OsFamily::current(),
-        vars: host.environment.clone(),
-    })
+    Paths::resolve(&host.env())
 }
 
 /// Runs one process command.

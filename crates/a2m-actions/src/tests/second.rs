@@ -522,15 +522,28 @@ async fn a_secret_comes_from_standard_input_and_a_shortcut_stops_before_what_is_
     assert_eq!(steps, ["target.add", "scout.run", "scout.report"]);
     assert_eq!((run.stops_before, run.note), (None, None));
     // A shortcut whose first step is not built does nothing, and says so.
+    let diff = SHORTCUTS
+        .iter()
+        .find(|shortcut| shortcut.word == "diff")
+        .unwrap();
+    let run = diff.on(registry);
+    assert!(run.steps.is_empty());
+    assert_eq!(run.stops_before, Some("version.diff"));
+    let note = run.note.unwrap();
+    assert!(note.contains("`diff` does nothing yet"), "{note}");
+    // One whose first steps are built runs them and stops before the
+    // first that is not: `learn` asks for a capture, which waits for its
+    // person, and stops before the inference.
     let learn = SHORTCUTS
         .iter()
         .find(|shortcut| shortcut.word == "learn")
         .unwrap();
     let run = learn.on(registry);
-    assert!(run.steps.is_empty());
-    assert_eq!(run.stops_before, Some("capture.start"));
+    let steps: Vec<&str> = run.steps.iter().map(|step| step.action).collect();
+    assert_eq!(steps, ["capture.start", "capture.stop"]);
+    assert_eq!(run.stops_before, Some("endpoints.infer"));
     let note = run.note.unwrap();
-    assert!(note.contains("`learn` does nothing yet"), "{note}");
+    assert!(note.contains("stopped before `endpoints.infer`"), "{note}");
     // A shortcut whose steps are all built runs them all and says nothing.
     let lint = SHORTCUTS
         .iter()
@@ -542,11 +555,11 @@ async fn a_secret_comes_from_standard_input_and_a_shortcut_stops_before_what_is_
         (1, None, None)
     );
     // One whose first step is not built does nothing, and says that.
-    let learn = SHORTCUTS
+    let diff = SHORTCUTS
         .iter()
-        .find(|shortcut| shortcut.word == "learn")
+        .find(|shortcut| shortcut.word == "diff")
         .unwrap();
-    let run = learn.on(registry);
+    let run = diff.on(registry);
     assert!(run.steps.is_empty());
     assert!(run.note.unwrap().contains("does nothing yet"));
     // Every shortcut's steps are a prefix of its own, whatever is built.

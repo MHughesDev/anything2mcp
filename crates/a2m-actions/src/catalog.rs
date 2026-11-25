@@ -226,6 +226,39 @@ fn watch_output() -> JsonSchema {
         .optional("condition", text())
 }
 
+/// A capture of a person's use, as `capture.start` and `capture.stop`
+/// return it: never a value it saw (decision 0392, point 2).
+fn capture_output() -> JsonSchema {
+    JsonSchema::object()
+        .required("capture_id", text())
+        .required("target", text())
+        .required("surface", text())
+        .required("environment", text())
+        .required("compiled_target_hash", text())
+        .required("state", JsonSchema::words(&["asked", "recording", "ended"]))
+        .required("asked_at", JsonSchema::int())
+        .required("bound_seconds", JsonSchema::int())
+        .optional("began_at", JsonSchema::int())
+        .optional("ended_at", JsonSchema::int())
+        .optional(
+            "ended_by",
+            JsonSchema::words(&[
+                "asked",
+                "person",
+                "bound",
+                "not_begun",
+                "engine_closed",
+                "returned",
+            ]),
+        )
+        .optional("findings", JsonSchema::int())
+        .optional("discoverers", list_of(any_map()))
+        .optional("act", text())
+        .optional("link", text())
+        .optional("person", text())
+        .optional("expires_at", JsonSchema::int())
+}
+
 /// One change a watch recorded, as `watch.changes` returns it: its kind,
 /// the checks and their runs, and never a value.
 fn watch_change() -> JsonSchema {
@@ -523,14 +556,20 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .opt("limit", COUNT, LIMIT)
             .opt("offset", OFFSET, OFFSET_HELP)
             .done(),
-        act("capture.start", "Begin recording actions and traffic on a surface, redacted as it is recorded.", BUILDER, Build, "4", Observe)
+        act("capture.start", "Ask for a capture of your person's own use of a surface. Nothing records until the person begins it on the engine's page; then only the structure of what they use is kept, never a value.", BUILDER, Build, "4", Observe)
             .pos("target", TEXT, TARGET)
-            .opt("surface", TEXT, "The surface to record.")
+            .opt("surface", TEXT, "The surface to record. The first one a pack can watch when left out.")
+            .opt("capture", TEXT, "The capture to begin. Only the press on its page gives it, with the person's proof of presence; an agent leaves it out.")
             .writes()
+            .output(capture_output())
+            .example(r#"{"target": "example"}"#)
             .done(),
-        act("capture.stop", "End the recording and store it.", BUILDER, Build, "4", Observe)
+        act("capture.stop", "End a capture you asked for, or read how it ended, and store what it found as findings.", BUILDER, Build, "4", Observe)
             .pos("target", TEXT, TARGET)
+            .opt("capture", TEXT, "The capture, as `capture.start` gave it. The newest of the target when left out.")
             .writes()
+            .output(capture_output())
+            .example(r#"{"target": "example"}"#)
             .done(),
         act("endpoints.infer", "Endpoint templates, schemas, and dependencies worked out from stored recordings.", BUILDER, Build, "4", Inspect)
             .pos("target", TEXT, TARGET)
@@ -616,6 +655,23 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                 .optional("limits", list_of(text()))
                 .required("review", text()))
             .example(r#"{"target": "example", "tool": "example_order_get", "input": {"order_id": "A-100"}}"#)
+            .done(),
+        act("draft.ready", "Make every drafted read a trial in this project read a value through ready to publish: record its offline test and fixture, promote its first binding, run the publish gates, and ask a person to publish, each step by its own action. A write, a pipeline, and a read with no trial are left alone, each with its reason.", BUILDER, Build, "5", Change)
+            .pos("target", TEXT, TARGET)
+            .opt("tools", LIST, "The drafted reads to make ready, by name; every drafted tool is looked at when left out. A named tool that cannot be made ready refuses the call, and nothing is done.")
+            .opt("version", TEXT, "The version's label for the publish asked for. The next number when left out.")
+            .long_running()
+            .writes()
+            .output(JsonSchema::object()
+                .required("target", text())
+                .required("ready", list_of(any_map()))
+                .required("left_alone", list_of(any_map()))
+                .required("failed", list_of(any_map()))
+                .optional("gates", any_map())
+                .required("publish", any_map())
+                .required("text", text()))
+            .example(r#"{"target": "example"}"#)
+            .example(r#"{"target": "example", "tools": ["example_order_get"]}"#)
             .done(),
         act("shadow.report", "How often a shadow binding matched the verified one, and where it differed.", BUILDER, Build, "4", Compare)
             .pos("target", TEXT, TARGET)

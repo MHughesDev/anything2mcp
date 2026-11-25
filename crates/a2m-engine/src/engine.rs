@@ -28,7 +28,9 @@ pub struct EngineSettings {
     /// How old a read of a record may be before it is read again ahead of
     /// its write.
     pub freshness_window: Duration,
-    /// How long a driver may take to prepare.
+    /// How long a driver may take to prepare when its mode's manifest
+    /// states no `prepare_within_ms` of its own. A mode that states one is
+    /// given that, up to the kernel's ceiling (decision 0427).
     pub prepare_timeout: Duration,
     /// The time limit of a step whose compiled target states none.
     pub step_timeout: Duration,

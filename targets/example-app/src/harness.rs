@@ -16,6 +16,7 @@ use crate::details::StoredDelivery;
 use crate::faults::Fault;
 use crate::forgery::NotesReport;
 use crate::own_requests::CaseRowsReport;
+use crate::person::WalkStep;
 use crate::store::{StoredItem, StoredOrder, WriteRecord};
 
 /// The one account's username. Made up.
@@ -506,6 +507,22 @@ impl TestApp {
             self.http
                 .post(self.url("/__control/auth/settings"))
                 .json(settings),
+        )
+        .await
+    }
+
+    /// Sets the walk of a person: from now on every page the application
+    /// serves carries a script that takes these steps in order, across pages,
+    /// as a person at a window would ([`crate::person`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface did not confirm.
+    pub async fn set_person_walk(&self, steps: &[WalkStep]) -> Result<(), HarnessError> {
+        self.command(
+            self.http
+                .post(self.url("/__control/person/walk"))
+                .json(steps),
         )
         .await
     }
