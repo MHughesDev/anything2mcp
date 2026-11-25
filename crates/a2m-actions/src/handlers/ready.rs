@@ -623,14 +623,6 @@ handler!(
         });
         if !passed {
             let publish = json!({"state": "not_asked"});
-            shown["text"] = json!(summary(
-                &ready_of(&shown),
-                &left,
-                &failed_of(&shown),
-                &publish
-            ));
-            shown["publish"] = publish;
-            shown["state"] = json!("not_asked");
             // The drafts with no offline test, when each is one left alone:
             // the gate stays whole, and removing them is one way on.
             let missing: Vec<String> = shown["gates"]["missing"]
@@ -639,6 +631,23 @@ handler!(
                 .flatten()
                 .filter_map(|entry| entry["file"].as_str().map(str::to_owned))
                 .collect();
+            // The only gap is the reads left alone: what was asked for is
+            // done, and the answer says so before it names the gap
+            // (decision 0485, point 3).
+            let only_left = failed_of(&shown).is_empty() && !missing.is_empty() && !left.is_empty();
+            let mut text = summary(&ready_of(&shown), &left, &failed_of(&shown), &publish);
+            if only_left {
+                text = format!(
+                    "{} The reads left alone have no offline test, and a publish needs one of every operation: remove their drafts, as `next` gives, then call `draft.ready` with `target` `{target}` again to ask for the publish.",
+                    text.trim_end_matches(
+                        "No publish was asked for: the publish gates did not pass."
+                    )
+                    .trim_end()
+                );
+            }
+            shown["text"] = json!(text);
+            shown["publish"] = publish;
+            shown["state"] = json!("not_asked");
             let next = if !failed_of(&shown).is_empty() {
                 Next::new(
                     "draft.ready",
@@ -649,7 +658,9 @@ handler!(
                 Next::new(
                     "draft.delete",
                     json!({"target": target.as_str(), "files": missing}),
-                    "to publish without the drafts that have no offline test; or make each ready as its entry under `left_alone` says, and call `draft.ready` again",
+                    &format!(
+                        "to publish without the drafts that have no offline test; or make each ready as its entry under `left_alone` says; then call `draft.ready` with `target` `{target}` again"
+                    ),
                 )
             } else {
                 tested.next.clone().unwrap_or_else(|| {
@@ -667,6 +678,24 @@ handler!(
                     "Call `test.run` to see which gate did not pass.",
                 )
             });
+            // Its code and class stay the gate's; its words say that the
+            // reads were made ready and only the publish was not asked for.
+            let failure = if only_left {
+                Failure::new(
+                    failure.class(),
+                    failure.code().clone(),
+                    format!(
+                        "No publish was asked for yet: every operation needs a passing offline test, and the drafts left alone have none: {}.",
+                        missing.join(", ")
+                    ),
+                    format!(
+                        "Call `draft.delete` with `target` `{target}` and `files` `{}` to remove them, then `draft.ready` with `target` `{target}`.",
+                        missing.join(", ")
+                    ),
+                )
+            } else {
+                failure
+            };
             return Ok(Output::ok(shown).failed(failure).then(next));
         }
 

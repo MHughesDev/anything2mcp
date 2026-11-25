@@ -346,7 +346,9 @@ async fn the_faults_of_the_first_hour_are_met_no_more_through_the_commands() {
         )),
         "{gone}"
     );
-    // The scout's proof promotes it; the `next` is then the publish.
+    // The scout's proof promotes it; the `next` is then `draft.ready`, the
+    // one way on to the publish while a read the scout proved is not
+    // published (decision 0485, point 2).
     let promoted = desk
         .ok(&[
             "binding", "promote", "example", "--tool", READ, "--mode", "api",
@@ -354,7 +356,12 @@ async fn the_faults_of_the_first_hour_are_met_no_more_through_the_commands() {
         .await;
     assert_eq!(promoted["result"]["promoted"], true, "{promoted}");
     let tested = desk.ok(&["test", "run", "example"]).await;
-    assert_eq!(tested["next"]["action"], "publish.request", "{tested}");
+    assert_eq!(tested["next"]["action"], "draft.ready", "{tested}");
+    assert_eq!(
+        tested["next"]["args"],
+        json!({"target": "example"}),
+        "{tested}"
+    );
 
     // 4. The publish: asked, the page waits, and the `next` is the same
     // request; after the person's press, the same request says the version

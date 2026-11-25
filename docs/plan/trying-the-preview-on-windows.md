@@ -44,9 +44,8 @@ The try should end with `status: completed` and the order of `Example Customer O
 ```powershell
 anything2mcp ready example
 # Seven reads are ready and `example_api_stock_get` is left alone (the test
-# application fails every third call). The answer ends with the error
-# `publish_gates_not_passed`: that is expected. Run the removal that `next`
-# names, as given, then:
+# application fails every third call), so no publish is asked for yet. Run
+# the removal that `next` names, as given, then:
 anything2mcp ready example --version 1.0.0
 ```
 

@@ -2165,10 +2165,9 @@ async fn a_scout_drafts_reads_by_rule_tries_them_and_never_writes() {
     assert!(!report["text"].as_str().unwrap().contains(needle));
     // The report says how drafts nobody asked for are removed.
     assert!(
-        report["text"]
-            .as_str()
-            .unwrap()
-            .contains("`draft.delete`, all in one call by `files`"),
+        report["text"].as_str().unwrap().contains(
+            "all in one call: `draft.delete` with `target` `example` and `files` `<file>`"
+        ),
         "{report}"
     );
     let listed = world

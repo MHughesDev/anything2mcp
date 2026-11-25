@@ -348,9 +348,20 @@ handler!(
                 reason.failure.next_step(),
             ));
         }
-        Ok(Output::ok(
-            json!({"state": health.state.as_str(), "checks": checks}),
-        ))
+        // The doctor's answer is never `ok` while a check finds a part
+        // missing that a person's act needs, such as the presence prompt a
+        // publish asks for (decision 0485, point 5): the state is then the
+        // check's, `component_missing`. A kernel that is not healthy says
+        // its own state first.
+        let missing = DoctorState::ComponentMissing.as_str();
+        let state = if health.state == HealthState::Ok
+            && checks.iter().any(|check| check["state"] == missing)
+        {
+            missing
+        } else {
+            health.state.as_str()
+        };
+        Ok(Output::ok(json!({"state": state, "checks": checks})))
     }
 );
 

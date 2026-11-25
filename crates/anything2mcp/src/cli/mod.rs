@@ -491,6 +491,16 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
         // machine refused the start. The command runs the engine inside
         // its own process, holding the engine lock it was handed until the
         // kernel has closed.
+        // The engine's status and its stop mean the engine that runs: with
+        // none running, the client end says so, and starts none (decision
+        // 0485, point 5). The settings are read as an engine would read
+        // them, so that a file that does not load is still named.
+        Ok(client::Found::Nothing(lock, _))
+            if !globals.in_process && steps.len() == 1 && NO_START.contains(&action.as_str()) =>
+        {
+            drop(lock);
+            return none_runs(&tree, &action, &paths, project.as_deref(), host, json);
+        }
         Ok(client::Found::Nothing(lock, refused)) => (lock, refused),
         Err(failure) => return client::not_reached(&tree, &action, &failure, json),
     };
@@ -543,6 +553,9 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
 /// (decision 0164).
 const INIT_WORD: &str = "init";
 
+/// When `init`'s next step is taken.
+const INIT_NEXT_WHEN: &str = "to add the system at `<address>` as a target named `<name>`, with the kind of its surface, such as `http`, and let the scout look at it and draft its reads";
+
 /// `init`: makes the folder the command was run in, or the one `--project`
 /// names, a project, with `a2m_actions::init::init_project`. A folder that
 /// others can change is not made one.
@@ -563,7 +576,15 @@ fn init(tree: &Tree, globals: &Globals, host: &Host, json: bool) -> Finished {
     }
     match a2m_actions::init::init_project(&folder) {
         Ok(report) => {
-            let response = a2m_actions::Response {
+            // The first command says the next (decision 0485, point 4): the
+            // system added as a target and scouted, which the shortcut `add`
+            // does in one command. An agent reads the action beneath it.
+            let next = a2m_actions::Next::new(
+                "target.add",
+                serde_json::json!({"name": "<name>", "address": "<address>", "kind": "<kind>"}),
+                INIT_NEXT_WHEN,
+            );
+            let mut response = a2m_actions::Response {
                 ok: true,
                 action: INIT_WORD.to_owned(),
                 result: Some(serde_json::json!({
@@ -573,11 +594,19 @@ fn init(tree: &Tree, globals: &Globals, host: &Host, json: bool) -> Finished {
                 })),
                 error: None,
                 warnings: Vec::new(),
-                next: None,
+                next: Some(next),
                 exit: ExitClass::Succeeded,
                 decision: None,
             };
-            render::render(&response, tree, json)
+            if json {
+                return render::render(&response, tree, json);
+            }
+            response.next = None;
+            let mut finished = render::render(&response, tree, json);
+            finished.stdout.push_str(&format!(
+                "\nnext, {INIT_NEXT_WHEN}:\n  {PROGRAM} add <name> --address <address> --kind <kind>\n"
+            ));
+            finished
         }
         Err(failure) => {
             let exit = if failure.class() == FailureClass::Input {
@@ -660,6 +689,56 @@ fn engine_logs(tree: &Tree, paths: &Paths, input: &Json, json: bool) -> Finished
 /// The actions for which no engine is started on demand: they ask about,
 /// or stop, the engine that runs.
 const NO_START: [&str; 2] = ["engine.status", "engine.stop"];
+
+/// `engine status` and `engine stop` when no engine runs: both succeed,
+/// and say that none runs; the stop says there was nothing to stop.
+/// Nothing is started or opened. A settings file that does not load is
+/// refused as an engine would refuse it.
+fn none_runs(
+    tree: &Tree,
+    action: &str,
+    paths: &Paths,
+    project: Option<&std::path::Path>,
+    host: &Host,
+    json: bool,
+) -> Finished {
+    if let Err(failure) = crate::engine::settings_of(paths, project, &host.environment) {
+        return stopped(tree, action, &failure, ExitClass::Failed, json);
+    }
+    let (result, next) = if action == "engine.stop" {
+        (
+            serde_json::json!({
+                "running": false,
+                "stopped": false,
+                "text": "No engine runs for this user and data directory, so there was nothing to stop.",
+            }),
+            None,
+        )
+    } else {
+        (
+            serde_json::json!({
+                "running": false,
+                "text": "No engine runs for this user and data directory, and none was started to answer. A command that needs one starts it; `doctor.run` checks this machine without one.",
+            }),
+            Some(a2m_actions::Next::new(
+                START_ACTION,
+                serde_json::json!({}),
+                "to start one now",
+            )),
+        )
+    };
+    let response = a2m_actions::Response {
+        ok: true,
+        action: action.to_owned(),
+        result: Some(result),
+        error: None,
+        warnings: Vec::new(),
+        next,
+        exit: ExitClass::Succeeded,
+        decision: None,
+    };
+    render::render(&response, tree, json)
+}
 
 /// `engine start`: starts the local engine, detached, when none answers,
 /// whatever `engine.in_process` says, and says whether it started one.

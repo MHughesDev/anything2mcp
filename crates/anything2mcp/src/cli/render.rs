@@ -85,44 +85,183 @@ fn moment(millis: i64) -> Option<String> {
 
 /// Lays a JSON value out as indented lines: `name: value` for a field, a
 /// dash for an item of a list.
+#[cfg(test)]
 fn lines(value: &Json, indent: usize, out: &mut String) {
-    laid_out(value, indent, true, out);
+    laid_out(value, indent, Some(&Tree::empty()), out);
 }
 
-/// [`lines`]. `moments` says whether a field named as a moment is printed
-/// as one: the engine's own fields are, and the values of a tool's
-/// `result`, which are the system's, are printed as the result carries
-/// them.
-fn laid_out(value: &Json, indent: usize, moments: bool, out: &mut String) {
+/// The input of a step a result names, `{action, input}` or `{action,
+/// args}`, as a command line, when the action has a command face.
+fn step_line(map: &serde_json::Map<String, Json>, tree: &Tree) -> Option<String> {
+    let action = map.get("action")?.as_str()?;
+    let input = map.get("input").or_else(|| map.get("args"));
+    command_line(
+        tree,
+        action,
+        &with_placeholders(tree, action, input.unwrap_or(&Json::Null)),
+    )
+}
+
+/// [`lines`]. `own` is the command tree while the fields are the engine's
+/// own, and `None` inside a tool's `result` and what is marked
+/// `untrusted`, which are the system's and are printed as they are
+/// carried. In the engine's own fields a moment is printed as one, a step
+/// to take and every action its words name are printed as the command
+/// that takes it (decision 0485, point 1), and an empty `fix` is not
+/// printed.
+fn laid_out(value: &Json, indent: usize, own: Option<&Tree>, out: &mut String) {
     let pad = " ".repeat(indent);
     match value {
         Json::Object(map) if !map.is_empty() => {
+            let step = own.and_then(|tree| step_line(map, tree));
             for (name, value) in map {
-                if moments
+                if step.is_some() && matches!(name.as_str(), "input" | "args") {
+                    continue;
+                }
+                if let (Some(line), "action") = (&step, name.as_str()) {
+                    out.push_str(&format!("{pad}command: {line}\n"));
+                } else if own.is_some() && name == "fix" && value.as_str() == Some("") {
+                } else if own.is_some()
                     && is_moment(name, value)
                     && let Some(at) = value.as_i64().and_then(moment)
                 {
                     out.push_str(&format!("{pad}{name}: {at}\n"));
+                } else if let (Some(tree), Json::String(text)) = (own, value) {
+                    let text = Json::String(commands(text, tree));
+                    out.push_str(&format!("{pad}{name}: {}\n", shown(&text, indent + 2)));
                 } else if is_scalar(value) {
                     out.push_str(&format!("{pad}{name}: {}\n", shown(value, indent + 2)));
                 } else {
                     out.push_str(&format!("{pad}{name}:\n"));
-                    laid_out(value, indent + 2, moments && name != "result", out);
+                    let inner = own.filter(|_| name != "result" && name != "untrusted");
+                    laid_out(value, indent + 2, inner, out);
                 }
             }
         }
         Json::Array(items) if !items.is_empty() => {
             for item in items {
-                if is_scalar(item) {
+                if let (Some(tree), Json::String(text)) = (own, item) {
+                    let text = Json::String(commands(text, tree));
+                    out.push_str(&format!("{pad}- {}\n", shown(&text, indent + 2)));
+                } else if is_scalar(item) {
                     out.push_str(&format!("{pad}- {}\n", shown(item, indent + 2)));
                 } else {
                     out.push_str(&format!("{pad}-\n"));
-                    laid_out(item, indent + 2, moments, out);
+                    laid_out(item, indent + 2, own, out);
                 }
             }
         }
         other => out.push_str(&format!("{pad}{}\n", shown(other, indent + 2))),
     }
+}
+
+/// The input of `action` with each required argument given without a
+/// flag that `input` does not hold written as its placeholder, `<field>`:
+/// the command then reads as the help gives it.
+fn with_placeholders(tree: &Tree, action: &str, input: &Json) -> Json {
+    let mut input = match input {
+        Json::Object(map) => Json::Object(map.clone()),
+        _ => Json::Object(serde_json::Map::new()),
+    };
+    if let (Some(face), Json::Object(map)) = (tree.face_of(action), &mut input) {
+        for arg in face
+            .args
+            .iter()
+            .filter(|arg| arg.positional && arg.required)
+        {
+            map.entry(arg.field.clone())
+                .or_insert_with(|| Json::String(format!("<{}>", arg.field)));
+        }
+    }
+    input
+}
+
+/// A command line with each placeholder, `'<field>'`, written bare, as
+/// the help writes it: in a sentence it is read, not pasted.
+fn unquoted_placeholders(line: &str) -> String {
+    line.split(' ')
+        .map(|word| {
+            word.strip_prefix("'<")
+                .and_then(|rest| rest.strip_suffix(">'"))
+                .filter(|name| name.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+                .map_or_else(|| word.to_owned(), |name| format!("<{name}>"))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The text of one span between backticks that starts at byte `from` of
+/// `text`, and the byte after its closing backtick.
+fn span_at(text: &str, from: usize) -> Option<(&str, usize)> {
+    let rest = text.get(from..)?.strip_prefix('`')?;
+    let end = rest.find('`')?;
+    Some((&rest[..end], from + 1 + end + 1))
+}
+
+/// The engine's words with every action they name between backticks
+/// written as the command that takes it (decision 0485, point 1). An
+/// action named with its inputs, "`scout.report` with `target` `example`
+/// and `part` `drafted.written`", is written with them, as flags; one named
+/// alone is written with a placeholder for each argument it needs. A span
+/// that names no action with a command face is left as it is, and so is
+/// any text a system returned, which never reaches here. The JSON form
+/// keeps the action names, which an agent reads.
+pub(crate) fn commands(text: &str, tree: &Tree) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    while let Some(found) = text.get(at..).and_then(|rest| rest.find('`')) {
+        let start = at + found;
+        out.push_str(&text[at..start]);
+        let Some((named, mut end)) = span_at(text, start) else {
+            out.push_str(&text[start..]);
+            return out;
+        };
+        let Some(face) = tree.face_of(named) else {
+            out.push_str(&text[start..end]);
+            at = end;
+            continue;
+        };
+        // The inputs that follow: ` with `k` `v`` and then ` and `k` `v``.
+        let mut input = serde_json::Map::new();
+        let mut joiner = " with ";
+        while let Some(after) = text.get(end..).and_then(|rest| rest.strip_prefix(joiner)) {
+            let key_at = text.len() - after.len();
+            let Some((field, key_end)) = span_at(text, key_at) else {
+                break;
+            };
+            let Some(arg) = face.args.iter().find(|arg| arg.field == field) else {
+                break;
+            };
+            let Some((value, value_end)) = text
+                .get(key_end..)
+                .and_then(|rest| rest.strip_prefix(' '))
+                .and_then(|_| span_at(text, key_end + 1))
+            else {
+                break;
+            };
+            let value = match arg.ty {
+                "flag" => Json::Bool(value == "true"),
+                "list" => Json::Array(
+                    value
+                        .split(", ")
+                        .map(|item| Json::String(item.to_owned()))
+                        .collect(),
+                ),
+                _ => Json::String(value.to_owned()),
+            };
+            input.insert(arg.field.clone(), value);
+            end = value_end;
+            joiner = " and ";
+        }
+        let input = with_placeholders(tree, named, &Json::Object(input));
+        match command_line(tree, named, &input) {
+            Some(line) => out.push_str(&format!("`{}`", unquoted_placeholders(&line))),
+            None => out.push_str(&text[start..end]),
+        }
+        at = end;
+    }
+    out.push_str(&text[at..]);
+    out
 }
 
 /// A value on one line; text of several lines continues indented.
@@ -140,8 +279,11 @@ fn shown(value: &Json, indent: usize) -> String {
 
 /// A failure as a person reads it, on standard error: the `error` object
 /// of a response.
-fn failure_text(error: &Json) -> String {
-    let part = |name: &str| error.get(name).and_then(Json::as_str).unwrap_or_default();
+fn failure_text(error: &Json, tree: Option<&Tree>) -> String {
+    let part = |name: &str| {
+        let text = error.get(name).and_then(Json::as_str).unwrap_or_default();
+        tree.map_or_else(|| text.to_owned(), |tree| commands(text, tree))
+    };
     format!(
         "{PROGRAM}: {}\n  class: {}\n  code: {}\n  fix: {}\n",
         part("message"),
@@ -241,6 +383,21 @@ fn report_summary<'a>(response: &'a Json, tree: &Tree) -> Option<(&'a str, Strin
     Some((summary, format!("{whole} --json")))
 }
 
+/// The `next` of a response as a person reads it: when, and the command.
+fn next_text(next: &Json, tree: &Tree) -> String {
+    let action = next
+        .get("action")
+        .and_then(Json::as_str)
+        .unwrap_or_default();
+    let when = commands(
+        next.get("when").and_then(Json::as_str).unwrap_or_default(),
+        tree,
+    );
+    let line = command_line(tree, action, next.get("args").unwrap_or(&Json::Null))
+        .unwrap_or_else(|| action.to_owned());
+    format!("\nnext, {when}:\n  {line}\n")
+}
+
 pub(crate) fn show(response: &Json, code: u8, tree: &Tree, json: bool) -> Finished {
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -251,28 +408,37 @@ pub(crate) fn show(response: &Json, code: u8, tree: &Tree, json: bool) -> Finish
         if let Some((summary, whole)) = report_summary(response, tree) {
             // A scout's report is hundreds of lines: at a terminal its
             // readable summary, and how to print the whole (decision 0219).
-            stdout.push_str(summary.trim_end());
+            stdout.push_str(commands(summary, tree).trim_end());
             stdout.push_str(&format!("\n\nThe whole report, as JSON:\n  {whole}\n"));
         } else if let Some(result) = response.get("result") {
-            lines(&without_said(result), 0, &mut stdout);
-        }
-        if let Some(next) = response.get("next") {
-            let action = next
-                .get("action")
-                .and_then(Json::as_str)
-                .unwrap_or_default();
-            let when = next.get("when").and_then(Json::as_str).unwrap_or_default();
-            let line = command_line(tree, action, next.get("args").unwrap_or(&Json::Null))
-                .unwrap_or_else(|| action.to_owned());
-            stdout.push_str(&format!("\nnext, {when}:\n  {line}\n"));
+            let mut result = without_said(result);
+            // A result that says what it did in a sentence says it first,
+            // above the fields it rests on (decision 0485, point 3).
+            if let Some(text) = result
+                .as_object_mut()
+                .and_then(|map| map.remove("text"))
+                .and_then(|text| text.as_str().map(str::to_owned))
+            {
+                stdout.push_str(commands(&text, tree).trim_end());
+                stdout.push_str("\n\n");
+            }
+            laid_out(&result, 0, Some(tree), &mut stdout);
         }
     }
     let warnings = response.get("warnings").and_then(Json::as_array);
     for warning in warnings.into_iter().flatten() {
-        stderr.push_str(&format!("warning: {}\n", scalar(warning)));
+        // In the text form the words name commands; in the JSON form,
+        // standard error repeats the object's own words.
+        let warning = scalar(warning);
+        let warning = if json {
+            warning
+        } else {
+            commands(&warning, tree)
+        };
+        stderr.push_str(&format!("warning: {warning}\n"));
     }
     if let Some(error) = response.get("error") {
-        stderr.push_str(&failure_text(error));
+        stderr.push_str(&failure_text(error, (!json).then_some(tree)));
     }
     // What the system said, apart from the product's message and fix, on
     // one line marked as its words (decision 0181). `said_line` escapes its
@@ -282,6 +448,17 @@ pub(crate) fn show(response: &Json, code: u8, tree: &Tree, json: bool) -> Finish
         stderr.push_str("  ");
         stderr.push_str(&said_line(said));
         stderr.push('\n');
+    }
+    // The step to take next is the last thing a person reads: after the
+    // result, and after the failure when there is one, on the same stream
+    // as the failure (decision 0485, point 3).
+    if !json && let Some(next) = response.get("next") {
+        let next = next_text(next, tree);
+        if response.get("error").is_some() {
+            stderr.push_str(&next);
+        } else {
+            stdout.push_str(&next);
+        }
     }
     Finished {
         code,
@@ -296,6 +473,121 @@ mod tests {
 
     use super::{lines, show};
     use crate::cli::parse::Tree;
+
+    /// The tree of this build's actions.
+    fn every_action() -> Tree {
+        Tree::of(&crate::engine::action_registry().unwrap())
+    }
+
+    /// Decision 0485, point 1: at a terminal an action the engine's words
+    /// name is the command that takes it, with the inputs named beside it
+    /// as its flags; a span that names no action, and the JSON form, keep
+    /// what was said.
+    #[test]
+    fn an_action_the_words_name_is_printed_as_its_command() {
+        let tree = every_action();
+        assert_eq!(
+            super::commands(
+                "`scout.report` with `target` `example` and `part` `drafted.written` lists them, and `limit` pages it.",
+                &tree
+            ),
+            "`anything2mcp scout report example --part drafted.written` lists them, and `limit` pages it."
+        );
+        assert_eq!(
+            super::commands(
+                "Call `draft.delete` with `target` `example` and `files` `a.yaml, b.yaml`.",
+                &tree
+            ),
+            "Call `anything2mcp draft delete example --files a.yaml --files b.yaml`."
+        );
+        assert_eq!(
+            super::commands(
+                "`scout.run` with `target` `example` and `fresh` `true`",
+                &tree
+            ),
+            "`anything2mcp scout run example --fresh`"
+        );
+        // Named alone, with a placeholder for what it needs.
+        assert_eq!(
+            super::commands("Call `tool.search`; `unknown.list` shows them.", &tree),
+            "Call `anything2mcp tool search`; `anything2mcp unknown list <target>` shows them."
+        );
+        // What is not an action, an input it does not take, and a lone
+        // backtick are left as they are.
+        for kept in [
+            "the page at `publish.link`",
+            "`draft.lint` with `nothing` `here`",
+            "an open ` mark",
+        ] {
+            let shown = super::commands(kept, &tree);
+            assert!(
+                shown.starts_with(&kept[..kept.find('`').unwrap()]),
+                "{shown}"
+            );
+            assert!(
+                !shown.contains("anything2mcp") || kept.contains("draft.lint"),
+                "{shown}"
+            );
+        }
+        assert_eq!(
+            super::commands("`draft.lint` with `nothing` `here`", &tree),
+            "`anything2mcp draft lint <target>` with `nothing` `here`"
+        );
+
+        let response = json!({
+            "ok": false,
+            "action": "draft.ready",
+            "result": {
+                "target": "example",
+                "text": "Ready: `example_order_get`. Call `draft.ready` with `target` `example` again.",
+                "left_alone": [{"next": {"action": "draft.try", "input": {"target": "example", "tool": "example_stock_get"}}}],
+                "checks": [{"check": "clock", "fix": ""}],
+            },
+            "error": {"class": "input", "code": "publish_gates_not_passed", "message": "None.", "fix": "Call `test.run` with `target` `example`."},
+            "next": {"action": "draft.delete", "when": "then `draft.ready`", "args": {"target": "example", "files": ["a.yaml"]}},
+        });
+        let shown = show(&response, 1, &tree, false);
+        // What it did first, in the text form's words; the step a result
+        // names as its command; no empty `fix`.
+        assert!(
+            shown.stdout.starts_with(
+                "Ready: `example_order_get`. Call `anything2mcp draft ready example` again.\n\n"
+            ),
+            "{}",
+            shown.stdout
+        );
+        assert!(
+            shown
+                .stdout
+                .contains("command: anything2mcp draft try example --tool example_stock_get\n"),
+            "{}",
+            shown.stdout
+        );
+        assert!(!shown.stdout.contains("fix"), "{}", shown.stdout);
+        // The failure, then the step, both on standard error.
+        assert!(!shown.stdout.contains("next,"), "{}", shown.stdout);
+        let error = shown
+            .stderr
+            .find("fix: Call `anything2mcp test run example`.")
+            .unwrap();
+        let next = shown
+            .stderr
+            .find("next, then `anything2mcp draft ready <target>`:\n  anything2mcp draft delete example --files a.yaml\n")
+            .unwrap();
+        assert!(error < next, "{}", shown.stderr);
+        // The JSON form keeps the action names, on both streams.
+        let json = show(&response, 1, &tree, true);
+        assert!(
+            json.stdout.contains("`draft.ready` with `target`"),
+            "{}",
+            json.stdout
+        );
+        assert!(
+            json.stderr.contains("Call `test.run` with"),
+            "{}",
+            json.stderr
+        );
+    }
 
     /// Decision 0219: at a terminal a scout's report is its summary and the
     /// command that prints the whole; as JSON it is whole.

@@ -1106,6 +1106,19 @@ async fn compare(
 /// described with what is observed (decision 0486).
 pub(crate) const DESCRIBED_AGAINST_OBSERVED: &str = "described_against_observed";
 
+/// The questions the comparison of what is described with what is
+/// observed opens, one of each result that is not `matched` (decision
+/// 0486): the report counts them apart and lists them after the rest
+/// (decision 0485), so that a dozen of them do not stand before the way on.
+pub(crate) const DESCRIBED_ONLY_QUESTION: &str = "The system's description states this endpoint, and this observation did not see it. Does it work as described?";
+/// See [`DESCRIBED_ONLY_QUESTION`].
+pub(crate) const OBSERVED_ONLY_QUESTION: &str =
+    "This endpoint was seen, and no description states it. What is it?";
+/// See [`DESCRIBED_ONLY_QUESTION`]: how the question of an `unknown`
+/// entry begins.
+pub(crate) const NOT_COMPARED_QUESTION: &str =
+    "What the description states here could not be compared with an observation";
+
 /// Described against observed (decision 0486): the registry's comparison
 /// of the findings, as stage 3 keeps it, and a question for each entry
 /// that is not `matched`. A verb and a path are the system's words, kept
@@ -1132,18 +1145,18 @@ fn described_against_observed(
             let question = match entry.result {
                 ComparisonResult::Matched => None,
                 ComparisonResult::DescribedOnly => Some((
-                    "The system's description states this endpoint, and this observation did not see it. Does it work as described?".to_owned(),
+                    DESCRIBED_ONLY_QUESTION.to_owned(),
                     "A tool drafted from it rests on the description alone, at `inferred`.".to_owned(),
                     "An observation of the surface that reaches it, such as a capture of a person's use, at `discovered`.".to_owned(),
                 )),
                 ComparisonResult::ObservedOnly => Some((
-                    "This endpoint was seen, and no description states it. What is it?".to_owned(),
+                    OBSERVED_ONLY_QUESTION.to_owned(),
                     "Nothing but the observation says what it takes and what it returns.".to_owned(),
                     "A description that states it, or a person's account in the target's files.".to_owned(),
                 )),
                 ComparisonResult::Unknown => Some((
                     format!(
-                        "What the description states here could not be compared with an observation ({}). Is it there?",
+                        "{NOT_COMPARED_QUESTION} ({}). Is it there?",
                         entry.reason.map_or("unknown", NotCompared::as_str)
                     ),
                     "Whether it was seen or not is not known, so nothing rests on it but the description.".to_owned(),

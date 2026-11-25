@@ -116,14 +116,46 @@ fn not_looked_at(done: &BTreeMap<u8, Json>) -> Vec<Json> {
             "why": "The scout began from a capture, which sees only what its person used while it recorded. Its coverage is partial: it says nothing of the rest. `scout.run` looks at the whole surface, and another capture records more.",
         }));
     }
-    out.push(json!({
-        "what": "described against observed, by each pack's own rule",
-        "why": "No pack's comparison of what a system describes with what was observed is built (roadmap E3); the scout compares only what the drafter writes by rule with the target's files.",
-    }));
     if stage(0)["budget_in_force"] == false {
         out.push(json!({"what": "a budget for the whole scout", "why": stage(0)["why_not"]}));
     }
     out
+}
+
+/// Whether an open question of a report is one the comparison of what is
+/// described with what is observed opened (decision 0486).
+fn from_comparison(entry: &Json) -> bool {
+    let question = &entry["question"];
+    let text = question["text"]
+        .as_str()
+        .or_else(|| question["untrusted"].as_str())
+        .unwrap_or_default();
+    [
+        super::scout::DESCRIBED_ONLY_QUESTION,
+        super::scout::OBSERVED_ONLY_QUESTION,
+        super::scout::NOT_COMPARED_QUESTION,
+    ]
+    .iter()
+    .any(|asked| text.starts_with(asked))
+}
+
+/// Whether a surface of a report met no answer: its discovery found
+/// nothing, and a discoverer of it ended because the system did not answer
+/// (a `transient` failure, such as `connection_lost`).
+fn unanswered(surface: &Json) -> bool {
+    let found: u64 = list(&surface["ended"])
+        .filter_map(|ended| ended["findings"].as_u64())
+        .sum();
+    found == 0
+        && list(&surface["ended"]).any(|ended| ended["report"]["failure"]["class"] == "transient")
+}
+
+/// The surfaces of a report that met no answer, by name.
+fn unanswered_surfaces(report: &Json) -> Vec<String> {
+    list(&report["content"]["surfaces"])
+        .filter(|surface| unanswered(surface))
+        .filter_map(|surface| surface["surface"].as_str().map(str::to_owned))
+        .collect()
 }
 
 /// What the report says a person does with its open questions (copy
@@ -172,7 +204,10 @@ pub(crate) fn assemble(
             })
         })
         .collect();
-    open.sort_by_key(Json::to_string);
+    // The comparison's questions, about one for each described operation
+    // a scout of an HTTP target did not observe, come after the rest, so
+    // that the questions a draft waits on are read first (decision 0485).
+    open.sort_by_key(|entry| (from_comparison(entry), entry.to_string()));
     let mut tried = stage(6).clone();
     if let Json::Object(map) = &mut tried {
         map.remove("runs");
@@ -324,11 +359,26 @@ fn by_state(entries: &[&Json]) -> String {
 /// nothing else the system said.
 fn rendered(report: &Json) -> String {
     let content = &report["content"];
-    let mut lines = vec![format!(
-        "Scout of `{}`, report {}.",
-        report["target"].as_str().unwrap_or_default(),
+    let target = report["target"].as_str().unwrap_or_default();
+    let mut lines = Vec::new();
+    // A system that did not answer is said first: nothing below is about
+    // the system, and the scout is run again once it answers (decision
+    // 0485, point 6).
+    let silent = unanswered_surfaces(report);
+    if !silent.is_empty() {
+        lines.push(format!(
+            "The system did not answer at {}, so the scout found nothing there. Once it answers, run the scout again: `scout.run` with `target` `{target}` and `fresh` `true`.",
+            silent
+                .iter()
+                .map(|surface| format!("the address of surface `{surface}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    lines.push(format!(
+        "Scout of `{target}`, report {}.",
         report["report_hash"].as_str().unwrap_or_default()
-    )];
+    ));
     if content["capture"].is_object() {
         lines.push(format!(
             "Made from a capture of the person's use, ended `{}`: it covers only what the person used.",
@@ -385,28 +435,27 @@ fn rendered(report: &Json) -> String {
         }
         if written.len() > TEXT_LINES {
             lines.push(format!(
-                "Drafted: {} more; `scout.report` with `part` `drafted.written` lists them, and `limit` and `offset` page it.",
+                "Drafted: {} more; `scout.report` with `target` `{target}` and `part` `drafted.written` lists them, and `limit` and `offset` page it.",
                 written.len() - TEXT_LINES
             ));
         }
         // A draft nobody asked for is the person's to remove: a publish
         // needs a passing offline test of every operation left (decision
         // 0219).
-        lines.push(
-            "Each draft is a proposal. Remove those nobody wants with `draft.delete`, all in one call by `files`, before a publish: it needs a passing offline test of every operation left."
-                .to_owned(),
-        );
+        lines.push(format!(
+            "Each draft is a proposal. Remove those nobody wants before a publish, all in one call: `draft.delete` with `target` `{target}` and `files` `<file>`, each file named. A publish needs a passing offline test of every operation left."
+        ));
     }
     let held = list(&content["drafted"]["held_back"]).count();
     if held > 0 {
         lines.push(format!(
-            "Held: {held} drafts wait in the target's `held/` folder, out of the target, for an answer to an open question; `draft.lint` lists each with its question, and `scout.report` with `part` `drafted.held_back` lists the files."
+            "Held: {held} drafts wait in the target's `held/` folder, out of the target, for an answer to an open question; `draft.lint` with `target` `{target}` lists each with its question, and `scout.report` with `target` `{target}` and `part` `drafted.held_back` lists the files."
         ));
     }
     let not_drafted = list(&content["drafted"]["not_drafted"]).count();
     if not_drafted > 0 {
         lines.push(format!(
-            "Not drafted: {not_drafted} findings a rule covers drafted nothing, each with the rule's reason; `scout.report` with `part` `drafted.not_drafted` lists them."
+            "Not drafted: {not_drafted} findings a rule covers drafted nothing, each with the rule's reason; `scout.report` with `target` `{target}` and `part` `drafted.not_drafted` lists them."
         ));
     }
     let secret = content["drafted"]["left_out_as_secret"]
@@ -437,13 +486,13 @@ fn rendered(report: &Json) -> String {
         .take(1)
     {
         lines.push(format!(
-            "Waiting: the reads of surface `{}` wait for a sign-in: `session.login` with this target and that surface signs in, and `draft.try` then tries each again.",
-            tool["surface"].as_str().unwrap_or_default()
+            "Waiting: the reads of surface `{surface}` wait for a sign-in: `session.login` with `target` `{target}` and `surface` `{surface}` signs in, and `draft.try` then tries each again.",
+            surface = tool["surface"].as_str().unwrap_or_default()
         ));
     }
     if tools.len() > TEXT_LINES {
         lines.push(format!(
-            "Tried: {} reads ({}); the first {TEXT_LINES} follow, and `scout.report` with `part` `tried.tools` lists the rest.",
+            "Tried: {} reads ({}); the first {TEXT_LINES} follow, and `scout.report` with `target` `{target}` and `part` `tried.tools` lists the rest.",
             tools.len(),
             by_state(&tools)
         ));
@@ -464,14 +513,23 @@ fn rendered(report: &Json) -> String {
             tool["tries"].as_u64().unwrap_or(0)
         ));
     }
-    lines.push(format!(
-        "Open questions: {}. `unknown.list` shows them.",
-        list(&content["open"]).count()
-    ));
+    let open = list(&content["open"]).count();
+    let compared = list(&content["open"])
+        .filter(|entry| from_comparison(entry))
+        .count();
+    lines.push(if compared == 0 {
+        format!("Open questions: {open}. `unknown.list` with `target` `{target}` shows them.")
+    } else {
+        // The comparison's questions are counted apart: they hold back no
+        // draft, and they are listed after the rest (decision 0485).
+        format!(
+            "Open questions: {open}, {compared} of them about what the system's description and the observation do not both show; those hold back no draft and are listed last. `unknown.list` with `target` `{target}` shows them."
+        )
+    });
     let skipped_all: Vec<&Json> = list(&content["not_looked_at"]).collect();
     if skipped_all.len() > TEXT_LINES {
         lines.push(format!(
-            "Not looked at: {} things; the first {TEXT_LINES} follow, and `scout.report` with `part` `not_looked_at` lists the rest.",
+            "Not looked at: {} things; the first {TEXT_LINES} follow, and `scout.report` with `target` `{target}` and `part` `not_looked_at` lists the rest.",
             skipped_all.len()
         ));
     }
@@ -605,7 +663,15 @@ pub(crate) fn shown(report: &Json) -> Output {
     if let Json::Object(map) = &mut result {
         map.insert("text".to_owned(), json!(text));
     }
-    let next = if waits_for_sign_in(report) {
+    let next = if !unanswered_surfaces(report).is_empty()
+        && !list(&report["content"]["tried"]["tools"]).any(|tool| tool["state"] == "proven")
+    {
+        Next::new(
+            "scout.run",
+            json!({"target": target, "fresh": true}),
+            "once the system answers: it did not, and the scout found nothing there",
+        )
+    } else if waits_for_sign_in(report) {
         Next::new(
             "session.login",
             json!({"target": target}),
@@ -617,7 +683,7 @@ pub(crate) fn shown(report: &Json) -> Output {
         Next::new(
             "draft.ready",
             json!({"target": target}),
-            "to record the offline test and fixture of each read the scout proved, promote its binding, run the publish gates, and ask a person to publish, in one action; `tools` names the reads to publish when not all are wanted",
+            super::build::READY_WHEN,
         )
     } else if open > 0 {
         Next::new(

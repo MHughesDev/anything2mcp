@@ -669,13 +669,61 @@ fn requirements(run: &RunRow, kind: JobKind, exclusive: Vec<ResourceKey>) -> Job
     }
 }
 
+/// A tool no published version has, when a publish of its target waits
+/// for its person: the answer says so, and where, so that the wait is not
+/// taken for a missing tool (decision 0485, point 2). Any other failure is
+/// given back as it is.
+fn waits_for_its_person(
+    kernel: &Kernel,
+    call: &Call,
+    name: &OperationName,
+    failure: Failure,
+) -> Failure {
+    if failure.code().as_str() != codes::NOT_FOUND.as_str() {
+        return failure;
+    }
+    let Some(person) = call.caller.principal.person() else {
+        return failure;
+    };
+    let waiting = kernel
+        .publishes_waiting(person)
+        .into_iter()
+        .find_map(|target| {
+            let named = a2m_core::TargetName::new(&target).ok()?;
+            if !name.belongs_to(&named) {
+                return None;
+            }
+            kernel
+                .waiting_publish(person, &target)
+                .map(|waiting| (target, waiting))
+        });
+    let Some((target, waiting)) = waiting else {
+        return failure;
+    };
+    let page = waiting.link.map_or_else(
+        || "on its page".to_owned(),
+        |link| format!("on the page at {link}"),
+    );
+    Failure::new(
+        failure.class(),
+        failure.code().clone(),
+        format!(
+            "No published tool is named `{name}` yet: a publish of `{target}` waits for its person, {page}."
+        ),
+        "Once the person has carried out the publish on that page, call the tool again; until then there is nothing to do.",
+    )
+}
+
 handler!(
     /// `tool.call`: submits a run of one published tool and returns its
     /// outcome, or the state it rests in.
     tool_call,
     |kernel, call| {
         let name = OperationName::new(call.required("tool")?)?;
-        let found = kernel.find_tool(&name).await?;
+        let found = match kernel.find_tool(&name).await {
+            Ok(found) => found,
+            Err(failure) => return Err(waits_for_its_person(kernel, &call, &name, failure)),
+        };
         let (effect, hazard) = found.effect();
         // The decision about this call, and the health check before it,
         // were made for the tool as it stood then. A version published in
