@@ -27,20 +27,20 @@ A package is one branch and one pull request. When it merges, its row changes to
 
 ## Milestones
 
-| # | Milestone | What a developer can do when it is reached | Version | State on 2026-11-18 |
+| # | Milestone | What a developer can do when it is reached | Version | State |
 | --- | --- | --- | --- | --- |
-| 0 | Foundations | Nothing a developer uses yet. The workspace, the checks, the test application, the core types, and the contracts exist | 0.0 | Reached, except package 0.2p, which is the owner's |
-| 1 | The first read | Read one value from a web application through a command or an MCP client, the same way every time, with a trace | | 9 of 10 done. 1.8 is ready: one of the two clauses of the exit test that [the exit-test report](../journal/2026-11-24-the-exit-tests-of-the-finished-phases.md) found unmet; the other, the budgets, is met by 1.9 |
-| 2 | The signed-in read | The same, on a system that needs a sign-in, with the session kept alive and no secret anywhere it should not be | | Reached: 7 of 7 done, and the exit test passes ([the exit-test report](../journal/2026-11-24-the-exit-tests-of-the-finished-phases.md)) |
-| 3 | Verified writes | Enter a spreadsheet into a web application: previewed, approved, read back, resumable without duplicates. The first usable product | 0.1 | 9 of 11 done. 3.6 waits on the owner's run of the prompts on macOS and Windows, and R1 on the release |
-| 4 | Anything, proven once | Do the same reads over a command-line program, with no change to the kernel | | Reached: 5 of 5 done. No exit test is stated beyond the rows |
-| 5 | The scout | Point at a system and get a report: what was found, what was drafted, which reads already work | 0.2 | 10 of 14 done (E1, E2, E4, E2a, E2b, E2c, E7a to E7d); E6 withdrawn |
-| 6 | Fast paths | The same operations over direct requests, proven equal to the interface and many times faster | | Reached: 6 of 6 done, and the exit test passes, measured ([the exit-test report](../journal/2026-11-24-the-exit-tests-of-the-finished-phases.md)) |
-| 7 | The developer's first hour | One install by pip, crates.io, or npm; from an address to published read tools in minutes | 0.3 | 4 of 10 done (F1 to F4) |
-| 8 | More kinds | Databases, files, queues, and simulated devices, each through its own pack | 0.4 to 0.6 | Reached: 13 of 13 done. No exit test is stated beyond the rows |
-| 9 | A server | Many users, each acting as themselves, with grants, toolsets, and runners | 0.7 to 0.8 | 1 of 9 done (6.3). Held until after the first release ([decision 0390](../decisions/0390-the-open-questions-of-2026-11-24-are-settled-by-the-lead-and-the-first-release-is-what-progress-counts-toward.md)) |
-| 10 | Breadth | Desktop applications, upstream MCP servers, and the hard cases of web interfaces | 0.9 | 6 of 7 done. 8.3 is left |
-| 11 | Hardening | Real systems tried with the owner; an outside security review; every failure a tested one | 1.0 | 2 of 10 done (9.1, 9.1a) |
+| 0 | Foundations | Nothing a developer uses yet. The workspace, the checks, the test application, the core types, and the contracts exist | 0.0 | <!-- progress:begin milestone-0 -->14 of 15 done; owner: 0.2p<!-- progress:end -->. Reached but for 0.2p, which is the owner's |
+| 1 | The first read | Read one value from a web application through a command or an MCP client, the same way every time, with a trace | | <!-- progress:begin milestone-1 -->10 of 11 done; held: 1.9b<!-- progress:end -->. The two clauses of the exit test that [the exit-test report](../journal/2026-11-24-the-exit-tests-of-the-finished-phases.md) found unmet are 1.8, the shared session, and 1.9, the budgets |
+| 2 | The signed-in read | The same, on a system that needs a sign-in, with the session kept alive and no secret anywhere it should not be | | Reached: <!-- progress:begin milestone-2 -->7 of 7 done<!-- progress:end -->, and the exit test passes ([the exit-test report](../journal/2026-11-24-the-exit-tests-of-the-finished-phases.md)) |
+| 3 | Verified writes | Enter a spreadsheet into a web application: previewed, approved, read back, resumable without duplicates. The first usable product | 0.1 | <!-- progress:begin milestone-3 -->9 of 11 done; owner: 3.6; held: R1<!-- progress:end -->. 3.6 waits on the owner's run of the prompts on macOS and Windows, and R1 on the release |
+| 4 | Anything, proven once | Do the same reads over a command-line program, with no change to the kernel | | Reached: <!-- progress:begin milestone-4 -->5 of 5 done<!-- progress:end -->. No exit test is stated beyond the rows |
+| 5 | The scout | Point at a system and get a report: what was found, what was drafted, which reads already work | 0.2 | <!-- progress:begin milestone-5 -->11 of 14 done; held: E8, E9, E3; withdrawn: E6<!-- progress:end --> |
+| 6 | Fast paths | The same operations over direct requests, proven equal to the interface and many times faster | | Reached: <!-- progress:begin milestone-6 -->6 of 6 done<!-- progress:end -->, and the exit test passes, measured ([the exit-test report](../journal/2026-11-24-the-exit-tests-of-the-finished-phases.md)) |
+| 7 | The developer's first hour | One install by pip, crates.io, or npm; from an address to published read tools in minutes | 0.3 | <!-- progress:begin milestone-7 -->9 of 13 done; ready: 5.1, 5.6c; held: 5.5, 5.6<!-- progress:end --> |
+| 8 | More kinds | Databases, files, queues, and simulated devices, each through its own pack | 0.4 to 0.6 | Reached: <!-- progress:begin milestone-8 -->13 of 13 done<!-- progress:end -->. No exit test is stated beyond the rows |
+| 9 | A server | Many users, each acting as themselves, with grants, toolsets, and runners | 0.7 to 0.8 | <!-- progress:begin milestone-9 -->1 of 9 done; held: 6.1, 6.2, 6.4, 6.5, 6.6, 7.1, 7.2, 7.3<!-- progress:end -->. Held until after the first release ([decision 0390](../decisions/0390-the-open-questions-of-2026-11-24-are-settled-by-the-lead-and-the-first-release-is-what-progress-counts-toward.md)) |
+| 10 | Breadth | Desktop applications, upstream MCP servers, and the hard cases of web interfaces | 0.9 | <!-- progress:begin milestone-10 -->6 of 7 done; held: 8.3<!-- progress:end --> |
+| 11 | Hardening | Real systems tried with the owner; an outside security review; every failure a tested one | 1.0 | <!-- progress:begin milestone-11 -->24 of 32 done; held: 9.1b, 9.1c, 9.2, 9.3, 9.4, R2; owner: 9.5, 9.6<!-- progress:end --> |
 
 ## Milestone 0: foundations
 
@@ -417,13 +417,14 @@ Lanes that do not share a crate. Within a lane, packages run in order.
 | Packs | One agent per pack, once the package it needs is done | Each pack is its own crates |
 | Design | Design review rounds; a pack's section before its crates | Documents only; indexes are edited last and in small edits |
 
-Right now, the packages marked `ready` are 5.1, 5.6c, N0b, FT5, FT6, YL1, and YL2: seven. 5.1, YL1, and YL2 each hold `a2m-actions`, so they are taken one after another. Whether a worker can take a row from the row alone is a different question, answered in one place, [the line](build-order.md#the-line-every-package-left-and-whether-a-worker-can-take-it) in the Build Order. Of the work added after the plan, N0, N1, N2a, W1, W2a, W2b, W2c, X4a, X4b, X6, P1, P3, FC1, and FC2 are done. E6 is withdrawn. Several held rows carry a note of what is built so far: the crate exists, and the row's proof waits on crates above it. Package 1.5 no longer waits on 0.5.
+<!-- progress:begin ready -->Right now, the packages marked `ready` are 5.1, 5.6c, FT5, FT6, YL1, YL2, and N0b: seven.<!-- progress:end --> Two that hold one crate are taken one after another; the line in the Build Order names each row's crates. Whether a worker can take a row from the row alone is a different question, answered in one place, [the line](build-order.md#the-line-every-package-left-and-whether-a-worker-can-take-it) in the Build Order. Of the work added after the plan, N0, N1, N2a, W1, W2a, W2b, W2c, X4a, X4b, X6, P1, P3, FC1, and FC2 are done. E6 is withdrawn. Several held rows carry a note of what is built so far: the crate exists, and the row's proof waits on crates above it. Package 1.5 no longer waits on 0.5.
 
 ## Rules for changing this document
 
 - At the end of every milestone, update the scorecard in [the bar](../spec/1-product/107-the-bar.md). A number that misses its target is a finding: the design changes, or the target does, by decision record.
 
 - Mark a package `done` in the pull request that completes it, and change `held` to `ready` for whatever it unblocks.
+- Then run `python3 tools/progress.py --write`: the milestones' counts and the sentence of `ready` packages are written from the rows, never by hand ([decision 0453](../decisions/0453-the-plans-counts-are-written-from-the-rows-between-markers.md)).
 - Split a package that grows past a session; give the parts letters, such as 3.7a and 3.7b.
 - Add a package when work turns up that belongs to none. Remove one only with a line in the journal saying why.
 - Reorder milestones only at a milestone's end, with the reasons in the journal.
