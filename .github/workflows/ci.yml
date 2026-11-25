@@ -795,7 +795,7 @@ jobs:
           set -o pipefail
           cargo test --locked --no-fail-fast -p anything2mcp --test product -- signed_in_web_read:: capture_use:: 2>&1 | tee window-tests.log
           # The filters name two modules of the product's one test program; a name that matches nothing is not a pass.
-          grep -q "test result: ok. 3 passed; 0 failed; 2 ignored" window-tests.log
+          grep -q "test result: ok. 5 passed; 0 failed; 4 ignored" window-tests.log
 
   desktop-windows:
     name: The desktop pack on Windows, against its stand
