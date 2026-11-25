@@ -181,13 +181,31 @@ pub const FIXED_ARGUMENTS: &[&str] = &[
     // changed; one that holds it back for a trial is given it. An unknown
     // name is ignored by a browser that has not got the feature.
     "--enable-features=WebMCP,DevToolsWebMCPSupport",
+    // What the browser writes when it cannot start, such as a sandbox it
+    // cannot make, goes to a file in its data directory, named after the
+    // data directory below (decision 0999). Only errors and worse: a page's
+    // console is logged at a lower level, and not at all from a context
+    // that keeps its state in memory, which every tab is in.
+    "--enable-logging",
+    "--log-level=2",
 ];
+
+/// The file in the data directory the browser writes its errors to. The
+/// engine removes it before each start and reads it only when the browser
+/// stopped before it answered (decision 0999).
+pub(crate) const LOG_FILE: &str = "launch-errors.log";
+
+/// The most of the log file that is read.
+const LOG_READ: u64 = 64 * 1024;
+
+/// How many of the browser's lines a failure shows.
+const LINES_SHOWN: usize = 2;
 
 /// The argument that keeps the browser without a window.
 pub(crate) const HEADLESS: &str = "--headless=new";
 
 /// The whole argument list of one launch.
-pub(crate) fn arguments(data_directory: &Path, window: bool) -> Vec<OsString> {
+pub(crate) fn arguments(data_directory: &Path, log_file: &Path, window: bool) -> Vec<OsString> {
     let mut arguments: Vec<OsString> = FIXED_ARGUMENTS.iter().map(OsString::from).collect();
     if !window {
         arguments.push(HEADLESS.into());
@@ -195,9 +213,67 @@ pub(crate) fn arguments(data_directory: &Path, window: bool) -> Vec<OsString> {
     let mut directory = OsString::from("--user-data-dir=");
     directory.push(data_directory);
     arguments.push(directory);
+    let mut log = OsString::from("--log-file=");
+    log.push(log_file);
+    arguments.push(log);
     // The page the browser opens with, so that it opens no other.
     arguments.push("about:blank".into());
     arguments
+}
+
+/// What a browser that stopped before it answered wrote in its log file,
+/// as far as it may be shown: its fatal lines first, then its errors, at
+/// most [`LINES_SHOWN`], each without the bracket the browser puts before
+/// it, with every known secret replaced and then cut. `None` when it wrote
+/// no such line, or the file is not there.
+pub(crate) fn what_it_wrote(log: &CheckedPath, redact: &dyn a2m_core::Redact) -> Option<String> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    log.open()
+        .ok()?
+        .take(LOG_READ)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    lines_shown(&String::from_utf8_lossy(&bytes), redact)
+}
+
+/// The lines of a log, as [`what_it_wrote`] shows them.
+pub(crate) fn lines_shown(log: &str, redact: &dyn a2m_core::Redact) -> Option<String> {
+    let mut fatal = Vec::new();
+    let mut errors = Vec::new();
+    for line in log.lines() {
+        // `[process:thread:moment:LEVEL:source] text`: the level is one
+        // whole part of the bracket.
+        let Some((bracket, text)) = line
+            .strip_prefix('[')
+            .and_then(|rest| rest.split_once("] "))
+        else {
+            continue;
+        };
+        let level = bracket
+            .split(':')
+            .find(|part| *part == "FATAL" || *part == "ERROR");
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        match level {
+            Some("FATAL") => fatal.push(text),
+            Some(_) => errors.push(text),
+            None => {}
+        }
+    }
+    let shown: Vec<String> = fatal
+        .into_iter()
+        .chain(errors)
+        .take(LINES_SHOWN)
+        .map(|text| crate::tab::shown(redact, text))
+        .collect();
+    if shown.is_empty() {
+        None
+    } else {
+        Some(shown.join("; "))
+    }
 }
 
 /// How the browser takes its pipe: descriptors 3 and 4 on Linux and macOS,
@@ -276,9 +352,13 @@ mod tests {
 
     #[test]
     fn the_launch_arguments_never_switch_the_sandbox_off_or_hide_automation() {
-        let all = arguments(Path::new("profile"), false)
+        let all = arguments(Path::new("profile"), Path::new("profile/log"), false)
             .into_iter()
-            .chain(arguments(Path::new("profile"), true))
+            .chain(arguments(
+                Path::new("profile"),
+                Path::new("profile/log"),
+                true,
+            ))
             .map(|argument| argument.to_string_lossy().to_lowercase())
             .collect::<Vec<_>>();
         for refused in [
@@ -314,9 +394,52 @@ mod tests {
     }
 
     #[test]
+    fn the_browser_writes_its_errors_to_a_file_in_its_data_directory() {
+        for window in [false, true] {
+            let all = arguments(Path::new("profile"), Path::new("profile/log"), window)
+                .into_iter()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            assert!(all.iter().any(|argument| argument == "--enable-logging"));
+            assert!(all.iter().any(|argument| argument == "--log-level=2"));
+            assert!(
+                all.iter()
+                    .any(|argument| argument == "--log-file=profile/log")
+            );
+        }
+    }
+
+    #[test]
+    fn a_log_shows_its_fatal_lines_first_without_their_bracket_redacted_and_bounded() {
+        struct One;
+        impl a2m_core::Redact for One {
+            fn redact(&self, text: &str) -> String {
+                text.replace("secret-for-tests-log", "[redacted]")
+            }
+        }
+        let log = "\
+[1:1:1125/023650.1:ERROR:a/b.cc:9] first error secret-for-tests-log
+not a line of the browser's
+[1:1:1125/023650.2:WARNING:a/b.cc:9] a warning
+[10:10:1125/023650.3:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:242] Zygote process exited prematurely with exit code 82 (setuid sandbox: failed to move to new namespaces)
+[1:1:1125/023650.4:ERROR:a/b.cc:9] second error
+";
+        let shown = lines_shown(log, &One).unwrap();
+        assert_eq!(
+            shown,
+            "Zygote process exited prematurely with exit code 82 (setuid sandbox: failed to move to new namespaces); first error [redacted]"
+        );
+        // Each line is cut, and a log of nothing above a warning shows none.
+        let long = format!("[1:ERROR:x] {}", "a".repeat(5000));
+        assert!(lines_shown(&long, &One).unwrap().chars().count() <= 201);
+        assert_eq!(lines_shown("[1:WARNING:x] fine\nplain\n", &One), None);
+        assert_eq!(lines_shown("", &One), None);
+    }
+
+    #[test]
     fn every_launch_connects_directly_and_runs_no_extension() {
         for window in [false, true] {
-            let all = arguments(Path::new("profile"), window)
+            let all = arguments(Path::new("profile"), Path::new("profile/log"), window)
                 .into_iter()
                 .map(|argument| argument.to_string_lossy().to_lowercase())
                 .collect::<Vec<_>>();
