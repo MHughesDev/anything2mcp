@@ -224,7 +224,7 @@ impl DraftingRule for MapFromIdentity {
         // A finding that cannot be read is still refused as one.
         reported(finding)?;
         cx.not_drafted(
-            "The device identified itself and lists no register, so no map is drafted from it: put the device's published register map in the project's `sources` folder and run the scout again, and the map and a read of each register are drafted from that.",
+            "The device identified itself and lists no register, so no map is drafted from it: put the device's published register map in the project's `inputs` folder and run the scout again, and the map and a read of each register are drafted from that.",
         );
         Ok(Vec::new())
     }

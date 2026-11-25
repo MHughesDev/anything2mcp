@@ -32,7 +32,7 @@ use crate::template::{Method, ProbeStep};
 
 /// The name, among a discovery's checked paths, of a description given as
 /// a file: the name the manifest's `http_description` declares under
-/// `files`, so the engine hands it a file of the project's `sources`
+/// `files`, so the engine hands it a file of the project's `inputs`
 /// folder under it (decision 0263).
 pub const DESCRIPTION_FILE: &str = "description";
 /// The name, in a discovery's focus, of the path a description is fetched
@@ -371,7 +371,7 @@ impl Discoverer for HttpDescription {
                 codes::failure(
                     &codes::row::DESCRIPTION_UNREADABLE,
                     format!("No description could be read: {why}."),
-                    "Put the description in the project's `sources` folder and run `anything2mcp scout run <target> --files '{\"description\": \"sources/<file>\"}'`.",
+                    "Put the description in the project's `inputs` folder and run `anything2mcp scout run <target> --files '{\"description\": \"inputs/<file>\"}'`.",
                 )
             };
             let mut served_at = None;

@@ -56,7 +56,7 @@ hidden: reject
 ## How a file reaches a run
 
 - A pipeline with a source has an input named `source`.
-- On one machine the file is read only from an allowed root: the project folder, or a folder the person added. Put it under `sources/` in the project and name it as `sources/items.csv`.
+- On one machine the file is read only from an allowed root: the project folder, or a folder the person added. Put it under `inputs/` in the project and name it as `inputs/items.csv`.
 - Links are resolved before the check. A renamed file whose content is not the type it claims is refused.
 - On a server a caller uploads content instead of passing a path.
 - You cannot name any other file, and the system's text never picks one.

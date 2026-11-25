@@ -1224,7 +1224,7 @@ use crate::codes::{self, BINARY_DISCOVERER, PACK, SURFACE_KIND};
 use crate::json::{self, Json};
 
 /// The name a binary is handed to the scout under: a file of the project's
-/// `sources` folder, never the program's own path.
+/// `inputs` folder, never the program's own path.
 pub const BINARY: &str = "binary";
 
 impl Stop {

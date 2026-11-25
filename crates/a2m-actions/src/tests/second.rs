@@ -54,8 +54,8 @@ async fn a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes() {
     let project = world.project("project");
     std::fs::create_dir_all(project.join("sheets")).unwrap();
     std::fs::write(project.join("sheets").join("items.csv"), b"Code\n").unwrap();
-    std::fs::write(project.join("sources").join(".hidden.csv"), b"Code\n").unwrap();
-    let file = project.join("sources").join("items.csv");
+    std::fs::write(project.join("inputs").join(".hidden.csv"), b"Code\n").unwrap();
+    let file = project.join("inputs").join("items.csv");
     std::fs::write(
         &file,
         sheet(&[
@@ -84,7 +84,7 @@ async fn a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes() {
     let sheet_call = json!({
         "tool": ORDER_FILL,
         "input": fill,
-        "source_file": "sources/items.csv",
+        "source_file": "inputs/items.csv",
     });
 
     // What the dispatcher refuses before any run exists.
@@ -93,13 +93,13 @@ async fn a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes() {
     assert_eq!(error_of(&none), invalid);
     assert!(none.error.unwrap().fix.contains("source_file"));
     let not_wanted = call(
-        json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}, "source_file": "sources/items.csv"}),
+        json!({"tool": ORDER_GET, "input": {"order_id": "A-100"}, "source_file": "inputs/items.csv"}),
         true,
     )
     .await;
     assert_eq!(error_of(&not_wanted), invalid);
     let both = call(
-        json!({"tool": ORDER_FILL, "source_file": "sources/items.csv", "source_rows": [{"Code": "L-1"}]}),
+        json!({"tool": ORDER_FILL, "source_file": "inputs/items.csv", "source_rows": [{"Code": "L-1"}]}),
         true,
     )
     .await;
@@ -120,18 +120,18 @@ async fn a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes() {
         (FailureClass::Input, "path_not_allowed".to_owned())
     );
     let outside = std::env::temp_dir().join("a2m-outside.csv");
-    // Nor from anywhere in the project but its `sources` folder: not
+    // Nor from anywhere in the project but its `inputs` folder: not
     // another folder of it, not its project file, not its target files,
     // not a hidden file, and not a folder.
     for escaping in [
         "../outside.csv".to_owned(),
-        "sources/../sheets/items.csv".to_owned(),
+        "inputs/../sheets/items.csv".to_owned(),
         outside.to_string_lossy().into_owned(),
         "sheets/items.csv".to_owned(),
         "anything2mcp.toml".to_owned(),
         "targets/example/target.yaml".to_owned(),
-        "sources/.hidden.csv".to_owned(),
-        "sources".to_owned(),
+        "inputs/.hidden.csv".to_owned(),
+        "inputs".to_owned(),
     ] {
         let mut input = sheet_call.clone();
         input["source_file"] = json!(escaping);
@@ -143,7 +143,7 @@ async fn a_source_file_reaches_a_pipeline_and_a_resume_reads_the_same_bytes() {
         );
     }
     let mut missing = sheet_call.clone();
-    missing["source_file"] = json!("sources/nothing.csv");
+    missing["source_file"] = json!("inputs/nothing.csv");
     assert_eq!(
         error_of(&call(missing, true).await),
         (FailureClass::Input, "file_unavailable".to_owned())
@@ -549,7 +549,7 @@ impl World {
     /// A project folder under the test's own folder, holding one sheet.
     fn project_with_sheet(&self, rows: &[(&str, &str, &str, &str)]) -> std::path::PathBuf {
         let project = self.project("project");
-        std::fs::write(project.join("sources").join("sheet.csv"), sheet(rows)).unwrap();
+        std::fs::write(project.join("inputs").join("sheet.csv"), sheet(rows)).unwrap();
         project
     }
 
@@ -584,7 +584,7 @@ async fn a_sheet_is_entered_row_by_row_from_a_file_of_the_project() {
                 json!({
                     "tool": SHEET_ENTER,
                     "input": {"order_id": "A-102"},
-                    "source_file": "sources/sheet.csv",
+                    "source_file": "inputs/sheet.csv",
                 }),
                 world.caller.clone(),
             )
@@ -673,7 +673,7 @@ async fn lines_whose_header_failed_are_recorded_as_blocked_and_written_once_it_i
                 json!({
                     "tool": KIT_ENTER,
                     "input": {"order_id": "A-102", "title": "Table kit"},
-                    "source_file": "sources/sheet.csv",
+                    "source_file": "inputs/sheet.csv",
                 }),
                 world.caller.clone(),
             )

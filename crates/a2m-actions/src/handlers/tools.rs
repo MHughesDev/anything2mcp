@@ -307,12 +307,12 @@ fn most_handed_bytes(kernel: &Kernel) -> u64 {
         .map_or(most, |allowed| allowed.min(most))
 }
 
-/// A file of the project's `sources` folder that a call names, by its path
+/// A file of the project's `inputs` folder that a call names, by its path
 /// from the project folder as the call wrote it, checked for reading: a
 /// source file of `tool.call`, or a file handed to a discovery. `what`
 /// begins each refusal's sentence. Blocking: it looks at the disk.
 ///
-/// A file is taken from the project's `sources` folder and from nowhere
+/// A file is taken from the project's `inputs` folder and from nowhere
 /// else in the project: not its target files, not its project file, not a
 /// hidden file. The checked path follows a link only while it stays
 /// inside the project, and what stands at the name must be a regular file:
@@ -320,7 +320,7 @@ fn most_handed_bytes(kernel: &Kernel) -> u64 {
 ///
 /// # Errors
 ///
-/// `input`/`path_not_allowed` for a path outside `sources/`, with a hidden
+/// `input`/`path_not_allowed` for a path outside `inputs/`, with a hidden
 /// part, absolute, with `..`, through a link out of the project, or at
 /// which no regular file stands; `input`/`file_unavailable` when nothing
 /// stands there.
@@ -335,8 +335,8 @@ fn source_file(
             format!("{what} is not read: {why}."),
             format!(
                 "Put the file in the project's `{}` folder and give its path from the project folder, such as `{}/items.csv`.",
-                crate::project::SOURCES_FOLDER,
-                crate::project::SOURCES_FOLDER
+                crate::project::INPUTS_FOLDER,
+                crate::project::INPUTS_FOLDER
             ),
         )
     })?;
@@ -364,7 +364,7 @@ fn source_file(
 /// it. Each path is checked here, when asked, by the code that checks a
 /// source file of `tool.call`, and must be at most the bytes a caller may
 /// hand in; nothing is read. Empty when the call names none. The engine
-/// checks each path again, under a root of the `sources` folder alone,
+/// checks each path again, under a root of the `inputs` folder alone,
 /// before any discoverer runs.
 ///
 /// # Errors
@@ -392,7 +392,7 @@ pub(crate) async fn discovery_files(
                     "The file named `{}` is not given as a path.",
                     codes::shown(name)
                 ),
-                "Give each file as its path from the project folder, such as `sources/example-openapi.json`.",
+                "Give each file as its path from the project folder, such as `inputs/example-openapi.json`.",
             ));
         };
         files.insert(name.clone(), path.to_owned());

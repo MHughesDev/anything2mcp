@@ -206,4 +206,4 @@ A designer who read the code for the command-line package found two statements i
 
 ## What came of round 20 (2026-11-18)
 
-Built. A person hands the scout files of the project's `sources` folder under names the discoverers declare, through `scout run --files`, `discover run --files`, and `spec import`; product tests import a description and a device's register map through the real command ([decision 0263](../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)).
+Built. A person hands the scout files of the project's `inputs` folder under names the discoverers declare, through `scout run --files`, `discover run --files`, and `spec import`; product tests import a description and a device's register map through the real command ([decision 0263](../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)).

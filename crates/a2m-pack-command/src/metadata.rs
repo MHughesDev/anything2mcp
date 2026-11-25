@@ -166,7 +166,7 @@ pub struct OptionSaid {
     pub about: Option<String>,
 }
 
-/// One option of a command that a handed file states, with what each
+/// One option of a command that a input file states, with what each
 /// source says of it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -201,7 +201,7 @@ pub(crate) struct Handed {
     pub read: FileRead,
 }
 
-/// The options the handed files state of one listed command, beside what
+/// The options the input files state of one listed command, beside what
 /// its usage line shows. Empty when no file says anything of it.
 pub(crate) fn options_of(
     command: &str,

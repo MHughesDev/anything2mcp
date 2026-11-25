@@ -549,7 +549,7 @@ pub const SHORTCUTS: &[Shortcut] = &[
                 action: "scout.run",
                 field: "files",
                 key: Some("description"),
-                does: "A description the system publishes about itself, as a file of the project's `sources` folder, such as `sources/example-openapi.json`; the scout drafts from it as `spec.import` does.",
+                does: "A description the system publishes about itself, as a file of the project's `inputs` folder, such as `inputs/example-openapi.json`; the scout drafts from it as `spec.import` does.",
             },
         ],
     },

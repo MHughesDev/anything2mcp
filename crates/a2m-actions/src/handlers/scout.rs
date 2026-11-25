@@ -208,7 +208,7 @@ struct Identified {
     sign_in_findings: BTreeMap<String, Vec<Finding>>,
 }
 
-/// The files of the project's `sources` folder a scout hands its
+/// The files of the project's `inputs` folder a scout hands its
 /// discoveries (decision 0263), and whether they are an unfinished scout's,
 /// stored when it began, rather than the call's.
 #[derive(Debug, Default)]

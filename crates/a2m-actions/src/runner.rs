@@ -52,7 +52,7 @@ pub(crate) const DISCOVERY_SURFACE: &str = "surface";
 /// discoverers are given.
 pub(crate) const DISCOVERY_FOCUS: &str = "focus";
 /// The field of a discovery run's stored call that holds the files of the
-/// project's `sources` folder the call handed its discoverers, each name to
+/// project's `inputs` folder the call handed its discoverers, each name to
 /// its path as the call wrote it (decision 0263). Left out when none were.
 pub(crate) const DISCOVERY_FILES: &str = "files";
 
@@ -899,7 +899,7 @@ impl Kernel {
         };
         // A discovery run's stored call names its surface, the focus
         // handed to its discoverers, and the files of the project's
-        // `sources` folder the call handed them (`discover.run`): the job
+        // `inputs` folder the call handed them (`discover.run`): the job
         // names the surface, the discoverers are given the focus alone,
         // and the files reach the engine through the control, which checks
         // each again (decision 0263). Files stored in a form this build

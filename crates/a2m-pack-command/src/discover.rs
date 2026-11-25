@@ -82,7 +82,7 @@ pub struct CommandFound {
     pub options: Vec<OptionFound>,
 }
 
-/// One option of the program as a whole, as a handed file states it.
+/// One option of the program as a whole, as a input file states it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProgramOption {
@@ -404,7 +404,7 @@ fn payload<T: Serialize>(found: &T) -> Result<String, Failure> {
 }
 
 /// Every file the scout was handed, read.
-struct HandedFiles {
+struct InputFiles {
     /// The completion file and the manual page.
     lines: Vec<(Handed, Digest)>,
     /// The PowerShell help file.
@@ -417,7 +417,7 @@ struct HandedFiles {
 /// declares, before any program is started: a file that cannot be read
 /// stops the discovery with nothing run. The text is redacted whole before
 /// it is read.
-fn handed(scope: &DiscoveryScope<'_>) -> Result<HandedFiles, Failure> {
+fn handed(scope: &DiscoveryScope<'_>) -> Result<InputFiles, Failure> {
     let program = program_name(&scope.surface.surface.address);
     let limit = usize::try_from(scope.bounds.bytes).unwrap_or(usize::MAX);
     let mut files = Vec::new();
@@ -465,7 +465,7 @@ fn handed(scope: &DiscoveryScope<'_>) -> Result<HandedFiles, Failure> {
         };
         files.push((Handed { name, read }, Digest::of(&bytes)));
     }
-    Ok(HandedFiles {
+    Ok(InputFiles {
         lines: files,
         help,
         manifest,
@@ -473,7 +473,7 @@ fn handed(scope: &DiscoveryScope<'_>) -> Result<HandedFiles, Failure> {
 }
 
 impl HelpDiscoverer {
-    /// The finding about one handed file.
+    /// The finding about one input file.
     fn file_finding(
         &self,
         file: &Handed,
@@ -710,7 +710,7 @@ impl HelpDiscoverer {
         Ok(())
     }
 
-    /// The finding about one listed command. With options a handed file
+    /// The finding about one listed command. With options a input file
     /// states, it is `inferred` from those files; without, it is what the
     /// help showed, at `discovered`.
     fn command_finding(
@@ -772,7 +772,7 @@ impl HelpDiscoverer {
         scope: &DiscoveryScope<'_>,
         out: &mut dyn FindingSink,
     ) -> Result<DiscoveryReport, Failure> {
-        let HandedFiles {
+        let InputFiles {
             lines: files,
             help,
             manifest,
@@ -930,7 +930,7 @@ impl Describer for HelpDescriber {
             };
             untrusted.push(self.redact.redact(&line));
         }
-        // What the handed files gave: how many, how much of them was not
+        // What the input files gave: how many, how much of them was not
         // read, and how many commands they state options of.
         let files: Vec<&Finding> = findings
             .iter()
@@ -967,7 +967,7 @@ impl Describer for HelpDescriber {
         );
         if !files.is_empty() {
             text.push_str(&format!(
-                " {} handed files were read as text and never run; they state options of {described} commands, and {unread} of their lines or entries were in a form the reader does not take and were not read.",
+                " {} input files were read as text and never run; they state options of {described} commands, and {unread} of their lines or entries were in a form the reader does not take and were not read.",
                 files.len()
             ));
         }

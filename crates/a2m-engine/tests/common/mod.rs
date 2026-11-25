@@ -2424,7 +2424,7 @@ pub struct StoreControl {
     pub acknowledged: Mutex<Vec<RecordRef>>,
     /// The project folder of the request that started the run.
     pub project: Mutex<Option<PathBuf>>,
-    /// The files of the project's `sources` folder the call that started a
+    /// The files of the project's `inputs` folder the call that started a
     /// discovery hands it, by name.
     pub discovery_files: Mutex<std::collections::BTreeMap<String, String>>,
     /// The answerer `other_records` hands out, and every operation and

@@ -95,7 +95,7 @@ sources = ["live_system", "artifact"]
 max_level = "discovered"
 bounds = { seconds = 60, bytes = 50000000, depth = 8 }
 surface_kinds = ["file"]                 # the surface kinds it applies to; left out, any surface of its access kind
-files = []                               # the names under which it reads files a person hands a discovery, from the project's `sources` folder; left out, none (decision 0263)
+files = []                               # the names under which it reads files a person hands a discovery, from the project's `inputs` folder; left out, none (decision 0263)
 driven_by = "engine"                     # "engine" | "person"; left out, "engine". "person" only where `points.traffic_capture` is not empty (decisions 0392, 0395)
 
 [[file_kinds]]

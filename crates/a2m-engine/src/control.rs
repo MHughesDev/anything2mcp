@@ -418,9 +418,9 @@ pub trait Control: Send + Sync {
         None
     }
 
-    /// The files of the project's `sources` folder that the call which
+    /// The files of the project's `inputs` folder that the call which
     /// started a discovery hands its discoverers: each name a discoverer
-    /// declares it reads, to the path the call gave, `sources/` and the
+    /// declares it reads, to the path the call gave, `inputs/` and the
     /// file below it, with forward slashes (decision 0263). The engine
     /// checks each path again under a read-only root of that folder before
     /// any discoverer runs, and hands nothing else. Asked only by a

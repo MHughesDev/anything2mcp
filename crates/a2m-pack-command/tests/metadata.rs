@@ -51,7 +51,7 @@ fn source(name: &str) -> Vec<u8> {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
             .join("fixtures")
-            .join("sources")
+            .join("inputs")
             .join(name),
     )
     .unwrap()
@@ -67,7 +67,7 @@ fn description(surface: &SurfaceRef) -> SurfaceDescription {
 }
 
 /// Runs the pack's discoverer on the stand, handed `files`: each a name
-/// and the bytes of a file put in a `sources` folder of the test's own.
+/// and the bytes of a file put in a `inputs` folder of the test's own.
 /// Also gives how many starts the stand had recorded when the discovery
 /// began, after `prepare` asked the version.
 async fn discover(
@@ -87,9 +87,9 @@ async fn discover(
         environment: Environment::new("test").unwrap(),
         surface: compiled_target.surfaces[0].clone(),
     };
-    let sources = folder.path().join("sources");
+    let sources = folder.path().join("inputs");
     std::fs::create_dir_all(&sources).unwrap();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots.add(root.clone(), &sources, Access::Read).unwrap();
     let mut paths = CheckedPaths::none();
@@ -188,7 +188,7 @@ fn from(option: &serde_json::Value) -> Vec<&str> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
+async fn input_files_are_read_as_text_and_each_option_keeps_its_source() {
     let folder = Folder::new("metadata");
     let stand = Stand::start().unwrap();
     let control = stand.control().clone();
@@ -239,7 +239,7 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
     .await;
     let report = report.unwrap();
 
-    // One finding for each handed file, which says how much was read.
+    // One finding for each input file, which says how much was read.
     let files = of_kind(&findings, "command_file");
     assert_eq!(files.len(), 2);
     for file in &files {
@@ -327,7 +327,7 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
         .unwrap()
         .describe(&findings, a2m_provider::DescribeForm::Summary);
     assert!(
-        described.text.contains("2 handed files"),
+        described.text.contains("2 input files"),
         "{}",
         described.text
     );

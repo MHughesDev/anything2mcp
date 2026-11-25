@@ -96,10 +96,10 @@ impl Engine {
     }
 }
 
-/// A file of a `sources` root, as a discovery is handed it.
+/// A file of a `inputs` root, as a discovery is handed it.
 fn handed(folder: &Path, name: &str) -> CheckedPath {
     let mut roots = Roots::none();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     roots.add(root.clone(), folder, Access::Read).unwrap();
     roots
         .folder(&root, Access::Read)
@@ -111,7 +111,7 @@ fn handed(folder: &Path, name: &str) -> CheckedPath {
 #[tokio::test(flavor = "multi_thread")]
 async fn with_no_engine_installed_it_says_so_and_nothing_starts() {
     let engine = Engine::new();
-    let sources = Folder::new("sources");
+    let sources = Folder::new("inputs");
     std::fs::write(sources.path().join("file.bin"), b"x").unwrap();
     let file = handed(sources.path(), "file.bin");
     let spec = engine.spec("ok", vec![engine.digest()]);
@@ -197,7 +197,7 @@ async fn a_pinned_engine_is_handed_the_file_as_its_one_argument_and_the_file_is_
 #[tokio::test(flavor = "multi_thread")]
 async fn a_program_whose_digest_is_not_pinned_is_refused_and_not_started() {
     let engine = Engine::new();
-    let sources = Folder::new("sources");
+    let sources = Folder::new("inputs");
     std::fs::write(sources.path().join("file.bin"), b"x").unwrap();
     let file = handed(sources.path(), "file.bin");
     let pinned = engine.digest();
@@ -225,7 +225,7 @@ async fn a_program_whose_digest_is_not_pinned_is_refused_and_not_started() {
 #[tokio::test(flavor = "multi_thread")]
 async fn only_a_regular_file_is_handed_over() {
     let engine = Engine::new();
-    let sources = Folder::new("sources");
+    let sources = Folder::new("inputs");
     std::fs::create_dir(sources.path().join("folder")).unwrap();
     let folder = handed(sources.path(), "folder");
     let decompiler = engine.decompiler(engine.spec("ok", vec![engine.digest()]));
@@ -237,7 +237,7 @@ async fn only_a_regular_file_is_handed_over() {
 #[tokio::test(flavor = "multi_thread")]
 async fn output_in_any_other_form_is_a_named_stop_and_none_of_it_is_used() {
     let engine = Engine::new();
-    let sources = Folder::new("sources");
+    let sources = Folder::new("inputs");
     std::fs::write(sources.path().join("file.bin"), b"x").unwrap();
     let file = handed(sources.path(), "file.bin");
     for (mode, class, code) in [
@@ -266,7 +266,7 @@ async fn output_in_any_other_form_is_a_named_stop_and_none_of_it_is_used() {
 #[tokio::test(flavor = "multi_thread")]
 async fn what_is_beyond_a_bound_is_counted_and_dropped_and_said() {
     let engine = Engine::new();
-    let sources = Folder::new("sources");
+    let sources = Folder::new("inputs");
     std::fs::write(sources.path().join("file.bin"), b"x").unwrap();
     let file = handed(sources.path(), "file.bin");
     // More functions than are kept.
@@ -295,7 +295,7 @@ async fn what_is_beyond_a_bound_is_counted_and_dropped_and_said() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_engine_is_started_with_the_listed_environment_only() {
     let engine = Engine::new();
-    let sources = Folder::new("sources");
+    let sources = Folder::new("inputs");
     std::fs::write(sources.path().join("file.bin"), b"x").unwrap();
     let file = handed(sources.path(), "file.bin");
     let mut spec = engine.spec("ok", vec![engine.digest()]);

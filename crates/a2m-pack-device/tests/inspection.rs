@@ -108,7 +108,7 @@ async fn inspect(
         .into_iter()
         .find(|found| found.declared().name.as_str() == "firmware_image")
         .unwrap();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots
         .add(root.clone(), project.path(), Access::Read)

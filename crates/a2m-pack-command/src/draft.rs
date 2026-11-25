@@ -26,7 +26,7 @@ fn whole(words: &str) -> bool {
     lower.contains("whole number") || lower.contains("integer")
 }
 
-/// What the handed files, and not the help, say of an option: its value's
+/// What the input files, and not the help, say of an option: its value's
 /// name and its description, in the order the sources were read.
 fn file_words(option: &OptionFound) -> impl Iterator<Item = &str> {
     option
@@ -337,7 +337,7 @@ impl DraftingRule for CommandFromFinding {
                         (None, None) => {}
                     }
                 }
-                // A flag that only a handed file states is a question, never
+                // A flag that only a input file states is a question, never
                 // a parameter: the program's own help does not show it.
                 for option in found.options.iter().filter(|option| !option.in_help()) {
                     if let Some(flag) = option.flags.first() {

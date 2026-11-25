@@ -6,7 +6,7 @@
 //! can state any folder, so the engine bounds what it will take: a folder
 //! that holds a project file, inside what `files.allowed_roots` allows,
 //! and never a folder in which another program keeps its own data. A source
-//! file is then read only from the project's `sources` folder. The engine
+//! file is then read only from the project's `inputs` folder. The engine
 //! never reads another program's cookie store or keys through a project
 //! (rule 5; spec section 502).
 
@@ -26,7 +26,7 @@ pub(crate) const ALLOWED_ROOTS: &str = "files.allowed_roots";
 pub(crate) const PROJECT_ROOT_WORD: &str = "<project>";
 
 /// The folder of a project a source file is read from.
-pub(crate) const SOURCES_FOLDER: &str = "sources";
+pub(crate) const INPUTS_FOLDER: &str = "inputs";
 
 /// The largest project file that is read.
 const PROJECT_FILE_LIMIT: u64 = 1024 * 1024;
@@ -492,15 +492,15 @@ fn others_may_change(path: &Path) -> Option<&'static str> {
 }
 
 /// Checks the path of a source file, as a call wrote it: a path inside the
-/// project's `sources` folder, with no hidden part.
+/// project's `inputs` folder, with no hidden part.
 ///
 /// # Errors
 ///
 /// The reason the path is not used, as the end of a sentence.
 pub(crate) fn source_path(path: &str) -> Result<(), &'static str> {
     let mut parts = path.split('/');
-    if parts.next() != Some(SOURCES_FOLDER) || path.len() <= SOURCES_FOLDER.len() + 1 {
-        return Err("a source file is read only from the project's `sources` folder");
+    if parts.next() != Some(INPUTS_FOLDER) || path.len() <= INPUTS_FOLDER.len() + 1 {
+        return Err("a source file is read only from the project's `inputs` folder");
     }
     if path.split('/').any(|part| part.starts_with('.')) {
         return Err("a part of it is hidden: its name starts with a dot");
@@ -753,18 +753,18 @@ mod tests {
 
     #[test]
     fn a_source_file_is_named_inside_the_sources_folder_with_no_hidden_part() {
-        assert!(source_path("sources/items.csv").is_ok());
-        assert!(source_path("sources/2026/items.csv").is_ok());
+        assert!(source_path("inputs/items.csv").is_ok());
+        assert!(source_path("inputs/2026/items.csv").is_ok());
         for refused in [
             "items.csv",
             "sheets/items.csv",
-            "sources",
-            "sources/",
-            "sourcesx/items.csv",
+            "inputs",
+            "inputs/",
+            "inputsx/items.csv",
             "targets/example/target.yaml",
             "anything2mcp.toml",
-            "sources/.env",
-            "sources/.git/config",
+            "inputs/.env",
+            "inputs/.git/config",
             ".anything2mcp/out/x",
         ] {
             assert!(source_path(refused).is_err(), "{refused}");

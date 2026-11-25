@@ -114,10 +114,10 @@ async fn read(
     bytes: &[u8],
     redact: &dyn Redact,
 ) -> Result<(DiscoveryReport, Vec<Finding>), Failure> {
-    let sources = scene.folder.path().join("sources");
+    let sources = scene.folder.path().join("inputs");
     std::fs::create_dir_all(&sources).unwrap();
     std::fs::write(sources.join("program.bin"), bytes).unwrap();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots.add(root.clone(), &sources, Access::Read).unwrap();
     let mut paths = CheckedPaths::none();

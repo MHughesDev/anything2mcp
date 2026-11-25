@@ -1432,7 +1432,7 @@ fn tested_as_compiled(
 /// The folder of one fixture, `fixtures/<name>` inside the target's
 /// folder, reached part by part: each part must be a folder itself, never a
 /// link, so that no fixture is read from another target's folder or from
-/// the project's sources (audit finding A-2).
+/// the project's inputs (audit finding A-2).
 pub(crate) fn fixture_folder(target: &CheckedPath, fixture: &str) -> Result<CheckedPath, Json> {
     let wrong = |problem: String| json!({"folder": untrusted(fixture), "problem": problem});
     let mut at = target.clone();

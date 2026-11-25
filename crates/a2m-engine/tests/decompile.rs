@@ -163,14 +163,14 @@ async fn scene_with(decompiler: Arc<Decompiler>) -> Scene {
     .await
 }
 
-/// Hands the discovery a file of the project's `sources` folder.
+/// Hands the discovery a file of the project's `inputs` folder.
 fn handing(scene: &Scene) -> common::Folder {
     let project = common::Folder::new("handed");
-    std::fs::create_dir_all(project.path().join("sources")).unwrap();
-    std::fs::write(project.path().join("sources").join("inspected.bin"), b"B").unwrap();
+    std::fs::create_dir_all(project.path().join("inputs")).unwrap();
+    std::fs::write(project.path().join("inputs").join("inspected.bin"), b"B").unwrap();
     *scene.control.project.lock().unwrap() = Some(project.path().to_path_buf());
     *scene.control.discovery_files.lock().unwrap() =
-        [("decompile".to_owned(), "sources/inspected.bin".to_owned())]
+        [("decompile".to_owned(), "inputs/inspected.bin".to_owned())]
             .into_iter()
             .collect();
     project

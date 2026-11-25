@@ -142,7 +142,7 @@ pub fn finding_kind() -> FindingKind {
         .unwrap_or_else(|_| unreachable!("`command` is a well-formed finding kind"))
 }
 
-/// The kind of finding about a handed file, as a checked name.
+/// The kind of finding about a input file, as a checked name.
 #[must_use]
 pub fn file_finding_kind() -> FindingKind {
     FindingKind::new(FILE_FINDING_KIND)

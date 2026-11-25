@@ -81,7 +81,7 @@ fn bundle(form: &str, change: impl Fn(&str) -> String) -> Folder {
 }
 
 /// The pack's discoverer of bundles, run against the scene's session,
-/// handed the folder `Example.app` of `sources` as the bundle.
+/// handed the folder `Example.app` of `inputs` as the bundle.
 async fn discover(
     scene: &Scene,
     sources: &Path,
@@ -100,7 +100,7 @@ async fn discover(
         .find(|found| found.declared().name.as_str() == "desktop_bundle")
         .expect("the pack registers a discoverer of bundles");
     assert_eq!(discoverer.declared().files, ["bundle"]);
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots.add(root.clone(), sources, Access::Read).unwrap();
     let mut paths = CheckedPaths::none();

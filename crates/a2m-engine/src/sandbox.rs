@@ -188,10 +188,10 @@ impl Engine {
         };
         // The project folder of the request that started the discovery, as
         // every step of the run is handed it (decision 0196), and the files
-        // of its `sources` folder the call named, each checked again here,
+        // of its `inputs` folder the call named, each checked again here,
         // before policy is asked or a driver is held: one that fails its
         // check ends the job, and no discoverer runs (decision 0263).
-        let paths = handed_files(run.paths(), &handed, &registry.files_taken(&description))?;
+        let paths = input_files(run.paths(), &handed, &registry.files_taken(&description))?;
         let tool = OperationName::new(DISCOVER_TOOL)?;
         control
             .decide(&GuardQuestion {
@@ -305,7 +305,7 @@ impl Engine {
 }
 
 /// The folder of a project whose files a person may hand a discovery.
-const SOURCES: &str = "sources";
+const INPUTS: &str = "inputs";
 
 /// Caller's text as an error message may hold it: no control character,
 /// and at most 80 characters.
@@ -324,16 +324,16 @@ fn shown(text: &str) -> String {
 }
 
 /// The run's checked paths with each file a call handed a discovery added
-/// under its name (decision 0263). Each path is the call's text, `sources/`
+/// under its name (decision 0263). Each path is the call's text, `inputs/`
 /// and a file below it. It is joined under a root made here of the
-/// project's `sources` folder, for reading only, by
+/// project's `inputs` folder, for reading only, by
 /// [`a2m_provider::CheckedPath::join`], which refuses an absolute path,
 /// `..`, and a link that leads out of the folder; a part that starts with
 /// a dot is refused too, and what stands at the path must be a regular
 /// file, not a link. A name that no
 /// discoverer of the surface reads is refused: a file nobody reads is a
 /// mistake, never ignored (rule 7). Nothing is read here.
-fn handed_files(
+fn input_files(
     paths: &CheckedPaths,
     handed: &BTreeMap<String, String>,
     taken: &BTreeSet<String>,
@@ -349,18 +349,18 @@ fn handed_files(
                 "The file `{}` handed to the discovery is refused: {why}.",
                 shown(path)
             ),
-            "Name a regular file inside the project's `sources` folder, as `sources/` and its path below it.",
+            "Name a regular file inside the project's `inputs` folder, as `inputs/` and its path below it.",
         )
     };
     let project = paths.project_folder()?;
     let folder = project
-        .join(SOURCES)
-        .map_err(|_| refused(SOURCES, "the project's `sources` folder cannot be used"))?;
-    let root = RootName::new(SOURCES)?;
+        .join(INPUTS)
+        .map_err(|_| refused(INPUTS, "the project's `inputs` folder cannot be used"))?;
+    let root = RootName::new(INPUTS)?;
     let mut roots = Roots::none();
     roots
         .add(root.clone(), folder.as_path(), Access::Read)
-        .map_err(|_| refused(SOURCES, "the project has no `sources` folder"))?;
+        .map_err(|_| refused(INPUTS, "the project has no `inputs` folder"))?;
     let sources = roots.folder(&root, Access::Read)?;
     for (name, path) in handed {
         if !taken.contains(name) {
@@ -376,8 +376,8 @@ fn handed_files(
             )));
         }
         let below = path
-            .strip_prefix("sources/")
-            .ok_or_else(|| refused(path, "it is not in the project's `sources` folder"))?;
+            .strip_prefix("inputs/")
+            .ok_or_else(|| refused(path, "it is not in the project's `inputs` folder"))?;
         if below.split('/').any(|part| part.starts_with('.')) {
             return Err(refused(path, "a part of it is hidden"));
         }

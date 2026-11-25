@@ -117,7 +117,7 @@ All three are generated from the same sources as the guidance file and the `docs
 
 ## The project folder
 
-Target files live in a project folder: any directory holding an `anything2mcp.toml`. It should be its own private Git repository. A file handed to a pipeline as its source is put in the project's `sources` folder and named from the project folder, as in `sources/items.csv`.
+Target files live in a project folder: any directory holding an `anything2mcp.toml`. It should be its own private Git repository. A file handed to a pipeline as its source is put in the project's `inputs` folder and named from the project folder, as in `inputs/items.csv`.
 
 ```text
 my-targets/

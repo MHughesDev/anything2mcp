@@ -191,7 +191,7 @@ async fn the_map_reader_reads_the_file_it_is_handed_under_its_declared_name() {
     let project = Folder::new("handed-map");
     std::fs::write(project.path().join("example-map.csv"), PUBLISHED).unwrap();
     std::fs::write(project.path().join("example-map.txt"), PUBLISHED).unwrap();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots
         .add(root.clone(), project.path(), Access::Read)

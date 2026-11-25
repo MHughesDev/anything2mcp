@@ -141,7 +141,7 @@ fn a_path_inside_the_root_is_read_written_and_listed() {
 fn a_root_that_is_not_declared_cannot_be_used() {
     let (folder, roots) = scene();
     let failure = roots
-        .check(&root("sources"), "a.txt", Access::Read)
+        .check(&root("inputs"), "a.txt", Access::Read)
         .unwrap_err();
     assert_eq!(
         (failure.class(), failure.code()),
@@ -151,7 +151,7 @@ fn a_root_that_is_not_declared_cannot_be_used() {
     // when it declares reading.
     let mut all = roots.clone();
     all.add(
-        root("sources"),
+        root("inputs"),
         &folder.path().join("outside"),
         Access::Write,
     )
@@ -186,7 +186,7 @@ fn a_root_that_is_not_declared_cannot_be_used() {
     assert_eq!(
         context
             .roots()
-            .check(&root("sources"), "secret.txt", Access::Read)
+            .check(&root("inputs"), "secret.txt", Access::Read)
             .unwrap_err()
             .code(),
         &codes::EFFECT_NOT_DECLARED

@@ -47,7 +47,7 @@ impl Redact for Planted {
 }
 
 /// The pack's discoverer of services, run against the scene's session,
-/// handed `files`: each a name and the bytes of a file put in a `sources`
+/// handed `files`: each a name and the bytes of a file put in an `inputs`
 /// folder of the test's own.
 async fn discover(
     scene: &Scene,
@@ -66,9 +66,9 @@ async fn discover(
         .into_iter()
         .find(|found| found.declared().name.as_str() == "desktop_service")
         .expect("the pack registers a discoverer of services");
-    let sources = scene.folder.path().join("sources");
+    let sources = scene.folder.path().join("inputs");
     std::fs::create_dir_all(&sources).unwrap();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots.add(root.clone(), &sources, Access::Read).unwrap();
     let mut paths = CheckedPaths::none();
@@ -179,7 +179,7 @@ async fn a_service_that_is_not_running_is_reported_and_never_started() {
 }
 
 #[tokio::test]
-async fn handed_files_are_read_as_text_and_start_nothing() {
+async fn input_files_are_read_as_text_and_start_nothing() {
     let Some(scene) = Scene::with_service("files", IDLE_NAME).await else {
         return;
     };

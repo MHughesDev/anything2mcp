@@ -165,7 +165,7 @@ A folder's writes act through the folder held from the root down ([decision 0272
 - **`HeldFolder::remove_file_if`** removes a file only where it is the file expected and the caller's check of its bytes, read through a handle of that file, says yes. It answers a **`Removal`**: `Removed`, or `NotThatFile { put_back }`.
 - **`FileIdentity`** is the system's identifier of a file: the device and the file number on Linux and macOS, and on Windows the volume's serial number and the file's identifier. **`FileIdentity::to_bytes`** gives it as 24 bytes, for a digest that tells one file from another; it is never shown.
 
-A discovery is handed files by name ([decision 0263](../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)):
+A discovery is input files by name ([decision 0263](../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)):
 
 - **`DiscovererDecl::files`** lists the names under which a discoverer reads a file a person hands a discovery, from the manifest's `files`; empty by default. Each is lowercase letters, digits, and underscores, starting with a letter, at most 32 bytes.
 - **`Registry::files_taken`** gives every name that the discoverers suiting a surface declare.
@@ -338,7 +338,7 @@ The design of [`a2m-engine`](../architecture/crates/a2m-engine.md) gives the int
 
 What [decision 0263](../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md) added to the engine:
 
-- **`Control::discovery_files`** gives a discovery job the files the call that started it handed its discoverers: each declared name, to the path the call gave under the project's `sources` folder. The engine checks each path again under a read-only root of that folder before any discoverer runs, and adds only the checked files to `DiscoveryScope::paths`. By default it gives none.
+- **`Control::discovery_files`** gives a discovery job the files the call that started it handed its discoverers: each declared name, to the path the call gave under the project's `inputs` folder. The engine checks each path again under a read-only root of that folder before any discoverer runs, and adds only the checked files to `DiscoveryScope::paths`. By default it gives none.
 
 What [decision 0251](../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md) added to the engine:
 

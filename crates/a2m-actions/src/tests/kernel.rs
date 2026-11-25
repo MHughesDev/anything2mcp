@@ -418,7 +418,7 @@ impl World {
     /// project file.
     pub(super) fn project(&self, name: &str) -> std::path::PathBuf {
         let project = self.folder.path().join(name);
-        std::fs::create_dir_all(project.join("sources")).unwrap();
+        std::fs::create_dir_all(project.join("inputs")).unwrap();
         std::fs::write(project.join("anything2mcp.toml"), "").unwrap();
         project
     }

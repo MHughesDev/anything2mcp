@@ -580,9 +580,9 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
         act("endpoints.infer", "Endpoint templates, schemas, and dependencies worked out from stored recordings.", BUILDER, Build, "4", Inspect)
             .pos("target", TEXT, TARGET)
             .done(),
-        act("spec.import", "A new scout of a target, handed a description the system publishes about itself as a file of the project's `sources` folder: exactly `scout.run` with `files` naming it `description`. Drafts by rule; never writes to the system.", BUILDER, Build, "4", Observe)
+        act("spec.import", "A new scout of a target, handed a description the system publishes about itself as a file of the project's `inputs` folder: exactly `scout.run` with `files` naming it `description`. Drafts by rule; never writes to the system.", BUILDER, Build, "4", Observe)
             .pos("target", TEXT, TARGET)
-            .req("file", TEXT, "The description's path from the project folder, inside its `sources` folder, such as `sources/example-openapi.json`.")
+            .req("file", TEXT, "The description's path from the project folder, inside its `inputs` folder, such as `inputs/example-openapi.json`.")
             .opt("wait_seconds", FieldType::Int { min: 0, max: 600 }, "How long to wait for each run to end before returning.")
             .long_running()
             .done(),
@@ -779,7 +779,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
         act("discover.run", "Run the discoverers that suit a target's surfaces, in the sandbox. Returns findings; never writes.", BUILDER, Build, "Stage E", Observe)
             .pos("target", TEXT, TARGET)
             .opt("surface", TEXT, "One surface. Every surface when left out.")
-            .opt("files", MAP, "Files of the project's `sources` folder to hand the discoverers, each under a name a discoverer reads, such as `description` for a published description of an interface: each name to the file's path from the project folder, such as `sources/example-openapi.json`. Each is checked when asked and again before any discoverer runs, and is read only; no other file is.")
+            .opt("files", MAP, "Files of the project's `inputs` folder to hand the discoverers, each under a name a discoverer reads, such as `description` for a published description of an interface: each name to the file's path from the project folder, such as `inputs/example-openapi.json`. Each is checked when asked and again before any discoverer runs, and is read only; no other file is.")
             .long_running()
             .done(),
         act("finding.list", "Findings for a target, by level, kind, or source.", BUILDER, Build, "Stage E", List)
@@ -804,7 +804,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .pos("target", TEXT, TARGET)
             .opt("fresh", BOOL, "Start a new scout instead of continuing the last one that did not finish. An unfinished scout goes on with the files it began with; a call that names other files starts a new one.")
             .opt("wait_seconds", FieldType::Int { min: 0, max: 600 }, "How long to wait for each run to end before returning.")
-            .opt("files", MAP, "Files of the project's `sources` folder to hand the discoverers, each under a name a discoverer reads, such as `description` for a published description of an interface: each name to the file's path from the project folder, such as `sources/example-openapi.json`. Each is checked when asked and again before any discoverer runs, and is read only; no other file is.")
+            .opt("files", MAP, "Files of the project's `inputs` folder to hand the discoverers, each under a name a discoverer reads, such as `description` for a published description of an interface: each name to the file's path from the project folder, such as `inputs/example-openapi.json`. Each is checked when asked and again before any discoverer runs, and is read only; no other file is.")
             .long_running()
             .done(),
         act("scout.report", "The last scout's report on a target: found, drafted, proven, open, and what to look at first. Each list is counted and shows its first entries; `part` reads one whole, in pages.", BUILDER, Build, "Stage E", Inspect)

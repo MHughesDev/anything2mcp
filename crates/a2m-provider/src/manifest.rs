@@ -478,7 +478,7 @@ pub struct DiscovererDecl {
     /// Its bounds.
     pub bounds: Bounds,
     /// The names under which it reads files a person hands a discovery, in
-    /// the order the manifest lists them: a file of the project's `sources`
+    /// the order the manifest lists them: a file of the project's `inputs`
     /// folder reaches it as the path of that name in
     /// [`crate::DiscoveryScope::paths`] (decision 0263). Each is a name of
     /// lowercase letters, digits, and underscores. Empty, the default: it

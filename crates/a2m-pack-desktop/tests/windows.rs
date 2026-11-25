@@ -41,7 +41,7 @@ impl FindingSink for Kept {
 
 /// A discoverer of the pack, run against the scene's session, handed the
 /// type library `bytes` (when there are any) as `library.tlb` of a
-/// `sources` folder of the test's own.
+/// `inputs` folder of the test's own.
 async fn discover(
     scene: &Scene,
     discoverer: &str,
@@ -59,8 +59,8 @@ async fn discover(
         .into_iter()
         .find(|found| found.declared().name.as_str() == discoverer)
         .expect("the pack registers the discoverer");
-    let sources = Folder::new("sources");
-    let root = RootName::new("sources").unwrap();
+    let sources = Folder::new("inputs");
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots
         .add(root.clone(), sources.path(), Access::Read)

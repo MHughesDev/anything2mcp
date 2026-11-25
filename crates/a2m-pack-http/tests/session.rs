@@ -1500,7 +1500,7 @@ async fn the_description_reader_reads_the_file_it_is_handed_under_its_declared_n
     // A file handed under that name is what the reader reads.
     let folder = Folder::new("handed");
     std::fs::write(folder.path().join("example-openapi.json"), DESCRIPTION).unwrap();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots
         .add(root.clone(), folder.path(), Access::Read)
@@ -1591,7 +1591,7 @@ async fn findings_from_handed_file(app: &TestApp, address: &str) -> Vec<Finding>
 async fn findings_from_description(description: String, address: &str) -> Vec<Finding> {
     let folder = Folder::new("handed-file");
     std::fs::write(folder.path().join("example-openapi.json"), description).unwrap();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots
         .add(root.clone(), folder.path(), Access::Read)

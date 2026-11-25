@@ -54,7 +54,7 @@ pub(crate) const PUBLISHED_MAP: &str = "device_register_map";
 
 /// The name, among a discovery's checked paths, of a published map given
 /// as a file: the one name the manifest's `device_register_map` declares
-/// under `files`, so the engine hands it a file of the project's `sources`
+/// under `files`, so the engine hands it a file of the project's `inputs`
 /// folder under it (decision 0263). No other path is read.
 pub const REGISTER_MAP_FILE: &str = "register_map";
 

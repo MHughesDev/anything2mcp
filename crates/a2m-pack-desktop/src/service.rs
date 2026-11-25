@@ -150,7 +150,7 @@ impl Discoverer for DesktopService {
 
     #[allow(
         clippy::too_many_lines,
-        reason = "one pass: the live service, then each handed file, in a fixed order"
+        reason = "one pass: the live service, then each input file, in a fixed order"
     )]
     fn discover<'a>(
         &'a self,
@@ -341,7 +341,7 @@ impl DesktopService {
         }
     }
 
-    /// The finding about one handed file: at the level `inferred`, since
+    /// The finding about one input file: at the level `inferred`, since
     /// what a file says is not what the running service does.
     fn file_finding(
         &self,
