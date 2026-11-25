@@ -347,6 +347,13 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
         with:
           command: check
+      # The notices file carries the licence texts of every third-party
+      # crate in the binary; a change to Cargo.lock that leaves it behind
+      # fails here, on every pull request.
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      - name: Hold the notices file of third-party licence texts to Cargo.lock
+        run: python3 tools/notices.py check
 
   documents:
     name: Documents and crate layering
@@ -384,6 +391,14 @@ jobs:
         run: python3 tools/test_contracts.py
       - name: Prove the failure-code check names a code nothing raises
         run: python3 tools/test_failure_codes.py
+      # The release workflow builds, checks, and gates every piece of a
+      # release; this fails when one is missing (package 5.5).
+      - name: Hold the release workflow to every file of a release and its gates
+        run: python3 tools/release_files.py workflow
+      - name: Prove the release check fails on each kind of fault in a release
+        run: python3 tools/test_release_files.py
+      - name: Prove the notices check fails on a stale notices file
+        run: python3 tools/test_notices.py
 
   bindings:
     name: Wheel and npm packages on ${{ matrix.os }}

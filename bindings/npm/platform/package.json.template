@@ -11,7 +11,8 @@
   "files": [
     "bin/",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "THIRD-PARTY-NOTICES.txt"
   ],
   "os": ["{{os}}"],
   "cpu": ["{{cpu}}"]{{libc}},

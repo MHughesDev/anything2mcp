@@ -62,6 +62,8 @@ function assemble({ platform: key, binary, out }) {
     fill(fs.readFileSync(path.join(HERE, "platform", "README.md.template"), "utf8"), values),
   );
   fs.copyFileSync(path.join(HERE, "platform", "LICENSE"), path.join(out, "LICENSE"));
+  // The licence texts of the third-party crates in the binary, written by tools/notices.py.
+  fs.copyFileSync(path.join(HERE, "..", "..", "THIRD-PARTY-NOTICES.txt"), path.join(out, "THIRD-PARTY-NOTICES.txt"));
   const target = path.join(out, "bin", binaryName(platform.os));
   fs.copyFileSync(binary, target);
   fs.chmodSync(target, 0o755);

@@ -1,14 +1,20 @@
 name: Release
 
 # Builds the pip package (one wheel per platform, each holding the binary, and
-# a source distribution) and the npm packages (a platform package per platform,
-# holding the binary taken from that platform's wheel, and the launcher)
-# whenever either changes, and publishes them in two cases only: a version tag
-# is pushed, or this workflow is started by hand with the version to publish
-# typed in. PyPI's and npm's trusted publishers name this file, so it must
-# stay .github/workflows/release.yml (docs/plan/publishing-setup.md).
-# Each registry has its own publish job, its own GitHub environment, and no
-# stored token. Publishing cannot be undone; RELEASING.md has the steps.
+# a source distribution), the npm packages (a platform package per platform,
+# holding the binary taken from that platform's wheel, and the launcher), and
+# a standalone archive per platform (the same binary, again taken from the
+# wheel), gathers them with a bill of materials, the notices file, and their
+# checksums, and checks the whole set, whenever any of them changes. It
+# publishes in two cases only: a version tag is pushed, or this workflow is
+# started by hand with the version to publish typed in. Then it attests the
+# build provenance of every file and makes the release page, and after that
+# publishes to PyPI and to npm. PyPI's and npm's trusted publishers name this
+# file, so it must stay .github/workflows/release.yml
+# (docs/plan/publishing-setup.md). Each publish job has its own GitHub
+# environment, and no token is stored. Publishing cannot be undone;
+# RELEASING.md has the steps, and tools/release_files.py workflow holds this
+# file to the set of jobs and gates it must have.
 
 on:
   pull_request:
@@ -16,12 +22,15 @@ on:
       - "bindings/python/**"
       - "bindings/npm/**"
       - ".github/workflows/release.yml"
+      - "THIRD-PARTY-NOTICES.txt"
+      - "tools/release_files.py"
+      - "tools/check_packages.py"
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       publish_version:
-        description: "Version to publish to PyPI and npm, exactly as in bindings/python/pyproject.toml. Leave empty to build and check without publishing."
+        description: "Version to publish to the release page, PyPI, and npm, exactly as in bindings/python/pyproject.toml. Leave empty to build and check without publishing."
         required: false
         default: ""
         type: string
@@ -88,6 +97,12 @@ jobs:
           # build is checked against it (decision 0437).
           if ! python3 tools/contracts.py kept "$version"; then
             echo "::error::contracts/$version/ is not kept whole; run python3 tools/contracts.py write $version and commit it before the tag."
+            exit 1
+          fi
+          # The changelog has the version's own section and Unreleased is
+          # empty again (RELEASING.md, step 3).
+          if ! python3 tools/release_files.py changelog "$version"; then
+            echo "::error::CHANGELOG.md is not ready for $version; see RELEASING.md, step 3."
             exit 1
           fi
           echo "This run publishes version $version."
@@ -331,6 +346,10 @@ jobs:
           persist-credentials: false
       - name: Install the toolchain pinned in rust-toolchain.toml
         run: rustup toolchain install
+      # The licence texts the wheels, the npm platform packages, and the
+      # archives carry are the ones of the crates Cargo.lock fixes now.
+      - name: Hold the notices file to Cargo.lock
+        run: python3 tools/notices.py check
       - name: List the crates each binary is built from, with licences, as Cargo.lock fixes them
         run: |
           mkdir bom
@@ -354,9 +373,174 @@ jobs:
           path: bom/
           if-no-files-found: error
 
+  archives:
+    name: Standalone archive for ${{ matrix.target }}
+    needs: [decide, wheels]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # As for npm, the wheel of the same target holds the binary, so the
+          # archive carries the binary the wheel does, built once.
+          - { target: x86_64-unknown-linux-gnu, exe: "" }
+          - { target: aarch64-unknown-linux-gnu, exe: "" }
+          - { target: x86_64-unknown-linux-musl, exe: "" }
+          - { target: aarch64-unknown-linux-musl, exe: "" }
+          - { target: x86_64-apple-darwin, exe: "" }
+          - { target: aarch64-apple-darwin, exe: "" }
+          - { target: x86_64-pc-windows-msvc, exe: ".exe" }
+          - { target: aarch64-pc-windows-msvc, exe: ".exe" }
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # Pinned by commit; this is v8.0.2.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: pip-wheel-${{ matrix.target }}
+          path: wheel
+      - name: Take the binary out of the wheel and pack it with the licence texts
+        env:
+          TARGET: ${{ matrix.target }}
+          EXE: ${{ matrix.exe }}
+        run: |
+          set -euo pipefail
+          wheel=$(ls wheel/*.whl)
+          member=$(unzip -Z1 "$wheel" | grep -E "\.data/scripts/anything2mcp${EXE//./\\.}\$")
+          if [ "$(echo "$member" | wc -l)" != 1 ]; then
+            echo "::error::Expected exactly one anything2mcp${EXE} in the wheel; found: $member"
+            exit 1
+          fi
+          mkdir -p binary archive
+          unzip -p "$wheel" "$member" > "binary/anything2mcp${EXE}"
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])")
+          # Dated by the commit, so one binary gives one archive byte for byte.
+          python3 tools/release_files.py archive --target "$TARGET" --binary "binary/anything2mcp${EXE}" \
+            --version "$version" --out archive --mtime "$(git log -1 --format=%ct)"
+          ls -l archive
+      # Pinned by commit; this is v7.0.2.
+      - name: Keep the archive for the release
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: archive-${{ matrix.target }}
+          path: archive/
+          if-no-files-found: error
+
+  release-files:
+    name: Gather and check every file of the release
+    needs: [decide, pip-package, npm-package, archives, bill-of-materials]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # Pinned by commit; this is v8.0.2.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: pip-*
+          merge-multiple: true
+          path: in/pip
+      # Pinned by commit; this is v8.0.2.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: npm-package-*
+          merge-multiple: true
+          path: in/npm
+      # Pinned by commit; this is v8.0.2.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: in/archives
+      - name: Gather the files with a bill of materials per target and their checksums, and check the set
+        run: |
+          set -euo pipefail
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])")
+          python3 tools/release_files.py assemble --version "$version" --pip in/pip --npm in/npm --archives in/archives --out release
+          python3 tools/release_files.py check release --version "$version"
+          (cd release && sha256sum --check --strict SHA256SUMS)
+          ls -l release
+      # Pinned by commit; this is v7.0.2. Kept a week: a run that publishes
+      # uses it within the hour, and a rehearsal's files are in the artifacts
+      # each job above keeps.
+      - name: Keep the files of the release for the publish jobs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-files
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-release:
+    name: Attest every file and make the release page
+    needs: [decide, release-files]
+    if: needs.decide.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Add required reviewers to this environment in the repository's settings to
+    # make GitHub ask a person before the release page is made.
+    environment: release
+    permissions:
+      # The release page, and the tag when the run was started by hand.
+      contents: write
+      # The short-lived credential the provenance is signed with, and the
+      # store the attestations are kept in. No token is stored anywhere.
+      id-token: write
+      attestations: write
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # Pinned by commit; this is v8.0.2.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: release-files
+          path: release
+      - name: Check the files again against their checksums
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])")
+          python3 tools/release_files.py check release --version "$version"
+          (cd release && sha256sum --check --strict SHA256SUMS)
+      # Pinned by commit; this is v4.2.2. One signed provenance statement for
+      # every file SHA256SUMS names, kept by GitHub and in the public
+      # transparency log; `gh attestation verify FILE --repo OWNER/REPO`
+      # checks one.
+      - name: Attest the build provenance of every file of the release
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-checksums: release/SHA256SUMS
+      - name: Make the release page, or add what a run before left off it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])")
+          tag="v$version"
+          python3 tools/release_files.py notes "$version" > "$RUNNER_TEMP/notes.md"
+          # Before 1.0 every release is marked a pre-release.
+          case "$version" in 0.*) pre="--prerelease" ;; *) pre="" ;; esac
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # A file already on the page is never replaced; one missing is added.
+            have=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+            for file in release/*; do
+              if ! grep -qxF "$(basename "$file")" <<< "$have"; then
+                gh release upload "$tag" "$file" --repo "$GITHUB_REPOSITORY"
+              fi
+            done
+          else
+            gh release create "$tag" release/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Anything2MCP $version" --notes-file "$RUNNER_TEMP/notes.md" $pre
+          fi
+
   publish-pypi:
     name: Publish to PyPI
-    needs: [decide, pip-package]
+    needs: [decide, pip-package, publish-release]
     if: needs.decide.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -379,7 +563,7 @@ jobs:
 
   publish-npm:
     name: Publish to npm
-    needs: [decide, npm-package]
+    needs: [decide, npm-package, publish-release]
     if: needs.decide.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20

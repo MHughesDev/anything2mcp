@@ -66,6 +66,8 @@ STEPS = [
     ("failure codes", ["python3", "tools/failure_codes.py", "--check"]),
     ("workflows", ["python3", "tools/check_workflows.py"]),
     ("contracts", ["python3", "tools/contracts.py", "check"]),
+    ("release workflow", ["python3", "tools/release_files.py", "workflow"]),
+    ("notices", ["python3", "tools/notices.py", "check"]),
     ("format", ["cargo", "fmt", "--all", "--check"]),
     ("lint", ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--keep-going", "--", "-D", "warnings"]),
     ("test", ["cargo", "test", "--workspace", "--locked", "--no-fail-fast"]),

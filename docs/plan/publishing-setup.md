@@ -37,6 +37,7 @@ The design calls for short-lived credentials issued to the release pipeline, nev
 - The release workflow must be the file `.github/workflows/release.yml`. PyPI will refuse a publish from any other file name.
 - The publish job runs in a GitHub environment named `pypi`. Adding required reviewers to it, in the repository's settings, makes GitHub ask a person before every publish.
 - The npm publish job runs in a GitHub environment named `npm`, and has `id-token: write` on that job alone. Required reviewers on it make GitHub ask a person before every npm publish.
+- The job that attests every file and makes the release page, `publish-release`, runs in a GitHub environment named `release`, with `contents: write`, `id-token: write`, and `attestations: write` on that job alone; the PyPI and npm jobs wait for it ([decision 0999](../decisions/0999-the-release-carries-archives-a-notices-file-and-attested-provenance-and-a-check-holds-the-workflow-to-every-piece.md)). **The owner creates the environment `release`** in the repository's settings, with required reviewers if a person should approve the release page; a job naming an environment that does not exist creates it without protection. Its attestations need no setup: they are signed with the run's short-lived credential, and nobody holds a key.
 
 ## Before the first npm publish
 
@@ -49,20 +50,20 @@ The owner makes each of these; the workflow cannot, and an agent does not hold a
 5. **Create the GitHub environment `npm`** in the repository's settings, and add required reviewers to it if a person should approve each publish. As with `pypi`, a job naming an environment that does not exist creates it without protection.
 6. Once a release has published by this route, **set "disallow tokens"** on each package so that nothing but the workflow can publish it.
 
-## Not built yet
+## Signing, the release page, and what is not built
 
 - **crates.io.** No job, and none is planned: the product is not published there ([decision 0242](../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)).
-- **Signing.** No artifact is signed, and the binaries have no build provenance attestation (`actions/attest-build-provenance`). npm's provenance covers the npm packages and PyPI's attestations the wheels, which is registry-side only. Signing of standalone binaries, and the installers they need, are in spec section 605 and are not built.
-- **The release page and standalone installs:** no archives, checksums, or installers are made.
-- **Bill of materials.** A list of the Rust crates in each binary, per target, with licences, is written by the workflow. Licence texts and an exchange format (SPDX or CycloneDX) need a tool the repository does not use yet; which tool is open ([decision 0186](../decisions/0186-the-release-workflow-builds-checks-and-publishes-the-npm-packages.md)).
+- **Signing.** Every file of a release has a build provenance attestation (`actions/attest-build-provenance`), made by `publish-release` from `SHA256SUMS`; it has never run. No file is signed with a key, and `self.update`'s check of a signature is not built.
+- **The release page and standalone installs:** the archives, the checksums, and the release page are built (the page only when publishing); the shell and PowerShell installers, Homebrew, winget, the container image, and the offline bundle are not.
+- **Bill of materials.** A CycloneDX bill per target, taken from the one maturin writes into each wheel, is a file of the release, and the plain list of crates per target stays as a run artifact. The licence texts are in `THIRD-PARTY-NOTICES.txt`, written by `tools/notices.py` and carried by the wheels, the npm platform packages, and the archives ([decision 0999](../decisions/0999-the-release-carries-archives-a-notices-file-and-attested-provenance-and-a-check-holds-the-workflow-to-every-piece.md)).
 
 ## Publishing a release
 
 [RELEASING.md](../../RELEASING.md) has the steps. In short:
 
 - `bindings/python/` holds the pip package: the real pre-alpha software, one maturin wheel for each of eight platforms and a source distribution. It is no longer a placeholder ([decision 0135](../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)).
-- `.github/workflows/release.yml` builds the eight wheels and the source distribution, and the nine npm packages from the wheels' binaries, on every pull request that touches either package, and checks each set together (eight wheels and one source distribution; the launcher and eight platform packages). It has run on pull requests; it has never published.
-- It publishes in two cases only: a tag `v` and the version is pushed on a commit that is on `main`; or the workflow is started by hand on `main` with the version to publish typed in. In both cases it refuses a version that is not the package's own. It then publishes to PyPI and to npm in two separate jobs, each behind its own environment.
+- `.github/workflows/release.yml` builds the eight wheels and the source distribution, the nine npm packages and the eight standalone archives from the wheels' binaries, on every pull request that touches the packages or the release files, checks each set together, and then checks every file of the release as one set with its checksums. It has run on pull requests; it has never published.
+- It publishes in two cases only: a tag `v` and the version is pushed on a commit that is on `main`; or the workflow is started by hand on `main` with the version to publish typed in. In both cases it refuses a version that is not the package's own. It then attests every file and makes the release page behind the environment `release`, and after that publishes to PyPI and to npm in two separate jobs, each behind its own environment.
 - **Publishing cannot be undone.** A version on PyPI can be yanked and never replaced. The owner has asked for the name to be held as soon as it can be ([journal, 2026-11-17](../journal/2026-11-17-the-rename-and-the-rules.md)); a publish now sends the real pre-alpha wheels, not a placeholder.
 - After a publish, check `pip install anything2mcp` in a clean environment and mark the name as held in the table above.
 
