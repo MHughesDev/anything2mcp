@@ -67,7 +67,7 @@ Say each thing once. Do not copy a locator into an operation, or a unit into a s
 
 ## How a result reads
 
-Every answer is one JSON object. Success has `ok: true`, `action`, `result`, `warnings`, and `next`. Failure has `ok: false` and `error` with `class`, `code`, `message`, `fix`, and `retry_safe`. An answer that did its part and waits for a person, such as a publish asked for, is `ok: true` with exit code 3 and a `state` that says what it waits on (`needs_person`, `needs_approval`, `needs_login`); a refusal for want of a person is `ok: false` with its error, and exit code 3 too.
+Every answer is one JSON object. Success has `ok: true`, `action`, `result`, `warnings`, and `next`. Failure has `ok: false` and `error` with `class`, `code`, `message`, `fix`, and `retry_safe`. An authoring action that did its part and waits for a person's act, such as a publish asked for, is `ok: true` with exit code 3 and a `state` that says what it waits on (`needs_person`). A run that rests on a person, such as a write waiting for its approval, is `ok: false` with exit code 3 and its `status` (`needs_approval`, `needs_login`): nothing was written. A refusal for want of a person is `ok: false` with its error, and exit code 3 too.
 
 `next` names the most useful following action, with its input and when to call it. If you are unsure, call it. Large results are written to a file under `.anything2mcp/out/`; the answer holds the path and a summary. Read the file yourself.
 

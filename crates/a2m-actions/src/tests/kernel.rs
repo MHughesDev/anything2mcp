@@ -551,13 +551,26 @@ async fn a_write_rests_until_a_person_approves_at_the_desk_and_is_written_exactl
         .call("tool.call", json!({"tool": ITEM_UPSERT, "input": input}))
         .await;
     assert_eq!(rested.exit, ExitClass::PersonNeeded, "{rested:?}");
-    // The call did its part and waits for a person: `ok`, with no error
-    // and its state (decision 0999).
-    assert!(rested.ok);
+    // A write that waits for its approval has written nothing, so it is
+    // never `ok`, though no error is in it (decision 0999).
+    assert!(!rested.ok);
     assert!(rested.error.is_none());
     let result = rested.result.clone().unwrap();
     assert_eq!(result["status"], "needs_approval");
     let run = result["run_id"].as_str().unwrap().to_owned();
+    // Read again, and asked through `action.run`, the waiting run is not
+    // `ok` either.
+    let read = world.call("run.get", json!({"run_id": run})).await;
+    assert_eq!(read.exit, ExitClass::PersonNeeded, "{read:?}");
+    assert!(!read.ok, "{read:?}");
+    let through = world
+        .call(
+            "action.run",
+            json!({"action": "run.get", "input": {"run_id": run}}),
+        )
+        .await;
+    assert_eq!(through.exit, ExitClass::PersonNeeded, "{through:?}");
+    assert!(!through.ok, "{through:?}");
     assert_eq!(rested.next.as_ref().unwrap().action, "run.resume");
     // Nothing was written, and the caller holds a link and nothing that
     // could approve.

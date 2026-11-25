@@ -368,9 +368,9 @@ impl ErrorBody {
 /// What every face renders, without branching on its content.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Response {
-    /// Whether the action did what was asked, with no error: for an answer
-    /// that waits for a person, exit class `PersonNeeded`, what the action
-    /// does before the person did (decision 0999).
+    /// Whether the action did what was asked, with no error. An answer
+    /// that waits for a person's act after doing its own part is `ok`; a
+    /// run that rests on a person is not (decision 0999).
     pub ok: bool,
     /// The action's name, as it was asked for.
     pub action: String,
@@ -543,6 +543,10 @@ pub struct Output {
     /// failed: the response then carries both the result, which names the
     /// run, and the error.
     pub failure: Option<Failure>,
+    /// Whether this is the answer of a run that rests on a person: a
+    /// tool's call waiting for its approval, a sign-in, or an answer. Its
+    /// work is not done, so it is never `ok` (decision 0999).
+    pub run_rests: bool,
 }
 
 impl Output {
@@ -555,6 +559,7 @@ impl Output {
             next: None,
             exit: ExitClass::Succeeded,
             failure: None,
+            run_rests: false,
         }
     }
 
@@ -611,13 +616,17 @@ impl Kernel {
             Ok((output, decision)) => {
                 let exit = output.exit;
                 Response {
-                    // An answer is `ok` when it carries no error: one that
-                    // did its part and waits for a person, exit code 3, is
-                    // `ok` with its result's `state` (decision 0999). A
-                    // refusal for want of a person carries an error, and
-                    // is not.
+                    // The one test of decision 0999: an answer is `ok` when
+                    // it carries no error, and it succeeded, or it waits
+                    // for a person's act after doing its own part. A run
+                    // that rests on a person has not done its part, and a
+                    // refusal for want of a person carries an error.
                     ok: output.failure.is_none()
-                        && matches!(exit, ExitClass::Succeeded | ExitClass::PersonNeeded),
+                        && match exit {
+                            ExitClass::Succeeded => true,
+                            ExitClass::PersonNeeded => !output.run_rests,
+                            ExitClass::Failed | ExitClass::Malformed => false,
+                        },
                     action: asked,
                     result: Some(redact_json(redact.as_ref(), &output.result)),
                     error: output.failure.as_ref().map(|failure| {

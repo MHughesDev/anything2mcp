@@ -1711,6 +1711,8 @@ pub(crate) async fn run_output(
     let _ = call;
     let mut output = Output::ok(Json::Object(out)).exit(exit);
     output.next = next;
+    // A run that rests on a person has not done its part (decision 0999).
+    output.run_rests = exit == ExitClass::PersonNeeded;
     if exit == ExitClass::Failed {
         let failure = failure.unwrap_or_else(|| {
             Failure::new(

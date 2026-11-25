@@ -6,7 +6,7 @@ use serde_json::{Value as Json, json};
 use super::handler;
 use crate::codes;
 use crate::def::{ActionDef, Effect};
-use crate::dispatch::{Next, Output, Request};
+use crate::dispatch::{ExitClass, Next, Output, Request};
 use crate::faces;
 
 fn words_match(def: &ActionDef, query: &str) -> bool {
@@ -140,6 +140,11 @@ handler!(
                 error.fix,
             )),
             (error, result) => Ok(Output {
+                // What the action run said of itself is kept: an answer
+                // waiting for a person that was not `ok` was a run's.
+                run_rests: error.is_none()
+                    && response.exit == ExitClass::PersonNeeded
+                    && !response.ok,
                 result: result.unwrap_or(Json::Null),
                 warnings: response.warnings,
                 next: response.next,
