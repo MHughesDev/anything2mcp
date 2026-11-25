@@ -1013,8 +1013,8 @@ const RESOLVES_A_PATH: &[(&str, usize, &str)] = &[
     ),
     (
         "a2m-pack-desktop/tests/start.rs",
-        1,
-        "a test that asks the system which program the process the driver started runs",
+        3,
+        "a test that asks the system which program the process the driver started runs, resolves the folder it copies the program into as a person writes it, and compares the two resolved (decision 0480)",
     ),
     (
         "a2m-pack-mcp/tests/launcher.rs",
