@@ -6,6 +6,10 @@ The design's own history is in the [decision records](docs/decisions/README.md),
 
 ## [Unreleased]
 
+### Added
+
+- A canary can now run on a schedule of its own, apart from a watch. `anything2mcp canary create example_order_get --input '{"order_id": "A-100"}' --interval-seconds 3600 --ends-at ...` (`canary.create`) asks for one: one published read with a fixed input, at an interval, until an end. It sends nothing until its person confirms it on the engine's page (`canary.confirm`, a person's act). Each check is a read and never writes; when one finds that the system no longer matches what the target knows, every tool relying on the same knowledge stops before it sends anything, and a later check that passes lifts that. A canary goes on after a drift, ends when another version of its target is published, and is held to the limits and the budget share of watches. `canary get`, `canary list`, and `canary end` show and end them ([decision 0999](docs/decisions/0999-a-canary-runs-on-a-schedule-its-person-confirmed-and-sends-only-a-published-read.md)).
+
 ## [0.1.0] - 2026-11-25
 
 The first published version, a **preview**, before version 1.0 ([decision 0476](docs/decisions/0476-version-0-1-is-a-preview-and-the-checks-a-person-makes-move-to-before-1-0.md)). Built and tested against the built-in test stands on Windows, macOS, and Linux. Until 1.0 a minor version may break. What this preview has not had yet:

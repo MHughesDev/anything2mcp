@@ -19,7 +19,7 @@ A version is published only when every gate passes, and the evidence is stored w
 
 **Where writes are tested.** In order of preference: the system owner's sandbox or a test environment; a dedicated test record in production that the tests restore after use; otherwise the write operation stays unpublished. Anything2MCP never proves a write by performing it on live business data.
 
-**After publishing.** Scheduled read-only canaries re-run the contract gate, more often for platforms that ship interface changes frequently. A failure marks the affected binding unhealthy; if no verified binding remains, the tool is marked unavailable before anyone runs a write.
+**After publishing.** Read-only canaries check a published read on a schedule, each one confirmed by the person it acts for and never started by the publish itself ([decision 0999](../../decisions/0999-a-canary-runs-on-a-schedule-its-person-confirmed-and-sends-only-a-published-read.md)). A drift marks the knowledge it was seen in, and every tool that relies on it is refused before anyone runs a write. Re-running the contract gate from a canary, and a schedule that follows how often a platform ships changes, are not built.
 
 **Creates.** For an operation that creates records: the same create run twice leaves one record, and a run stopped between sending a create and recording it finds that record on resume ([section 209](../2-kernel/209-record-identity-and-dependent-records.md)).
 

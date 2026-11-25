@@ -25,6 +25,7 @@ Decides when and where work may run. It admits or refuses a run, queues its jobs
 - Holds: scopes for which no job is handed out, the stop-everything switch among them.
 - Detecting lost leases and queueing the reconcile jobs that follow.
 - When each watch check is due, the gap for due times that passed with no check, and a check's admission as the lowest work ([decision 0247](../../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)).
+- Canaries on a schedule of their own: their row (`canaries`), who may confirm one, when each check is due, and its admission as a watch's check is admitted ([decision 0999](../../decisions/0999-a-canary-runs-on-a-schedule-its-person-confirmed-and-sends-only-a-published-read.md)).
 
 It must never: call the engine, a driver, or the session keeper; read a compiled target; decide policy; change a record row of the ledger; let a job run twice at once; take, release, or quarantine a record lock itself.
 
@@ -97,6 +98,20 @@ pub struct WatchLimits { pub shortest_interval, pub longest, pub most_per_person
 impl WatchLimits { pub fn check_new(..); pub fn phase(&self, WatchId, Duration) -> Duration; pub fn fits_budget(..) }
 pub fn due_at(confirmed_at: Timestamp, phase: Duration, interval: Duration, index: u64) -> Timestamp;
 pub fn plan(watch: &WatchRow, now: Timestamp) -> Option<DuePlan>;   // Waiting | Due | Missed { gap, then } | EndReached
+
+// Canaries (decision 0999). The row is the scheduler's own, `canaries`.
+impl Scheduler {
+    pub async fn ask_canary(&self, new: NewCanary) -> Result<CanaryRow, Failure>;   // a read; a watch's limits
+    pub async fn confirm_canary(&self, id: CanaryId, by: PrincipalId, current: Digest, limit: RateLimit)
+        -> Result<CanaryRow, Failure>;   // its own person, its own version, the surface's share
+    pub async fn due_canaries(&self) -> Result<Vec<DueCanary>, Failure>;   // ends at its end or a new version
+    pub async fn next_canary_due(&self) -> Result<Option<Timestamp>, Failure>;
+    pub async fn submit_canary(&self, due: &DueCanary, s: Submission) -> Result<CanaryAdmission, Failure>;
+    pub async fn end_canary_check(&self, id: CanaryId, run: RunId, outcome: CanaryOutcome,
+        failure: Option<(FailureClass, FailureCode)>) -> Result<CanaryRow, Failure>;   // lets a resting run go
+    pub async fn end_canary(&self, id: CanaryId, why: CanaryEnd) -> Result<CanaryRow, Failure>;
+}
+pub mod canary { pub fn get(..); pub fn of_person(..); pub fn open(..); pub fn of_run(..) }   // inside a transaction
 
 pub struct Submission {
     pub run: NewRun,                       // the run row; its caller, tool version, and input hash are the dedupe key, which the ledger computes
@@ -245,6 +260,15 @@ A watch is the ledger's row ([decision 0247](../../decisions/0247-a-watch-keeps-
 - **The budget.** A check spends the same budgets as any read of its surface. Its grant, at admission and through `rate`, never takes a bucket below `reserve_percent` (half) of its capacity, so a caller's own reads always find half the burst; the scheduler knows a check's job by asking the ledger whether its run is a check under way. `confirm_watch` calls `fits_budget` inside its own transaction, against the other open watches of the same surface as the store holds them, so that all the watches on one surface are confirmed within `budget_share_percent` (a tenth) of its sustained rate and two confirmations at once cannot both take the last of it. At run time a check also spends `BudgetKey::watch_share` of its surface: a budget only checks spend, whose limit is that share of the surface budget's stored limit, or of `default_rate` when none was set, rounded down and never below one request. A read that sends more pages than it declared waits on it. Admission takes one request of it, as of every budget a submission names.
 - **Waking.** `next_watch_due` answers the earliest moment `due_watches` has work; the task that sweeps waits on the earlier of it and `next_due`. `next_due` itself does not include watches, so a task that does not call `due_watches` never spins.
 
+## Canaries
+
+A canary is one published read with a fixed input, sent at an interval until an end, to find whether the knowledge it goes through still fits the system ([decision 0999](../../decisions/0999-a-canary-runs-on-a-schedule-its-person-confirmed-and-sends-only-a-published-read.md)). Its row is the scheduler's own; its drift's mark and its pass's lift are `a2m-actions`'s, made from the run's own report of a binding's health (decision 0380).
+
+- **Nothing before its person.** `ask_canary` keeps it `asked`. `confirm_canary` takes only the person it acts for (anyone else is told there is no such canary), only while the version it was asked under is published (`canary_version_changed`), and only within the surface's share beside the watches and canaries on it. `due_canaries` plans confirmed canaries alone; one nobody confirmed ends at its end having sent nothing.
+- **A read of its version.** `ask_canary` refuses an operation that is not a read (`canary_not_a_read`); `submit_canary` refuses a submission that writes or that is not the canary's own read, person, version, and input. `due_canaries` ends a canary whose target has another published version, `version_changed`, before another check.
+- **A watch's limits and times.** The floor, the longest, and as many per person as watches (`canary_too_many`); due times, the phase, and a missed due time counted, never checked late. A check is `batch`, leaves the reserve, and spends the watches' share of its surface at admission and through `rate`, which finds a canary's job by `canary::of_run`. A watch's confirmation counts the canaries on its surface.
+- **It goes on.** `end_canary_check` makes it `confirmed` again whatever its check found, and lets a run that rests go, cancelled when the check opened it, so the next check is a run of its own and nobody is asked anything.
+
 ## Holds
 
 `hold` puts a scope on hold: everything, a workspace, a target, or a caller. While it lasts, a submission the scope covers is refused, no job it covers is handed out, and the heartbeat of a leased job it covers answers `pause`: the runner stops at its next commit point and ends the job as `Stopped`, which leaves the run resumable. A scheduler pause does not use up a waiting job's queue limit: the time it lasted is given back on release. Pauses are kept in the store.
@@ -286,6 +310,8 @@ A claim is one writing transaction of the store, which has one writer. Postgres 
 | `input` | `schema_invalid`, `not_found` | A submission is malformed; there is no such job or run |
 | `input` | `watch_interval_too_short`, `watch_too_long` | A watch's interval below the floor; an end further than the longest a watch lasts |
 | `busy` | `watch_too_many`, `watch_over_budget_share` | The person has the most watches they may; the watches on a surface would pass their share of its budget |
+| `policy` | `canary_not_a_read`, `canary_not_asked`, `canary_version_changed` | A canary of an operation that is not a read; a confirmation of one confirmed or ended; one under another version than is published |
+| `busy` | `canary_too_many` | The person has the most canaries they may |
 
 ## Invariants
 
@@ -309,6 +335,7 @@ A claim is one writing transaction of the store, which has one writer. Postgres 
 | What one write holds alone has one key, and two jobs that name it run one after the other | Three jobs on two surfaces with three free slots |
 | Everything queued or leased is found again after a restart | The store closed and opened again: the queue, the lease, the runner, the pause; a job whose runner is gone is recovered by the deadline rule |
 | A watch checks nothing before its person confirms it, never two at once, is admitted behind interactive work, leaves half of each budget, and turns missed due times into one gap and one check | `tests/watch.rs`, on a clock that moves only when told, with a restart |
+| A canary nobody confirmed is never due and makes no job; only its person confirms it, under its own version; its check is a batch read of the kind `canary`; a new version ends it | `tests/canary.rs` |
 | No fixed sleeps | Every test runs on a clock that moves only when told; a source test forbids sleeping in the crate |
 | The scheduler names no mode and does not depend on the engine | The audit's layering rule; a source test |
 
@@ -322,6 +349,7 @@ A claim is one writing transaction of the store, which has one writer. Postgres 
 6. Done in part: `hello`, matching by capability and home runner, `drain`, `bye`, `cancel`, holds. Not built: enrollment and revoking a runner, which belong to the runner link of slices 7.1 and 7.2; marking a runner offline when it falls silent.
 7. Done ([decision 0247](../../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)): a watch's due times, gaps, and admission; the reserve in a budget's grant. Done since ([decision 0262](../../decisions/0262-watches-are-held-to-their-end-their-budget-and-their-runs-own-result.md)): every watch past its end ended, whatever its state; the share checked in the confirmation's transaction; the share of a surface each check spends at run time. Not built: a priority below `batch` and a job kind of a check's own, each a rebuilt `jobs` table; calendar forms of a schedule, which wait for named time zones; signals that bring a due time forward.
 7a. Done ([decision 0291](../../decisions/0291-a-watch-ends-when-its-condition-holds-on-a-checks-own-result.md)): a watch past its end is ended and its check's run cancelled in one transaction, `DueWatches::cancelled` replacing `DueWatches::cancel`; `Scheduler::after_cancels`, what follows a cancel made in another call's transaction. Test: `a_pass_that_fails_ends_nothing_and_cancels_nothing_and_the_next_does_both` in `tests/watch.rs`.
+7b. Done ([decision 0999](../../decisions/0999-a-canary-runs-on-a-schedule-its-person-confirmed-and-sends-only-a-published-read.md)): canaries on a schedule of their own. Not built: a canary of a pipeline; an interval suggested from `drift_risk`.
 8. Not built: several control planes over one store, a claim on Postgres, and waking a waiter in another process. Slice 9.4. On one store with one writer the same tables serve.
 
 ## Open points
