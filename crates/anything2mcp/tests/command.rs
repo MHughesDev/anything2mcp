@@ -574,8 +574,14 @@ fn run_with_stdin(mut command: Command, input: &'static [u8]) -> Output {
     use std::io::Write;
     let mut child = command.stdin(Stdio::piped()).spawn().unwrap();
     // The pipe is closed when the handle is dropped: the program reads to
-    // the end of its input.
-    child.stdin.take().unwrap().write_all(input).unwrap();
+    // the end of its input. A program that refuses its arguments may end
+    // before it reads any of it, and the write then meets a closed pipe;
+    // that is the program's answer, which the test reads from its output.
+    match child.stdin.take().unwrap().write_all(input) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(error) => panic!("writing the program's input: {error}"),
+    }
     child.wait_with_output().unwrap()
 }
 
