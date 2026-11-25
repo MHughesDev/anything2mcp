@@ -481,6 +481,9 @@ pub(crate) struct RequestSent {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SameDocument {
     pub frame_id: String,
+    /// The frame's address now.
+    #[serde(default)]
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

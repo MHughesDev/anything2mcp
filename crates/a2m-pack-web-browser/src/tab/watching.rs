@@ -20,7 +20,7 @@ use std::sync::Weak;
 use a2m_core::{Failure, FailureClass};
 use serde_json::Value as Json;
 
-use super::{Page, PageExchanges, Status, fields_of, without_query};
+use super::{Page, PageExchanges, Status, fields_of, without_fragment, without_query};
 use crate::browsers::{Address, Browser};
 use crate::error::{BrowserError, RequestShape, codes};
 use crate::origin::Origins;
@@ -41,6 +41,10 @@ pub const SCREENS_KEPT: usize = 40;
 /// How long a watching tab waits, after its page's address changes, for
 /// the page's requests to end before it takes the snapshot all the same.
 pub const SETTLE_BOUND: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How many documents' addresses a watching tab keeps, its frames' among
+/// them: the newest.
+const ADDRESSES_KEPT: usize = 64;
 
 /// The resource types of the requests of a page that a watching tab
 /// records whatever their method: a script's, and a beacon. A request of a
@@ -108,13 +112,34 @@ pub struct WatchedScreens {
     pub missed: usize,
 }
 
-/// What a watching tab holds of the screens of its page.
+/// A document of a watching tab's own frame, by the order the documents
+/// were parsed in: what [`WatchTab::exchanges_through`] takes the requests
+/// up to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DocumentMark(pub(crate) usize);
+
+/// One screen a watching tab looked at, as [`WatchTab::next_screen`] gives
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchedScreen {
+    /// The screen's address, without its query.
+    pub address: String,
+    /// The document of the tab's frame the screen was in.
+    pub document: DocumentMark,
+    /// Its snapshot, by structure, as [`WatchedScreens::snapshots`] keeps
+    /// one; `None` when it was not taken.
+    pub snapshot: Option<Snapshot>,
+    /// Whether no snapshot was taken because the tab had already taken
+    /// [`SCREENS_KEPT`].
+    pub past_bound: bool,
+}
+
+/// What a watching tab holds of the screens of its page: each it looked
+/// at, oldest first, until it is handed out.
 #[derive(Debug, Default)]
 pub(crate) struct Screens {
-    taken: Vec<Snapshot>,
+    looked: std::collections::VecDeque<WatchedScreen>,
     count: usize,
-    bound_hit: bool,
-    missed: usize,
 }
 
 /// A tab a person uses while the engine watches: it has no method that
@@ -173,7 +198,7 @@ impl WatchTab {
     /// first, once none is awaiting its answer, or when the deadline passes
     /// with what was answered by then.
     pub async fn exchanges(&self, deadline: Deadline) -> PageExchanges {
-        self.page.take_exchanges(deadline).await
+        self.page.take_exchanges(deadline, None).await
     }
 
     /// Records the page's requests. A watching tab already does from the
@@ -185,18 +210,44 @@ impl WatchTab {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// The snapshots of the screens the person came to since the last call.
+    /// The snapshots of the screens the person came to since the last call,
+    /// and of [`Self::next_screen`].
     #[must_use]
     pub fn screens(&self) -> WatchedScreens {
+        let mut out = WatchedScreens::default();
+        while let Some(screen) = self.next_screen() {
+            match screen.snapshot {
+                Some(snapshot) => out.snapshots.push(snapshot),
+                None if screen.past_bound => out.bound_hit = true,
+                None => out.missed += 1,
+            }
+        }
+        out
+    }
+
+    /// The oldest screen the person came to that has not been handed out,
+    /// with the document it was in, whether its snapshot was taken or not:
+    /// one is given for each address the tab looked at.
+    #[must_use]
+    pub fn next_screen(&self) -> Option<WatchedScreen> {
         self.page
             .screens
             .lock()
-            .map(|mut screens| WatchedScreens {
-                snapshots: std::mem::take(&mut screens.taken),
-                bound_hit: std::mem::take(&mut screens.bound_hit),
-                missed: std::mem::take(&mut screens.missed),
-            })
-            .unwrap_or_default()
+            .ok()
+            .and_then(|mut screens| screens.looked.pop_front())
+    }
+
+    /// As [`Self::exchanges`], but only the requests sent under the
+    /// documents of the tab's frame up to `through`, which a screen of
+    /// [`Self::next_screen`] names, and only those are waited for: a
+    /// request of a document the person came to after it is kept for the
+    /// next take. Every request is taken with `None`.
+    pub async fn exchanges_through(
+        &self,
+        through: Option<DocumentMark>,
+        deadline: Deadline,
+    ) -> PageExchanges {
+        self.page.take_exchanges(deadline, through).await
     }
 
     /// How many documents of the tab have loaded, how many times its
@@ -289,6 +340,9 @@ impl Page {
     pub(super) fn heard_sent(&self, sent: &RequestSent) {
         let request = &sent.request;
         let kind = sent.resource_type.as_str();
+        if kind == "Document" {
+            self.document_at(&sent.loader_id, &request.url);
+        }
         let recorded = RECORDED_KINDS.contains(&kind)
             || (kind == "Document" && !matches!(request.body.sent(0), Sent::Nothing));
         if !self.recording.load(std::sync::atomic::Ordering::SeqCst)
@@ -339,7 +393,7 @@ impl Page {
             }
             if let Ok(mut exchanges) = self.exchanges.lock() {
                 if exchanges.len() < super::EXCHANGES_KEPT {
-                    exchanges.push(one.exchange);
+                    exchanges.push((one.loader, one.exchange));
                 } else {
                     self.dropped
                         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -404,72 +458,171 @@ impl Page {
         (media_type, None, false)
     }
 
-    /// Takes a snapshot of the screen the page is on, when its address
-    /// differs from the last one looked at and is on one of the tab's
-    /// origins, once its requests have ended or [`SETTLE_BOUND`] passed.
+    /// Takes a snapshot of the screen the page is on, when its document or
+    /// its address differs from the last one looked at and the address is
+    /// on one of the tab's origins, once its requests have ended or
+    /// [`SETTLE_BOUND`] passed.
+    ///
+    /// Each screen is looked at in one document of the tab's frame, the
+    /// last parsed, at the address the browser said that document is at,
+    /// and is handed out with it whatever comes of its snapshot: when the
+    /// person moves on to another document before the screen's requests
+    /// end, or while the snapshot is taken, the snapshot is not kept, since
+    /// it may hold the next document's screen, and the screen is handed out
+    /// as missed, so that its requests are still put to it.
     async fn look_at_screen(&self, last: &mut Option<String>) {
-        let deadline = Deadline::after(self.call_deadline);
-        let Ok((address, _)) = self.address_and_title(deadline).await else {
+        // A document the browser named no address for, such as the empty
+        // one a tab opens on, is no screen of the surface's.
+        let loader = self.last_parsed();
+        let Some(address) = self.address_of(loader.as_deref()) else {
             return;
         };
         let at = without_query(&address).to_owned();
-        if last.as_deref() == Some(at.as_str()) {
+        // One screen for each address of each document: a document loaded
+        // again at the same address is another visit.
+        let seen = format!("{} {at}", loader.as_deref().unwrap_or_default());
+        if last.as_deref() == Some(seen.as_str()) {
             return;
         }
         if !Address::new(&at).is_ok_and(|address| self.origins.allows(&address)) {
             return;
         }
-        *last = Some(at);
+        *last = Some(seen);
+        let document = self.document_mark(loader.as_deref());
         let full = self
             .screens
             .lock()
-            .map(|mut screens| {
-                let full = screens.count >= SCREENS_KEPT;
-                screens.bound_hit |= full;
-                full
-            })
+            .map(|screens| screens.count >= SCREENS_KEPT)
             .unwrap_or(true);
-        if full {
-            self.looked.send_modify(|count| *count += 1);
-            return;
-        }
-        self.settle().await;
-        let taken = self
-            .snapshot(
-                &SnapshotLimits::default(),
-                Deadline::after(self.call_deadline),
-            )
-            .await;
-        if let Ok(mut screens) = self.screens.lock() {
-            match taken {
-                Ok(mut snapshot) => {
-                    for element in &mut snapshot.elements {
-                        if element.value.as_deref() != Some(MASK) {
-                            element.value = None;
-                        }
+        let mut screen = WatchedScreen {
+            address: at,
+            document,
+            snapshot: None,
+            past_bound: full,
+        };
+        if !full && self.settle(loader.as_deref()).await {
+            let taken = self
+                .snapshot(
+                    &SnapshotLimits::default(),
+                    Deadline::after(self.call_deadline),
+                )
+                .await;
+            if let Ok(mut snapshot) = taken
+                && self.last_parsed() == loader
+                && without_query(&snapshot.address) == screen.address
+            {
+                for element in &mut snapshot.elements {
+                    if element.value.as_deref() != Some(MASK) {
+                        element.value = None;
                     }
-                    screens.taken.push(snapshot);
-                    screens.count += 1;
                 }
-                Err(_) => screens.missed += 1,
+                screen.snapshot = Some(snapshot);
             }
+        }
+        if let Ok(mut screens) = self.screens.lock() {
+            if screen.snapshot.is_some() {
+                screens.count += 1;
+            }
+            screens.looked.push_back(screen);
         }
         self.looked.send_modify(|count| *count += 1);
     }
 
-    /// Waits until the browser says the page's document is idle on the
-    /// network and none of its recorded requests awaits its answer, or
-    /// [`SETTLE_BOUND`] passes.
-    async fn settle(&self) {
-        let loaded = self.nav.borrow().loaded.clone();
+    /// The loader of the last document of the tab's own frame parsed.
+    fn last_parsed(&self) -> Option<String> {
+        self.documents
+            .lock()
+            .ok()
+            .and_then(|documents| documents.last().cloned())
+    }
+
+    /// The address the browser said the document under `loader` is at,
+    /// with every known secret replaced.
+    fn address_of(&self, loader: Option<&str>) -> Option<String> {
+        let loader = loader?;
+        let addresses = self.addresses.lock().ok()?;
+        let (_, address) = addresses.iter().rev().find(|(own, _)| own == loader)?;
+        Some(self.redact.redact(address))
+    }
+
+    /// The browser says the document under `loader` is at `address`: its
+    /// request was sent, or redirected, or its frame's address changed
+    /// within it.
+    pub(super) fn document_at(&self, loader: &str, address: &str) {
+        if loader.is_empty() {
+            return;
+        }
+        if let Ok(mut addresses) = self.addresses.lock() {
+            addresses.retain(|(own, _)| own != loader);
+            if addresses.len() >= ADDRESSES_KEPT {
+                addresses.pop_front();
+            }
+            addresses.push_back((loader.to_owned(), without_fragment(address).to_owned()));
+        }
+    }
+
+    /// The frame's address changed within its document: the last parsed
+    /// is at `address` now.
+    pub(super) fn moved_within(&self, address: &str) {
+        if let Some(loader) = self.last_parsed() {
+            self.document_at(&loader, address);
+        }
+    }
+
+    /// The mark of the document of the tab's frame under `loader`: the
+    /// last parsed when the browser named none, or it is not yet known.
+    fn document_mark(&self, loader: Option<&str>) -> DocumentMark {
+        let documents = self
+            .documents
+            .lock()
+            .map(|known| known.clone())
+            .unwrap_or_default();
+        let last = documents.len().saturating_sub(1);
+        DocumentMark(
+            loader
+                .and_then(|loader| documents.iter().position(|known| known == loader))
+                .unwrap_or(last),
+        )
+    }
+
+    /// A document of the tab's own frame has been parsed under `loader`.
+    pub(super) fn parsed(&self, loader: &str) {
+        if let Ok(mut documents) = self.documents.lock()
+            && !documents.iter().any(|known| known == loader)
+        {
+            documents.push(loader.to_owned());
+        }
+    }
+
+    /// Waits until the browser says the page's document, the one under
+    /// `loader`, is idle on the network and none of its recorded requests
+    /// awaits its answer, or [`SETTLE_BOUND`] passes; `false`, at once,
+    /// when another document of the frame is parsed first, as when a
+    /// person leaves a page before it is quiet.
+    async fn settle(&self, loader: Option<&str>) -> bool {
+        let loader = loader.map(str::to_owned);
         let mut nav = self.nav.subscribe();
         let mut waiting = self.waiting.subscribe();
-        let _ = tokio::time::timeout(SETTLE_BOUND, async {
+        let mut changes = self.changes.subscribe();
+        let quiet = async {
             let _ = nav
-                .wait_for(|nav| loaded.is_none() || nav.idle == loaded)
+                .wait_for(|nav| loader.is_none() || nav.idle == loader)
                 .await;
             let _ = waiting.wait_for(|count| *count == 0).await;
-        })
-        .await;
+        };
+        // A document is parsed before the count of changes grows.
+        let left = async {
+            loop {
+                if self.last_parsed() != loader || changes.changed().await.is_err() {
+                    return;
+                }
+            }
+        };
+        tokio::select! {
+            () = quiet => {}
+            () = left => return false,
+            () = tokio::time::sleep(SETTLE_BOUND) => {}
+        }
+        self.last_parsed() == loader
     }
 }
