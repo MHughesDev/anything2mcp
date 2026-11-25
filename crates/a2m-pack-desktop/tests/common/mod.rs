@@ -210,6 +210,11 @@ impl Scene {
         Self::build(name, true, copy.path()).await
     }
 
+    /// The same, with the target at `target` in place of the fixture.
+    pub async fn at(name: &str, target: &Path) -> Option<Self> {
+        Self::build(name, true, target).await
+    }
+
     async fn with(name: &str, application: bool) -> Option<Self> {
         Self::build(name, application, &fixture()).await
     }

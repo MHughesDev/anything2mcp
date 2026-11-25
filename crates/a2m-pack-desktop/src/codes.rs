@@ -112,6 +112,10 @@ a2m_core::failure_codes! {
     PROGRAM_REFUSED = Policy, "program_refused",
         meaning "The surface lets the pack start its program, and the program's file is not one the pack starts: it is missing, is a shell, an interpreter, or a script, or another user can replace it or a folder on its way. Nothing was started.",
         next "Declare the installed program's own file, in a folder only you or the system's administrator can change.";
+    KEYS_NOT_BUILT = Busy, "keys_not_built",
+        meaning "An action is done by a key, and this version does one only on Linux, where the accessibility interface lists the key an element's action is bound to. Nothing was sent.",
+        next "Name the element's action with `perform`, or run the write on Linux.",
+        passes not_by_itself;
     REMOTE_NAMESPACE_REFUSED = Policy, "remote_namespace_refused",
         meaning "The surface's management namespace names another machine (it begins with two separators). The driver asks only this machine's management service, and asks nothing of it.",
         next "Leave `management_namespace` out, or name a namespace of this machine.";
@@ -222,6 +226,21 @@ pub(crate) fn start_not_built(program: &str) -> StepFailure {
             std::env::consts::OS
         ),
         "Start the application as you normally do, then run the tool again.",
+    ))
+}
+
+/// An action by a key, on a system where it is not built. Nothing was
+/// sent.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn keys_not_built(what: &str, key: &str) -> StepFailure {
+    StepFailure::not_sent(failure(
+        &row::KEYS_NOT_BUILT,
+        format!(
+            "{what} is done by the key `{}`, and this version does an action by a key only on Linux; this system is {}. Nothing was sent.",
+            shown(key),
+            std::env::consts::OS
+        ),
+        "Name the element's action with `perform`, or run the write on Linux.",
     ))
 }
 

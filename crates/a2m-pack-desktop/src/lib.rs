@@ -48,6 +48,7 @@ mod dbus;
 mod discover;
 mod draft;
 mod driver;
+mod keys;
 mod lower;
 mod members;
 mod model;

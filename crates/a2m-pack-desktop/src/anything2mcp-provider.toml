@@ -277,6 +277,10 @@ code = "application_not_started"
 class = "policy"
 code = "program_refused"
 
+[[failure_codes]]
+class = "busy"
+code = "keys_not_built"
+
 # It reads a running application a person started and the target names, on
 # the person's screen. It starts no program of its own: only the one a
 # published compiled target declares for a surface that states

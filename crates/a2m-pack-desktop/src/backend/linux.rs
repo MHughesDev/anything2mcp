@@ -508,6 +508,33 @@ impl Hands<'_> {
         .await
     }
 
+    /// Does the element's one action that it binds to `key` of the pack's
+    /// closed list, as its action interface lists its key bindings
+    /// (decision 0999). `Ok(None)` when it binds the key to no action, or
+    /// to more than one, and nothing was sent; `Ok(Some(false))` when the
+    /// application says it did not do it. No key event is sent.
+    pub(crate) async fn press_key(&self, node: &Node, key: &str) -> Result<Option<bool>, Acted> {
+        let (bus, path) = (node.el.bus.as_str(), node.el.path.as_str());
+        let offered: Vec<(String, String, String)> =
+            call(&self.look.a11y, bus, path, ACTION, "GetActions", &())
+                .await
+                .map_err(Acted::NotSent)?;
+        let bound: Vec<usize> = offered
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, _, binding))| crate::keys::binds(binding, key))
+            .map(|(at, _)| at)
+            .collect();
+        let [index] = bound.as_slice() else {
+            return Ok(None);
+        };
+        let index = i32::try_from(*index)
+            .map_err(|_| Acted::NotSent(AxError::Lost("an action out of range".to_owned())))?;
+        act_call(&self.look.a11y, &node.el, ACTION, "DoAction", &(index,))
+            .await
+            .map(Some)
+    }
+
     /// Does the element's action named `name`. `Ok(None)` when it offers
     /// no action of that name, and nothing was sent; `Ok(Some(false))` when
     /// the application says it did not do it.

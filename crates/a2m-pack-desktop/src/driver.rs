@@ -740,6 +740,12 @@ impl Held {
             shown(&payload.action),
             shown(name)
         );
+        // An action by a key is done through the element's own action bound
+        // to it, which only AT-SPI lists for a field (decision 0999).
+        #[cfg(not(target_os = "linux"))]
+        if let Some(key) = &action.key {
+            return Err(codes::keys_not_built(&what, key));
+        }
         let tree = self.walk(deadline).await?;
         let at = tree
             .one(&action.locate)
@@ -783,16 +789,33 @@ impl Held {
         // Last before the act, on the walk it acts on: the record, and no
         // window the screens do not name.
         self.before_act(step, screen, &tree, input).await?;
-        match hands.perform(&node, &action.perform).await {
+        #[cfg(target_os = "linux")]
+        let done = match &action.key {
+            Some(key) => hands.press_key(&node, key).await,
+            None => hands.perform(&node, &action.perform).await,
+        };
+        #[cfg(not(target_os = "linux"))]
+        let done = hands.perform(&node, &action.perform).await;
+        match done {
             Ok(Some(true)) => {}
             Ok(None) => {
+                let (offers, fix) = match &action.key {
+                    Some(key) => (
+                        format!("binds no action, or more than one, to the key `{key}`"),
+                        "Take a snapshot of the window and correct the action's `key`, or name the element's action with `perform`.",
+                    ),
+                    None => (
+                        format!(
+                            "offers no action named `{}` exactly once",
+                            shown(&action.perform)
+                        ),
+                        "Take a snapshot of the window and correct the action's `perform`.",
+                    ),
+                };
                 return Err(StepFailure::not_sent(codes::failure(
                     &codes::row::UNEXPECTED_CONTROL,
-                    format!(
-                        "{what} offers no action named `{}` exactly once. Nothing was sent.",
-                        shown(&action.perform)
-                    ),
-                    "Take a snapshot of the window and correct the action's `perform`.",
+                    format!("{what} {offers}. Nothing was sent."),
+                    fix,
                 )));
             }
             Ok(Some(false)) => {

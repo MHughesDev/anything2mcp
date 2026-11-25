@@ -44,6 +44,12 @@ pub(crate) struct Action {
     pub locate: Vec<Locator>,
     /// The name of the element's action, as its interface lists it.
     pub perform: String,
+    /// The key of the pack's closed list ([`crate::keys::KEYS`]) the
+    /// action is done by, when it states one: the element's own action
+    /// that the element binds to that key (decision 0999). Never a
+    /// synthetic key.
+    #[serde(default)]
+    pub key: Option<String>,
     pub confirm: Cond,
     pub commits: bool,
 }
