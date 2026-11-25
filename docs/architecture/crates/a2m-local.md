@@ -205,7 +205,7 @@ The product crate starts the role in this order: `Channel::bind`, `LocalSurface:
 | Address | A socket in the user's runtime directory, inside a directory of its own with mode 0700 | A pipe whose name carries the user's security identifier |
 | Who may open it | The directory's mode; the socket's mode 0600 | An access list naming only the user, and the first-instance flag so no other process can create the pipe first |
 | Server's check of the client | The peer credentials the kernel reports for the socket | The client process's token, from the pipe |
-| Client's check of the server | The socket file and its directory are owned by the user | The pipe's server process runs as the user |
+| Client's check of the server | The socket file and its directory are owned by the user (`check_owner`, before it connects); then the peer credentials of the connected socket name the user (`server_user` and `served_by`), and anything else, a user that could not be read among them, is `NotOurs`, so `peer_not_allowed` | The pipe's server process runs as the user; the client opens the pipe with `ClientOptions::security_qos_flags(SECURITY_IDENTIFICATION)`, so a server that impersonates it holds a token at the identification level and can act as it nowhere |
 
 The client's check matters as much as the server's. Without it another program could create the socket or the pipe first and receive commands meant for the engine, or answer them.
 

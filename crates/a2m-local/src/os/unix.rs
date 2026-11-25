@@ -180,7 +180,9 @@ fn check_owner(place: &Place, expected: &str) -> Result<(), ConnectError> {
 }
 
 /// Connects to the engine, after checking that what listens is the
-/// expected user's. Nothing is sent. A socket queues a connection the
+/// expected user's: the socket's file and folder before it connects, and
+/// the kernel's word on who serves the connected socket after. Nothing is
+/// sent. A socket queues a connection the
 /// engine has not taken yet, so nothing here waits for `_deadline`.
 pub(crate) async fn connect(
     place: &Place,
@@ -200,7 +202,30 @@ pub(crate) async fn connect(
             )));
         }
     }
-    reached(UnixStream::connect(&place.socket).await)
+    let stream = reached(UnixStream::connect(&place.socket).await)?;
+    served_by(server_user(&stream).as_deref(), expected)?;
+    Ok(stream)
+}
+
+/// The user of the process that serves a connected socket, as the kernel
+/// reports it for the client's own end: the peer credentials of the
+/// listening socket, which are its creator's. `None` when the kernel's
+/// answer could not be read.
+pub(crate) fn server_user(stream: &UnixStream) -> Option<String> {
+    stream.peer_cred().ok().map(|cred| cred.uid().to_string())
+}
+
+/// The client's check of the engine's end of the connection, beside the
+/// check of the socket's file and folder ([`check_owner`]): the kernel's
+/// word on who serves must be `expected`. A server whose user could not be
+/// read is nobody's, and is refused as another user's would be. Nothing
+/// has been sent when this refuses.
+pub(crate) fn served_by(server: Option<&str>, expected: &str) -> Result<(), ConnectError> {
+    if server == Some(expected) {
+        Ok(())
+    } else {
+        Err(ConnectError::NotOurs)
+    }
 }
 
 /// What one attempt to connect came to. Nothing listening is an engine

@@ -16,6 +16,7 @@ The design's own history is in the [decision records](docs/decisions/README.md),
 
 ### Security
 
+- A command on macOS and Linux now also asks the operating system who serves the engine's socket once it is connected, and refuses one of another user before it sends anything, as the engine asks of its clients. On Windows the client opens the engine's pipe at the identification level by its own setting, so that whatever serves the pipe can learn who connected and never act as them.
 - The README now has the vault's passphrase typed at a prompt that writes no shell history (`read -rs`), and says to start agents from another shell, since a program started from the shell that holds it inherits it. It also states the limit of the approval it promises: the presence prompt stops a mistaken or steered agent, not a hostile program already running as you. Publishing setup and RELEASING.md now make each release environment's required reviewer and its rule of `main` and `v*` tags the release's gate, set before the first tag ([decision 0484](docs/decisions/0484-a-release-is-gated-by-its-environments-and-a-person-approves-every-publish.md)).
 
 ## [0.1.0] - 2026-11-25
