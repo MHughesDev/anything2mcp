@@ -52,7 +52,7 @@ A pack states this through one new method, `Lowering::statement(binding, lowered
 
 ### 3. A sign-in may name its probe before the read is drafted, in a draft only
 
-In a draft compile, a probe that names nothing, where no operation file of that name exists either, compiles to the new `ProbePlan::Pending { name }`, with the warning `kernel.probe_pending` in the lint result and `ProbeReview::Pending` with the fixed `PROBE_PENDING` in the review. A probe that names an operation with errors stays that operation's errors. A publish compile refuses a probe nothing defines, as `kernel.unknown_name`, as before; and `Plan::check` in `a2m-core` refuses a `Pending` probe in a plan under any version but the draft version, `0.0.0`, so no published plan can hold one, whoever made it. A session made under a pending probe is never called confirmed: the keeper's probe has nothing to run.
+In a draft compile, a probe that names nothing, where no operation file of that name exists either, compiles to the new `ProbePlan::Pending { name }`, with the warning `kernel.session_check_pending` in the lint result and `ProbeReview::Pending` with the fixed `PROBE_PENDING` in the review. A probe that names an operation with errors stays that operation's errors. A publish compile refuses a probe nothing defines, as `kernel.unknown_name`, as before; and `Plan::check` in `a2m-core` refuses a `Pending` probe in a plan under any version but the draft version, `0.0.0`, so no published plan can hold one, whoever made it. A session made under a pending probe is never called confirmed: the keeper's probe has nothing to run.
 
 ## Alternatives weighed
 
@@ -82,4 +82,4 @@ Other packs have the same case and are not changed here: a device's single regis
 
 - No plan's bytes change: the example target compiles to the plan it compiled to before, and the plan's pinned hash is unchanged. `ProbePlan` has a new variant that only a draft can hold. The operation file's `identity` takes an optional `place`, so the published schema of operation files changes.
 - `ReviewItem` and `ReviewSummary` keep their paths at the crate root and gain fields; `ReviewSummary` gains `sign_ins`.
-- Two kernel lint codes: `kernel.place_not_fixed` and `kernel.probe_pending`.
+- Two kernel lint codes: `kernel.place_not_fixed` and `kernel.session_check_pending`.

@@ -35,5 +35,5 @@ A target needs to read YAML, TOML, or XML as a system; a workbook editor passes 
 ## Spec sections
 
 - [308. The file pack](../spec/3-packs/308-the-file-pack.md)
-- [201. Archetypes and modes](../spec/2-kernel/201-archetypes-and-modes.md)
+- [201. Archetypes and modes](../spec/2-kernel/201-access-kinds-and-modes.md)
 - [`a2m-pack-file`](../architecture/crates/a2m-pack-file.md)

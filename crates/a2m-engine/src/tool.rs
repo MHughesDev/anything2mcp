@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    CompiledBinding, CompiledInput, CompiledOperation, Digest, EffectClass, ExprIndex, Failure,
-    FailureClass, IdentityStrategy, OperationIndex, OperationName, REDACTED, RecordKey,
+    CompiledBinding, CompiledInput, CompiledOperation, Coverage, Digest, EffectClass, ExprIndex,
+    Failure, FailureClass, OperationIndex, OperationName, REDACTED, RecordKey, RecordMatching,
     RecordState, RunState, StepArg, Timestamp, ToolRuns, Value, Values, WriteEvidence,
 };
 use a2m_expr::names;
@@ -15,9 +15,9 @@ use a2m_ledger::{
     Acted, ActedToken, BlobKind, BlobRef, PlannedRecord, ReadBack, Reconciled, RecordIntent,
     RecordRef, RetentionClass, Settled,
 };
+use a2m_logs::Phase;
 use a2m_provider::{Observed, Posture, Sent, StepFailure, StepOutcome};
 use a2m_sources::{LoadedSource, OPERATION_READER, Sources};
-use a2m_telemetry::Phase;
 
 use crate::codes;
 use crate::compare::{self, Field};
@@ -597,6 +597,10 @@ struct Tool<'p> {
     scope: Scope,
     /// What the tool returns: the result of the last step that ran.
     last: Values,
+    /// How much of what it could return the result holds (decision 0472):
+    /// what the read stated, for a tool that is one operation called once;
+    /// `unknown` for any other.
+    coverage: Coverage,
 }
 
 impl Tool<'_> {
@@ -883,6 +887,7 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
         steps,
         scope,
         last: Values::new(),
+        coverage: Coverage::Unknown,
     };
     if writing {
         write_tool(run, &loaded, &mut tool).await
@@ -899,7 +904,10 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
         let sent = match read {
             Ok(()) => run
                 .control
-                .send(EngineEvent::Result(kept(run, &tool.last)))
+                .send(EngineEvent::Result {
+                    values: kept(run, &tool.last),
+                    coverage: tool.coverage,
+                })
                 .await
                 .map_err(Stop::from),
             Err(stop) => Err(stop),
@@ -953,6 +961,14 @@ async fn read_steps_of(
             }
             results.push(outputs);
         }
+        // Only one read of one operation, the whole of the tool, says what
+        // the result holds: a pipeline's last step, or a step called for
+        // each of several inputs, says nothing of the records of the whole.
+        tool.coverage = if tool.steps.len() == 1 && calls.len() == 1 {
+            run.read_coverage
+        } else {
+            Coverage::Unknown
+        };
         let step = &tool.steps[position];
         let kept = StepShape { ..*step };
         tool.keep(&kept, results);
@@ -1103,8 +1119,11 @@ async fn read_pass(
         .await
         .map_err(|failure| (failure, None))?;
     let failed = |failure: Failure| (failure, Some(held));
-    match observe(run, held, binding, scope, fields).await {
-        Ok(Some(seen)) => outputs_of(loaded, found, &seen).map_err(failed),
+    match observe_covered(run, held, binding, scope, fields).await {
+        Ok(Some((seen, coverage))) => {
+            run.read_coverage = coverage;
+            outputs_of(loaded, found, &seen).map_err(failed)
+        }
         Ok(None) => Err(failed(codes::fail(
             &codes::row::OUTPUT_UNEXPECTED,
             format!("The operation `{}` found nothing to read.", found.name),
@@ -1124,6 +1143,20 @@ pub(crate) async fn observe(
     scope: &Scope,
     fields: &[Field],
 ) -> Result<Option<Values>, Failure> {
+    observe_covered(run, held, binding, scope, fields)
+        .await
+        .map(|seen| seen.map(|(values, _)| values))
+}
+
+/// [`observe`], with what the steps that returned values stated of their
+/// coverage (decision 0472).
+async fn observe_covered(
+    run: &mut Run<'_>,
+    held: usize,
+    binding: &CompiledBinding,
+    scope: &Scope,
+    fields: &[Field],
+) -> Result<Option<(Values, Coverage)>, Failure> {
     let steps = binding.act.len() + binding.confirm.len() + binding.read_back.len();
     run.budget(held, steps).await?;
     let mut scope = scope.clone();
@@ -1145,7 +1178,7 @@ pub(crate) async fn observe(
             None => return Ok(None),
         }
     }
-    Ok(Some(seen.values))
+    Ok(Some((seen.values, seen.coverage)))
 }
 
 /// A write tool: the preview, the approval check, reconcile on resume, and
@@ -1357,8 +1390,12 @@ async fn write_tool(run: &mut Run<'_>, loaded: &Loaded, tool: &mut Tool<'_>) -> 
     }
     // The read steps after the first write step run only now.
     read_steps_of(run, loaded, tool, first_write, all).await?;
+    // A write's result states nothing of the records a read could return.
     run.control
-        .send(EngineEvent::Result(kept(run, &tool.last)))
+        .send(EngineEvent::Result {
+            values: kept(run, &tool.last),
+            coverage: Coverage::Unknown,
+        })
         .await?;
     Ok(Done::Completed)
 }
@@ -1718,7 +1755,7 @@ async fn hold_for(
     Ok(held)
 }
 
-/// Reads a record as its identity strategy says (spec section 209).
+/// Reads a record as its record matching says (spec section 209).
 /// `Ok(None)` when it does not exist. A sign that the session ended is
 /// relayed to the keeper.
 ///
@@ -1740,7 +1777,7 @@ async fn read_record(
     let binding = &found.bindings[record.binding];
     let searches = matches!(
         found.identity.strategy,
-        IdentityStrategy::Stamped | IdentityStrategy::Find
+        RecordMatching::Stamped | RecordMatching::Find
     ) && !binding.lookup.is_empty()
         && record.assigned.is_none()
         && !record.recorded;
@@ -1916,16 +1953,14 @@ async fn preview_record(
     // fourth has a key and a binding with nothing to read it with: it is
     // not read, and the diff says that what it holds now cannot be read.
     let unreadable = !record.pending
-        && found.identity.strategy != IdentityStrategy::None
+        && found.identity.strategy != RecordMatching::None
         && found.bindings.get(record.binding).is_some_and(cannot_read);
     let looked_up = !record.pending
         && !unreadable
         && match found.identity.strategy {
-            IdentityStrategy::None => false,
-            IdentityStrategy::Stamped => record.stamp.is_some(),
-            IdentityStrategy::Natural | IdentityStrategy::Composite | IdentityStrategy::Find => {
-                true
-            }
+            RecordMatching::None => false,
+            RecordMatching::Stamped => record.stamp.is_some(),
+            RecordMatching::Natural | RecordMatching::Composite | RecordMatching::Find => true,
         };
     let raw = if looked_up {
         let held = hold_for(run, found, record, None, false).await?;
@@ -2137,7 +2172,7 @@ async fn reconcile(
         let held = snapshot.iter().find(|held| held.record == record.record);
         let found = operation(loaded, record.operation)?;
         let mode = held.and_then(|held| held.mode.clone());
-        if found.identity.strategy == IdentityStrategy::None
+        if found.identity.strategy == RecordMatching::None
             || found.bindings.get(record.binding).is_some_and(cannot_read)
         {
             // A record of no identity has no key to be read by, and a
@@ -2578,7 +2613,7 @@ async fn read_in_doubt(
     let binding = &found.bindings[record.binding];
     let by_lookup = matches!(
         found.identity.strategy,
-        IdentityStrategy::Stamped | IdentityStrategy::Find
+        RecordMatching::Stamped | RecordMatching::Find
     ) && !binding.lookup.is_empty()
         && record.assigned.is_none()
         && !record.recorded;
@@ -2616,7 +2651,7 @@ async fn verify_again(
         .filter(|record| record.state == RecordState::Verified)
     {
         let found = operation(loaded, record.operation)?;
-        if found.identity.strategy == IdentityStrategy::None {
+        if found.identity.strategy == RecordMatching::None {
             continue;
         }
         run.checkpoint(Duration::ZERO)?;
@@ -2773,11 +2808,11 @@ async fn commit_point(
     // say nothing more, and where the system cannot prove an absence by
     // itself, such as a log that has lost its front, it would stop the
     // write for nothing.
-    let never_sent = found.identity.strategy == IdentityStrategy::Stamped
-        && record.state == RecordState::Planned;
+    let never_sent =
+        found.identity.strategy == RecordMatching::Stamped && record.state == RecordState::Planned;
     if !fresh
         && !never_sent
-        && found.identity.strategy != IdentityStrategy::None
+        && found.identity.strategy != RecordMatching::None
         && !cannot_read(binding)
     {
         let raw = read_record(run, found, record, held, false).await?;

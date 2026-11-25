@@ -149,9 +149,9 @@ class AuditCatches(unittest.TestCase):
         shutil.rmtree(self.root / "crates" / "a2m-pack-web-probe")
         self.assert_finding("layering", "a2m-pack-web-probe is in the layering table but crates/a2m-pack-web-probe does not exist")
 
-    def test_the_field_harness_is_held_to_the_table_like_a_crate(self):
-        shutil.rmtree(self.root / "tools" / "field-harness")
-        self.assert_finding("layering", "a2m-field-harness is in the layering table but tools/field-harness does not exist")
+    def test_the_copy_test_harness_is_held_to_the_table_like_a_crate(self):
+        shutil.rmtree(self.root / "tools" / "copy-test-harness")
+        self.assert_finding("layering", "a2m-copy-test-harness is in the layering table but tools/copy-test-harness does not exist")
 
     def test_a_program_under_tools_that_is_not_in_the_table_is_refused(self):
         extra = self.root / "tools" / "extra"
@@ -217,6 +217,15 @@ class AuditCatches(unittest.TestCase):
         copy = self.root / "bindings" / "python" / "LICENSE"
         copy.write_text(copy.read_text(encoding="utf-8") + "One more line.\n", encoding="utf-8")
         self.assert_finding("release", "bindings/python/LICENSE must be an exact copy of LICENSE")
+
+    def test_a_changed_copy_of_the_notices_file_is_refused(self):
+        copy = self.root / "bindings" / "python" / "THIRD-PARTY-NOTICES.txt"
+        copy.write_text(copy.read_text(encoding="utf-8") + "One more line.\n", encoding="utf-8")
+        self.assert_finding("release", "bindings/python/THIRD-PARTY-NOTICES.txt must be an exact copy")
+
+    def test_a_missing_notices_file_is_refused(self):
+        (self.root / "THIRD-PARTY-NOTICES.txt").unlink()
+        self.assert_finding("release", "THIRD-PARTY-NOTICES.txt is missing")
 
     def test_an_earlier_name_in_a_living_file_is_refused(self):
         earlier = "Web" + "2MCP"

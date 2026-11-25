@@ -336,3 +336,42 @@ fn a_management_namespace_on_another_machine_is_not_stated() {
         assert!(matches!(item.reach, Reach::Partly { .. }), "{}", item.tool);
     }
 }
+
+#[test]
+fn a_surface_that_may_be_started_names_its_program_and_does_not_say_where_it_sends() {
+    use a2m_files::{BindingStates, ProgramRun, Reach};
+    let folder = Folder::new("start-states");
+    let registry = registry(folder.path(), None);
+    let root = folder.path().join("start");
+    let digest = format!("sha256:{}", "a".repeat(64));
+    let lines =
+        format!("    service: org.example.Desk\n    start: true\n    digest: \"{digest}\"\n");
+    fixture_copy(&root, "target.yaml", move |text| {
+        text.replace("    service: org.example.Desk\n", &lines)
+    });
+    let compiled = compile_at(&registry, &root).unwrap_or_else(|p| panic!("{}", shown(&p)));
+    assert!(!compiled.review.items.is_empty());
+    for item in &compiled.review.items {
+        assert!(!matches!(item.reach, Reach::Stated { .. }), "{}", item.tool);
+        for binding in &item.bindings {
+            let BindingStates::Stated { runs, .. } = &binding.states else {
+                panic!("`{}` is not stated", item.tool);
+            };
+            let [
+                a2m_files::RunReview {
+                    run: ProgramRun::Program { path, digests },
+                    ..
+                },
+            ] = runs.as_slice()
+            else {
+                panic!("`{}` names {runs:?}", item.tool);
+            };
+            assert_eq!(path, "/opt/example/bin/example-desk");
+            assert_eq!(digests.len(), 1);
+        }
+    }
+    // The compiled surface declares the program, for the supervisor.
+    let surface = &compiled.compiled_target.surfaces[0];
+    assert_eq!(surface.programs.len(), 1);
+    assert_eq!(surface.programs[0].path, "/opt/example/bin/example-desk");
+}

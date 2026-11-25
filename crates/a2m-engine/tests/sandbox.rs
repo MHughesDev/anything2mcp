@@ -203,15 +203,15 @@ async fn a_discovery_job_for_a_surface_the_compiled_target_does_not_hold_leaves_
     assert!(scene.hooks.postures.lock().unwrap().is_empty());
 }
 
-// ---- files of the project's `sources` folder (decision 0263) ----
+// ---- files of the project's `inputs` folder (decision 0263) ----
 
-/// A project with a `sources` folder holding one file, set as the folder of
+/// A project with a `inputs` folder holding one file, set as the folder of
 /// the request, and the files the call hands the discovery.
 fn handing(scene: &Scene, files: &[(&str, &str)]) -> common::Folder {
     let project = common::Folder::new("handed");
-    std::fs::create_dir_all(project.path().join("sources")).unwrap();
+    std::fs::create_dir_all(project.path().join("inputs")).unwrap();
     std::fs::write(
-        project.path().join("sources").join("example-openapi.json"),
+        project.path().join("inputs").join("example-openapi.json"),
         b"{\"openapi\": \"3.0.0\"}",
     )
     .unwrap();
@@ -226,7 +226,7 @@ fn handing(scene: &Scene, files: &[(&str, &str)]) -> common::Folder {
 #[tokio::test]
 async fn a_named_file_of_the_sources_folder_reaches_the_discoverer_under_its_name() {
     let scene = Scene::new(ORDER_GET, |_| {}).await;
-    let _project = handing(&scene, &[("description", "sources/example-openapi.json")]);
+    let _project = handing(&scene, &[("description", "inputs/example-openapi.json")]);
     let outcome = scene.discover("app").await;
     assert!(completed(&outcome), "{outcome:?}");
     let handed = scene.discoverer.handed.lock().unwrap().clone();
@@ -253,30 +253,26 @@ async fn a_link_out_of_the_sources_folder_is_refused_and_nothing_is_read() {
     let outside = common::Folder::new("outside");
     std::fs::write(outside.path().join("secret.txt"), b"not for discovery").unwrap();
     // The same refusal for a path that leaves the folder by its text, a
-    // hidden file, a path outside `sources/`, and a name no discoverer of
+    // hidden file, a path outside `inputs/`, and a name no discoverer of
     // the surface reads.
     let mut cases = vec![
-        ("description", "sources/../outside.txt", "path_not_allowed"),
-        ("description", "sources/.hidden.json", "path_not_allowed"),
+        ("description", "inputs/../outside.txt", "path_not_allowed"),
+        ("description", "inputs/.hidden.json", "path_not_allowed"),
         ("description", "target.yaml", "path_not_allowed"),
-        ("description", "sources/missing.json", "path_not_allowed"),
-        (
-            "register_map",
-            "sources/example-openapi.json",
-            "job_invalid",
-        ),
+        ("description", "inputs/missing.json", "path_not_allowed"),
+        ("register_map", "inputs/example-openapi.json", "job_invalid"),
     ];
-    let link = "sources/out.json";
+    let link = "inputs/out.json";
     cases.push(("description", link, "path_not_allowed"));
     for (name, path, code) in cases {
         let scene = Scene::new(ORDER_GET, |_| {}).await;
         let project = handing(&scene, &[(name, path)]);
         std::fs::write(project.path().join("outside.txt"), b"not in sources").unwrap();
-        std::fs::write(project.path().join("sources").join(".hidden.json"), b"{}").unwrap();
+        std::fs::write(project.path().join("inputs").join(".hidden.json"), b"{}").unwrap();
         if path == link
             && link_file(
                 &outside.path().join("secret.txt"),
-                &project.path().join("sources").join("out.json"),
+                &project.path().join("inputs").join("out.json"),
             )
             .is_none()
         {
@@ -307,7 +303,7 @@ async fn a_try_runs_a_draft_read_that_may_not_act_live() {
     .await;
     // Live, a draft binding is never chosen, and the run is held to a
     // compiled target in which nothing else may act: it fails for good and
-    // offers no resume (field test 7, finding 47).
+    // offers no resume (copy test 7, finding 47).
     let outcome = scene.work(JobKind::Execute, ORDER_GET, order()).await;
     assert_eq!(
         failed_as(&outcome),

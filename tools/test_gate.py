@@ -91,7 +91,7 @@ class Records(unittest.TestCase):
 
     def test_a_package_is_named_from_its_id_with_or_without_a_name_in_it(self):
         self.assertEqual(gate.package_name("path+file:///w/crates/a2m-core#0.0.1"), "a2m-core")
-        self.assertEqual(gate.package_name("path+file:///w/tools/field-harness#a2m-field-harness@0.0.1"), "a2m-field-harness")
+        self.assertEqual(gate.package_name("path+file:///w/tools/copy-test-harness#a2m-copy-test-harness@0.0.1"), "a2m-copy-test-harness")
         self.assertEqual(gate.package_name("registry+https://github.com/rust-lang/crates.io-index#serde@1.0.0"), "serde")
 
     def test_a_program_is_known_by_its_file_name_on_every_system(self):
@@ -369,6 +369,32 @@ class FlakyRun(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn("2 runs", done.stdout)
         self.assertIn("0 failed", done.stdout)
+
+
+class Limits(unittest.TestCase):
+    """A test program past its limit is stopped, and the tests that had
+    not ended are named, so a hang on CI says where it is."""
+
+    def test_a_program_past_its_limit_is_stopped_and_says_so(self):
+        started = __import__("time").monotonic()
+        done = gate.run_limited([sys.executable, "-c", "import time; print('begun', flush=True); time.sleep(30)"], None, dict(os.environ), 1)
+        self.assertIsNone(done.returncode)
+        self.assertIn("begun", done.stdout)
+        self.assertLess(__import__("time").monotonic() - started, 20)
+
+    def test_a_program_within_its_limit_gives_its_code(self):
+        done = gate.run_limited([sys.executable, "-c", "import sys; print('x'); sys.exit(3)"], None, dict(os.environ), 30)
+        self.assertEqual(done.returncode, 3)
+        self.assertEqual(done.stdout.strip(), "x")
+
+    def test_the_tests_still_running_are_those_with_no_result(self):
+        out = (
+            "test a::slow has been running for over 60 seconds\n"
+            "test b::stuck has been running for over 60 seconds\n"
+            "test a::slow ... ok\n"
+            "test c::fast ... ok\n"
+        )
+        self.assertEqual(gate.still_running(out), ["b::stuck"])
 
 
 if __name__ == "__main__":

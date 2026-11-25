@@ -106,7 +106,7 @@ Today the scout (`handlers/scout.rs`) starts from a declared surface's address. 
 **The new stage, stage 0.5 "survey".** Before identify, when the person has pointed the scout at *a network* rather than *an address* and that network is in reach for looking:
 
 1. Rung 0-2 produce **network findings**: each thing seen on the network, with its place, what announced it, and what it claims to be.
-2. Each network finding is offered to every pack's discoverer whose `suits()` says the thing's claimed kind matches (the `SurfaceDescription` already carries `kind`, `archetype`, `address`, `facts` — the shape is there). The kernel hands the finding across as data; it does not learn any pack's knowledge (rule 8). A pack that recognizes "an HTTP service at `local_network` address X with an interface description at a conventional path" says so; the kernel does not know what an interface description is.
+2. Each network finding is offered to every pack's discoverer whose `suits()` says the thing's claimed kind matches (the `SurfaceDescription` already carries `kind`, `access_kind`, `address`, `facts` — the shape is there). The kernel hands the finding across as data; it does not learn any pack's knowledge (rule 8). A pack that recognizes "an HTTP service at `local_network` address X with an interface description at a conventional path" says so; the kernel does not know what an interface description is.
 3. For each thing a pack can place, the drafter writes a **candidate**: the `target.add` a person would run, with the address and its place filled in, marked provisional, needing the person's confirmation (502 barrier 2) because it reaches a new place.
 4. The report lists candidates, grouped by place, newest and nearest first, with their evidence level and what is still a claim.
 
@@ -159,7 +159,7 @@ All reads. Named `a2m_<noun>_<verb>` in the registry's `noun.verb` form. Rung 0 
 
 | Piece | Where | Why |
 | --- | --- | --- |
-| `Place` enum; `Network` fingerprint type; `Reach` type | `a2m-core` (layer 1) | Closed types, named in the documents, like `Archetype` ([decision 0060](../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)) |
+| `Place` enum; `Network` fingerprint type; `Reach` type | `a2m-core` (layer 1) | Closed types, named in the documents, like `AccessKind` ([decision 0060](../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)) |
 | Place derivation from an address + machine state | `a2m-provider` (layer 5), beside the path check | The one place a pack is handed a checked destination, as it is handed a checked path today |
 | `Destinations` grows to carry place; reach test | `a2m-provider`, used by `a2m-engine` `destinations_of` | The destination check is already here |
 | The reach ledger as a protected setting; `net.*` rung-0 actions | `a2m-actions` (layer 7), `handlers/machine.rs` | Rung 0 inspects the engine's own host, like `doctor.run`; settings live here |
@@ -254,7 +254,7 @@ No section is edited in this wave. These would change:
 
 - **[Section 105](../spec/1-product/105-core-concepts.md)** core concepts: add place, network, and reach as nouns; add `network` surface kind to the examples.
 - **[Section 106](../spec/1-product/106-what-it-latches-onto.md)** what it latches onto: a short "networks" row and the idea that a surface has a place; the scout surveys a network.
-- **[Section 201](../spec/2-kernel/201-archetypes-and-modes.md)** / the registry: the `network` surface kind and the net pack's mode(s).
+- **[Section 201](../spec/2-kernel/201-access-kinds-and-modes.md)** / the registry: the `network` surface kind and the net pack's mode(s).
 - **[Section 203](../spec/2-kernel/203-the-provider-contract.md)** the provider contract: `Destinations` carries place; the manifest's effects name the rung and places a provider may reach; `SurfaceDescription` gains place.
 - **[Section 212](../spec/2-kernel/212-policy-and-approvals.md)**: the policy input may condition on the current network; the approval binding may carry the network (invention 6).
 - **[Section 218](../spec/2-kernel/218-discovery-and-findings.md)**: the `network` subject tag; the address subject's place; the rungs of looking as a discovery bound.

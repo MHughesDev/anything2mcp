@@ -21,11 +21,11 @@ use std::time::Duration;
 
 use a2m_auth::SessionLease;
 use a2m_core::{CompiledTarget, Decimal, Digest, Failure, Hazard, Redact, Step, Value, Values};
+use a2m_logs::{Acting, Detail};
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
-use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
 
 use crate::codec::{self, Unwritable};

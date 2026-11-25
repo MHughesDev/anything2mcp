@@ -5,7 +5,7 @@
 //! program starts: `anything2mcp <noun> <verb> [arguments]` for every
 //! action with a command face, and the shortcuts, which are data. The
 //! process commands are written by hand: `serve` is the local engine and
-//! `bridge` the stdio proxy of an MCP client; `runner` is named and not
+//! `stdio` the stdio proxy of an MCP client; `runner` is named and not
 //! built.
 //!
 //! A command is a thin client of the local engine: it sends each action
@@ -16,6 +16,7 @@
 //! and closes. `--in-process` asks for that form by name, and is refused
 //! while an engine runs.
 
+mod channel;
 mod client;
 mod complete;
 mod parse;
@@ -32,11 +33,12 @@ use std::sync::Arc;
 use a2m_actions::{Env, ExitClass, FrontDoor, OsFamily, PROGRAM, Paths, PersonSurface, codes};
 use a2m_core::{Failure, FailureClass};
 use a2m_local::{ClientLabel, Kept, kept_by};
-use a2m_telemetry::SystemClock;
+use a2m_logs::SystemClock;
 use a2m_vault::KeyStore;
 
 use crate::engine::{Engine, EngineOptions, action_registry};
 use crate::person::{ProcessTerminal, TerminalSurface};
+pub use channel::CHANNEL_OPEN_LINE;
 pub use parse::COMPLETION_COMMAND;
 pub(crate) use parse::Tree;
 use parse::{Globals, Parsed, Step};
@@ -76,7 +78,7 @@ pub struct Host {
     pub program: Option<PathBuf>,
     /// The presence prompt `serve` asks a person's presence with. `None` is
     /// this machine's own, which the operating system gives. The shipped
-    /// program never sets it; only the field harness does (decision 0310).
+    /// program never sets it; only the copy test harness does (decision 0310).
     pub prompt: Option<Arc<dyn a2m_local::PresencePrompt>>,
 }
 
@@ -497,7 +499,7 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
         Some(person) => Arc::clone(person),
         None => Arc::new(TerminalSurface::new(
             Arc::new(ProcessTerminal),
-            Arc::clone(&clock) as Arc<dyn a2m_telemetry::Clock>,
+            Arc::clone(&clock) as Arc<dyn a2m_logs::Clock>,
         )),
     };
     let mut options = EngineOptions::of_machine(paths, host.environment.clone(), person);
@@ -624,8 +626,8 @@ fn engine_logs(tree: &Tree, paths: &Paths, input: &Json, json: bool) -> Finished
             json,
         );
     };
-    let file = paths.logs.join(a2m_telemetry::LOG_FILE_NAME);
-    match a2m_telemetry::recent_lines(&paths.logs, count) {
+    let file = paths.logs.join(a2m_logs::LOG_FILE_NAME);
+    match a2m_logs::recent_lines(&paths.logs, count) {
         Ok(read) => {
             let lines: Vec<Json> = read
                 .into_iter()
@@ -771,7 +773,7 @@ pub unsafe fn run(args: impl IntoIterator<Item = String>) -> ExitCode {
 }
 
 /// [`run`], in the surroundings `host` gives: a program that sets what the
-/// shipped one never does, such as the field harness's presence prompt,
+/// shipped one never does, such as the copy test harness's presence prompt,
 /// builds its own host from [`Host::of_process`] and starts here.
 ///
 /// # Safety

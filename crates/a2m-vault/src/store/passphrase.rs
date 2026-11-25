@@ -451,7 +451,7 @@ impl KeyStore for PassphraseKeyStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::names::{Generation, KeyId, Layer};
+    use crate::names::{KeyId, KeyRotationNumber, Layer};
     use crate::store::creation::tests::Folder;
 
     /// The smallest cost the derivation accepts, so the tests are quick.
@@ -474,7 +474,7 @@ mod tests {
         Binding {
             key: KeyId::root(),
             layer: Layer::Workspace,
-            generation: Generation::FIRST,
+            rotation: KeyRotationNumber::FIRST,
         }
     }
 

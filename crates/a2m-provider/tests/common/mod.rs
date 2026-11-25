@@ -17,13 +17,14 @@ use a2m_auth::{
     SignInContext, SignedIn,
 };
 use a2m_core::{
-    Failure, FailureClass, FailureCode, FileKindName, Finding, IdentityStrategy, Mode, NoSecrets,
-    PackPayload, Step, StepKind, SurfaceKind, SurfaceName, Timestamp, Values, Verb,
+    Failure, FailureClass, FailureCode, FileKindName, Finding, Mode, NoSecrets, PackPayload,
+    RecordMatching, Step, StepKind, SurfaceKind, SurfaceName, Timestamp, Values, Verb,
 };
 use a2m_files::{
     CompiledSection, DefinedName, Diagnostics, Doc, ExprSite, FileKind, JsonSchema, KindContext,
     Located, LowerContext, Lowered, Lowering, Possible, ResolvedBinding, SurfaceKindSpec,
 };
+use a2m_logs::LogSettings;
 use a2m_provider::{
     BoxFuture, Cleanup, CompilerRegistrations, DescribeForm, Describer, Description, Discoverer,
     DiscovererName, DiscoveryReport, DiscoveryScope, Driver, DriverHealth, FindingSink,
@@ -31,7 +32,6 @@ use a2m_provider::{
     SandboxPort, StepFailure, StepInput, StepOutcome, Supervisor, SupervisorLimits,
     SurfaceDescription, SurfaceRef,
 };
-use a2m_telemetry::TelemetrySettings;
 
 /// A folder under the system's temporary folder, removed when dropped.
 pub struct Folder(PathBuf);
@@ -82,14 +82,14 @@ pub fn host_with(folder: &Folder, roots: Roots, redact: Arc<dyn a2m_core::Redact
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots,
         redact,
-        telemetry: a2m_telemetry::start(&TelemetrySettings::default(), Arc::new(NoSecrets), &logs)
+        logs_and_traces: a2m_logs::start(&LogSettings::default(), Arc::new(NoSecrets), &logs)
             .unwrap(),
     }
 }
 
-/// The manifest of the test pack. `name` is the pack; `archetype` that of
+/// The manifest of the test pack. `name` is the pack; `access kind` that of
 /// its mode; `extra` is added at the end.
-pub fn manifest(name: &str, archetype: &str, extra: &str) -> String {
+pub fn manifest(name: &str, access_kind: &str, extra: &str) -> String {
     format!(
         r#"manifest_format = 1
 contract = 1
@@ -102,7 +102,7 @@ kind = "pack"
 
 [[modes]]
 name = "stand"
-archetype = "{archetype}"
+archetype = "{access_kind}"
 verbs = ["read", "upsert"]
 steps = ["fetch", "send"]
 rank = 40
@@ -110,7 +110,7 @@ session_reads = 4
 
 [[surface_kinds]]
 name = "{name}_surface"
-archetype = "{archetype}"
+archetype = "{access_kind}"
 session = true
 
 [points]
@@ -120,7 +120,7 @@ auth_provider = ["{name}_login"]
 
 [[discoverers]]
 name = "look"
-archetype = "{archetype}"
+archetype = "{access_kind}"
 kinds = ["call"]
 sources = ["live_system"]
 max_level = "discovered"
@@ -223,7 +223,7 @@ impl Lowering for StandLowering {
     fn binding_schema(&self) -> &JsonSchema {
         &self.schema
     }
-    fn identity(&self, _binding: &ResolvedBinding<'_>, _strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, _binding: &ResolvedBinding<'_>, _strategy: RecordMatching) -> Possible {
         Possible::Yes
     }
     fn lower(

@@ -51,7 +51,7 @@ pub use keeper::{
 pub use key::{AuthEntry, SessionKey, SessionRef};
 pub use lease::{LeaseRequest, Purpose, SessionGrant, SessionLease, Wait};
 pub use material::Material;
-pub use name::{CredentialRef, ProfileRef, ProviderName};
+pub use name::{BrowserProfileRef, CredentialRef, ProviderName};
 pub use person::{AskPerson, PersonAnswer, PersonAsk, PersonReason, Returned};
 pub use provider::{
     AuthProvider, ExpirySign, ProviderNeeds, ProviderSet, RawSign, Rung, SignInAddress,
@@ -63,7 +63,8 @@ pub use state::{CallRule, call_rule, legal_move};
 pub use store::{EventKind, SessionEvent, SessionRow, SessionStore};
 pub use surfaces::{EntrySurfaces, SignInDestinations};
 pub use work::{
-    InProcessWork, KeeperJob, KeeperWork, KeeperWorker, ProbeOutcome, RunProbe, Work, WorkOutcome,
+    InProcessWork, KeeperJob, KeeperWork, KeeperWorker, RunSessionCheck, SessionCheckOutcome, Work,
+    WorkOutcome,
 };
 
 /// The boxed future the traits of this crate return, so that each can be

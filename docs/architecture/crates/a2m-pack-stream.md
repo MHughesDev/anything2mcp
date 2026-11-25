@@ -9,7 +9,7 @@ The stream pack: the `stream` driver over queues, topics, and logs. Every read e
 | Side | Pack: stream |
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
-| Depends on | `a2m-core` (the compiled target, steps, values, findings), `a2m-files` (file kinds, lowering, lint, and drafting registration), `a2m-auth` (`SessionLease`, `CredentialSink`), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`), `a2m-telemetry` (the clock that stamps a finding). Outside: `tokio` and `serde`. No broker client crate: both wire clients are the pack's own |
+| Depends on | `a2m-core` (the compiled target, steps, values, findings), `a2m-files` (file kinds, lowering, lint, and drafting registration), `a2m-auth` (`SessionLease`, `CredentialSink`), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`), `a2m-logs` (the clock that stamps a finding). Outside: `tokio` and `serde`. No broker client crate: both wire clients are the pack's own |
 | Roadmap packages | Packages J2, J3 of the [roadmap](../../plan/roadmap.md) |
 | Carries out | Spec section [309](../../spec/3-packs/309-the-stream-pack.md); the entry bar of section [202](../../spec/2-kernel/202-kernel-and-packs.md); section [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (no input changes a destination) |
 
@@ -28,7 +28,7 @@ It must never: choose a channel from a step argument; keep a subscription open a
 
 | Registration | Content |
 | --- | --- |
-| Mode | `stream`, archetype stream; rank 60; four reads and one write at a time in a session; a write holds the link |
+| Mode | `stream`, access kind stream; rank 60; four reads and one write at a time in a session; a write holds the link |
 | Surface kind | `broker`, with a session. Fields: `address`, one `host:port`, and `protocol`, one of the names the registration offers: `nats` (the crate's `PROTOCOLS`), and `example-broker/1` (`TEST_BROKER_PROTOCOL`) only in a test's registration |
 | Step kinds | `latest`, `browse`, `subscribe`, `await`, `publish`, `acknowledge`, `scan`, `position`, `taken` from lowerings; `channels` and `describe` from the discoverer only |
 | Driver | One, for `stream` |
@@ -161,7 +161,7 @@ What a step is given and gives:
 | --- | --- | --- |
 | 1 | A driver, no retries inside | One step, one request, except a wait, which fetches one message at a time until its limit. A failure whose fate is unknown gives the connection up |
 | 2 | Read-back for every write | By the table of section 309. Where there is none the operation is `irreversible` with no identity, and the compiler says so |
-| 3 | Each identity strategy | `natural` on a retained state channel. `stamped` on a log or a retained channel that declares an idempotency header. `composite` and `find` are refused. `none` elsewhere |
+| 3 | Each record matching | `natural` on a retained state channel. `stamped` on a log or a retained channel that declares an idempotency header. `composite` and `find` are refused. `none` elsewhere |
 | 4 | A test stand | `targets/example-broker`, cases 1 to 16; `targets/example-nats` for the protocol `nats`, with a test against a real server when `A2M_TEST_NATS` names one |
 | 5 | A discoverer | `broker_look` |
 | 6 | Failures mapped | Below |
@@ -296,8 +296,8 @@ What a step is given and gives:
 15. Done ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)): `wire::plain_tcp_address` asks the one question of a plain link, `ScopedHost::may_leave_this_machine` of `a2m-core`; pinned over the shared corpus of address spellings with the old check kept beside it. A loopback address with a zone, which the socket-address parser takes, is refused now.
 16. Done ([decision 0334](../../decisions/0334-the-device-stream-and-data-packs-state-where-their-tools-send.md)): `Lowering::statement` for the review summary: a binding starts nothing, sets nothing, and sends to its surface's broker and no other. Test: `every_tool_states_that_it_starts_nothing_and_sends_only_to_its_broker` (`tests/compile.rs`).
 
-17. Done ([decision 0435](../../decisions/0435-a-plain-link-that-carries-no-credential-goes-to-the-surfaces-address.md)), field test 7's finding 43: a connection that carries no credential goes to the surface's address, off the loopback included; one that carries a credential still goes to the loopback address only. Tests: `a_broker_that_asks_for_no_sign_in_is_reached_at_an_address_off_the_loopback` (`tests/nats.rs`), `plain_tcp_that_carries_no_credential_goes_to_the_surfaces_address` (`tests/driver.rs`), `a_connection_that_carries_no_credential_may_go_to_another_address` (`src/wire.rs`).
-18. Done ([decision 0434](../../decisions/0434-a-broker-that-keys-by-subject-gives-the-subject-as-a-channels-key.md)), field test 7's finding 44: `key: {from: subject}` in a channel file; the facts' `key_from_subject`; the drafter takes the subject as the key where the broker keys by subject and asks only where it names neither. Test: `a_retained_stream_keyed_by_subject_is_drafted_with_the_subject_as_its_key` (`tests/nats.rs`).
+17. Done ([decision 0435](../../decisions/0435-a-plain-link-that-carries-no-credential-goes-to-the-surfaces-address.md)), copy test 7's finding 43: a connection that carries no credential goes to the surface's address, off the loopback included; one that carries a credential still goes to the loopback address only. Tests: `a_broker_that_asks_for_no_sign_in_is_reached_at_an_address_off_the_loopback` (`tests/nats.rs`), `plain_tcp_that_carries_no_credential_goes_to_the_surfaces_address` (`tests/driver.rs`), `a_connection_that_carries_no_credential_may_go_to_another_address` (`src/wire.rs`).
+18. Done ([decision 0434](../../decisions/0434-a-broker-that-keys-by-subject-gives-the-subject-as-a-channels-key.md)), copy test 7's finding 44: `key: {from: subject}` in a channel file; the facts' `key_from_subject`; the drafter takes the subject as the key where the broker keys by subject and asks only where it names neither. Test: `a_retained_stream_keyed_by_subject_is_drafted_with_the_subject_as_its_key` (`tests/nats.rs`).
 
 Not built:
 
@@ -319,7 +319,7 @@ Not proven:
 - Redelivery after the acknowledgement wait on `nats` against a real server. The stand redelivers after the wait on its own clock, when a test moves it; a run that drops its connection holding a message leaves it pending until then, as the reviewer read the server to do.
 
 - The session path with a real lease. Tests run with no lease; the token reaches the wire only through `connect`, which the stand's token case exercises from the refusing side. Read, not run: `SessionLease::apply` registers every secret with the vault's redactor before the driver's sink is given it, so the token is known to the redactor before `connect`; the refusal of a credential that cannot be carried is tested on the sink alone.
-- A take, or a publish with no read-back, through the engine. Their bindings offer `acknowledged`, and the record ends `acted` only through `Control::acknowledged`, which the ledger does not yet implement; what the engine stores before the commit point, and hands back through `Prepared::recorded`, was read in its code and played by the tests through `DriverHandle::act_recorded`.
+- A take, or a publish with no read-back, through the engine. Their bindings offer `acknowledged`, and the record ends `acted` only through `ControlPort::acknowledged`, which the ledger does not yet implement; what the engine stores before the commit point, and hands back through `Prepared::recorded`, was read in its code and played by the tests through `DriverHandle::act_recorded`.
 - The engine loop over these steps. The tests call the handle directly.
 - Windows and macOS. The crate has no code that differs by system, and its tree compiles C below it, so it was linted and run on Linux only.
 

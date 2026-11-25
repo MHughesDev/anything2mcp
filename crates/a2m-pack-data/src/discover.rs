@@ -12,11 +12,11 @@ use a2m_core::{
     Address, Coverage, EvidenceLevel, FailsAs, Failure, Finding, FindingKind, LimitationCode,
     PackPayload, ProducedBy, Source, Step, Subject, Value, Values,
 };
+use a2m_logs::Clock;
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
     DiscoveryScope, FindingSink, SandboxPort, StepInput, StepOutcome, SurfaceDescription,
 };
-use a2m_telemetry::Clock;
 use serde::{Deserialize, Serialize};
 
 use crate::model::SurfaceFields;

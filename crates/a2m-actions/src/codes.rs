@@ -116,8 +116,8 @@ a2m_core::failure_codes! {
         meaning "The test `fixture.record` made does not pass against its scrubbed fixture, or an observed value would be in a file; nothing was written.",
         next "Write this fixture by hand with synthetic values its field types take.";
     CLIENT_CONFIG_REFUSED = Input, "client_config_refused",
-        meaning "`client.connect` cannot set a client's configuration: its profile does not read, names no file for this system, or the client's file does not read as a JSON object (decision 0219). Nothing is written.",
-        next "Correct the client's profile or its file, as the message names, then run the command again.";
+        meaning "`client.connect` cannot set a client's configuration: its client profile does not read, names no file for this system, or the client's file does not read as a JSON object (decision 0219). Nothing is written.",
+        next "Correct the client profile or its file, as the message names, then run the command again.";
     BINDING_NOT_PROMOTABLE = Input, "binding_not_promotable",
         meaning "A binding `binding.promote` may not make verified: not a drafted first binding of its operation, or one whose file cannot be rewritten by rule (decision 0189).",
         next "Write the binding with `status: draft`, test it and try it, then call `binding.promote`.";
@@ -130,6 +130,12 @@ a2m_core::failure_codes! {
     NOT_MADE_READY_UNTRIED = Input, "not_made_ready_untried",
         meaning "`draft.ready` was named a read that no trial in this project has read a value through: the newest finished scout did not prove it, and the caller has no completed trial of it made since (decision 0443).",
         next "Try the read with `draft.try` and an input it answers, or sign in where it waits for a sign-in, then call `draft.ready` again.";
+    NOTHING_ASSERTED = Input, "nothing_asserted",
+        meaning "`assertion.confirm` was asked for a target whose drafts assert no read: no entry says `read_asserted: true` (decision 0475).",
+        next "Assert the read in its entry with `effect: read` and `read_asserted: true`, with an `enum` on the field that tells a read from a write, then ask again.";
+    ASSERTION_CHANGED = Stale, "assertion_changed",
+        meaning "The reads a target's drafts assert changed between the confirmation's page and the person's press: what would be confirmed is not what the person read, so nothing was (decision 0475).",
+        next "Ask for the confirmation again, and confirm the reads as they are now.";
     CAPTURE_NOT_OFFERED = Input, "capture_not_offered",
         meaning "No enabled pack watches a person's use of the surface: no discoverer a person drives suits it, so no capture of it can be asked for.",
         next "Scout the target with `scout.run` instead, or enable a pack whose discoverer a person drives.";
@@ -139,6 +145,12 @@ a2m_core::failure_codes! {
     RUN_NOT_COMPLETED = Rejected, "run_not_completed",
         meaning "A run ended in a state other than completed, and carried no failure of its own.",
         next "Call `trace.show` with the run's identifier to see what happened.";
+    EXPORT_CHANGED = Stale, "export_changed",
+        meaning "`trace.export` wrote its file and, read back, the file did not hold what was written: something changed it in between.",
+        next "Export again, and let nothing else write in the project's working folder meanwhile.";
+    VERSION_MOVED = Stale, "version_moved",
+        meaning "`version.rollback` made its version current and stored that, and when it read the store back another version was current: a publish or a rollback came between.",
+        next "Call `target.status` to see which version is current, and roll back again if it is not the one wanted.";
 }
 
 pub(crate) fn stale(

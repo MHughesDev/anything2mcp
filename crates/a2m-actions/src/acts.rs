@@ -489,8 +489,11 @@ impl Kernel {
             // A sign-in's outcome is not given back from what was kept: the
             // session keeper says whether one holds now, and the handler
             // answers from it before it asks; a sign-in asked for again
-            // after a session ended is a new act (decision 0205).
-            let reuses = def.name.as_str() != "session.login";
+            // after a session ended is a new act (decision 0205). Nor is a
+            // confirmation's: what it confirms is the drafts as they are
+            // when it is asked, and a confirmation asked for again after
+            // they changed is a new act (decision 0475).
+            let reuses = !matches!(def.name.as_str(), "session.login" | "assertion.confirm");
             if let Some(kept) = state
                 .kept
                 .iter()
@@ -673,6 +676,12 @@ impl Kernel {
             // store holds it (decision 0283); the input stays its
             // identifier alone.
             let details = self.watch_confirmation_lines(caller, &input).await?;
+            return Ok((input, details, PublishShown::default(), Vec::new()));
+        }
+        if def.name.as_str() == "assertion.confirm" {
+            // What the person confirms is each asserted read of the drafts
+            // as they are now, pinned by its digest (decision 0475).
+            let (input, details) = self.assertion_lines(input, project).await?;
             return Ok((input, details, PublishShown::default(), Vec::new()));
         }
         if def.name.as_str() == "capture.start" {

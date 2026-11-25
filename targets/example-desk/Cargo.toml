@@ -11,6 +11,7 @@ publish.workspace = true
 # interface. `service` is the part of the bus crate that exports objects;
 # the workspace's other user of the crate only calls.
 [target.'cfg(target_os = "linux")'.dependencies]
+futures-core.workspace = true
 tokio.workspace = true
 zbus = { workspace = true, features = ["service"] }
 

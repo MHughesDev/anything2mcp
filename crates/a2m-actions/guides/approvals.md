@@ -38,6 +38,6 @@ A hazard raises the approval an effect asks for. It never lowers it.
 
 When a version is in force, the page shows, right after where it leads, each tool whose change breaks an agent that calls it as it was, and why: a tool gone, an input gone or now required, a type changed or its words narrowed, an output gone or now possibly absent, the effect risen, the hazard added or changed, the record's key changed. The answer names the same under `breaking`. Nothing is refused for it: tell the person, and let them decide. `version.diff` gives the same classification for any two published versions. Not shown yet: changed read-back, expressions, and steps.
 
-## Decision points
+## Run questions
 
-An operation may declare `decision_points`: questions a person may have to answer during a run. A run asks only what its operation declares. The answer is recorded with who gave it.
+An operation may declare run questions, under the key `decision_points`: questions a person may have to answer during a run. A run asks only what its operation declares. The answer is recorded with who gave it.

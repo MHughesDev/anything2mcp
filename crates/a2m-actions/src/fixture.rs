@@ -952,6 +952,15 @@ handler!(
         )
         .await?
         .map_err(a2m_core::Failure::from)?;
+        // The asserted reads of the drafts their person confirmed, which
+        // the recording's trial may let a page send (decision 0475).
+        let confirmed = kernel
+            .confirmed_reads_of(
+                &target,
+                &compiled.compiled_target,
+                &compiled.review.asserted,
+            )
+            .await;
         let compiled_target = Arc::new(compiled.compiled_target);
         let Some(tool) = compiled_target.tool(&tool_name).cloned() else {
             return Err(codes::input(
@@ -1083,7 +1092,12 @@ handler!(
                 .unwrap_or(pin.position)
         });
         let named = call.text("mode").is_some() || call.int("position").is_some();
-        kernel.keep_draft(&target, compiled.encoded.hash, Arc::clone(&compiled_target));
+        kernel.keep_draft(
+            &target,
+            compiled.encoded.hash,
+            Arc::clone(&compiled_target),
+            confirmed,
+        );
         let recorder = Recorder::start(kernel, digest);
         let run = crate::handlers::tools::submit_trial_kept(
             kernel,

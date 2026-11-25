@@ -301,27 +301,27 @@ impl FromStr for Layer {
     }
 }
 
-/// Which generation of a key: 1 for the first, one more after each rotation.
+/// Which key rotation number of a key: 1 for the first, one more after each rotation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Generation(u32);
+pub struct KeyRotationNumber(u32);
 
-impl Generation {
-    /// The first generation of any key.
+impl KeyRotationNumber {
+    /// The first key rotation number of any key.
     pub const FIRST: Self = Self(1);
 
-    /// A generation read back from a key record.
+    /// A key rotation number read back from a key record.
     #[must_use]
     pub const fn new(number: u32) -> Self {
         Self(number)
     }
 
-    /// The generation as a number.
+    /// The key rotation number as a number.
     #[must_use]
     pub const fn get(self) -> u32 {
         self.0
     }
 
-    /// The generation after this one, or `None` at the last number.
+    /// The key rotation number after this one, or `None` at the last number.
     #[must_use]
     pub const fn next(self) -> Option<Self> {
         match self.0.checked_add(1) {
@@ -331,7 +331,7 @@ impl Generation {
     }
 }
 
-impl fmt::Display for Generation {
+impl fmt::Display for KeyRotationNumber {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -415,14 +415,14 @@ impl FromStr for KeyId {
     }
 }
 
-/// One generation of one key: what an envelope or a key record names as the
+/// One key rotation number of one key: what an envelope or a key record names as the
 /// key above it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct KeyRef {
     /// Which key.
     pub id: KeyId,
-    /// Which generation of it.
-    pub generation: Generation,
+    /// Which key rotation number of it.
+    pub rotation: KeyRotationNumber,
 }
 
 /// What a key wrapped by the key store is: authenticated with the wrapped
@@ -433,8 +433,8 @@ pub struct Binding {
     pub key: KeyId,
     /// Its layer.
     pub layer: Layer,
-    /// Its generation.
-    pub generation: Generation,
+    /// Its key rotation number.
+    pub rotation: KeyRotationNumber,
 }
 
 impl Binding {
@@ -443,7 +443,8 @@ impl Binding {
         bound
             .field("key", self.key.as_bytes())
             .field("layer", self.layer.as_str().as_bytes())
-            .number("generation", self.generation.get())
+            // The label keeps the old word, so every bound byte is unchanged (decision 0402).
+            .number("generation", self.rotation.get())
     }
 }
 
@@ -515,7 +516,10 @@ mod tests {
             assert_eq!(layer.as_str().parse::<Layer>().unwrap(), layer);
         }
         assert!("top".parse::<Layer>().is_err());
-        assert_eq!(Generation::FIRST.next(), Some(Generation::new(2)));
-        assert_eq!(Generation::new(u32::MAX).next(), None);
+        assert_eq!(
+            KeyRotationNumber::FIRST.next(),
+            Some(KeyRotationNumber::new(2))
+        );
+        assert_eq!(KeyRotationNumber::new(u32::MAX).next(), None);
     }
 }

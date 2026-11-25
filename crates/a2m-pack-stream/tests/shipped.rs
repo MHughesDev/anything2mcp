@@ -17,12 +17,12 @@ use std::time::Duration;
 
 use a2m_core::{Environment, Epoch, RunId};
 use a2m_ledger::Fence;
+use a2m_logs::LogSettings;
 use a2m_pack_stream::codes;
 use a2m_provider::{
     CheckedPaths, Deadline, Destinations, DriverHealth, HostServices, Posture, PrepareContext,
     ProviderSettings, RegistryBuilder, Roots, Sent, Supervisor, SupervisorLimits, SurfaceRef,
 };
-use a2m_telemetry::TelemetrySettings;
 use common::*;
 
 #[tokio::test]
@@ -34,8 +34,8 @@ async fn the_ordinary_registration_offers_only_the_real_protocol_and_refuses_the
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots: Roots::none(),
         redact: Arc::new(Planted),
-        telemetry: a2m_telemetry::start(
-            &TelemetrySettings::default(),
+        logs_and_traces: a2m_logs::start(
+            &LogSettings::default(),
             Arc::new(a2m_core::NoSecrets),
             &logs,
         )
@@ -99,6 +99,7 @@ async fn the_ordinary_registration_offers_only_the_real_protocol_and_refuses_the
         destinations: &destinations,
         paths: &CheckedPaths::none(),
         supervisor: &supervisor,
+        confirmed: a2m_provider::ConfirmedReads::none(),
     };
     let failure = handle.prepare(&cx, None).await.unwrap_err();
     assert_eq!(failure.failure.code(), &codes::PROTOCOL_UNKNOWN);

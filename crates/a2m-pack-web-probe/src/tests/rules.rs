@@ -88,8 +88,7 @@ fn the_manifest_declares_every_known_place_of_a_browser_and_the_profile_root() {
             supervisor: Supervisor::new(SupervisorLimits::default()),
             roots: Roots::none(),
             redact: no_secrets(),
-            telemetry: a2m_telemetry::start(&TelemetrySettings::default(), no_secrets(), &logs)
-                .unwrap(),
+            logs_and_traces: a2m_logs::start(&LogSettings::default(), no_secrets(), &logs).unwrap(),
         };
         let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
         crate::add_to(&mut builder, SharedBrowsers::default());
@@ -575,4 +574,113 @@ fn an_object_keyed_by_identifiers_is_one_map_whatever_its_size() {
         json!({"type": "map", "items": {"type": "integer"}})
     );
     assert!(!big.withheld());
+}
+
+#[test]
+fn a_record_s_pages_are_joined_and_the_heading_they_do_not_share_is_kept_as_its_type() {
+    use crate::screen::{mark_varying, matched, of_a_record, signature};
+    let record = |heading: &str| {
+        json!({"format": "1", "title": "", "cut": false, "elements": [
+            {"depth": 0, "role": "main", "name": ""},
+            {"depth": 1, "role": "heading", "name": heading, "level": 1},
+            {"depth": 1, "role": "paragraph"},
+            {"depth": 2, "role": "text", "name_type": "code"},
+        ]})
+    };
+    let origin = "http://127.0.0.1:4010";
+    let one = record("Example customer one");
+    let two = record("Example customer two");
+    let mut longer = record("Example customer three");
+    longer["elements"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"depth": 1, "role": "paragraph"}));
+    assert!(of_a_record(&signature(&one).unwrap()));
+    assert_eq!(
+        matched(&[
+            (origin, "/orders/A-1/record", &one),
+            (origin, "/orders/A-2/record", &two),
+            (origin, "/orders/A-3/record", &longer),
+        ]),
+        [crate::screen::Matched {
+            pattern: "/orders/{order_id}/record".to_owned(),
+            pages: vec![0, 1],
+        }]
+    );
+    // A page with no heading is never a record, and never joined.
+    let bare = json!({"format": "1", "title": "", "cut": false, "elements": [
+        {"depth": 0, "role": "main", "name": ""},
+        {"depth": 1, "role": "paragraph"},
+    ]});
+    assert!(signature(&bare).is_none());
+    // The heading the pages do not share is the record's value: kept as its
+    // type, and marked.
+    let mut first = one.clone();
+    mark_varying(&mut first, &[&one, &two]);
+    assert_eq!(
+        first["elements"][1],
+        json!({"depth": 1, "role": "heading", "name_type": "text", "level": 1, "varies": true})
+    );
+    assert!(!first.to_string().contains("Example customer"));
+    // One the pages share stays as it is.
+    let mut same = one.clone();
+    mark_varying(&mut same, &[&one, &one.clone()]);
+    assert_eq!(same, one);
+}
+
+fn posted(body: &[(&str, &str)], answer: serde_json::Value) -> Exchange {
+    Exchange {
+        method: "POST".to_owned(),
+        made_by: Some("/cases/rows-kept".to_owned()),
+        body: Some(crate::infer::Body {
+            media_type: "application/json".to_owned(),
+            fields: Some(
+                body.iter()
+                    .map(|(name, kind)| ((*name).to_owned(), (*kind).to_owned()))
+                    .collect(),
+            ),
+            names_withheld: false,
+        }),
+        ..get("/api/cases/rows/kept", answer)
+    }
+}
+
+#[test]
+fn a_request_that_only_adds_what_the_browser_kept_after_the_first_visit_is_one_shape() {
+    use crate::watch::kept_by_the_browser;
+    let first = posted(&[("draw", "integer")], json!({"rows": []}));
+    let later = posted(
+        &[("draw", "integer"), ("order", "string")],
+        json!({"rows": []}),
+    );
+    let more = posted(
+        &[("draw", "integer"), ("order", "string")],
+        json!({"rows": [], "ordered": "x"}),
+    );
+    let all = [first.clone(), later.clone(), later.clone(), more.clone()];
+    // First visit in one shape, every later visit in one that adds a field.
+    let one = kept_by_the_browser(&[0, 1, 2], &all, &[1, 2, 3, 4]).unwrap();
+    assert_eq!(one, later.found());
+    // An answer that adds a field marks it optional.
+    let both = kept_by_the_browser(&[0, 3], &all, &[1, 2, 3, 4]).unwrap();
+    assert_eq!(both["response"]["fields"]["ordered"]["optional"], true);
+    assert!(both["response"]["fields"]["rows"].get("optional").is_none());
+    // A change within one visit, or back to the first shape, is two.
+    assert!(kept_by_the_browser(&[0, 1], &all, &[1, 1, 2, 3]).is_none());
+    let back = [first.clone(), later.clone(), first.clone()];
+    assert!(kept_by_the_browser(&[0, 1, 2], &back, &[1, 2, 3]).is_none());
+    // A field of another kind, and names withheld after the first visit,
+    // are two.
+    let other_kind = posted(
+        &[("draw", "string"), ("order", "string")],
+        json!({"rows": []}),
+    );
+    assert!(kept_by_the_browser(&[0, 1], &[first.clone(), other_kind], &[1, 2]).is_none());
+    let mut withheld = later.clone();
+    if let Some(body) = &mut withheld.body {
+        body.names_withheld = true;
+    }
+    assert!(kept_by_the_browser(&[0, 1], &[first.clone(), withheld], &[1, 2]).is_none());
+    // A later shape that takes a field away is two.
+    assert!(kept_by_the_browser(&[0, 1], &[later, first], &[1, 2]).is_none());
 }

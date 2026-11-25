@@ -23,18 +23,18 @@ use std::time::Duration;
 
 use a2m_auth::{
     AskPerson, AuthEntry, CredentialRef, EntrySurfaces, ExpirySign, InProcessWork, Keeper,
-    KeeperWorker, LeaseRequest, PersonAnswer, PersonAsk, ProbeOutcome, ProviderSet, Purpose,
-    Returned, RunProbe, SessionKey, SessionLease, SessionRef, SessionStore, StoredCredentials,
-    Wait, WeakKeeper,
+    KeeperWorker, LeaseRequest, PersonAnswer, PersonAsk, ProviderSet, Purpose, Returned,
+    RunSessionCheck, SessionCheckOutcome, SessionKey, SessionLease, SessionRef, SessionStore,
+    StoredCredentials, Wait, WeakKeeper,
 };
 use a2m_core::{
     CompiledTarget, DecisionId, Environment, Failure, FailureClass, Identity, PrincipalId, Redact,
     RunId, Secret, SessionState, TargetName, Timestamp, Value, Values, WorkspaceId,
 };
 use a2m_ledger::{Store, StoreConfig};
+use a2m_logs::ManualClock;
 use a2m_pack_web_browser::test_support::{self, Screen, screen_required};
 use a2m_provider::{Authority, Deadline, Posture, Sent, StepFailure, StepInput, StepOutcome};
-use a2m_telemetry::ManualClock;
 use a2m_vault::{BoxFuture, MemoryKeyStore, Vault};
 use common::{Folder, Scene, Stand, compile, compile_changed, page_http_mode, ui_mode};
 use example_app::auth::AuthSettings;
@@ -103,29 +103,29 @@ struct Probe {
     world: OnceLock<(Weak<Scene>, WeakKeeper, Arc<AuthEntry>)>,
 }
 
-impl RunProbe for Probe {
-    fn probe<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
+impl RunSessionCheck for Probe {
+    fn check_session<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, SessionCheckOutcome> {
         Box::pin(async move {
             let Some((scene, keeper, entry)) = self.world.get() else {
-                return ProbeOutcome::Unknown;
+                return SessionCheckOutcome::Unknown;
             };
             let Some(scene) = scene.upgrade() else {
-                return ProbeOutcome::Unknown;
+                return SessionCheckOutcome::Unknown;
             };
             let Some(keeper) = keeper.upgrade() else {
-                return ProbeOutcome::Unknown;
+                return SessionCheckOutcome::Unknown;
             };
             let mut asked = request(entry, Wait::NoWait);
             asked.purpose = Purpose::Probe;
             let Ok(lease) = keeper.lease(asked).await else {
-                return ProbeOutcome::Unknown;
+                return SessionCheckOutcome::Unknown;
             };
             match read(&scene, &lease).await {
-                Ok(_) => ProbeOutcome::SignedIn,
+                Ok(_) => SessionCheckOutcome::SignedIn,
                 Err(failure) if failure.failure.class() == FailureClass::SessionExpired => {
-                    ProbeOutcome::SignedOut
+                    SessionCheckOutcome::SignedOut
                 }
-                Err(_) => ProbeOutcome::Unknown,
+                Err(_) => SessionCheckOutcome::Unknown,
             }
         })
     }
@@ -190,7 +190,7 @@ struct World {
     vault: Arc<Vault>,
     entry: Arc<AuthEntry>,
     person: Arc<Person>,
-    telemetry_dir: PathBuf,
+    logs_and_traces_dir: PathBuf,
 }
 
 impl World {
@@ -290,7 +290,7 @@ impl World {
             (false, false) => surfaces,
         };
         let entry = Arc::new(entry);
-        let telemetry_dir = stand.folder.path().to_path_buf();
+        let logs_and_traces_dir = stand.folder.path().to_path_buf();
         let scene = Arc::new(Scene::over(stand, compiled_target, &origin));
 
         let store = SessionStore::new(ledger);
@@ -348,7 +348,7 @@ impl World {
             vault,
             entry,
             person,
-            telemetry_dir,
+            logs_and_traces_dir,
         }
     }
 
@@ -471,7 +471,7 @@ async fn a_right_password_signs_in_once_an_expired_session_is_renewed_and_no_sec
     let told = format!("{values:?} {stopped:?} {timeline:?} {renewed:?}");
     for secret in &planted {
         assert!(!told.contains(secret.as_str()), "{secret} in {told}");
-        for folder in [world.home.path(), world.telemetry_dir.as_path()] {
+        for folder in [world.home.path(), world.logs_and_traces_dir.as_path()] {
             let written = files_holding(folder, secret);
             assert!(written.is_empty(), "{secret} is written in {written:?}");
         }
@@ -1142,7 +1142,7 @@ async fn a_second_factor_is_answered_by_the_person_and_the_code_is_kept_nowhere(
     assert!(format!("{values:?}").contains("Signed in as [redacted]."));
     world.keeper.idle().await;
     for secret in [SECOND_FACTOR_CODE, PASSWORD, COOKIE_PREFIX] {
-        for folder in [world.home.path(), world.telemetry_dir.as_path()] {
+        for folder in [world.home.path(), world.logs_and_traces_dir.as_path()] {
             let written = files_holding(folder, secret);
             assert!(written.is_empty(), "{secret} is written in {written:?}");
         }
@@ -1361,7 +1361,7 @@ fn screen() -> Option<Screen> {
 /// Every file under the engine's home and the logs holds none of these.
 fn written_nowhere(world: &World, secrets: &[&str]) {
     for secret in secrets {
-        for folder in [world.home.path(), world.telemetry_dir.as_path()] {
+        for folder in [world.home.path(), world.logs_and_traces_dir.as_path()] {
             let written = files_holding(folder, secret);
             assert!(written.is_empty(), "{secret} is written in {written:?}");
         }

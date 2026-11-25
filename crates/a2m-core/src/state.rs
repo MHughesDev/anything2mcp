@@ -19,7 +19,7 @@ vocabulary! {
         Expired => "expired",
         /// Steps are executing.
         Running => "running",
-        /// A declared decision point waits for a person.
+        /// A declared run question waits for a person.
         NeedsInput => "needs_input",
         /// The session expired and could not renew itself.
         NeedsLogin => "needs_login",

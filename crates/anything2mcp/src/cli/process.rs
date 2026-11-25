@@ -1,5 +1,5 @@
 //! The process commands: `serve`, which is the local engine in the
-//! foreground, and `bridge`, the stdio proxy an MCP client starts. They
+//! foreground, and `stdio`, the stdio proxy an MCP client starts. They
 //! start a role and are not actions. `runner` is named and not built.
 
 use std::io::Write;
@@ -8,9 +8,9 @@ use std::sync::Arc;
 use a2m_actions::{BuiltInToolset, ExitClass, PROGRAM, Paths, Response, codes};
 use a2m_core::{Failure, FailureClass};
 use a2m_local::{ClientLabel, Connector, StopReason};
+use a2m_logs::SystemClock;
 use a2m_mcp::stdio_proxy;
 use a2m_policy::ToolsetName;
-use a2m_telemetry::SystemClock;
 use serde_json::json;
 
 use super::parse::{COMPLETION_COMMAND, Globals, Tree};
@@ -25,8 +25,8 @@ use crate::wire;
 /// the local channel. A program that starts `serve` waits for it.
 pub const READY_LINE: &str = "anything2mcp: the local engine is ready.";
 
-/// The name the bridge gives itself on the local channel. The MCP client
-/// behind it names itself in the protocol, which the bridge does not read.
+/// The name the stdio proxy gives itself on the local channel. The MCP client
+/// behind it names itself in the protocol, which the stdio proxy does not read.
 const BRIDGE_LABEL: &str = "stdio";
 
 fn malformed(message: String, fix: String) -> Failure {
@@ -63,10 +63,12 @@ pub(crate) async fn run(
         // Answered by the program itself: it starts nothing.
         COMPLETION_COMMAND => return super::complete::run(tree, rest, json),
         "serve" => serve(tree, globals, rest, host, json).await,
-        // Standard output of the bridge carries protocol messages and
+        // Standard output carries the engine's bytes alone (decision 0466).
+        "channel" => return super::channel::run(rest, host).await,
+        // Standard output of the stdio proxy carries protocol messages and
         // nothing else, so what stops it is told on standard error alone.
-        "bridge" => {
-            return bridge(globals, rest, host)
+        "stdio" => {
+            return stdio(globals, rest, host)
                 .await
                 .unwrap_or_else(|(failure, exit)| Finished {
                     code: exit.exit_code(),
@@ -258,7 +260,7 @@ async fn serve(
         environment,
         Arc::new(TerminalSurface::new(
             Arc::new(ProcessTerminal),
-            Arc::clone(&clock) as Arc<dyn a2m_telemetry::Clock>,
+            Arc::clone(&clock) as Arc<dyn a2m_logs::Clock>,
         )),
     );
     options.clock = clock;
@@ -266,7 +268,7 @@ async fn serve(
         project_of(globals, host).map_err(|failure| (failure, ExitClass::Malformed))?;
     options.key_store.clone_from(&host.key_store);
     let local = LocalEngine::start(options, prompt).await.map_err(failed)?;
-    // The kernel's telemetry now receives the process's log lines; the
+    // The kernel's logs and traces now receives the process's log lines; the
     // engine's log says that it started, and how (decision 0266).
     tracing::info!(
         pid = std::process::id(),
@@ -386,10 +388,10 @@ fn read_passphrase() -> Result<String, Failure> {
     Ok(text)
 }
 
-/// The toolset `bridge` was asked for: `use` unless `--toolset` names the
+/// The toolset `stdio` was asked for: `use` unless `--toolset` names the
 /// other built-in one.
 fn toolset_of(rest: &[String]) -> Result<ToolsetName, Failure> {
-    let usage = || format!("Run `{PROGRAM} bridge`, or `{PROGRAM} bridge --toolset build`.");
+    let usage = || format!("Run `{PROGRAM} stdio`, or `{PROGRAM} stdio --toolset build`.");
     let mut chosen = BuiltInToolset::Use.as_str().to_owned();
     let mut words = rest.iter();
     while let Some(word) = words.next() {
@@ -399,7 +401,7 @@ fn toolset_of(rest: &[String]) -> Result<ToolsetName, Failure> {
             _ => {
                 return Err(malformed(
                     format!(
-                        "`{PROGRAM} bridge` has no argument `{}`.",
+                        "`{PROGRAM} stdio` has no argument `{}`.",
                         super::shown(word)
                     ),
                     usage(),
@@ -424,13 +426,13 @@ fn toolset_of(rest: &[String]) -> Result<ToolsetName, Failure> {
     ToolsetName::new(&chosen)
 }
 
-/// `bridge`: copies MCP messages between standard input and output and
+/// `stdio`: copies MCP messages between standard input and output and
 /// the local engine's MCP endpoint, until input ends. Standard output is
 /// written by the proxy alone. A request sent while no engine runs starts
 /// one on demand; where none may be started, it is answered with an error
 /// that names the failure, and the next one is carried as soon as an
 /// engine answers.
-async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finished, Stopped> {
+async fn stdio(globals: &Globals, rest: &[String], host: &Host) -> Result<Finished, Stopped> {
     let toolset = toolset_of(rest).map_err(|failure| (failure, ExitClass::Malformed))?;
     let failed = |failure| (failure, ExitClass::Failed);
     let paths = paths_of(host).map_err(failed)?;
@@ -444,7 +446,7 @@ async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finis
     // When nothing answers, an engine is started on demand for the request
     // that finds none, and again after one has stopped (decision 0165).
     // Where none may be started, one look now tells a person who starts the
-    // bridge by hand at once; the client learns it with its first request.
+    // stdio proxy by hand at once; the client learns it with its first request.
     let starts = Arc::new(Starts {
         program: host.program.clone(),
         paths: paths.clone(),
@@ -459,7 +461,7 @@ async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finis
         }
         Err(failure) => say(told(&failure).trim_end()),
         // An engine that runs with other settings variables serves this
-        // bridge with its own, and the person who starts it is told.
+        // stdio proxy with its own, and the person who starts it is told.
         Ok(link) => {
             if let Some(warning) =
                 crate::engine::settings_warning(link.start_variables_differing(
@@ -470,7 +472,7 @@ async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finis
             }
         }
     }
-    // The project folder the bridge was started in, or was given with
+    // The project folder the stdio proxy was started in, or was given with
     // `--project`, named to the engine on every request, as a command names
     // it. The engine checks the folder before any action uses it; nothing
     // an MCP message says can name one.
@@ -526,7 +528,7 @@ async fn bridge(globals: &Globals, rest: &[String], host: &Host) -> Result<Finis
     })
 }
 
-/// What the bridge needs to start an engine on demand.
+/// What the stdio proxy needs to start an engine on demand.
 struct Starts {
     program: Option<std::path::PathBuf>,
     paths: Paths,
@@ -536,7 +538,7 @@ struct Starts {
 
 impl Starts {
     /// How an engine is started now, or why none may be. The settings
-    /// are read each time, because they may change while the bridge runs.
+    /// are read each time, because they may change while the stdio proxy runs.
     fn plan(&self) -> Result<a2m_local::Launch, Failure> {
         start::plan_for(
             self.program.as_deref(),
@@ -557,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn the_bridge_serves_the_two_built_in_toolsets_and_names_no_other() {
+    fn the_stdio_proxy_serves_the_two_built_in_toolsets_and_names_no_other() {
         assert_eq!(toolset_of(&[]).unwrap().as_str(), "use");
         assert_eq!(
             toolset_of(&words(&["--toolset", "build"]))

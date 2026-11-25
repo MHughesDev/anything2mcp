@@ -5,7 +5,7 @@ contract = 1
 
 [provider]
 name = "stream"
-version = "0.0.1"
+version = "0.1.0"
 publisher = "Anything2MCP"
 kind = "pack"
 

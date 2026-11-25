@@ -13,12 +13,12 @@ use std::time::Duration;
 
 use a2m_auth::SessionLease;
 use a2m_core::{
-    Archetype, CompiledSurface, CompiledTarget, Digest, Environment, Epoch, Failure, FailureClass,
-    FailureCode, Mode, RecordKey, Redact, RunId, ScopedHost, Step, StepKind, TargetName, Value,
-    Values, Version,
+    AccessKind, CompiledSurface, CompiledTarget, Coverage, Digest, Environment, Epoch, Failure,
+    FailureClass, FailureCode, Mode, RecordKey, Redact, RunId, ScopedHost, Step, StepKind,
+    TargetName, Value, Values, Version,
 };
 use a2m_ledger::{IntentToken, RecordRef};
-use a2m_telemetry::Acting;
+use a2m_logs::Acting;
 
 use crate::BoxFuture;
 use crate::codes;
@@ -170,6 +170,62 @@ pub struct PrepareContext<'a> {
     /// Starts only what the manifest and the published compiled target
     /// declare.
     pub supervisor: &'a ScopedSupervisor,
+    /// The asserted reads of the drafts that their person confirmed on the
+    /// engine's page, for a try of the drafts (decision 0475). Empty for a
+    /// published compiled target, which has its own rule, and wherever the
+    /// control plane does not say.
+    pub confirmed: ConfirmedReads,
+}
+
+/// The asserted reads a person confirmed on the engine's page for a try of
+/// the drafts (decision 0475), each by the file kind that asserts it, its
+/// surface, and its entry. The kernel puts in an entry only when the
+/// confirmation's digest covers the entry as the compiled target holds it,
+/// so a name here is the compiled target's own entry, unchanged since the
+/// person read it. A pack that reads it lets a confirmed entry through only
+/// where its own rule says; a pack that does not read it is unchanged.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConfirmedReads {
+    entries: BTreeSet<(String, String, String)>,
+}
+
+impl ConfirmedReads {
+    /// None confirmed.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            entries: BTreeSet::new(),
+        }
+    }
+
+    /// The entries given, each `(file kind, surface, entry)`.
+    #[must_use]
+    pub fn of(entries: impl IntoIterator<Item = (String, String, String)>) -> Self {
+        Self {
+            entries: entries.into_iter().collect(),
+        }
+    }
+
+    /// Whether the entry `entry` of the file kind `kind` on `surface` was
+    /// confirmed.
+    #[must_use]
+    pub fn covers(&self, kind: &str, surface: &str, entry: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|(k, s, e)| k == kind && s == surface && e == entry)
+    }
+
+    /// Whether none is confirmed.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// How many are confirmed.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 impl fmt::Debug for PrepareContext<'_> {
@@ -456,6 +512,15 @@ pub struct Observed {
     pub for_reconcile: Values,
     /// Evidence, already redacted.
     pub captures: Vec<Capture>,
+    /// Whether the values hold every record the system has that matches
+    /// the step's input (decision 0472): `complete` only when the driver
+    /// knows that the system holds no record it did not return, such as a
+    /// store asked for one row more than its limit that gave none more;
+    /// `partial` when it knows the system holds more; `unknown`, the
+    /// default, when it cannot tell, or the step returns no records. A
+    /// watch reports a record removed only between two runs whose every
+    /// step that returned values stated `complete`.
+    pub coverage: Coverage,
 }
 
 impl Observed {
@@ -647,7 +712,7 @@ pub enum Authority<'a> {
 /// What the handle knows of the mode and its provider, from the manifest.
 pub(crate) struct HandleFacts {
     pub mode: Mode,
-    pub archetype: Archetype,
+    pub access_kind: AccessKind,
     pub steps: BTreeSet<StepKind>,
     /// The kinds of step that always save.
     pub commit_steps: BTreeSet<StepKind>,
@@ -707,10 +772,10 @@ impl DriverHandle {
         &self.facts.mode
     }
 
-    /// The mode's archetype.
+    /// The mode's access kind.
     #[must_use]
-    pub fn archetype(&self) -> Archetype {
-        self.facts.archetype
+    pub fn access_kind(&self) -> AccessKind {
+        self.facts.access_kind
     }
 
     /// Which provider drives the mode, and why.

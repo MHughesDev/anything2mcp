@@ -70,13 +70,16 @@ mod tests;
 pub use a2m_provider::Deadline;
 
 pub use browsers::{
-    Address, BROWSER_KIND, Browser, BrowserHealth, BrowserSettings, BrowserState, Browsers,
-    DIGESTS_SETTING, DOWNLOADS_FOLDER, HANG_PROBE, HANGS_BEFORE_RECYCLE, MEMORY_CEILING,
-    MEMORY_LIMIT, MEMORY_RETRY, Observer, OpenBrowser, PROFILE_ROOT, ProfileKey, STAGING_FOLDER,
-    SharedBrowsers, StateCookie, Visibility,
+    Address, BROWSER_KIND, Browser, BrowserHealth, BrowserProfileKey, BrowserSettings,
+    BrowserState, Browsers, DIGESTS_SETTING, DOWNLOADS_FOLDER, HANG_PROBE, HANGS_BEFORE_RECYCLE,
+    MEMORY_CEILING, MEMORY_LIMIT, MEMORY_RETRY, Observer, OpenBrowser, PROFILE_ROOT,
+    STAGING_FOLDER, SharedBrowsers, StateCookie, Visibility,
 };
 pub use capture::captured;
-pub use error::{BrowserError, Dispatch, LaunchReason, MemoryShort, Reason, RequestShape, codes};
+pub use error::{
+    BrowserError, Dispatch, LaunchReason, MemoryShort, REFUSED_WHEN_MADE, Reason, RequestShape,
+    codes,
+};
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
 pub use origin::Origins;
 pub use page_read::{MAX_SEGMENT_BYTES, PageAnswer, PagePath, plain_segment};

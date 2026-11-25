@@ -655,7 +655,7 @@ fn program(doc: &Located<Doc>, file: &str, surface: &str, found: &mut Found) -> 
         if name.is_empty()
             || name.contains(['=', '\0'])
             || value.contains('\0')
-            || name == a2m_provider::OWNER_MARK_VARIABLE
+            || name == a2m_provider::PROCESS_MARK_VARIABLE
         {
             found.bad(
                 "env_malformed",

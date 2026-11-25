@@ -5,9 +5,9 @@
 use std::path::Path;
 
 use a2m_core::{
-    Archetype, Availability, BindingStatus, Checkpoint, Coverage, DoctorState, EffectClass,
-    EnvironmentKind, EvidenceLevel, FailureClass, FieldBase, Hazard, IdentityStrategy,
-    LimitationCode, RecordState, RunState, Sensitivity, SessionState, Source, Subject,
+    AccessKind, Availability, BindingStatus, Checkpoint, Coverage, DoctorState, EffectClass,
+    EnvironmentKind, EvidenceLevel, FailureClass, FieldBase, Hazard, LimitationCode,
+    RecordMatching, RecordState, RunState, Sensitivity, SessionState, Source, Subject,
     SubsystemMove, SubsystemState, TestKind, WriteEvidence,
 };
 
@@ -165,18 +165,26 @@ fn evidence_levels_are_the_ladder_in_its_section() {
 }
 
 #[test]
-fn archetypes_are_the_seven_in_their_section() {
-    let spec = document("spec/2-kernel/201-archetypes-and-modes.md");
+fn access_kinds_are_the_seven_in_their_section() {
+    let spec = document("spec/2-kernel/201-access-kinds-and-modes.md");
     let section = between(
         &spec,
         "## The seven",
-        "## How each archetype fills the loop",
+        "## How each access kind fills the loop",
     );
-    let named: Vec<String> = column(section, "| # | Archetype |", 1)
-        .into_iter()
-        .map(|name| name.to_lowercase())
-        .collect();
-    assert_eq!(named, Archetype::NAMES);
+    // The section names each access kind, and gives the word it is written
+    // as, which keeps an older name where decision 0402 keeps one.
+    let named = column(section, "| # | Access kind |", 1);
+    let written = column(section, "| # | Access kind |", 2);
+    assert_eq!(written, AccessKind::NAMES);
+    assert_eq!(named.len(), AccessKind::NAMES.len());
+    for (name, word) in named.iter().zip(&written) {
+        let renamed = name == "File" && word == "artifact";
+        assert!(
+            renamed || name.to_lowercase() == *word,
+            "{name} is written {word}"
+        );
+    }
 }
 
 #[test]
@@ -275,9 +283,9 @@ fn doctor_states_are_the_ones_doctor_reports() {
 }
 
 #[test]
-fn identity_strategies_are_the_ones_in_the_record_identity_section() {
+fn record_matchings_are_the_ones_in_the_record_identity_section() {
     let spec = document("spec/2-kernel/209-record-identity-and-dependent-records.md");
-    assert_eq!(column(&spec, "| Strategy |", 0), IdentityStrategy::NAMES);
+    assert_eq!(column(&spec, "| Strategy |", 0), RecordMatching::NAMES);
 }
 
 /// The words written as code in the meaning of one field of a file format:
@@ -339,7 +347,7 @@ fn description_authors_are_the_ones_in_the_file_formats() {
 #[test]
 fn sign_in_modes_are_the_ones_in_the_file_formats() {
     let listed = format_words("## `auth.yaml`", "## `types.yaml`", "`mode` (required)");
-    assert_eq!(listed, a2m_core::SignInMode::NAMES);
+    assert_eq!(listed, a2m_core::SignInKind::NAMES);
 }
 
 #[test]
@@ -413,7 +421,7 @@ fn every_vocabulary_reads_back_what_it_writes() {
         assert!("no such value".parse::<T>().is_err());
         assert!(serde_json::from_str::<T>("\"no such value\"").is_err());
     }
-    round_trip(a2m_core::SignInMode::ALL, a2m_core::SignInMode::NAMES);
+    round_trip(a2m_core::SignInKind::ALL, a2m_core::SignInKind::NAMES);
     round_trip(a2m_core::DriftRisk::ALL, a2m_core::DriftRisk::NAMES);
     round_trip(a2m_core::DescriptionBy::ALL, a2m_core::DescriptionBy::NAMES);
     round_trip(a2m_core::CaptureLevel::ALL, a2m_core::CaptureLevel::NAMES);
@@ -423,13 +431,13 @@ fn every_vocabulary_reads_back_what_it_writes() {
         a2m_core::WhitespaceRule::NAMES,
     );
     round_trip(a2m_core::DecimalMark::ALL, a2m_core::DecimalMark::NAMES);
-    round_trip(Archetype::ALL, Archetype::NAMES);
+    round_trip(AccessKind::ALL, AccessKind::NAMES);
     round_trip(Availability::ALL, Availability::NAMES);
     round_trip(Checkpoint::ALL, Checkpoint::NAMES);
     round_trip(DoctorState::ALL, DoctorState::NAMES);
     round_trip(EnvironmentKind::ALL, EnvironmentKind::NAMES);
     round_trip(FieldBase::ALL, FieldBase::NAMES);
-    round_trip(IdentityStrategy::ALL, IdentityStrategy::NAMES);
+    round_trip(RecordMatching::ALL, RecordMatching::NAMES);
     round_trip(Sensitivity::ALL, Sensitivity::NAMES);
     round_trip(SubsystemMove::ALL, SubsystemMove::NAMES);
     round_trip(SubsystemState::ALL, SubsystemState::NAMES);

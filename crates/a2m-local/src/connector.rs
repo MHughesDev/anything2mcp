@@ -192,6 +192,24 @@ impl Connector {
     /// Opens a connection and checks the engine's owner, without the
     /// hello.
     pub(crate) async fn open(&self) -> Result<Link, Failure> {
+        let stream = self.open_checked().await?;
+        Link::over(stream.0, self.version).await
+    }
+
+    /// Opens a connection and checks the engine's owner, by the same rule
+    /// as [`Connector::connect`], and hands the connection back as bytes:
+    /// no hello is said and no request is made on it. What is written on
+    /// it, the hello first, is the caller's. The channel command uses it
+    /// to carry another client's own bytes after this check (decision
+    /// 0466). Nothing is started.
+    ///
+    /// # Errors
+    ///
+    /// The failures of [`Connector::connect`] that come before the hello:
+    /// `busy`/`engine_unreachable`, `policy`/`peer_not_allowed`,
+    /// `transient`/`connection_lost`, `input`/`socket_path_too_long`, and
+    /// `busy`/`channel_unavailable`.
+    pub async fn open_checked(&self) -> Result<CheckedStream, Failure> {
         // A socket of a path the system does not take cannot be reached:
         // told by name, and no engine is started for it.
         if let Some((socket, length, longest)) = self.place.too_long() {
@@ -223,7 +241,48 @@ impl Connector {
                 ConnectError::Lost => hello_lost(&self.log),
                 ConnectError::Io(error) => codes::unavailable("The local channel", &error),
             })?;
-        Link::over(stream, self.version).await
+        Ok(CheckedStream(stream))
+    }
+}
+
+/// A connection to the engine whose owner was checked before anything was
+/// sent: a Unix socket on macOS and Linux, a named pipe on Windows. It is
+/// bytes both ways and nothing more; the hello and every request on it are
+/// the caller's. Made only by [`Connector::open_checked`].
+#[derive(Debug)]
+pub struct CheckedStream(os::ClientStream);
+
+impl tokio::io::AsyncRead for CheckedStream {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for CheckedStream {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_shutdown(cx)
     }
 }
 

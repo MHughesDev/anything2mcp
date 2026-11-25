@@ -8,15 +8,16 @@ use a2m_core::{
     AddressOverride, ApproveWrites, AuthProviderName, AuthSetting, BindingStatus,
     COMPILED_TARGET_FORMAT, CanonicalJson, CaptureLevel, Checkpoint, CompiledAuth, CompiledBinding,
     CompiledEnvironment, CompiledIdentity, CompiledInput, CompiledOperation, CompiledOutput,
-    CompiledPipeline, CompiledProbe, CompiledRate, CompiledSource, CompiledSurface, CompiledTarget,
-    CompiledTargetHeader, CompiledTest, CompiledTool, CredentialRef, CredentialUse, Date, Decimal,
-    DecisionPoint, DeclaredProgram, DescriptionBy, Digest, DriftRisk, EffectClass,
-    EncodedCompiledTarget, Environment, EnvironmentIndex, EnvironmentKind, FieldOf, FieldTypeIndex,
-    FileKindName, Hazard, IdentityStrategy, InputIndex, LintCode, Millis, Mode, OperationIndex,
+    CompiledPipeline, CompiledRate, CompiledRecords, CompiledSessionCheck, CompiledSource,
+    CompiledSurface, CompiledTarget, CompiledTargetHeader, CompiledTest, CompiledTool,
+    CredentialRef, CredentialUse, Date, Decimal, DeclaredProgram, DescriptionBy, Digest, DriftRisk,
+    EffectClass, EncodedCompiledTarget, Environment, EnvironmentIndex, EnvironmentKind, FieldOf,
+    FieldTypeIndex, FileKindName, Hazard, InputIndex, LintCode, Millis, Mode, OperationIndex,
     OperationName, PackPayload, PackRef, PackSection, PermissionManifest, PipelineIndex,
-    PipelineLimits, PipelineStep, RecordKey, SectionIndex, SignInMode, Stands, Step, StepArg,
-    StepKind, SurfaceIndex, SurfaceKind, SurfaceName, TargetName, TargetSection, TestKind,
-    ToolAnnotations, ToolIndex, ToolRuns, Value, ValueType, Values, Verb, Version, WriteEvidence,
+    PipelineLimits, PipelineStep, RecordKey, RecordMatching, RunQuestion, SectionIndex, SignInKind,
+    Stands, Step, StepArg, StepKind, SurfaceIndex, SurfaceKind, SurfaceName, TargetName,
+    TargetSection, TestKind, ToolAnnotations, ToolIndex, ToolRuns, Value, ValueType, Values, Verb,
+    Version, WriteEvidence,
 };
 use a2m_expr::{TypeEnv, names};
 
@@ -47,7 +48,7 @@ use crate::view::{
 };
 
 /// The version of this compiler, which a compiled target's header names.
-pub const COMPILER_VERSION: Version = Version::new(0, 0, 1);
+pub const COMPILER_VERSION: Version = Version::new(0, 1, 0);
 /// The oldest engine that may run a compiled target this compiler makes.
 pub const MINIMUM_ENGINE: Version = Version::new(0, 0, 1);
 /// The version a draft is compiled as.
@@ -1305,7 +1306,7 @@ impl<'a> Compiler<'a> {
                     named.as_text().unwrap_or_default()
                 );
                 self.error(
-                    codes::PROBE_INVALID,
+                    codes::SESSION_CHECK_INVALID,
                     Stage::Resolve,
                     &named.at,
                     message,
@@ -1319,7 +1320,7 @@ impl<'a> Compiler<'a> {
         }
         let mode = entry
             .text("mode")
-            .and_then(|mode| mode.parse::<SignInMode>().ok())?;
+            .and_then(|mode| mode.parse::<SignInKind>().ok())?;
         let provider_doc = entry.get("provider")?;
         let Some(provider) = provider_doc
             .as_text()
@@ -1425,13 +1426,17 @@ impl<'a> Compiler<'a> {
     /// The probe of one entry of `auth.yaml`: a read operation of the
     /// target, with the inputs the entry gives it, or an entry of a pack's
     /// file kind on one of the entry's surfaces.
-    fn probe(&mut self, entry: &Located<Doc>, surfaces: &[SurfaceIndex]) -> Option<CompiledProbe> {
+    fn probe(
+        &mut self,
+        entry: &Located<Doc>,
+        surfaces: &[SurfaceIndex],
+    ) -> Option<CompiledSessionCheck> {
         let named = entry.get("probe")?;
         let name = named.as_text()?;
         let given = entry.get("probe_inputs");
         let invalid = |this: &mut Self, at: &Place, message: String, fix: &str| {
             this.error(
-                codes::PROBE_INVALID,
+                codes::SESSION_CHECK_INVALID,
                 Stage::Resolve,
                 at,
                 message,
@@ -1524,7 +1529,7 @@ impl<'a> Compiler<'a> {
                     fine = false;
                 }
             }
-            return fine.then(|| CompiledProbe::Operation {
+            return fine.then(|| CompiledSessionCheck::Operation {
                 operation: OperationIndex::new(index(position)),
                 inputs,
             });
@@ -1564,7 +1569,7 @@ impl<'a> Compiler<'a> {
                     );
                     return None;
                 }
-                Some(CompiledProbe::Entry(PackRef {
+                Some(CompiledSessionCheck::Entry(PackRef {
                     section: *section,
                     entry: name.to_owned(),
                 }))
@@ -1581,7 +1586,7 @@ impl<'a> Compiler<'a> {
                 // never may, and the compiled target's own check refuses one.
                 self.problems.push(
                     Diagnostic::error(
-                        kernel(codes::PROBE_PENDING),
+                        kernel(codes::SESSION_CHECK_PENDING),
                         Stage::Resolve,
                         &named.at,
                         format!(
@@ -1592,7 +1597,7 @@ impl<'a> Compiler<'a> {
                     )
                     .as_warning(),
                 );
-                Some(CompiledProbe::Pending {
+                Some(CompiledSessionCheck::Pending {
                     name: name.to_owned(),
                 })
             }
@@ -1943,12 +1948,79 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// The records a read declares over its list outputs (decision 0472):
+    /// `records: {key: [...]}`, each name a list output, none twice, and only
+    /// on an operation that reads. Every list output is a column of the
+    /// records; an output that is not a list is a fact of the whole result.
+    fn records(
+        &mut self,
+        doc: &Located<Doc>,
+        effect: EffectClass,
+        outputs: &[CompiledOutput],
+    ) -> Option<CompiledRecords> {
+        let declared = doc.get("records")?;
+        let at = declared.at.clone();
+        if effect != EffectClass::Read {
+            self.error(
+                codes::RECORDS_INVALID,
+                Stage::Validate,
+                &at,
+                "The operation declares `records`, and only a read returns records to compare."
+                    .to_owned(),
+                "Remove `records`, or declare it on the read that lists the records.".to_owned(),
+            );
+            return None;
+        }
+        let names: Vec<Located<String>> = declared
+            .get("key")
+            .map(Located::items)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|item| {
+                item.as_text()
+                    .map(|text| Located::new(text.to_owned(), item.at.clone()))
+            })
+            .collect();
+        let mut key: Vec<String> = Vec::new();
+        let mut fine = !names.is_empty();
+        for name in &names {
+            let list = outputs
+                .iter()
+                .any(|output| output.name == name.value && matches!(output.ty, ValueType::List(_)));
+            let why = if key.contains(&name.value) {
+                format!("The record key names `{}` twice.", shown(&name.value))
+            } else if list {
+                key.push(name.value.clone());
+                continue;
+            } else if outputs.iter().any(|output| output.name == name.value) {
+                format!(
+                    "The record key names `{}`, which is not a list output: only a list output is a column of the records.",
+                    shown(&name.value)
+                )
+            } else {
+                format!(
+                    "The record key names `{}`, which is not an output of the operation.",
+                    shown(&name.value)
+                )
+            };
+            fine = false;
+            self.error(
+                codes::RECORDS_INVALID,
+                Stage::Validate,
+                &name.at,
+                why,
+                "Name in `records.key` the list outputs whose items make a record's key, parent first, each once.".to_owned(),
+            );
+        }
+        fine.then_some(CompiledRecords { key })
+    }
+
     fn identity(
         &mut self,
         doc: &Located<Doc>,
         effect: EffectClass,
         inputs: &[InputInfo],
-    ) -> (IdentityStrategy, Vec<String>, Option<Place>) {
+    ) -> (RecordMatching, Vec<String>, Option<Place>) {
         let names = |list: &Located<Doc>| -> Vec<Located<String>> {
             match &list.value {
                 Doc::Text(text) => vec![Located::new(text.clone(), list.at.clone())],
@@ -1980,21 +2052,21 @@ impl<'a> Compiler<'a> {
                     "The operation states both `key` and `identity`.".to_owned(),
                     "Keep one: `key` is the short form of `identity` for `natural` and `composite`.",
                 );
-                return (IdentityStrategy::None, Vec::new(), None);
+                return (RecordMatching::None, Vec::new(), None);
             }
             (Some(key), None) => {
                 let strategy = if matches!(key.value, Doc::Text(_)) {
-                    IdentityStrategy::Natural
+                    RecordMatching::Natural
                 } else {
-                    IdentityStrategy::Composite
+                    RecordMatching::Composite
                 };
                 (strategy, names(key), key.at.clone())
             }
             (None, Some(identity)) => {
                 let strategy = identity
                     .text("strategy")
-                    .and_then(|strategy| strategy.parse::<IdentityStrategy>().ok())
-                    .unwrap_or(IdentityStrategy::None);
+                    .and_then(|strategy| strategy.parse::<RecordMatching>().ok())
+                    .unwrap_or(RecordMatching::None);
                 let key = identity.get("inputs").map(names).unwrap_or_default();
                 fixed = identity.get("place").map(|place| place.at.clone());
                 (strategy, key, identity.at.clone())
@@ -2009,7 +2081,7 @@ impl<'a> Compiler<'a> {
                         "Add `key:` with the input, or the inputs, that identify the record; or `identity:` with a strategy; or declare the effect `irreversible`.".to_owned(),
                     );
                 }
-                return (IdentityStrategy::None, Vec::new(), None);
+                return (RecordMatching::None, Vec::new(), None);
             }
         };
         let mut fine = true;
@@ -2053,7 +2125,7 @@ impl<'a> Compiler<'a> {
             // The record is the one place every binding names: no input
             // chooses it, and nothing but `natural` finds a record by its
             // own key in the system (decision 0252).
-            let why = if strategy != IdentityStrategy::Natural {
+            let why = if strategy != RecordMatching::Natural {
                 Some(format!(
                     "`place: fixed` says the record is found by its own key, the place, and the strategy is `{strategy}`."
                 ))
@@ -2070,15 +2142,15 @@ impl<'a> Compiler<'a> {
                     why,
                     "Write `identity: {strategy: natural, place: fixed}` with no `inputs`, or name the inputs that are the record's key and leave out `place`.".to_owned(),
                 );
-                return (IdentityStrategy::None, Vec::new(), None);
+                return (RecordMatching::None, Vec::new(), None);
             }
             return (strategy, Vec::new(), fixed);
         }
         let count_fits = match strategy {
-            IdentityStrategy::Natural => key.len() == 1,
-            IdentityStrategy::Composite => !key.is_empty(),
-            IdentityStrategy::None => key.is_empty(),
-            IdentityStrategy::Stamped | IdentityStrategy::Find => true,
+            RecordMatching::Natural => key.len() == 1,
+            RecordMatching::Composite => !key.is_empty(),
+            RecordMatching::None => key.is_empty(),
+            RecordMatching::Stamped | RecordMatching::Find => true,
         };
         if !count_fits {
             invalid(
@@ -2092,7 +2164,7 @@ impl<'a> Compiler<'a> {
             );
             fine = false;
         }
-        if strategy == IdentityStrategy::None && effect == EffectClass::Write {
+        if strategy == RecordMatching::None && effect == EffectClass::Write {
             invalid(
                 self,
                 &at,
@@ -2108,7 +2180,7 @@ impl<'a> Compiler<'a> {
                 None,
             )
         } else {
-            (IdentityStrategy::None, Vec::new(), None)
+            (RecordMatching::None, Vec::new(), None)
         }
     }
 
@@ -2220,12 +2292,13 @@ impl<'a> Compiler<'a> {
                     .map(to_u32),
             };
             let examples = self.examples(doc, &info);
-            let decision_points = self.decision_points(doc);
-            if let (Some(mut compiled), Some(examples), Some(decision_points)) =
-                (self.bindings(&info), examples, decision_points)
+            let run_questions = self.run_questions(doc);
+            if let (Some(mut compiled), Some(examples), Some(run_questions)) =
+                (self.bindings(&info), examples, run_questions)
             {
                 compiled.examples = examples;
-                compiled.decision_points = decision_points;
+                compiled.run_questions = run_questions;
+                compiled.records = self.records(doc, effect, &info.outputs);
                 let title = doc.text("title").unwrap_or(info.name.as_str()).to_owned();
                 let description = doc.text("description").unwrap_or_default().to_owned();
                 self.note_description_by(doc, info.name.as_str());
@@ -2322,9 +2395,9 @@ impl<'a> Compiler<'a> {
     }
 
     /// The questions an operation declares that a person may have to answer.
-    fn decision_points(&mut self, doc: &Located<Doc>) -> Option<Vec<DecisionPoint>> {
+    fn run_questions(&mut self, doc: &Located<Doc>) -> Option<Vec<RunQuestion>> {
         let mut fine = true;
-        let mut points: Vec<DecisionPoint> = Vec::new();
+        let mut points: Vec<RunQuestion> = Vec::new();
         for point in doc
             .get("decision_points")
             .map(Located::items)
@@ -2339,13 +2412,13 @@ impl<'a> Compiler<'a> {
                     codes::NAME_DEFINED_TWICE,
                     Stage::Resolve,
                     &name.at,
-                    format!("The decision point `{}` is named twice in the operation, or is not one name.", shown(text)),
-                    "Give each decision point its own lowercase name.".to_owned(),
+                    format!("The run question `{}` is named twice in the operation, or is not one name.", shown(text)),
+                    "Give each run question its own lowercase name.".to_owned(),
                 );
                 fine = false;
                 continue;
             }
-            points.push(DecisionPoint {
+            points.push(RunQuestion {
                 name: text.to_owned(),
                 question: question.to_owned(),
             });
@@ -2533,14 +2606,14 @@ impl<'a> Compiler<'a> {
                 status,
                 doc: binding,
             };
-            if info.strategy != IdentityStrategy::None
+            if info.strategy != RecordMatching::None
                 && let Possible::No(why) = lowering.identity(&resolved, info.strategy)
             {
                 self.error(
                     codes::IDENTITY_NOT_POSSIBLE,
                     Stage::Analyze,
                     &binding.at,
-                    format!("The identity strategy `{}` is not possible in this `{mode}` binding: {why}", info.strategy),
+                    format!("The record matching `{}` is not possible in this `{mode}` binding: {why}", info.strategy),
                     "Choose a strategy every binding of the operation can carry out, or remove the binding.".to_owned(),
                 );
                 fine = false;
@@ -2633,7 +2706,7 @@ impl<'a> Compiler<'a> {
         }
         // A binding that states no status is `draft`, and neither a draft
         // nor a retired binding acts in a published version: an operation
-        // with no other publishes a tool no call of can ever run (field
+        // with no other publishes a tool no call of can ever run (copy
         // test 7, finding 47). It is a warning in every compile, so `lint`
         // says it and the person publishing sees it; it is not an error,
         // because the offline tests that earn a draft binding its promotion
@@ -2736,7 +2809,8 @@ impl<'a> Compiler<'a> {
                 destinations: list("destinations"),
             },
             examples: Vec::new(),
-            decision_points: Vec::new(),
+            run_questions: Vec::new(),
+            records: None,
         })
     }
 
@@ -3000,7 +3074,7 @@ impl<'a> Compiler<'a> {
         let needs_read_back = by.evidence != WriteEvidence::Acknowledged
             && (info.effect == EffectClass::Write
                 || (info.effect == EffectClass::Irreversible
-                    && info.strategy != IdentityStrategy::None));
+                    && info.strategy != RecordMatching::None));
         // The compiled target's check asks the same question (decision 0193).
         if by.evidence == WriteEvidence::Acknowledged
             && !a2m_core::acknowledgement_may_stand(info.strategy, &lowered.read_back)
@@ -3019,7 +3093,7 @@ impl<'a> Compiler<'a> {
         // returns the record's values is a read-back by another name, and
         // the author is told so. A warning, in every mode.
         if by.evidence == WriteEvidence::Acknowledged
-            && info.strategy != IdentityStrategy::None
+            && info.strategy != RecordMatching::None
             && lowered.read_back.is_empty()
             && !lowered.lookup.is_empty()
         {
@@ -3889,7 +3963,7 @@ impl<'a> Compiler<'a> {
                 || (compiled.effect == EffectClass::Write
                     && matches!(
                         compiled.identity.strategy,
-                        IdentityStrategy::Natural | IdentityStrategy::Composite
+                        RecordMatching::Natural | RecordMatching::Composite
                     ));
             let output: serde_json::Map<String, serde_json::Value> = compiled
                 .outputs

@@ -199,8 +199,15 @@ async fn checklist(world: &World, wire: &mut Wire) {
             "{via} asked {asked}: {answer}"
         );
         let served: Vec<&String> = result["capabilities"].as_object().unwrap().keys().collect();
-        assert_eq!(served, ["tools"], "{answer}");
+        assert_eq!(served, ["resources", "tools"], "{answer}");
         assert!(result["capabilities"]["tools"].get("listChanged").is_none());
+        // A stateless server holds no stream for the handshake revision to
+        // be told on: its resources are read, never subscribed to.
+        assert!(
+            result["capabilities"]["resources"]
+                .get("subscribe")
+                .is_none()
+        );
         assert_eq!(result["serverInfo"]["name"], "anything2mcp");
         assert!(!result["serverInfo"]["version"].as_str().unwrap().is_empty());
     }
@@ -222,6 +229,7 @@ async fn checklist(world: &World, wire: &mut Wire) {
         "{via}: {answer}"
     );
     assert!(result["capabilities"]["tools"].is_object());
+    assert_eq!(result["capabilities"]["resources"]["subscribe"], true);
     assert!(!result["instructions"].as_str().unwrap().is_empty());
     assert!(result["ttlMs"].is_u64());
     assert!(result["cacheScope"].is_string());

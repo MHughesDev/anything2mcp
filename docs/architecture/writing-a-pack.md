@@ -20,7 +20,7 @@ The eight items of section 202. A pack that cannot clear item 2 for its writes m
 | --- | --- | --- |
 | 1 | A driver, with no retries inside | `impl Driver for FileDriver` in `src/driver.rs`; `src/save.rs` says "never retried" at the replace |
 | 2 | A read-back rule for every write, or the write is `irreversible` | `src/lower.rs`: `update` and `create` lower to a save followed by a `confirm` that reads the file again; `least_effect` makes `delete` `irreversible`. Test `an_update_changes_one_span_of_delimited_text_and_reads_back` in `tests/stand.rs` |
-| 3 | An answer for each identity strategy | `identity` in `src/lower.rs`: natural, composite and none are possible; stamped and find say why not |
+| 3 | An answer for each record matching | `identity` in `src/lower.rs`: natural, composite and none are possible; stamped and find say why not |
 | 4 | A test stand that reports ground truth | `targets/example-files`, used by `tests/stand.rs` |
 | 5 | A discoverer whose findings claim no more than was seen | `src/discover.rs`; the manifest caps its level at `discovered`. Test `discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_states` |
 | 6 | Failures mapped to the existing classes | `src/codes.rs` and the `[[failure_codes]]` of the manifest. Test `every_failure_code_of_the_pack_is_declared_with_its_one_class` in `tests/pack.rs` |
@@ -32,7 +32,7 @@ The eight items of section 202. A pack that cannot clear item 2 for its writes m
 **The manifest**, `anything2mcp-provider.toml`, is included by the crate (`MANIFEST` in `src/lib.rs`). The registry refuses anything the pack registers that the manifest does not declare. Its sections, as the file pack and the command pack use them:
 
 - `[provider]`: name, version, publisher, `kind = "pack"`.
-- `[[modes]]`: the mode's name, archetype, verbs, the step kinds, and which of them are `commit_steps`; its rank, its intent window, and the key it is `exclusive` on.
+- `[[modes]]`: the mode's name, access kind, verbs, the step kinds, and which of them are `commit_steps`; its rank, its intent window, and the key it is `exclusive` on.
 - `[[surface_kinds]]`, `[[file_kinds]]`, `[[finding_kinds]]`: the words the pack adds. A file kind has one owning pack per surface kind ([decision 0062](../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)); the web and desktop packs each own `screens/` for their own surfaces ([0203](../decisions/0203-two-packs-may-each-draft-a-file-kind-of-one-name-for-their-own-surfaces.md)).
 - `[points]`, `[[discoverers]]`, `[[drafting_rules]]`: what it observes, with a bound on time and bytes and a ceiling on the evidence level, and which findings become which files.
 - `[[lint_rules]]` with stable codes; `[[failure_codes]]`, each with exactly one class.

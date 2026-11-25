@@ -4,7 +4,7 @@
 use a2m_core::{CredentialRef, DecisionId, Failure, Identity, Secret, TargetName};
 use a2m_ledger::{ChainCheck, Durability};
 use a2m_policy::{KillScope, KillSwitch};
-use a2m_sched::HoldScope;
+use a2m_sched::PauseScope;
 use serde_json::{Value as Json, json};
 
 use super::handler;
@@ -248,7 +248,7 @@ handler!(
         let (scope, hold) = match call.required("scope")? {
             "workspace" => (
                 KillScope::Workspace(workspace),
-                HoldScope::Workspace(workspace),
+                PauseScope::Workspace(workspace),
             ),
             "target" => {
                 let target = TargetName::new(call.text("target").ok_or_else(|| {
@@ -260,10 +260,10 @@ handler!(
                 })?)?;
                 (
                     KillScope::Target(target.clone()),
-                    HoldScope::Target(workspace, target),
+                    PauseScope::Target(workspace, target),
                 )
             }
-            _ => (KillScope::Everything, HoldScope::Everything),
+            _ => (KillScope::Everything, PauseScope::Everything),
         };
         // Releasing a switch is a person's act. The dispatcher asked for
         // the proof before this ran, and checked that it is this caller's
@@ -306,7 +306,7 @@ handler!(
         // is set in the policy engine first, and released there last. The
         // audit entry is written in the policy engine's own transaction.
         if !on {
-            sched.release_hold(hold.clone()).await?;
+            sched.release_pause(hold.clone()).await?;
         }
         let entry = a2m_ledger::AuditEntry {
             workspace,
@@ -329,13 +329,13 @@ handler!(
                 // The switch is still set in the policy engine: the hold
                 // goes back, so that the queue and the decisions agree.
                 if !on {
-                    let _ = sched.hold(hold).await;
+                    let _ = sched.pause(hold).await;
                 }
                 return Err(failure);
             }
         };
         if on {
-            sched.hold(hold).await?;
+            sched.pause(hold).await?;
         }
         Ok(
             Output::ok(json!({"scope": scope, "on": on, "epoch": epoch})).then(Next::new(

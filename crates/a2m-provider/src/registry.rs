@@ -1,5 +1,5 @@
 //! The registry: one immutable snapshot of every provider, its modes with
-//! their archetypes, and the objects each supplied.
+//! their access kinds, and the objects each supplied.
 //!
 //! The product crate builds it once at start, with one call per pack, and
 //! builds a new one when a provider is enabled or disabled. It is never
@@ -13,12 +13,12 @@ use std::sync::Arc;
 
 use a2m_auth::AuthProvider;
 use a2m_core::{
-    Archetype, Availability, Digest, EffectClass, Failure, FailureClass, FailureCode, Mode, Redact,
-    SurfaceKind, Values, Version,
+    AccessKind, Availability, Digest, EffectClass, Failure, FailureClass, FailureCode, Mode,
+    Redact, SurfaceKind, Values, Version,
 };
 use a2m_files::CompilerSet;
+use a2m_logs::LogsAndTraces;
 use a2m_sources::{ReaderName, SourceReader};
-use a2m_telemetry::Telemetry;
 
 use crate::action::ProviderAction;
 use crate::capture::CaptureHandle;
@@ -41,8 +41,8 @@ pub struct HostServices {
     pub roots: Roots,
     /// The redactor.
     pub redact: Arc<dyn Redact>,
-    /// Telemetry.
-    pub telemetry: Telemetry,
+    /// LogsAndTraces.
+    pub logs_and_traces: LogsAndTraces,
 }
 
 impl fmt::Debug for HostServices {
@@ -111,8 +111,8 @@ pub struct ProviderListing {
 /// A registered surface kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfaceKindEntry {
-    /// Its archetype.
-    pub archetype: Archetype,
+    /// Its access kind.
+    pub access_kind: AccessKind,
     /// Whether the keeper holds a session on a surface of this kind.
     pub session: bool,
     /// The provider that serves it.
@@ -156,6 +156,50 @@ fn file_digest(path: &Path) -> Option<Digest> {
     crate::supervisor::digest_of(path).ok()
 }
 
+/// What the availability check finds of one outside program a provider
+/// needs (spec section 203), as `component.list` shows it: where it was
+/// found, its digest, and whether that digest is one the manifest knows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentState {
+    /// The first of the requirement's fixed places that holds a file, or
+    /// `None` when none does.
+    pub found: Option<PathBuf>,
+    /// The digest of the file found, when it could be read.
+    pub digest: Option<Digest>,
+    /// Whether the digest is one the manifest lists. False when the
+    /// manifest lists none, which takes any program found as unverified.
+    pub known: bool,
+}
+
+/// The first of a requirement's fixed places that holds a file. A place
+/// written for another operating system, which is not an absolute path
+/// here, is passed over rather than looked for in the engine's own working
+/// folder.
+fn component_place(needed: &crate::manifest::Requirement) -> Option<PathBuf> {
+    needed
+        .paths
+        .iter()
+        .map(Path::new)
+        .find(|path| path.is_absolute() && path.is_file())
+        .map(Path::to_path_buf)
+}
+
+/// Looks for one requirement at its fixed places, in order, and takes the
+/// digest of what it finds. It starts nothing, and a place written for
+/// another operating system, which is not an absolute path here, is passed
+/// over rather than looked for in the engine's own working folder.
+#[must_use]
+pub fn component_state(needed: &crate::manifest::Requirement) -> ComponentState {
+    let found = component_place(needed);
+    let digest = found.as_deref().and_then(file_digest);
+    let known = digest.is_some_and(|digest| needed.known_digests.contains(&digest));
+    ComponentState {
+        found,
+        digest,
+        known,
+    }
+}
+
 /// The availability check of spec section 203. It looks at the machine and
 /// starts nothing: this function has no way to reach the supervisor.
 fn availability(manifest: &Manifest) -> (Availability, String) {
@@ -170,19 +214,15 @@ fn availability(manifest: &Manifest) -> (Availability, String) {
         );
     }
     for needed in &manifest.requirements {
-        // A place written for another operating system is not an absolute
-        // path here; it would be looked for in the engine's own working
-        // folder, and is passed over.
-        let found = needed
-            .paths
-            .iter()
-            .map(Path::new)
-            .find(|path| path.is_absolute() && path.is_file());
-        let Some(found) = found else {
+        // Only where the place is found; the digest is taken only when the
+        // manifest lists one to compare it with, since a registry is built
+        // for every command and a browser's program is hundreds of
+        // megabytes to read.
+        let Some(found) = component_place(needed) else {
             return (Availability::ComponentMissing, needed.missing.clone());
         };
         if !needed.known_digests.is_empty()
-            && !file_digest(found).is_some_and(|digest| needed.known_digests.contains(&digest))
+            && !file_digest(&found).is_some_and(|digest| needed.known_digests.contains(&digest))
         {
             return (
                 Availability::ComponentUnverified,
@@ -307,7 +347,7 @@ impl RegistryBuilder {
             supervisor: supervisor.clone(),
             roots: roots.clone(),
             redact: Arc::clone(&self.host.redact),
-            telemetry: self.host.telemetry.clone(),
+            logs_and_traces: self.host.logs_and_traces.clone(),
             settings: settings.clone(),
         };
         let mut registrar = Registrar::new(&manifest);
@@ -415,7 +455,7 @@ impl RegistryBuilder {
 
         let usable = |p: &Pending| p.collected.is_some() && p.problems.is_empty();
 
-        // Modes and surface kinds agree on their archetype; a kind has one
+        // Modes and surface kinds agree on their access kind; a kind has one
         // owner for a surface kind.
         let mut conflicts: Vec<(usize, Failure)> = Vec::new();
         for (index, one) in pending.iter().enumerate().filter(|(_, p)| usable(p)) {
@@ -428,14 +468,14 @@ impl RegistryBuilder {
                     let differs = other
                         .manifest
                         .mode(&mode.name)
-                        .is_some_and(|theirs| theirs.archetype != mode.archetype);
+                        .is_some_and(|theirs| theirs.access_kind != mode.access_kind);
                     if differs {
                         conflicts.push((
                             index,
                             codes::failure(
                                 &codes::row::MODE_CONFLICT,
                                 format!(
-                                    "The mode `{}` is registered with two archetypes, here and by `{other_name}`.",
+                                    "The mode `{}` is registered with two access kinds, here and by `{other_name}`.",
                                     mode.name
                                 ),
                                 "Disable one of the two providers.",
@@ -659,7 +699,7 @@ impl RegistryBuilder {
                 surface_kinds.insert(
                     kind.name.clone(),
                     SurfaceKindEntry {
-                        archetype: kind.archetype,
+                        access_kind: kind.access_kind,
                         session: kind.session,
                         provider: name.clone(),
                     },
@@ -681,7 +721,7 @@ impl RegistryBuilder {
                 modes
                     .entry(decl.name.clone())
                     .or_insert_with(|| ModeEntry {
-                        archetype: decl.archetype,
+                        access_kind: decl.access_kind,
                         candidates: Vec::new(),
                     })
                     .candidates
@@ -850,7 +890,7 @@ struct Candidate {
 }
 
 struct ModeEntry {
-    archetype: Archetype,
+    access_kind: AccessKind,
     candidates: Vec<Candidate>,
 }
 
@@ -939,10 +979,10 @@ impl Registry {
         self.inner.digest
     }
 
-    /// The archetype of a registered mode.
+    /// The access kind of a registered mode.
     #[must_use]
-    pub fn archetype(&self, mode: &Mode) -> Option<Archetype> {
-        self.inner.modes.get(mode).map(|entry| entry.archetype)
+    pub fn access_kind(&self, mode: &Mode) -> Option<AccessKind> {
+        self.inner.modes.get(mode).map(|entry| entry.access_kind)
     }
 
     /// Every registered mode, in order of name.
@@ -1076,7 +1116,7 @@ impl Registry {
         };
         let facts = HandleFacts {
             mode: mode.clone(),
-            archetype: entry.archetype,
+            access_kind: entry.access_kind,
             steps: candidate.decl.steps.iter().cloned().collect(),
             commit_steps: candidate.decl.commit_steps.iter().cloned().collect(),
             absence_steps: candidate.decl.absence_steps.iter().cloned().collect(),
@@ -1116,7 +1156,7 @@ impl Registry {
         let (entry, candidate, reason) = self.chosen(mode)?;
         let facts = HandleFacts {
             mode: mode.clone(),
-            archetype: entry.archetype,
+            access_kind: entry.access_kind,
             steps: candidate.decl.steps.iter().cloned().collect(),
             commit_steps: candidate.decl.commit_steps.iter().cloned().collect(),
             absence_steps: candidate.decl.absence_steps.iter().cloned().collect(),

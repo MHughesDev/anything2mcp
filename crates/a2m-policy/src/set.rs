@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::failure::invalid;
 use crate::model::{
-    GroupName, IdentityMode, ModuleName, OptionName, PrincipalRef, Request, Role, RuleId, ToolRef,
+    GroupName, IdentityKind, ModuleName, OptionName, PrincipalRef, Request, Role, RuleId, ToolRef,
     word,
 };
 use crate::rules::{self, Answer};
@@ -106,7 +106,7 @@ pub struct RoleBinding {
 }
 
 /// A grant: who may use which tools, up to which effect class, acting through
-/// which identity mode. Each grant is one permit.
+/// which identity kind. Each grant is one permit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Grant {
     /// Who it is given to.
@@ -115,8 +115,8 @@ pub struct Grant {
     pub scope: Scope,
     /// The highest effect class it allows.
     pub max_effect: EffectClass,
-    /// The identity mode a run under it may use.
-    pub identity_mode: IdentityMode,
+    /// The identity kind a run under it may use.
+    pub identity_mode: IdentityKind,
 }
 
 /// Who may see fields up to a sensitivity label.
@@ -361,7 +361,7 @@ impl PolicyLayers {
 
 /// Where a set runs, which decides what it may say.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Profile {
+pub enum DeploymentShape {
     /// One machine, one operating-system user.
     Local,
     /// A shared server.
@@ -371,7 +371,7 @@ pub enum Profile {
 /// The policy set a fresh store starts with.
 #[derive(Debug, Clone)]
 pub struct BuiltIn {
-    pub(crate) profile: Profile,
+    pub(crate) profile: DeploymentShape,
     pub(crate) layers: PolicyLayers,
 }
 
@@ -390,7 +390,7 @@ impl BuiltIn {
                     role: *role,
                 })
                 .collect(),
-            grants: IdentityMode::ALL
+            grants: IdentityKind::ALL
                 .iter()
                 .map(|mode| Grant {
                     who: who.clone(),
@@ -413,7 +413,7 @@ impl BuiltIn {
             tests: rules::local_tests(user, workspace),
         };
         Self {
-            profile: Profile::Local,
+            profile: DeploymentShape::Local,
             layers,
         }
     }
@@ -423,7 +423,7 @@ impl BuiltIn {
     #[must_use]
     pub fn server() -> Self {
         Self {
-            profile: Profile::Server,
+            profile: DeploymentShape::Server,
             layers: PolicyLayers::default(),
         }
     }
@@ -440,7 +440,7 @@ impl BuiltIn {
 
     /// Where this set runs.
     #[must_use]
-    pub const fn profile(&self) -> Profile {
+    pub const fn profile(&self) -> DeploymentShape {
         self.profile
     }
 
@@ -500,7 +500,7 @@ impl CandidateSet {
     /// `input`, `schema_invalid` when a setting is out of range, a rule is
     /// badly formed, a condition does not compile to true or false, or the
     /// set says something its profile does not allow.
-    pub fn compile(layers: &PolicyLayers, profile: Profile) -> Result<Self, Failure> {
+    pub fn compile(layers: &PolicyLayers, profile: DeploymentShape) -> Result<Self, Failure> {
         let settings = &layers.settings;
         if settings.max_records_per_run == 0 {
             return Err(invalid(
@@ -516,7 +516,9 @@ impl CandidateSet {
                 "Set `approval_window_minutes` between 1 and 1440.",
             ));
         }
-        if profile == Profile::Local && settings.approve_writes != ApproveWrites::PersonEachRun {
+        if profile == DeploymentShape::Local
+            && settings.approve_writes != ApproveWrites::PersonEachRun
+        {
             return Err(invalid(
                 "On one machine a write is approved by the person at it; no other approver can be named.",
                 "Set `approve_writes` to `person_each_run`.",
@@ -698,7 +700,7 @@ pub(crate) fn load(
     version: Digest,
     layers_text: &str,
     tests_text: &str,
-    profile: Profile,
+    profile: DeploymentShape,
 ) -> Result<Compiled, Failure> {
     let unreadable = || {
         invalid(

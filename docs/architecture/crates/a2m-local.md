@@ -9,7 +9,7 @@ The engine on one machine, and the channel to it. This crate holds both ends of 
 | Side | Kernel |
 | Layer | 8, Roles |
 | May depend on | Layers 1 to 7 |
-| Depends on | `a2m-core`, `a2m-actions`, `a2m-telemetry`, and for the person surface `a2m-policy`, `a2m-auth`, `a2m-vault`. Outside: Tokio, axum, `hyper`, `hyper-util`; `rustix` on macOS and Linux and `windows-sys` on Windows ([decision 0117](../../decisions/0117-the-local-channel-and-the-person-surface-on-one-machine-as-built.md)). On Linux only, for the presence prompt: `zbus` 6.3.0 (no default features; `tokio`, `proxy`) and `zbus_polkit` 6.0.0 ([decision 0142](../../decisions/0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md)). On macOS only: `objc2-local-authentication` 0.3.2, `objc2` 0.6.5, `objc2-foundation` 0.3.2, and `block2` 0.6.2, with no default features. On Windows only: `windows` 0.62.2 (`Security_Credentials_UI`, `Win32_System_WinRT`, `Win32_Foundation`) and `windows-future` 0.3.2, and more features of `windows-sys` ([decision 0146](../../decisions/0146-the-macos-and-windows-presence-prompts-as-built.md)). A crate for notifications is still to be chosen |
+| Depends on | `a2m-core`, `a2m-actions`, `a2m-logs`, and for the person surface `a2m-policy`, `a2m-auth`, `a2m-vault`. Outside: Tokio, axum, `hyper`, `hyper-util`; `rustix` on macOS and Linux and `windows-sys` on Windows ([decision 0117](../../decisions/0117-the-local-channel-and-the-person-surface-on-one-machine-as-built.md)). On Linux only, for the presence prompt: `zbus` 6.3.0 (no default features; `tokio`, `proxy`) and `zbus_polkit` 6.0.0 ([decision 0142](../../decisions/0142-the-presence-prompt-interface-and-the-linux-prompt-as-built.md)). On macOS only: `objc2-local-authentication` 0.3.2, `objc2` 0.6.5, `objc2-foundation` 0.3.2, and `block2` 0.6.2, with no default features. On Windows only: `windows` 0.62.2 (`Security_Credentials_UI`, `Win32_System_WinRT`, `Win32_Foundation`) and `windows-future` 0.3.2, and more features of `windows-sys` ([decision 0146](../../decisions/0146-the-macos-and-windows-presence-prompts-as-built.md)). A crate for notifications is still to be chosen |
 | Roadmap packages | Roadmap package 1.4 (the channel, the lifecycle); 3.6 (the loopback listener, the presence prompt, notifications) |
 | Carries out | Spec sections [222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) on one machine, the protected settings of [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md); the [local channel](../../reference/technical-reference.md#local-channel) and [on-disk layout](../../reference/technical-reference.md#on-disk-layout) of the technical reference |
 
@@ -98,7 +98,13 @@ impl Connector {
     /// The hello waits at most HELLO_PATIENCE (30 s); an engine that holds the channel
     /// and does not answer is busy / engine_unreachable, naming the engine's output file.
     pub async fn connect(&self) -> Result<Link, Failure>;
+    /// The same connect and the same check of the engine's owner, with no hello: the
+    /// connection as bytes, for `anything2mcp channel` to carry another client's own
+    /// hello and requests (decision 0466). The failures of `connect` before the hello.
+    pub async fn open_checked(&self) -> Result<CheckedStream, Failure>;
 }
+/// A checked connection to the engine: AsyncRead + AsyncWrite, a Unix socket or the pipe.
+pub struct CheckedStream;
 pub const HELLO_PATIENCE: Duration;
 // Start on demand (decision 0165): the client takes the start lock, looks again, starts
 // `start` detached, and waits for the channel to answer, all within `patience`.
@@ -118,7 +124,7 @@ impl Connector {
 pub const START_LOCK_NAME: &str; pub const STARTED_LINE: &str;
 pub const STOPPED_LINE: &str;              // how the line begins that an engine writes as it stops before it serves
 pub fn stopped_line(failure: &Failure) -> String;  // that line: its process's number and the failure as JSON
-pub const ENGINE_LOG_NAME: &str;   // "engine-output.log", not telemetry's engine.log (decision 0181)
+pub const ENGINE_LOG_NAME: &str;   // "engine-output.log", not the logs crate's engine.log (decision 0181)
 pub struct Link { /* an HTTP/1.1 connection over the channel; the engine's hello */ }
 impl Link {
     pub fn engine_version(&self) -> Version;
@@ -158,11 +164,11 @@ pub trait PresencePrompt: Send + Sync {
 }
 pub struct PromptText { pub title: String, pub detail: String, pub purpose: PromptFor }
 pub enum PromptFor { Act, Approval(Option<EffectClass>) }              // what the ask is for; None = effect not known
-// `FieldPrompt<R, W>` (decision 0310) answers on a reader and a writer a test runner holds; only the field
+// `CopyTestPrompt<R, W>` (decision 0310) answers on a reader and a writer a test runner holds; only the copy test
 // harness builds it. It passes Act and Approval(Some(not irreversible)) when the line read is the short
 // hash shown, and refuses Approval(Some(Irreversible)) and Approval(None) without asking.
 pub enum PresenceKind { OsPrompt, DialogOnly, NotAvailable }            // os_prompt, dialog_only, not_available
-pub enum PromptName { Polkit, LocalAuthentication, WindowsHello, FieldHarness }  // polkit, local_authentication, windows_hello, field_harness
+pub enum PromptName { Polkit, LocalAuthentication, WindowsHello, CopyTestHarness }  // polkit, local_authentication, windows_hello, field_harness
 pub enum PresenceReason {                                               // one word, for a report
     Ready, NotBuilt, NoSystemBus, NoPolkit, PolicyNotInstalled, SessionNotActive,
     NoAgent, GrantedWithoutAsking, NoWindowStation, SessionRemote, SessionLocked,
@@ -323,7 +329,7 @@ Sign-in is the keeper's work, not this crate's. `ask_sign_in` is to notify the p
 | `anything2mcp` | `Channel` in the `serve` role on one machine; `Connector` for every command; `LocalSurface` handed to `Kernel::open` |
 | `a2m-mcp` and the SDK bridge | `Link`, through the product crate, which hands the stdio proxy a connected link |
 
-It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health`; `a2m-telemetry` for spans.
+It calls `a2m-actions` for `Paths`, `PersonSurface`, `ApprovalDesk`, and `health`; `a2m-logs` for spans.
 
 ## State
 

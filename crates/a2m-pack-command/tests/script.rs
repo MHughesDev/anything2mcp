@@ -53,6 +53,9 @@ struct Pair {
     dashes: bool,
     /// The variables passed from the engine's environment.
     pass: &'static [&'static str],
+    /// How long one run may take: the target's limit and the step's
+    /// deadline.
+    within: Duration,
 }
 
 /// A project with the target `example` in it, whose one surface is the
@@ -102,7 +105,7 @@ fn files(
     };
     args.extend((1..=count).map(|n| format!("{{param: p{n}}}")));
     let commands = format!(
-        "surface: shell\nprogram:\n  digests: {{{}: [\"sha256:{digest}\"]}}\n  interpreter: {{args: [{}]}}\n  env: {{{}set: {{EXAMPLE_OUT: {}}}}}\n  limits: {{timeout: 60s}}\n  exits: {{0: ok}}\ncommands:\n  echo_script:\n    effect: read\n    script: {{path: {}, digest: \"sha256:{script_digest}\"}}\n    params: {{{}}}\n    args: [{}]\n    output: none\n",
+        "surface: shell\nprogram:\n  digests: {{{}: [\"sha256:{digest}\"]}}\n  interpreter: {{args: [{}]}}\n  env: {{{}set: {{EXAMPLE_OUT: {}}}}}\n  limits: {{timeout: {}s}}\n  exits: {{0: ok}}\ncommands:\n  echo_script:\n    effect: read\n    script: {{path: {}, digest: \"sha256:{script_digest}\"}}\n    params: {{{}}}\n    args: [{}]\n    output: none\n",
         current_platform(),
         fixed.join(", "),
         if pair.pass.is_empty() {
@@ -111,6 +114,7 @@ fn files(
             format!("pass: [{}], ", pair.pass.join(", "))
         },
         quoted(&out.display().to_string()),
+        pair.within.as_secs(),
         quoted(script_path),
         params.join(", "),
         args.join(", "),
@@ -195,11 +199,12 @@ impl Scene {
             surface: &surface,
             compiled_target: &self.compiled_target,
             posture: Posture::Live,
-            deadline: Deadline::after(WITHIN),
+            deadline: Deadline::after(pair.within),
             redact: &NoSecrets,
             destinations: &Destinations::default(),
             paths: &paths,
             supervisor: &supervisor,
+            confirmed: a2m_provider::ConfirmedReads::none(),
         };
         let mut prepared = handle.prepare(&cx, None).await?;
         let mut args = Values::new();
@@ -209,7 +214,7 @@ impl Scene {
         let operation = &self.compiled_target.operations[0];
         let mut result = Ok(());
         for step in &operation.bindings[0].act {
-            let input = StepInput::new(&args, Deadline::after(WITHIN));
+            let input = StepInput::new(&args, Deadline::after(pair.within));
             if let Err(failure) = handle
                 .act(&mut prepared, step, &input, Authority::Read)
                 .await
@@ -253,6 +258,7 @@ fn shell_pair() -> Pair {
         text: "for a in \"$@\"; do printf '%s\\000' \"$a\"; done > \"$EXAMPLE_OUT\"\n".to_owned(),
         dashes: true,
         pass: &[],
+        within: WITHIN,
     }
 }
 
@@ -271,6 +277,7 @@ fn python_pair() -> Option<Pair> {
         text: "import os, sys\nwith open(os.environ['EXAMPLE_OUT'], 'wb') as out:\n    for a in sys.argv[1:]:\n        out.write(os.fsencode(a) + b'\\0')\n".to_owned(),
         dashes: true,
         pass: &[],
+        within: WITHIN,
     })
 }
 
@@ -408,6 +415,10 @@ fn powershell_pair() -> Option<Pair> {
         // PowerShell takes `--` as its own end of parameters.
         dashes: false,
         pass: &[],
+        // Windows PowerShell's start ran past a minute twice on CI's
+        // Windows runners, with each other interpreter here done in
+        // seconds; what this test proves does not depend on the time.
+        within: Duration::from_secs(180),
     })
 }
 
@@ -473,6 +484,7 @@ fn node_pair() -> Option<(Pair, Option<Folder>)> {
         dashes: true,
         // Windows programs commonly expect the system's folder named.
         pass: if cfg!(windows) { &["SYSTEMROOT"] } else { &[] },
+        within: WITHIN,
     };
     Some((pair, copy))
 }
@@ -531,6 +543,7 @@ async fn python_on_windows_receives_each_value_as_literal_text() {
         text: "import os, sys\nwith open(os.environ['EXAMPLE_OUT'], 'wb') as out:\n    for a in sys.argv[1:]:\n        out.write(a.encode('utf-8', 'surrogatepass') + b'\\0')\n".to_owned(),
         dashes: true,
         pass: &["SYSTEMROOT"],
+        within: WITHIN,
     };
     each_value_arrives_as_it_was(&pair).await;
 }
@@ -562,6 +575,7 @@ async fn osascript_receives_each_value_as_literal_text() {
         text: "on run argv\n\tset f to open for access (POSIX file (system attribute \"EXAMPLE_OUT\")) with write permission\n\tset eof f to 0\n\trepeat with a in argv\n\t\twrite (contents of a) to f as \u{ab}class utf8\u{bb}\n\t\twrite (ASCII character 0) to f\n\tend repeat\n\tclose access f\nend run\n".to_owned(),
         dashes: false,
         pass: &[],
+        within: WITHIN,
     };
     each_value_arrives_as_it_was(&pair).await;
 }

@@ -44,7 +44,7 @@ max_level = "discovered"
 bounds = { seconds = 30, bytes = 4096, depth = 1 }
 
 # Reads a register map a vendor published, given as a file of the
-# project's `sources` folder under the name `register_map`. It sends no
+# project's `inputs` folder under the name `register_map`. It sends no
 # frame: nothing of the device is observed.
 [[discoverers]]
 name = "device_register_map"

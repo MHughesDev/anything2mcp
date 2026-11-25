@@ -27,7 +27,7 @@ a2m-expr = { path = "../a2m-expr" }
 a2m-ledger = { path = "../a2m-ledger" }
 a2m-provider = { path = "../a2m-provider" }
 a2m-sources = { path = "../a2m-sources" }
-a2m-telemetry = { path = "../a2m-telemetry" }
+a2m-logs = { path = "../a2m-logs" }
 a2m-vault = { path = "../a2m-vault" }
 example-app = { path = "../../targets/example-app" }
 reqwest.workspace = true

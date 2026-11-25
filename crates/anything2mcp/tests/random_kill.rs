@@ -23,8 +23,8 @@ use std::time::Duration;
 
 use a2m_actions::PresenceProof;
 use a2m_core::{RunId, Timestamp};
+use a2m_logs::{Clock, ManualClock, SystemClock};
 use a2m_policy::{Channel, PresenceCheck};
-use a2m_telemetry::{Clock, ManualClock, SystemClock};
 use common::{Machine, World};
 use example_app::harness::TestApp;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

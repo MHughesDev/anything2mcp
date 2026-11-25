@@ -23,9 +23,9 @@ use a2m_actions::{
 };
 use a2m_auth::PersonAnswer;
 use a2m_core::{Failure, FailureClass, Timestamp};
+use a2m_logs::{Clock, ManualClock};
 use a2m_policy::{Channel, PresenceCheck, PrincipalRef};
 use a2m_provider::{RegistryBuilder, Roots, Supervisor, SupervisorLimits};
-use a2m_telemetry::{Clock, ManualClock};
 use a2m_vault::{BoxFuture as VaultFuture, KeyStore, MemoryKeyStore};
 use engine::{AppPack, Counted, Folder, ITEM_UPSERT, ORDER_GET, START};
 use example_app::harness::TestApp;
@@ -250,6 +250,15 @@ impl Options {
         }
     }
 
+    /// The defaults, with the store on disk, so that another connection
+    /// can hold its write lock.
+    pub(super) fn on_disk() -> Self {
+        Self {
+            place: StorePlace::Disk,
+            ..Self::default()
+        }
+    }
+
     /// The defaults, with a store on disk that cannot open: the kernel is
     /// stopped.
     pub(super) fn with_blocked_store() -> Self {
@@ -418,7 +427,7 @@ impl World {
     /// project file.
     pub(super) fn project(&self, name: &str) -> std::path::PathBuf {
         let project = self.folder.path().join(name);
-        std::fs::create_dir_all(project.join("sources")).unwrap();
+        std::fs::create_dir_all(project.join("inputs")).unwrap();
         std::fs::write(project.join("anything2mcp.toml"), "").unwrap();
         project
     }

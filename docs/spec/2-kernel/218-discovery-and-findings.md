@@ -4,7 +4,7 @@ Discovery is how the runtime learns what a system can do. This section defines w
 
 ## Three rules first
 
-1. **Discovery cannot write.** Discovery runs as a job: a runner calls the discoverer inside the engine's sandbox, which gives it only what the sandbox's port offers, and writing is not among it. What "cannot write" means differs by kind of system, so each pack states it for its archetype and its conformance test proves it: for the web pack, a request that is not a read is never sent; for a program, it is started only in the help and version forms the target declares; for a database, every read runs in a transaction the store holds read-only; for a queue, nothing is consumed. A discoverer that needs a system to change in order to observe it is not a discoverer.
+1. **Discovery cannot write.** Discovery runs as a job: a runner calls the discoverer inside the engine's sandbox, which gives it only what the sandbox's port offers, and writing is not among it. What "cannot write" means differs by kind of system, so each pack states it for its access kind and its conformance test proves it: for the web pack, a request that is not a read is never sent; for a program, it is started only in the help and version forms the target declares; for a database, every read runs in a transaction the store holds read-only; for a queue, nothing is consumed. A discoverer that needs a system to change in order to observe it is not a discoverer.
 2. **Discovery returns findings, and a finding cannot run.** Only a compiled target runs. A finding becomes something that can run only as target files that pass the compiler and the gates, whoever or whatever wrote them: a person, an agent, or the drafter of [section 402](../4-building-tools/402-the-scout-and-who-does-what.md).
 3. **A finding claims the least it can.** Where a field is not given, it takes the weakest value, never the strongest.
 
@@ -116,19 +116,19 @@ What is not known is recorded as carefully as what is. Each target has a ledger 
 
 An unknown that a tool depends on is shown in the review summary before publishing. A person may publish with it open; they do so knowingly, and the tool's record says so. This is the paper form of "unknown means stop": at run time an unseen variant is a stop, and at build time it is a line in the ledger.
 
-## What a discoverer reads, by archetype
+## What a discoverer reads, by access kind
 
-| Archetype | Observed on the live system | Read as description or artifact |
+| Access kind | Observed on the live system | Read as description or capture |
 | --- | --- | --- |
 | Interface | The accessibility tree as a snapshot; which screen models match | Nothing by default |
 | Request | Captured exchanges while a person uses the system; a listing the service computes, such as an MCP server's tools | A published schema or contract; the system's own code, through an optional provider |
 | Command | The program's own help and version output, in the forms the target declares | Its manual; completion data; a PowerShell module's help file and manifest |
 | Bridge | The functions the host lists | A type library, a dictionary, headers |
-| Artifact | The structure of a real file: sheets, named ranges, keys | A format's published schema |
+| File | The structure of a real file: sheets, named ranges, keys | A format's published schema |
 | Stream | Topics the broker lists; a bounded sample of messages | Registered schemas |
 | Device | What the device answers when asked to identify and list itself | A published map of registers or objects; a firmware image, through an optional provider |
 
-A description or an artifact is read from the system, or from a file a person hands the discovery. A discoverer declares in its manifest the names under which it reads such a file (`files`). A call names each file of the project's `sources` folder under one of those names; the registry checks the path and the name when asked, and the engine checks the path again under a read-only root of that folder before any discoverer runs, so a discoverer is handed that file and no other. A name no discoverer of the surface reads is refused, never ignored. The files are part of the discovery's stored call ([decision 0263](../../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)).
+A description or an artifact is read from the system, or from a file a person hands the discovery. A discoverer declares in its manifest the names under which it reads such a file (`files`). A call names each file of the project's `inputs` folder under one of those names; the registry checks the path and the name when asked, and the engine checks the path again under a read-only root of that folder before any discoverer runs, so a discoverer is handed that file and no other. A name no discoverer of the surface reads is refused, never ignored. The files are part of the discovery's stored call ([decision 0263](../../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)).
 
 ## Bounds
 

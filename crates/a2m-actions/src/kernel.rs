@@ -1,8 +1,8 @@
 //! The kernel handle: every service below, joined once.
 //!
 //! Opening takes two calls, because the provider registry needs the
-//! redactor and telemetry before it can be built, and the kernel needs the
-//! registry. [`Kernel::prepare`] opens the store, the vault, and telemetry;
+//! redactor and logs and traces before it can be built, and the kernel needs the
+//! registry. [`Kernel::prepare`] opens the store, the vault, and logs and traces;
 //! the product crate builds the provider registry with what
 //! [`Prepared::host_services`] gives; [`Kernel::open`] loads policy and
 //! starts the keeper and the scheduler.
@@ -23,10 +23,10 @@ use a2m_core::{
     Redact, Secret, TargetName, WorkspaceId,
 };
 use a2m_ledger::{AuditEntry, Durability, Owner, SqlValue, Store, StoreConfig, Tx};
+use a2m_logs::{Clock, LogLevel, LogSettings, LogsAndTraces};
 use a2m_policy::{ActingFor, BuiltIn, Policy, PolicyHealth, PrincipalRef};
 use a2m_provider::{HostServices, RegistryProblem, Roots, Supervisor};
 use a2m_sched::{SchedSettings, Scheduler};
-use a2m_telemetry::{Clock, LogLevel, Telemetry, TelemetrySettings};
 use a2m_vault::{KeyStore, RandomSource, Redactor, StoreHealth as KeyStoreHealth, Vault};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -34,7 +34,7 @@ use tokio::task::JoinHandle;
 use crate::codes;
 use crate::dispatch::Principal;
 use crate::health::{Health, Impaired, Part};
-use crate::keeper::{PersonBridge, ProbeBridge};
+use crate::keeper::{PersonBridge, SessionCheckBridge};
 use crate::paths::Paths;
 use crate::person::{ApprovalDesk, PersonSurface};
 use crate::registry::ActionRegistry;
@@ -81,7 +81,7 @@ impl std::fmt::Debug for KernelParts {
 }
 
 /// The first half of an open kernel: the store, the vault, the redactor,
-/// and telemetry. The provider registry is built from it.
+/// and logs and traces. The provider registry is built from it.
 pub struct Prepared {
     settings: Settings,
     paths: Paths,
@@ -91,7 +91,7 @@ pub struct Prepared {
     store: Option<Store>,
     vault: Option<Arc<Vault>>,
     redact: Arc<dyn Redact>,
-    telemetry: Telemetry,
+    logs_and_traces: LogsAndTraces,
     impaired: Vec<Impaired>,
     /// Whether the store is kept on disk, and so outlives the engine.
     store_on_disk: bool,
@@ -114,10 +114,10 @@ impl Prepared {
         Arc::clone(&self.redact)
     }
 
-    /// Telemetry.
+    /// LogsAndTraces.
     #[must_use]
-    pub fn telemetry(&self) -> Telemetry {
-        self.telemetry.clone()
+    pub fn logs_and_traces(&self) -> LogsAndTraces {
+        self.logs_and_traces.clone()
     }
 
     /// The settings the kernel was prepared with.
@@ -134,14 +134,14 @@ impl Prepared {
 
     /// What the provider registry hands on to packs: the supervisor and the
     /// named roots the product crate made, with this kernel's redactor and
-    /// telemetry.
+    /// handle.
     #[must_use]
     pub fn host_services(&self, supervisor: Supervisor, roots: Roots) -> HostServices {
         HostServices {
             supervisor,
             roots,
             redact: self.redact(),
-            telemetry: self.telemetry(),
+            logs_and_traces: self.logs_and_traces(),
         }
     }
 }
@@ -195,14 +195,14 @@ pub(crate) struct Inner {
     pub(crate) store: Option<Store>,
     pub(crate) vault: Option<Arc<Vault>>,
     redact: Arc<dyn Redact>,
-    pub(crate) telemetry: Telemetry,
+    pub(crate) logs_and_traces: LogsAndTraces,
     pub(crate) policy: Option<Policy>,
     /// How the approval desk reaches the store, emptied at close so that a
     /// person surface that keeps the desk holds no clone of the store.
     desk_reach: Option<crate::person::DeskReach>,
     pub(crate) keeper: Option<Keeper>,
     /// The keeper's way to run a session's probe through the engine.
-    pub(crate) probes: Arc<ProbeBridge>,
+    pub(crate) probes: Arc<SessionCheckBridge>,
     pub(crate) credentials: Option<Arc<StoredCredentials>>,
     pub(crate) sched: Option<Scheduler>,
     pub(crate) providers: a2m_provider::Registry,
@@ -270,7 +270,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 impl Kernel {
     /// Opens the store and runs its migrations, opens the vault over the
-    /// key store given and joins it to the store, and starts telemetry.
+    /// key store given and joins it to the store, and starts logs and traces.
     /// Never fails: a part that cannot be opened is noted, and the kernel
     /// opens in the health state that part brings.
     pub async fn prepare(parts: KernelParts) -> Prepared {
@@ -322,13 +322,13 @@ impl Kernel {
             _ => LogLevel::Info,
         };
         let in_memory =
-            || Telemetry::in_memory(level, Arc::clone(&redact), Arc::clone(&parts.clock));
-        let telemetry = match parts.place {
+            || LogsAndTraces::in_memory(level, Arc::clone(&redact), Arc::clone(&parts.clock));
+        let logs_and_traces = match parts.place {
             StorePlace::Memory => in_memory(),
-            StorePlace::Disk => a2m_telemetry::start_with_clock(
-                &TelemetrySettings {
+            StorePlace::Disk => a2m_logs::start_with_clock(
+                &LogSettings {
                     log_level: level,
-                    ..TelemetrySettings::default()
+                    ..LogSettings::default()
                 },
                 Arc::clone(&redact),
                 &parts.paths.logs,
@@ -346,7 +346,7 @@ impl Kernel {
             store,
             vault,
             redact,
-            telemetry,
+            logs_and_traces,
             impaired,
             store_on_disk,
         }
@@ -398,7 +398,7 @@ impl Kernel {
         let mut policy = None;
         let mut desk_reach = None;
         let mut keeper = None;
-        let probes = Arc::new(ProbeBridge::default());
+        let probes = Arc::new(SessionCheckBridge::default());
         let mut credentials = None;
         let mut sched = None;
         if let Some(store) = &prepared.store {
@@ -455,7 +455,7 @@ impl Kernel {
             sched = Some(Scheduler::new(
                 store.clone(),
                 settings,
-                Some(prepared.telemetry.clone()),
+                Some(prepared.logs_and_traces.clone()),
             ));
 
             if let Some(vault) = &prepared.vault {
@@ -507,7 +507,7 @@ impl Kernel {
                 let work = Arc::new(InProcessWork::new(
                     Arc::clone(&held),
                     Arc::new(PersonBridge::new(Arc::clone(&person))),
-                    Arc::clone(&probe) as Arc<dyn a2m_auth::RunProbe>,
+                    Arc::clone(&probe) as Arc<dyn a2m_auth::RunSessionCheck>,
                 ));
                 let hours = prepared
                     .settings
@@ -519,14 +519,14 @@ impl Kernel {
                     .unwrap_or(15);
                 let keeper_settings = KeeperSettings {
                     keep_alive: seconds(hours.saturating_mul(3600)),
-                    probe_every: seconds(minutes.saturating_mul(60)),
+                    check_every: seconds(minutes.saturating_mul(60)),
                     ..KeeperSettings::default()
                 };
                 keeper = Some(
                     Keeper::builder(sessions, set, work, Arc::clone(&prepared.clock))
                         .local_worker(Arc::clone(&held))
                         .settings(keeper_settings)
-                        .telemetry(prepared.telemetry.clone())
+                        .logs_and_traces(prepared.logs_and_traces.clone())
                         .random(Arc::clone(&prepared.random))
                         .build(),
                 );
@@ -543,7 +543,7 @@ impl Kernel {
                 store: prepared.store,
                 vault: prepared.vault,
                 redact: prepared.redact,
-                telemetry: prepared.telemetry,
+                logs_and_traces: prepared.logs_and_traces,
                 policy,
                 desk_reach,
                 keeper,
@@ -841,10 +841,10 @@ impl Kernel {
         Arc::clone(&self.inner.redact)
     }
 
-    /// Telemetry.
+    /// LogsAndTraces.
     #[must_use]
-    pub fn telemetry(&self) -> &Telemetry {
-        &self.inner.telemetry
+    pub fn logs_and_traces(&self) -> &LogsAndTraces {
+        &self.inner.logs_and_traces
     }
 
     /// The registry of actions, for generating faces.
@@ -921,10 +921,10 @@ impl Kernel {
 
     /// Notes the published version a run leased `session` under, whose
     /// probe the keeper's checks of it then run.
-    pub(crate) fn note_probe(
+    pub(crate) fn note_session_check(
         &self,
         session: a2m_core::SessionId,
-        source: crate::keeper::ProbeSource,
+        source: crate::keeper::SessionCheckSource,
     ) {
         self.inner.probes.note(session, source);
     }
@@ -1012,7 +1012,7 @@ impl Kernel {
         let weak = Arc::downgrade(&self.inner);
         let clock = Arc::clone(&self.inner.clock);
         let wake = Arc::clone(&self.inner.wake);
-        let probe_every = self
+        let check_every = self
             .inner
             .settings
             .int("sessions.probe_minutes")
@@ -1036,9 +1036,9 @@ impl Kernel {
                             .as_unix_millis()
                             .saturating_sub(clock.now().as_unix_millis());
                         std::time::Duration::from_millis(u64::try_from(ahead).unwrap_or(0))
-                            .min(probe_every)
+                            .min(check_every)
                     }
-                    _ => probe_every,
+                    _ => check_every,
                 };
                 tokio::select! {
                     alive = due.changed() => {
@@ -1108,9 +1108,14 @@ impl Kernel {
 
 /// How many compiled targets read from the store are kept in memory.
 pub(crate) const COMPILED_TARGETS_KEPT: usize = 64;
-/// A drafted compiled target kept for a trial: its target and hash, and the
-/// compiled target.
-pub(crate) type KeptDraft = ((TargetName, Digest), Arc<CompiledTarget>);
+/// A drafted compiled target kept for a trial: its target and hash, the
+/// compiled target, and the asserted reads of it its person confirmed
+/// (decision 0475).
+pub(crate) type KeptDraft = (
+    (TargetName, Digest),
+    Arc<CompiledTarget>,
+    a2m_provider::ConfirmedReads,
+);
 /// How many drafted compiled targets of trials are kept in memory. A trial
 /// whose compiled target was let go since cannot be resumed; it is tried
 /// again.

@@ -45,7 +45,9 @@
 //! a screen that reads one of the page's tables by its headings and a
 //! `list` read over it (decision 0183), and a screen of the values the page
 //! labels and a `get` read of them; a placeholder the discoverers matched
-//! into the page's path is each read's key (decision 0187).
+//! into the page's path is each read's key (decision 0187). A table, a list,
+//! or a record the page gives no name or label is drafted held (decisions
+//! 0474 and 0473).
 //!
 //! A pack crate sees the kernel up to the provider contract and the base
 //! of its own pack; the layering table in
@@ -56,6 +58,7 @@ pub mod codes;
 mod draft;
 mod draft_request;
 mod driver;
+mod heading;
 mod lower;
 mod model;
 mod page_http;
@@ -176,8 +179,8 @@ impl Pack for WebUiPack {
             .lowering(Arc::new(lower::SiteToolsLowering::new(site_tools)))
             .lint_rule(Arc::new(screens::CssNotLast))
             .lint_rule(Arc::new(screens::GeneratedId))
-            .lint_rule(Arc::new(screens::ProfileUnknown))
-            .lint_rule(Arc::new(screens::ProfileReadonly))
+            .lint_rule(Arc::new(screens::PlatformProfileUnknown))
+            .lint_rule(Arc::new(screens::PlatformProfileReadonly))
             .lint_rule(Arc::new(screens::CssUsed))
             .lint_rule(Arc::new(screens::NoFingerprint))
             .drafting_rule(Arc::new(draft::TableScreenRule {

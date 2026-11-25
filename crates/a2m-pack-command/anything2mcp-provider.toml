@@ -28,7 +28,7 @@ discoverer = ["help", "binary"]
 
 # Runs only the help and version forms a target declares. Handed a fish
 # completion file under `completions` or a manual page under `manual`, as
-# files of the project's `sources` folder, it reads them as text and never
+# files of the project's `inputs` folder, it reads them as text and never
 # runs them (decision 0284); handed a PowerShell XML help file under
 # `powershell_help` or a module manifest under `module_manifest`, it reads
 # them as data, imports no module, and starts nothing (decision 0290).
@@ -43,7 +43,7 @@ bounds = { seconds = 30, bytes = 1048576, depth = 2 }
 files = ["completions", "manual", "powershell_help", "module_manifest"]
 
 # Reads the plain facts of a binary a person hands it under `binary`, as a
-# file of the project's `sources` folder: its kind and system, imports and
+# file of the project's `inputs` folder: its kind and system, imports and
 # exports, version resource, manifest, entitlements, and signature. It reads
 # bytes only and starts nothing: the file is never run or loaded (X5,
 # decision 0276). The bound of bytes is the largest program it reads.

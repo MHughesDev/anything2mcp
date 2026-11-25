@@ -1,5 +1,5 @@
 //! A person hands the scout files of the project (decision 0263): a file
-//! that describes a system, kept in the project's `sources` folder and
+//! that describes a system, kept in the project's `inputs` folder and
 //! named under a name a discoverer reads, through the command face.
 //!
 //! The test application serves its description at no place the HTTP pack
@@ -9,7 +9,7 @@
 //! PowerShell help file describes commands that the command-line stand's
 //! program does not know; they are read from the file and nothing is
 //! started for them. Every path
-//! that leads out of the `sources` folder, every hidden file, and every
+//! that leads out of the `inputs` folder, every hidden file, and every
 //! name no discoverer reads is refused before anything starts.
 
 #![allow(
@@ -33,7 +33,7 @@ use serde_json::{Value as Json, json};
 const DESCRIPTION_PATH: &str = "/api/openapi.json";
 
 /// The file the test writes from the stand's description.
-const DESCRIPTION_FILE: &str = "sources/example-openapi.json";
+const DESCRIPTION_FILE: &str = "inputs/example-openapi.json";
 
 /// The files a scout of the test application drafts for one read: the
 /// pinned description that states its request, and its operation
@@ -55,7 +55,7 @@ fn files(name: &str, path: &str) -> String {
 }
 
 /// The test application, with its description written to the project's
-/// `sources` folder and then served nowhere: every request for it is
+/// `inputs` folder and then served nowhere: every request for it is
 /// answered 404.
 async fn described_elsewhere(project: &Path) -> TestApp {
     let app = TestApp::start().await.unwrap();
@@ -69,7 +69,7 @@ async fn described_elsewhere(project: &Path) -> TestApp {
         .await
         .unwrap();
     assert!(description.contains("\"openapi\""), "{description}");
-    std::fs::create_dir_all(project.join("sources")).unwrap();
+    std::fs::create_dir_all(project.join("inputs")).unwrap();
     std::fs::write(project.join(DESCRIPTION_FILE), description).unwrap();
     app.set_fault(&Fault {
         kind: FaultKind::Status { status: 404 },
@@ -215,7 +215,7 @@ async fn a_register_map_given_as_a_file_is_read_by_the_device_scout() {
         "controller",
         &[("127.0.0.1:502", &address), ("127.0.0.1:1502", &address)],
     );
-    let sources = machine.project.path().join("sources");
+    let sources = machine.project.path().join("inputs");
     std::fs::create_dir_all(&sources).unwrap();
     std::fs::write(sources.join("example-map.csv"), MAP).unwrap();
     let world = machine.open().await;
@@ -227,7 +227,7 @@ async fn a_register_map_given_as_a_file_is_read_by_the_device_scout() {
             "--wait-seconds",
             "60",
             "--files",
-            &files("register_map", "sources/example-map.csv"),
+            &files("register_map", "inputs/example-map.csv"),
         ])
         .await;
     assert!(scouted["report_hash"].is_string(), "{scouted}");
@@ -238,7 +238,7 @@ async fn a_register_map_given_as_a_file_is_read_by_the_device_scout() {
     );
     assert_eq!(
         scouted["content"]["files"],
-        json!({"register_map": "sources/example-map.csv"}),
+        json!({"register_map": "inputs/example-map.csv"}),
         "{scouted}"
     );
     // Nothing was written to the device.
@@ -286,7 +286,7 @@ const MANY: usize = 400;
 const SOUND: usize = 12;
 
 /// The test application's description with `MANY` more described reads
-/// added, written to the project's `sources` folder over the first.
+/// added, written to the project's `inputs` folder over the first.
 fn enlarge_description(project: &Path) {
     let path = project.join(DESCRIPTION_FILE);
     let mut described: Json =
@@ -481,7 +481,7 @@ async fn a_file_outside_the_sources_folder_a_hidden_file_or_a_link_out_is_refuse
     let app = described_elsewhere(machine.project.path()).await;
     let world = with_target(&machine, &app).await;
     let project = machine.project.path();
-    let sources = project.join("sources");
+    let sources = project.join("inputs");
     std::fs::write(sources.join(".env"), "made-up=1\n").unwrap();
     let outside = Folder::new("outside");
     let elsewhere = outside.path().join("example-openapi.json");
@@ -491,17 +491,17 @@ async fn a_file_outside_the_sources_folder_a_hidden_file_or_a_link_out_is_refuse
         "../x".to_owned(),
         absolute,
         "targets/example/target.yaml".to_owned(),
-        "sources/.env".to_owned(),
-        "sources/../targets/example/target.yaml".to_owned(),
-        "sources".to_owned(),
+        "inputs/.env".to_owned(),
+        "inputs/../targets/example/target.yaml".to_owned(),
+        "inputs".to_owned(),
     ];
     match linked(&elsewhere, &sources.join("out")) {
-        Ok(()) => refused.push("sources/out".to_owned()),
+        Ok(()) => refused.push("inputs/out".to_owned()),
         Err(why) => println!("no link out was made, so that case is not tried: {why}"),
     }
     let inside = project.join("targets").join("example").join("target.yaml");
     match linked(&inside, &sources.join("in")) {
-        Ok(()) => refused.push("sources/in".to_owned()),
+        Ok(()) => refused.push("inputs/in".to_owned()),
         Err(why) => println!("no link was made, so that case is not tried: {why}"),
     }
     for path in &refused {
@@ -541,7 +541,7 @@ async fn a_file_outside_the_sources_folder_a_hidden_file_or_a_link_out_is_refuse
             "run",
             "example",
             "--files",
-            &files("description", "sources/absent.json"),
+            &files("description", "inputs/absent.json"),
         ])
         .await;
     assert_eq!(ran.error()["code"], "file_unavailable", "{}", ran.json);
@@ -596,7 +596,7 @@ fn powershell_help() -> Vec<u8> {
             .join("a2m-pack-command")
             .join("tests")
             .join("fixtures")
-            .join("sources")
+            .join("inputs")
             .join("Example.Inventory-help.xml"),
     )
     .unwrap()
@@ -620,14 +620,14 @@ async fn a_powershell_help_file_given_as_a_file_drafts_its_commands_and_starts_n
         ],
     )
     .on_disk();
-    let sources = machine.project.path().join("sources");
+    let sources = machine.project.path().join("inputs");
     std::fs::create_dir_all(&sources).unwrap();
     std::fs::write(
         sources.join("Example.Inventory-help.xml"),
         powershell_help(),
     )
     .unwrap();
-    let handed = files("powershell_help", "sources/Example.Inventory-help.xml");
+    let handed = files("powershell_help", "inputs/Example.Inventory-help.xml");
     let world = machine.open().await;
 
     let read = world

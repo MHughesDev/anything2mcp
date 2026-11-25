@@ -22,7 +22,8 @@ const path = require("node:path");
 const { PLATFORMS, platformKey, findPlatformPackage } = require("../lib/platform.js");
 
 const { ACTIONS, Actions } = require("./actions.js");
-const { Client, LOCAL_API, connectTo } = require("./client.js");
+const { Client, LOCAL_API, connectTo, greet } = require("./client.js");
+const { missing, openThroughProgram } = require("./program.js");
 const channel = require("./channel.js");
 const { ChannelError } = channel;
 
@@ -89,19 +90,16 @@ function startEngine({ binary, env, project }) {
   });
 }
 
-// Opens the channel to the engine for this operating system.
+// Opens the channel to the engine for this operating system. On Windows the
+// pipe is opened by the program's `anything2mcp channel` command, which
+// checks who serves it as every command does (decision 0466).
 async function open(options) {
-  const { env = process.env, platform = process.platform, project, name, timeout, verifyPipeServer, sid } = options;
+  const { env = process.env, platform = process.platform, project, name, timeout, binary } = options;
   if (platform === "win32") {
-    if (typeof verifyPipeServer !== "function" || typeof sid !== "string") {
-      throw new ChannelError(
-        "client_not_built",
-        "This client cannot yet check who serves the engine's pipe on Windows.",
-        "Use the `anything2mcp` command on Windows for now, or pass `verifyPipeServer` and `sid`.",
-      );
-    }
-    const address = channel.pipeName(channel.windowsRuntimeDir(env), sid);
-    return connectTo(address, { verify: verifyPipeServer, name, project, timeout });
+    const program = binary || installedBinary();
+    if (!program) throw missing();
+    const stream = await openThroughProgram(program, ["channel"], { env: { ...process.env, ...env } });
+    return greet(stream, { name, project, timeout });
   }
   const file = channel.socketPath(env, platform);
   channel.checkOwner(file);
@@ -120,11 +118,11 @@ async function open(options) {
 //
 // On macOS and Linux the client checks that the socket and its directory
 // belong to the user before it sends anything. On Windows Node's standard
-// library cannot say who serves a named pipe, so the client cannot make the
-// check by itself and refuses to connect (`client_not_built`) unless the
-// caller supplies `verifyPipeServer`, a function of the pipe's socket that
-// resolves to true only when the process serving it runs as this user. The
-// pipe's name needs the user's security identifier: `sid`.
+// library cannot say who serves a named pipe, so the client runs the
+// program's `anything2mcp channel` command, the one named by `binary` or
+// installed by the platform package, which opens the pipe after the check
+// every command makes, that the process serving it runs as this user, and
+// then carries the client's bytes and reads none of them.
 async function connect(options = {}) {
   const { start = true, binary, env = process.env, project } = options;
   try {
@@ -149,8 +147,7 @@ module.exports = {
   LOCAL_API,
   connect,
   connectTo,
+  greet,
   packageVersion,
-  pipeName: channel.pipeName,
   socketPath: channel.socketPath,
-  windowsRuntimeDir: channel.windowsRuntimeDir,
 };

@@ -25,7 +25,7 @@ The MCP face of the kernel. It turns the action registry and a toolset's publish
 - The stdio proxy: a thin client that copies MCP messages between standard input and output and the engine's MCP endpoint.
 - Client profiles, as data: a quirk of one client, where one must be handled.
 
-It must never: hold run state between requests; decide whether a call is allowed; validate a call against anything but the full schema the dispatcher holds; let text from a target into a tool's name or description; branch on which client is calling except through a profile.
+It must never: hold run state between requests; decide whether a call is allowed; validate a call against anything but the full schema the dispatcher holds; let text from a target into a tool's name or description; branch on which client is calling except through a client profile.
 
 ## Interface
 
@@ -82,9 +82,9 @@ pub async fn stdio_proxy<U, R, W>(upstream: U, toolset: &ToolsetName, input: R, 
     -> Result<(), Failure>;
 ```
 
-The proxy is started by `bridge`, a process command of the product crate, which connects through `a2m-local` and wraps the link's `send` in a closure. The two role crates do not depend on each other. Client profiles are not built, so no type for them exists yet.
+The proxy is started by `stdio`, a process command of the product crate, which connects through `a2m-local` and wraps the link's `send` in a closure. The two role crates do not depend on each other. Client profiles are not built, so no type for them exists yet.
 
-**How the product crate composes it.** For each of `use` and `build`: `McpService::new(kernel.clone(), toolset, McpSettings::from_settings(kernel.settings())?)`, nested at `mcp_path(&toolset)` in the router the local channel serves. The mount puts the caller on each request: an `McpPeer` with the user the channel saw, or the `Caller` it already had the kernel check for the REST router. Beside the caller it puts the `ProjectFolder` the client end stated, when it stated one; the endpoint hands it to `Request::in_project_folder` with every dispatch, and nothing in a message can set it. `bridge` names the folder it was started in, or the one `--project` gives, on every request it carries. For `bridge`: `stdio_proxy(move |request| link.send(request), &toolset, stdin, stdout)`, and exit status 0 when it returns well.
+**How the product crate composes it.** For each of `use` and `build`: `McpService::new(kernel.clone(), toolset, McpSettings::from_settings(kernel.settings())?)`, nested at `mcp_path(&toolset)` in the router the local channel serves. The mount puts the caller on each request: an `McpPeer` with the user the channel saw, or the `Caller` it already had the kernel check for the REST router. Beside the caller it puts the `ProjectFolder` the client end stated, when it stated one; the endpoint hands it to `Request::in_project_folder` with every dispatch, and nothing in a message can set it. `stdio` names the folder it was started in, or the one `--project` gives, on every request it carries. For `stdio`: `stdio_proxy(move |request| link.send(request), &toolset, stdin, stdout)`, and exit status 0 when it returns well.
 
 ## Revisions
 
@@ -106,7 +106,7 @@ One service serves both, with no session for either. Both are served because a s
 
 **What a handshake-era caller does not get.** A stateless server does not remember what a client declared in `initialize`. Such a caller gets the fallback every client gets: the link in the result in place of elicitation, the run identifier in place of a task.
 
-**The protocol layer.** One module of this crate answers the methods: `initialize` and `ping` of the handshake revision, `server/discover` of the stateless revision, and `tools/list` and `tools/call` in both. It builds each result in the shape its revision wants, and answers a tool call whose caller asked for progress as a stream of events. It is about 300 lines over `serde_json`, and names no outside protocol library ([decision 0130](../../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md)). Everything this crate promises is in the list of messages below, which is tested with raw messages; that list is what let the SDK be replaced in one step, with every test passing unchanged.
+**The protocol layer.** One module of this crate answers the methods: `initialize` and `ping` of the handshake revision, `server/discover` and `subscriptions/listen` of the stateless revision, and `tools/list`, `tools/call`, and the three resource methods in both. It builds each result in the shape its revision wants, and answers a tool call whose caller asked for progress as a stream of events. It is about 300 lines over `serde_json`, and names no outside protocol library ([decision 0130](../../decisions/0130-the-mcp-protocol-layer-is-our-own-because-the-sdk-brings-an-unmaintained-crate.md)). Everything this crate promises is in the list of messages below, which is tested with raw messages; that list is what let the SDK be replaced in one step, with every test passing unchanged.
 
 **In front of it.** The endpoint checks, in order: the `Host`, the `Origin` (none passes on; one that is not the listener's own, `http://` and a served name with the port the `Host` names, is 403 before the body is read and before the caller is looked at), the HTTP method, the content types, the caller, the size of the body, that the body is JSON, that it is one request or one notification, the revision it names and that its headers agree, and the shape of a tool call. It answers a notification itself, with status 202. Each refusal of a message is a JSON-RPC error whose `data` holds the failure's class, code, message, and fix.
 
@@ -144,7 +144,13 @@ Each line is a test with raw messages. "H" is the handshake revision, "M" the ne
 | `tools/call` with a `progressToken` | Answer as a stream of events: `notifications/progress` with that token, a rising count, and a sentence of the server's own, then the result. Say nothing in progress that a system said |
 | `tools/call` without a `progressToken` | Send no progress, and answer with one JSON message |
 | `notifications/cancelled` on stdio, or the stream closed on HTTP | Stop, and send nothing more for that request. Other requests are still answered |
-| `resources/read`, `prompts/list`, `prompts/get`, tasks, elicitation | Not built. Their lines are added by the packages that build them |
+| `resources/templates/list` (H and M) | List one template for each action with a resource face, from the registry: today `a2m://watches/{watch_id}/changes{?after}`, of `watch.changes`, as `application/json` ([decision 0478](../../decisions/0478-a-watch-is-an-mcp-resource-of-watch-changes-and-its-changes-are-followed-without-a-decision-for-each-wait.md)). M adds `ttlMs` and `cacheScope` `public` |
+| `resources/list` (H and M) | Answer an empty list: each watch is reached by its URI, which every `watch.*` result names as `resource` |
+| `resources/read` of a URI a template matches (H and M) | Dispatch the template's action once, as the caller, with the fields the URI fills and nothing else; answer one item of contents, the action's result as JSON text. M adds `ttlMs` 0 and `cacheScope` `private` |
+| `resources/read` of a URI no template matches exactly, or of a watch that is not the caller's person's | Answer -32002 (H) or -32602 (M), with the failure as `data`; nothing in the URI is decoded |
+| `subscriptions/listen` (M) | Acknowledge first, tagged with the request's id, honouring in `resourceSubscriptions` only the URIs that are watches of the caller's person and no other kind; send `notifications/resources/updated` with the URI, tagged the same, each time one of them records a change after the URI's `after` or else after its last change; answer the request once every watch followed has ended. Closing the stream ends it |
+| `subscriptions/listen` and `resources/subscribe` (H) | Answer -32601: a stateless server holds no stream for the handshake revision's notification |
+| `prompts/list`, `prompts/get`, tasks, elicitation | Not built. Their lines are added by the packages that build them |
 | A request over HTTP with a foreign `Host`, or none | Be refused with status 403 before it is read |
 | A request over HTTP with an `Origin` that is not the listener's own, `null`, or malformed | Be refused with status 403 before it is read and before its caller is checked |
 | A request over HTTP that is not a `POST` | Be refused with status 405 |
@@ -190,7 +196,7 @@ A toolset's list is the same for every caller connected to it; rights are checke
 | --- | --- |
 | `result` | `structuredContent`, matching the action's output schema, and one text item holding the same JSON |
 | `next` of a success | Inside the structured content, as `next`: the action, the name of its tool, its input, and when. Every output schema admits it. Rendered by `McpResultFace::of_in` with the endpoint's toolset: when this toolset does not list the tool, `next` names `a2m_action_run` with the action as its argument |
-| Kept blobs: traces, diffs, snapshots, files | A reference in the result, never inlined. Resource links and `resources/read` are not built |
+| Kept blobs: traces, diffs, snapshots, files | A reference in the result, never inlined. Resource links, and a resource of any blob, are not built |
 | `warnings` of a success | `_meta`, under `anything2mcp/warnings`. The output schemas take no key for them |
 | a published tool in a list | its `_meta`, under `anything2mcp/target`, `anything2mcp/version`, `anything2mcp/description_by` (`rule` or `builder`, who wrote the description; decision 0307, point 6), and `anything2mcp/digest`, the `digest` `tool.search` gives in full, of the tool as published and not of the sentence a drift puts first ([decision 0460](../../decisions/0460-a-tools-digest-is-of-its-definition-as-published-and-the-untrusted-mark-sits-on-the-output-field.md)); a control tool has none. The same for every client |
 | a published tool a drift stopped (`available: false` from `tool.search`) | listed all the same, its schema unchanged; its description begins with the fixed sentence "Unavailable: the system changed and this tool was stopped until its target is repaired." and its `_meta` carries `anything2mcp/unavailable`: the reason, the knowledge marked, and when ([decision 0396](../../decisions/0396-a-tool-stopped-by-a-drift-is-listed-and-marked-never-left-out.md)) |
@@ -239,7 +245,7 @@ Not built. The same `McpService` is mounted at `/mcp/<toolset>` on the network l
 
 | Caller | Uses |
 | --- | --- |
-| `anything2mcp` | `McpService` mounted on the local channel and the network listener; `stdio_proxy` for `bridge` |
+| `anything2mcp` | `McpService` mounted on the local channel and the network listener; `stdio_proxy` for `stdio` |
 
 It calls `a2m-actions` for the registry, `dispatch`, the check of a caller, and the redactor.
 
@@ -287,6 +293,7 @@ Every failure of a call is the dispatcher's, rendered. This crate adds five, non
 
 1. Done: one service, the stdio proxy as a line copier of our own, and the `use` toolset with `a2m_tool_call` for a read. Package 1.5.
 2. Done: structured results, `next` inside them, annotations, the two revisions, cancelling, and progress from the run's events for `tool.call` and `run.resume`. Not built: resource links.
+7. Done (package W2e, [decision 0478](../../decisions/0478-a-watch-is-an-mcp-resource-of-watch-changes-and-its-changes-are-followed-without-a-decision-for-each-wait.md)): a watch's changes as a resource generated from the registry, read in both revisions, and its subscription by `subscriptions/listen`, which follows each watch through `Kernel::watch_changes` with no decision for each wait. Tests: `src/tests/resources.rs`, and the product's `a_line_the_stand_removes_is_reported_once_and_reaches_an_agent_through_the_resource`. Not built: keep-alive on a subscription's stream, any other resource, `resources/list` holding each watch, and list-changed notifications.
 3. Not built: elicitation. The link fallback is in the result. Package 3.6.
 4. Done: the `build` toolset and its action search tools, which are actions like any other; one sentence of server instructions, which names the fields of `a2m_action_run` from `action.run`'s own definition, held by a test ([decision 0219](../../decisions/0219-shadow-bindings-reach-the-product-and-the-first-hour-is-mended.md)). Not built: prompts, resources, instructions generated from the guidance file. Section 221 says nothing of the instructions; section 220 says they carry the handful of rules every caller needs and come from the same sources as the guidance file, which is now the `guidance` page of `docs.get`. The one sentence stays until that generation is built. Package 5.1.
 5. Done: stateless Streamable HTTP with the `Host` check, as a router to nest at `/mcp/<toolset>`. Not built: token checks, protected resource metadata, named toolsets. Package 6.2.

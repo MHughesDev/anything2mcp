@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, EvidenceLevel, Failure, FailureClass, Finding, Redact, Source, Value, Values,
+    AccessKind, EvidenceLevel, Failure, FailureClass, Finding, Redact, Source, Value, Values,
 };
 use a2m_files::{Drafter, TargetRoot};
 use a2m_provider::{
@@ -523,7 +523,7 @@ async fn discover_with(
 ) -> Vec<(String, Result<Vec<Finding>, Failure>)> {
     let description = SurfaceDescription {
         kind: scene.surface.surface.kind.clone(),
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -738,7 +738,7 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
     // The describer counts, and keeps the system's own text apart.
     let description = scene.registry.discoverers_for(&SurfaceDescription {
         kind: scene.surface.surface.kind.clone(),
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: service.address.clone(),
         facts: Values::new(),
     })[0]
@@ -1477,7 +1477,7 @@ async fn the_description_reader_reads_the_file_it_is_handed_under_its_declared_n
     let scene = Scene::new("secured", &service.address);
     let description = SurfaceDescription {
         kind: scene.surface.surface.kind.clone(),
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -1500,7 +1500,7 @@ async fn the_description_reader_reads_the_file_it_is_handed_under_its_declared_n
     // A file handed under that name is what the reader reads.
     let folder = Folder::new("handed");
     std::fs::write(folder.path().join("example-openapi.json"), DESCRIPTION).unwrap();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots
         .add(root.clone(), folder.path(), Access::Read)
@@ -1574,7 +1574,7 @@ async fn a_description_given_as_a_file_passes_the_redactor_before_anything_is_ma
 
 /// The findings a discovery of the surface at `address` makes from the
 /// test application's description, handed in as a file.
-async fn findings_from_handed_file(app: &TestApp, address: &str) -> Vec<Finding> {
+async fn findings_from_input_file(app: &TestApp, address: &str) -> Vec<Finding> {
     let description = app
         .http()
         .get(app.url("/api/openapi.json"))
@@ -1591,7 +1591,7 @@ async fn findings_from_handed_file(app: &TestApp, address: &str) -> Vec<Finding>
 async fn findings_from_description(description: String, address: &str) -> Vec<Finding> {
     let folder = Folder::new("handed-file");
     std::fs::write(folder.path().join("example-openapi.json"), description).unwrap();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots
         .add(root.clone(), folder.path(), Access::Read)
@@ -1631,7 +1631,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
     // One `http` surface, whose address ends in a path: the findings carry
     // the origin and that path, and the surface is not an open question.
     let prefixed = format!("{base}/v1");
-    let findings = findings_from_handed_file(&app, &prefixed).await;
+    let findings = findings_from_input_file(&app, &prefixed).await;
     assert_eq!(findings.len(), 13);
     let one = target.replace("http://127.0.0.1:4010", &prefixed);
     let (_folder, root, scene, report) = draft_into(one, &findings);
@@ -1656,7 +1656,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
         "environments:",
         "  files:\n    kind: files\n    base: \"/tmp\"\nenvironments:",
     );
-    let findings = findings_from_handed_file(&app, &base).await;
+    let findings = findings_from_input_file(&app, &base).await;
     let (folder, _, _, report) = draft_into(with_other, &findings);
     assert!(report.open_questions.is_empty(), "{report:?}");
     let entry = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
@@ -1673,7 +1673,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
                 &format!("  other:\n    kind: http\n    base: \"{second}\"\nenvironments:"),
             )
     };
-    let findings = findings_from_handed_file(&app, &prefixed).await;
+    let findings = findings_from_input_file(&app, &prefixed).await;
     let (folder, _, _, report) = draft_into(two(&format!("{base}/v2")), &findings);
     assert!(report.open_questions.is_empty(), "{report:?}");
     let entry = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();

@@ -19,7 +19,7 @@
 //! | `files.allowed_roots` | The dispatcher's check of a stated project folder |
 
 use a2m_core::{EffectClass, Value};
-use a2m_policy::{ApproveWrites, BuiltIn, Profile};
+use a2m_policy::{ApproveWrites, BuiltIn, DeploymentShape};
 
 use crate::codes;
 use crate::settings::Settings;
@@ -70,7 +70,7 @@ pub(crate) fn carried(settings: &Settings, built_in: BuiltIn) -> (BuiltIn, Vec<N
         policy.pre_approval = flag;
     }
     if let Some(word) = settings.text("policy.approve_writes") {
-        let local = built_in.profile() == Profile::Local;
+        let local = built_in.profile() == DeploymentShape::Local;
         match ApproveWrites::from_text(word) {
             Some(ApproveWrites::NamedApprover) if local => refused.push(not_in_force(
                 settings,
@@ -130,11 +130,11 @@ mod tests {
     use a2m_ledger::{
         Durability, Fence, NewRun, Opened, RetentionClass, Store, StoreConfig, ToolKind,
     };
+    use a2m_logs::ManualClock;
     use a2m_policy::{
         ApprovalSurface, Approved, BuiltIn, Channel, Context, LimitCheck, ModuleName, Outcome,
         Policy, PresenceCheck, PrincipalRef, Question, Request, Resource, ToolRef,
     };
-    use a2m_telemetry::ManualClock;
     use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
 
     use super::carried;
@@ -187,7 +187,7 @@ mod tests {
         let clock = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START)));
         let store = Store::open(
             StoreConfig::in_memory()
-                .with_clock(Arc::clone(&clock) as Arc<dyn a2m_telemetry::Clock>)
+                .with_clock(Arc::clone(&clock) as Arc<dyn a2m_logs::Clock>)
                 .with_random(counted()),
         )
         .await

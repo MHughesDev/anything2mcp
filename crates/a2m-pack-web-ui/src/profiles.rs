@@ -126,7 +126,7 @@ pub struct DetectRule {
 
 /// A platform profile.
 #[derive(Debug, Clone)]
-pub struct Profile {
+pub struct PlatformProfile {
     /// Its name, which a surface's `profile` names.
     pub name: String,
     /// The rules of which any one names the family, with a confidence.
@@ -148,7 +148,7 @@ pub struct Profile {
     pub support_tier: String,
 }
 
-impl Profile {
+impl PlatformProfile {
     /// Whether an identifier is one the profile says is made, not chosen.
     #[must_use]
     pub fn rejects_id(&self, id: &str) -> bool {
@@ -187,7 +187,7 @@ fn words<'a>(
 /// # Errors
 ///
 /// A sentence that says what is wrong, and where.
-pub fn parse(file: &str, text: &str) -> Result<Profile, String> {
+pub fn parse(file: &str, text: &str) -> Result<PlatformProfile, String> {
     let at = RelPath::new(&format!("profiles/{file}.yaml"))
         .map_err(|_| "the file's name is not one a path may have".to_owned())?;
     let docs = parse_yaml(&at, text).map_err(|found| found.to_string())?;
@@ -300,7 +300,7 @@ pub fn parse(file: &str, text: &str) -> Result<Profile, String> {
     )?
     .to_owned();
     let support_tier = words(doc, "support_tier", TIERS, "a tier of support")?.to_owned();
-    Ok(Profile {
+    Ok(PlatformProfile {
         name: name.to_owned(),
         detect,
         ready_js,
@@ -319,8 +319,8 @@ pub fn parse(file: &str, text: &str) -> Result<Profile, String> {
 ///
 /// The first file that does not fit, as a sentence. A test reads them all,
 /// so that none that does not fit is ever embedded.
-pub fn all() -> Result<&'static [Profile], &'static str> {
-    static HELD: OnceLock<Result<Vec<Profile>, String>> = OnceLock::new();
+pub fn all() -> Result<&'static [PlatformProfile], &'static str> {
+    static HELD: OnceLock<Result<Vec<PlatformProfile>, String>> = OnceLock::new();
     HELD.get_or_init(|| {
         FILES
             .iter()
@@ -336,7 +336,7 @@ pub fn all() -> Result<&'static [Profile], &'static str> {
 
 /// The profile of a name.
 #[must_use]
-pub fn named(name: &str) -> Option<&'static Profile> {
+pub fn named(name: &str) -> Option<&'static PlatformProfile> {
     all().ok()?.iter().find(|profile| profile.name == name)
 }
 

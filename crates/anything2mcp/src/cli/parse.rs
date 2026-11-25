@@ -663,8 +663,8 @@ impl Tree {
                  one by itself. `--passphrase-from-stdin` reads the vault's passphrase from \
                  standard input, to its end, instead of from the environment.",
             ),
-            "bridge" => (
-                format!("{PROGRAM} bridge [--toolset use|build]"),
+            "stdio" => (
+                format!("{PROGRAM} stdio [--toolset use|build]"),
                 "A process command: it starts a long-lived role and is not an action.",
                 "The program an MCP client starts: it copies MCP messages between its standard \
                  input and output and the local engine's MCP endpoint.\nStandard output carries \
@@ -672,6 +672,17 @@ impl Tree {
                  where none may be started (`engine.in_process`), it is answered with an error \
                  that says to run `anything2mcp serve`.\nThe \
                  project folder is the one it is started in, or the one `--project` names.",
+            ),
+            "channel" => (
+                format!("{PROGRAM} channel"),
+                "A process command: it starts a long-lived role and is not an action.",
+                "The local channel as bytes on standard input and output, for a client that \
+                 cannot check the engine itself, such as the Node client on Windows.\nIt connects \
+                 to the engine with the check every command makes, that the engine runs as this \
+                 user, then copies bytes both ways and reads none of them.\nStandard error says \
+                 `anything2mcp: the local channel is open.` once connected, or the refusal as one \
+                 JSON object.\nIt starts no engine, and ends when standard input ends or the \
+                 engine closes the connection.",
             ),
             COMPLETION_COMMAND => (
                 format!(
@@ -770,7 +781,7 @@ pub(crate) fn process_flags(word: &str) -> &'static [(&'static str, &'static str
             "--passphrase-from-stdin",
             "Read the vault's passphrase from standard input, to its end.",
         )],
-        "bridge" => &[("--toolset", "The built-in toolset to serve: use or build.")],
+        "stdio" => &[("--toolset", "The built-in toolset to serve: use or build.")],
         _ => &[],
     }
 }

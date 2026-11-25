@@ -46,10 +46,10 @@ class Packages(unittest.TestCase):
     def test_a_wheel_with_only_the_program_passes(self):
         self.assertEqual(self.faults("wheel", wheel(GOOD_WHEEL), cp.wheel_files), [])
 
-    def test_a_wheel_that_also_holds_the_field_harness_fails(self):
-        members = dict(GOOD_WHEEL, **{"anything2mcp-0.0.1.data/scripts/a2m-field-harness": ELF})
+    def test_a_wheel_that_also_holds_the_copy_test_harness_fails(self):
+        members = dict(GOOD_WHEEL, **{"anything2mcp-0.0.1.data/scripts/a2m-copy-test-harness": ELF})
         faults = self.faults("wheel", wheel(members), cp.wheel_files)
-        self.assertTrue(any("field harness" in f for f in faults), faults)
+        self.assertTrue(any("copy test harness" in f for f in faults), faults)
         self.assertTrue(any("binary the package is not to hold" in f for f in faults), faults)
 
     def test_a_wheel_that_holds_another_binary_under_any_name_fails(self):
@@ -65,7 +65,7 @@ class Packages(unittest.TestCase):
     def test_a_platform_package_holds_the_one_program_in_bin(self):
         good = {"package/package.json": b"{}", "package/bin/anything2mcp": ELF}
         self.assertEqual(self.faults("npm", tarball(good), cp.tarball_files), [])
-        bad = dict(good, **{"package/bin/a2m-field-harness": ELF})
+        bad = dict(good, **{"package/bin/a2m-copy-test-harness": ELF})
         self.assertTrue(self.faults("npm", tarball(bad), cp.tarball_files))
 
     def test_the_launcher_holds_no_binary(self):

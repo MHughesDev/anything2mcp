@@ -34,8 +34,8 @@ use a2m_auth::{
 };
 use a2m_core::{AccountName, Failure, Identity, Timestamp};
 use a2m_pack_web_browser::{
-    Address, BrowserError, Browsers, Deadline, LaunchReason, Look, Origins, PageEnvironment,
-    ProfileKey, Visibility,
+    Address, BrowserError, BrowserProfileKey, Browsers, Deadline, LaunchReason, Look, Origins,
+    PageEnvironment, Visibility,
 };
 
 use crate::codes;
@@ -260,7 +260,7 @@ impl WindowLogin {
         }
         let key = &cx.session().key;
         let name = profile_name(cx.session().session);
-        let profile = ProfileKey {
+        let profile = BrowserProfileKey {
             target: key.target.clone(),
             environment: key.environment.clone(),
             identity: Identity::Account(AccountName::new(&name)?),
@@ -437,7 +437,7 @@ impl AuthProvider for WindowLogin {
             if let Some(profile) = material.profile()
                 && let Ok(account) = AccountName::new(profile.as_str())
             {
-                let key = ProfileKey {
+                let key = BrowserProfileKey {
                     target: cx.session().key.target.clone(),
                     environment: cx.session().key.environment.clone(),
                     identity: Identity::Account(account),

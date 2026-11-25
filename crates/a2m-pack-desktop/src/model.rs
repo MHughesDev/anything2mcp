@@ -44,6 +44,12 @@ pub(crate) struct Action {
     pub locate: Vec<Locator>,
     /// The name of the element's action, as its interface lists it.
     pub perform: String,
+    /// The key of the pack's closed list ([`crate::keys::KEYS`]) the
+    /// action is done by, when it states one: the element's own action
+    /// that the element binds to that key (decision 0467). Never a
+    /// synthetic key.
+    #[serde(default)]
+    pub key: Option<String>,
     pub confirm: Cond,
     pub commits: bool,
 }
@@ -202,6 +208,11 @@ pub(crate) struct SurfaceFields {
     /// Its namespace, when not the default.
     #[serde(default)]
     pub management_namespace: Option<String>,
+    /// Whether the driver may start the program, by its path and digest,
+    /// when no application of it is running (decision 0467). Without it
+    /// the pack starts nothing.
+    #[serde(default)]
+    pub start: bool,
 }
 
 /// The payload of a `management_get` or a `com_get` step: the management

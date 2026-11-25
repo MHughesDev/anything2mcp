@@ -7,24 +7,24 @@ use std::time::Duration;
 
 use a2m_auth::{ExpirySign, SessionLease};
 use a2m_core::{
-    BindingStatus, CompiledBinding, CompiledOperation, Environment, Failure, FailureClass,
-    FailureCode, Mode, OperationIndex, OperationName, REDACTED, RecordKey, RunState, SessionState,
-    Step, SurfaceIndex, Value, Values,
+    BindingStatus, CompiledBinding, CompiledOperation, Coverage, Environment, Failure,
+    FailureClass, FailureCode, Mode, OperationIndex, OperationName, REDACTED, RecordKey, RunState,
+    SessionState, Step, SurfaceIndex, Value, Values,
 };
 use a2m_ledger::{IntentToken, RecordRef};
+use a2m_logs::{
+    CaptureKind, CaptureOutcome, CapturePoint, CaptureRef, ChoiceReason, OfferedCapture, PassStart,
+    Phase, StepRecord, TraceBuilder, TraceOutcome, TracedValue,
+};
 use a2m_provider::{
     Access, Authority, CheckedPaths, Deadline, Destinations, DriverHandle, DriverHealth, Observed,
     Posture, PrepareContext, Prepared, ProgramRef, RootName, Roots, Sent, StepFailure, StepInput,
     StepOutcome, SurfaceRef,
 };
-use a2m_telemetry::{
-    ArtifactKind, ArtifactOutcome, ArtifactRef, CapturePoint, ChoiceReason, OfferedArtifact,
-    PassStart, Phase, StepRecord, TraceBuilder, TraceOutcome, TracedValue,
-};
 
 use crate::codes;
 use crate::compare::Field;
-use crate::control::{Control, EngineEvent, KeptCapture, PassedOver, SessionWant};
+use crate::control::{ControlPort, EngineEvent, KeptCapture, PassedOver, SessionWant};
 use crate::engine::Engine;
 use crate::guard::caught;
 use crate::job::{Directive, JobKind, JobSpec, KernelHealth};
@@ -133,7 +133,7 @@ pub(crate) struct PassInfo {
 pub(crate) struct Run<'a> {
     pub engine: &'a Engine,
     pub job: &'a JobSpec,
-    pub control: &'a dyn Control,
+    pub control: &'a dyn ControlPort,
     pub loaded: Arc<Loaded>,
     pub environment: Environment,
     pub env_position: usize,
@@ -155,6 +155,9 @@ pub(crate) struct Run<'a> {
     /// binding is handed in place of its provider's driver. No session is
     /// asked for, and no provider's driver is used (decision 0177).
     pub replay: Option<Arc<dyn a2m_provider::Driver>>,
+    /// What the last read pass of an operation stated of its coverage, as
+    /// its steps that returned values stated it (decision 0472).
+    pub read_coverage: Coverage,
     /// Whether a binding in shadow may run beside this job's reads: a live
     /// `Execute` job of a tool that only reads (decision 0207).
     pub shadow_allowed: bool,
@@ -212,7 +215,7 @@ impl<'a> Run<'a> {
     pub fn new(
         engine: &'a Engine,
         job: &'a JobSpec,
-        control: &'a dyn Control,
+        control: &'a dyn ControlPort,
         loaded: Arc<Loaded>,
         env_position: usize,
         posture: Posture,
@@ -260,6 +263,7 @@ impl<'a> Run<'a> {
             paths,
             time_limit: None,
             replay: None,
+            read_coverage: Coverage::Unknown,
             shadow_allowed: false,
             shadowed: Vec::new(),
             shadow_budget: None,
@@ -409,7 +413,7 @@ impl<'a> Run<'a> {
                 // change: a binding passed over for its status alone never
                 // qualifies on this version. It is the reason given only
                 // where no binding was passed over for anything else, which
-                // may pass (field test 7, finding 47).
+                // may pass (copy test 7, finding 47).
                 let failure = codes::fail(
                     &codes::row::NO_BINDING_MAY_ACT,
                     format!(
@@ -766,6 +770,7 @@ impl<'a> Run<'a> {
             destinations: &destinations,
             paths: &self.paths,
             supervisor: &supervisor,
+            confirmed: self.control.confirmed_reads(&self.loaded.hash),
         };
         // It is safe to drop the future of `prepare`, so it runs under its
         // deadline.
@@ -1085,8 +1090,8 @@ impl<'a> Run<'a> {
                     Err(_) => {}
                 }
             }
-            let artifacts = self.keep_captures(&cx, &result).await;
-            self.traced(&cx, &result, took, artifacts);
+            let captures = self.keep_captures(&cx, &result).await;
+            self.traced(&cx, &result, took, captures);
             // The step a drift was seen at names the knowledge that no
             // longer fits (decision 0380).
             if let Err(failure) = &result
@@ -1114,7 +1119,7 @@ impl<'a> Run<'a> {
 
     /// Keeps what a step captured, as the run's capture level says: each
     /// capture passes the redactor and the trace's own check, is kept as
-    /// evidence through `Control`, and is named in the step's trace record.
+    /// evidence through `ControlPort`, and is named in the step's trace record.
     /// This happens before the step after it is sent, so what was captured
     /// before a committing step is kept before the save. A capture that
     /// cannot be kept is dropped and the run goes on. The capture that says
@@ -1123,7 +1128,7 @@ impl<'a> Run<'a> {
         &mut self,
         cx: &StepCx<'_>,
         result: &Result<StepOutcome, StepFailure>,
-    ) -> Vec<ArtifactRef> {
+    ) -> Vec<CaptureRef> {
         let Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = result else {
             return Vec::new();
         };
@@ -1136,9 +1141,9 @@ impl<'a> Run<'a> {
                 break;
             };
             let kind = if capture.media_type.starts_with("image/") {
-                ArtifactKind::Screenshot
+                CaptureKind::Screenshot
             } else {
-                ArtifactKind::Exchange
+                CaptureKind::Exchange
             };
             // Bytes that are text are redacted once more; an image cannot
             // be, and arrives with no report of what was masked, so the
@@ -1148,7 +1153,7 @@ impl<'a> Run<'a> {
                 Ok(text) => redact.redact(text).into_bytes(),
                 Err(_) => capture.bytes.clone(),
             };
-            let ArtifactOutcome::Kept(artifact) = trace.artifact(OfferedArtifact {
+            let CaptureOutcome::Kept(redacted) = trace.capture(OfferedCapture {
                 kind,
                 at: CapturePoint::Step,
                 bytes,
@@ -1163,12 +1168,12 @@ impl<'a> Run<'a> {
                 step: u32::try_from(cx.position).unwrap_or(u32::MAX),
                 name: redact.redact(&capture.name),
                 media_type: capture.media_type.clone(),
-                bytes: artifact.bytes,
+                bytes: redacted.bytes,
             };
             if let Ok(blob) = self.control.keep_capture(keeping).await {
-                kept.push(ArtifactRef {
-                    kind: artifact.kind,
-                    at: artifact.at,
+                kept.push(CaptureRef {
+                    kind: redacted.kind,
+                    at: redacted.at,
                     blob: blob.digest(),
                 });
             }
@@ -1182,7 +1187,7 @@ impl<'a> Run<'a> {
         cx: &StepCx<'_>,
         result: &Result<StepOutcome, StepFailure>,
         took: Duration,
-        artifacts: Vec<ArtifactRef>,
+        captures: Vec<CaptureRef>,
     ) {
         let begins = self.begins.take().map(|info| {
             let held = &self.held[cx.held];
@@ -1238,7 +1243,7 @@ impl<'a> Run<'a> {
             acting,
             values,
             outcome,
-            artifacts,
+            captures,
         });
     }
 
@@ -1440,6 +1445,17 @@ pub(crate) fn merge(scope: &mut Scope, all: &mut Observed, observed: Observed) {
             result.insert(name.to_owned(), value.clone());
         }
     }
+    // Coverage is stated by the steps that return values: a step that
+    // returns none, such as one that opens a transaction, states nothing of
+    // the records. Of the steps that do, the weakest stands, so the pass is
+    // `complete` only when every one of them was (decision 0472).
+    if !observed.values.is_empty() {
+        all.coverage = if all.values.is_empty() {
+            observed.coverage
+        } else {
+            weakest(all.coverage, observed.coverage)
+        };
+    }
     for (name, value) in observed.values {
         all.values.insert(name, value);
     }
@@ -1452,6 +1468,16 @@ pub(crate) fn merge(scope: &mut Scope, all: &mut Observed, observed: Observed) {
     // A step's captures were kept, as the run's capture level says, when
     // the step ended; nothing of them is held beyond it.
     drop(observed.captures);
+}
+
+/// The weaker of two statements of coverage: `partial` over anything,
+/// then `unknown`, and `complete` only of two that are both complete.
+pub(crate) const fn weakest(one: Coverage, other: Coverage) -> Coverage {
+    match (one, other) {
+        (Coverage::Partial, _) | (_, Coverage::Partial) => Coverage::Partial,
+        (Coverage::Complete, Coverage::Complete) => Coverage::Complete,
+        _ => Coverage::Unknown,
+    }
 }
 
 /// Whether a value holds the redaction mark: it was masked by the redactor,
@@ -1516,5 +1542,68 @@ impl a2m_provider::OtherRecords for CannotTell {
         _value: a2m_core::Digest,
     ) -> a2m_provider::BoxFuture<'a, a2m_provider::RecordedElsewhere> {
         Box::pin(async { a2m_provider::RecordedElsewhere::CannotTell })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use a2m_core::{Coverage, Value, Values};
+    use a2m_provider::Observed;
+
+    use super::merge;
+    use crate::loaded::Scope;
+
+    fn step(values: &[(&str, i64)], coverage: Coverage) -> Observed {
+        Observed {
+            values: values.iter().map(|(name, value)| (*name, *value)).collect(),
+            coverage,
+            ..Observed::default()
+        }
+    }
+
+    fn merged(steps: Vec<Observed>) -> Coverage {
+        let mut scope = Scope::new(Value::Record(Values::new()));
+        let mut all = Observed::default();
+        for observed in steps {
+            merge(&mut scope, &mut all, observed);
+        }
+        all.coverage
+    }
+
+    /// Decision 0472: a pass is complete only when every step that returned
+    /// values stated `complete`; a step that returned none states nothing;
+    /// `partial` anywhere makes the pass partial.
+    #[test]
+    fn a_pass_is_complete_only_when_every_step_that_returned_values_said_so() {
+        let opened = || step(&[], Coverage::Unknown);
+        let fetched = |coverage| step(&[("rows", 3)], coverage);
+        assert_eq!(
+            merged(vec![opened(), fetched(Coverage::Complete), opened()]),
+            Coverage::Complete
+        );
+        assert_eq!(merged(vec![opened(), opened()]), Coverage::Unknown);
+        assert_eq!(
+            merged(vec![
+                fetched(Coverage::Complete),
+                step(&[("total", 1)], Coverage::Unknown)
+            ]),
+            Coverage::Unknown
+        );
+        assert_eq!(
+            merged(vec![
+                step(&[("total", 1)], Coverage::Unknown),
+                fetched(Coverage::Partial),
+                fetched(Coverage::Complete)
+            ]),
+            Coverage::Partial
+        );
+        // A step's word before any step returned values is not kept.
+        assert_eq!(
+            merged(vec![
+                step(&[], Coverage::Complete),
+                fetched(Coverage::Unknown)
+            ]),
+            Coverage::Unknown
+        );
     }
 }

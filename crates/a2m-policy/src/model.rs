@@ -206,8 +206,8 @@ word! {
 }
 
 word! {
-    /// How the identity a run acts as is obtained (glossary, "identity mode").
-    IdentityMode {
+    /// How the identity a run acts as is obtained (glossary, "identity kind").
+    IdentityKind {
         /// The caller's own token, passed on.
         PerUserToken => "per_user_token",
         /// A session signed in as the caller.
@@ -368,7 +368,7 @@ pub struct Context {
     /// The environment.
     pub environment: Environment,
     /// How the run's identity is obtained, once resolved from the toolset.
-    pub identity_mode: Option<IdentityMode>,
+    pub identity_mode: Option<IdentityKind>,
     /// Whether the caller is an AI agent, whatever principal it calls as.
     pub caller_is_agent: bool,
     /// For whom the caller acts, where that was proved.

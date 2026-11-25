@@ -6,7 +6,7 @@ The key names are those of the settings loader ([decision 0095](../../decisions/
 
 ## Principles
 
-1. **Every setting has a default, and the defaults together are the safe single-user installation.** An empty file, or no file, is a complete configuration: the Solo profile, one engine per user, writes approved by a person every run, nothing sent anywhere.
+1. **Every setting has a default, and the defaults together are the safe single-user installation.** An empty file, or no file, is a complete configuration: the Solo deployment shape, one engine per user, writes approved by a person every run, nothing sent anywhere.
 2. **Every setting is typed, documented, and validated at start.** A value of the wrong type, out of range, or naming something that does not exist stops the load with the file, the line, the key, and the fix. **An unknown key is an error, never ignored**, with the nearest known keys offered, so a misspelt safety setting can never be silently without effect. **A key whose part is not built is refused by name** too, from every layer and whatever its value, with what happens instead and what it arrives with; the key stays declared, and `config.show` marks it `built: false` ([decision 0236](../../decisions/0236-a-declared-setting-whose-feature-is-not-built-is-refused-by-name.md), built by [decision 0241](../../decisions/0241-protected-settings-loosen-only-from-an-administrators-file-and-every-key-says-whether-it-is-built.md)).
 3. **One schema.** Each setting is declared once: its key, type, allowed values, default for each profile, scope, whether it is protected, which direction is safer, when a change takes effect, and its description. The validation at start and the output of `config.show`, with each key's documentation through `config.show <key>`, are generated from it; `docs.get settings` is one fixed paragraph, and no editor schema is generated yet. Two tests hold the schema to the code of every product crate: one fails if a key is read that the schema does not declare, the other if a key marked built has no reader or a key marked not built has one.
 4. **A change is audited.** At every start the audit records `settings.changed` with the digest of the effective settings when it differs from the last start's; the keys that changed and their layers are not recorded yet. `config.set`, which is to write an entry with who, which key, the old and new values, the layer, and the presence check passed, is not built.
@@ -45,7 +45,7 @@ Settings come from layers. A higher layer overrides a lower one, key by key, low
 | # | Layer | Where | Typical use |
 | --- | --- | --- | --- |
 | 1 | Built-in defaults | The binary | The safe single-user installation |
-| 2 | The deployment profile | `profile.name`, from the installation's file or the flags of `serve` | Defaults that differ by shape, such as the scout running on add only in `solo` and `workstation` |
+| 2 | The deployment shape | `profile.name`, from the installation's file or the flags of `serve` | Defaults that differ by shape, such as the scout running on add only in `solo` and `workstation` |
 | 3 | A preset | `profile.preset`, from the flags, the variables, the user's file, or the installation's file; never the project's | A handful of values set by one choice |
 | 4 | The installation's settings file | The installation's configuration directory. It may loosen a protected setting only when no account but an administrator can change it (below) | A server's store, listeners, identity provider, network |
 | 5 | The user's settings file | The user's configuration directory | One person's preferences on a shared machine |
@@ -74,12 +74,12 @@ A setting is how this installation behaves. A target file is what a system is: i
 | Project | Authoring and the scout, the keys of scope P; applied today from the folder the engine started in (layer 6, above) | `anything2mcp.toml` | The developer | `authoring.scout.run = "on_request"` |
 | Target | Surfaces, rates, operations, environments, which bindings exist | The target's files, versioned and published | The target's author, then a publisher | A surface's request budget |
 | Environment, test or production | Addresses, declared test records, which writes the gates may try | The target's environments file | The target's author; test records are declared by a person ([section 403](../4-building-tools/403-testing-and-publish-gates.md)) | Writes run in the gates only in `test` |
-| Surface | Request budget, how it stands to other surfaces, its identity strategy | The target's files | The target's author | Two requests a second |
-| Toolset | Which tools, which version, identity mode, keep-alive window on a server, how the tool list is shaped | The store | Whoever defines the toolset, through `toolset.create` and `toolset.update`, which are not built; on one machine only the built-in toolsets exist | Keep-alive 4 hours for `orders` |
+| Surface | Request budget, how it stands to other surfaces, its record matching | The target's files | The target's author | Two requests a second |
+| Toolset | Which tools, which version, identity kind, keep-alive window on a server, how the tool list is shaped | The store | Whoever defines the toolset, through `toolset.create` and `toolset.update`, which are not built; on one machine only the built-in toolsets exist | Keep-alive 4 hours for `orders` |
 | Operation | Effect class, hazard, time limits, record limit, binding order | The target's files | The target's author | A 30-second limit on one save |
-| Caller or grant | Highest effect class, identity mode, scope, quota | The store | An administrator, through `grant.add`, which is not built | An agent may read `example` only |
+| Caller or grant | Highest effect class, identity kind, scope, quota | The store | An administrator, through `grant.add`, which is not built | An agent may read `example` only |
 | Provider or pack | Enabled or not; the pack's own group | Layers 1 to 8 for the group; `provider.enable` for enabling | The installer; enabling some providers is protected | `packs.http.max_response_bytes = 1000000` |
-| Session | Nothing is set on a session directly. Its keep-alive, probe, and attempt limit come from settings, the toolset, and the target's auth file | Derived | Nobody; `session.revoke` ends one | |
+| Session | Nothing is set on a session directly. Its keep-alive, session check, and attempt limit come from settings, the toolset, and the target's auth file | Derived | Nobody; `session.revoke` ends one | |
 | Run | Per-call options the operation offers and policy allows | The call | The caller, within policy | Pin the `http` mode |
 
 ## Protected settings
@@ -192,7 +192,7 @@ Each table gives the key, its type or values, its default on one machine, its sc
 | `ledger.intent_window.<mode>` (not built) | 1 up to the manifest's value | The mode's `intent_window` in its manifest | U | no |
 | `modes.disabled` (not built) | Modes that may not be used here | None | U | no |
 
-The order of bindings is not a setting. It is the operation's, or each mode's rank in its provider's manifest ([section 201](201-archetypes-and-modes.md)). A disabled mode makes its bindings unhealthy, and reads fall to the next verified binding as for any unhealthy one.
+The order of bindings is not a setting. It is the operation's, or each mode's rank in its provider's manifest ([section 201](201-access-kinds-and-modes.md)). A disabled mode makes its bindings unhealthy, and reads fall to the next verified binding as for any unhealthy one.
 
 **Scheduling.** Defaults per mode come from each mode's manifest ([section 211](211-concurrency.md)).
 
@@ -225,7 +225,7 @@ The order of bindings is not a setting. It is the operation's, or each mode's ra
 | `authoring.capture.values` (not built) | Boolean: keep values, not only shapes | Off | P | yes |
 | `authoring.capture.limits.seconds`, `authoring.capture.limits.bytes`, `authoring.capture.limits.exchanges` (not built) | Time, bytes, exchanges | A draft | P | no |
 
-**Evidence and telemetry.**
+**Evidence, logs, and traces.**
 
 | Key | Values | Default | Scope | Protected |
 | --- | --- | --- | --- | --- |
@@ -350,7 +350,7 @@ What a system is, and how it must be treated, is configured in its target files,
 | Time limits | Per step and per operation, within each pack's ceiling; the installation's own ceiling, `engine.time_limit_ceiling_seconds`, is not built |
 | Record limits | Per pipeline, within the installation's and the toolset's |
 | Effect class and hazard | Derived by the compiler from the files |
-| Sign-in, the probe, the idle timeout | The auth file |
+| Sign-in, the session check, the idle timeout | The auth file |
 
 A ceiling is checked twice. The compiler refuses a value above the ceilings of the installation where it compiles, today for the ceilings a pack checks when it compiles, not for the step time-limit ceiling; importing a version into an installation with lower ceilings checks it again, and an operation above them is refused with a named failure, never cut silently. At run time the lower of the target's value and the setting applies.
 
@@ -372,7 +372,7 @@ A new policy version's tightening applies to waiting runs at their next check; i
 
 ## Worked examples
 
-The empty configuration. With no file at all, the engine is the Solo profile with the `standard` preset:
+The empty configuration. With no file at all, the engine is the Solo deployment shape with the `standard` preset:
 
 ```toml
 ```

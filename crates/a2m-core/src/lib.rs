@@ -58,14 +58,14 @@ pub use compiled_target::{
     AddressOverride, ApproveWrites, AuthSetting, COMPILED_TARGET_FORMAT, CaptureLevel, Checkpoint,
     CodeLabel, CompiledAuth, CompiledBinding, CompiledEnvironment, CompiledExpr, CompiledFieldType,
     CompiledIdentity, CompiledInput, CompiledOperation, CompiledOutput, CompiledPipeline,
-    CompiledProbe, CompiledRate, CompiledSource, CompiledSurface, CompiledTarget,
-    CompiledTargetHeader, CompiledTest, CompiledTool, CredentialUse, DecimalMark, DecisionPoint,
+    CompiledRate, CompiledRecords, CompiledSessionCheck, CompiledSource, CompiledSurface,
+    CompiledTarget, CompiledTargetHeader, CompiledTest, CompiledTool, CredentialUse, DecimalMark,
     DeclaredProgram, DescriptionBy, DriftRisk, EncodedCompiledTarget, EnvironmentIndex,
-    EnvironmentKind, ExprIndex, FailsAs, FieldBase, FieldFormat, FieldTypeIndex, IdentityStrategy,
-    InputIndex, OperationIndex, PackRef, PackSection, PermissionManifest, PipelineIndex,
-    PipelineLimits, PipelineStep, SectionIndex, Sensitivity, SignInMode, Stands, Step, StepArg,
-    SurfaceIndex, TargetSection, TestKind, ToolAnnotations, ToolIndex, ToolRuns, WhitespaceRule,
-    ZoneRule, acknowledgement_may_stand,
+    EnvironmentKind, ExprIndex, FailsAs, FieldBase, FieldFormat, FieldTypeIndex, InputIndex,
+    OperationIndex, PackRef, PackSection, PermissionManifest, PipelineIndex, PipelineLimits,
+    PipelineStep, RecordMatching, RunQuestion, SectionIndex, Sensitivity, SignInKind, Stands, Step,
+    StepArg, SurfaceIndex, TargetSection, TestKind, ToolAnnotations, ToolIndex, ToolRuns,
+    WhitespaceRule, ZoneRule, acknowledgement_may_stand,
 };
 pub use decimal::{Decimal, Rounding};
 pub use digest::{Digest, FieldHasher, InvalidDigest};
@@ -85,7 +85,7 @@ pub use ident::{
     RunnerId, SessionId, StepKind, SurfaceKind, SurfaceName, TargetName, Verb, Version,
     WorkspaceId,
 };
-pub use kind::{Archetype, Mode};
+pub use kind::{AccessKind, Mode};
 pub use name::{InvalidName, UnknownName, is_kept_for_a_device};
 pub use notice::SurfaceNotice;
 pub use redact::{

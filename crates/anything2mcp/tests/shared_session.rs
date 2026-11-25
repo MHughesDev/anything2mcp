@@ -24,7 +24,7 @@ use std::sync::Arc;
 use a2m_actions::{BoxFuture, Paths, PersonSurface};
 use a2m_local::{Availability, PresencePrompt, PromptAnswer, PromptName, PromptText, StopReason};
 use anything2mcp::{EngineOptions, LocalEngine, PASSPHRASE_VARIABLE};
-use common::served::{Bridge, object, output, stateless};
+use common::served::{StdioProxy, object, output, stateless};
 use common::{Machine, PASSPHRASE, Surface, USER};
 use example_app::harness::{PASSWORD, TestApp, USERNAME};
 use serde_json::{Value as Json, json};
@@ -121,7 +121,7 @@ fn read_by_command(code: Option<i32>, read: &Json) -> Json {
 }
 
 /// What an MCP client's read gave, after checking it completed.
-fn read_by_bridge(called: &Json) -> Json {
+fn read_by_stdio_proxy(called: &Json) -> Json {
     assert_ne!(called["result"]["isError"], true, "{called}");
     let content = &called["result"]["structuredContent"];
     assert_eq!(content["status"], "completed", "{called}");
@@ -175,11 +175,11 @@ async fn a_command_and_an_mcp_client_read_through_one_engine_and_the_application
         "{read}"
     );
 
-    // An MCP client, through `bridge`, reads the same page through the same
+    // An MCP client, through `stdio`, reads the same page through the same
     // engine, and is given what the command was given.
-    let mut bridge = Bridge::start(&machine, &["bridge"]);
+    let mut stdio = StdioProxy::start(&machine, &["stdio"]);
     let ask = |id: u64| stateless(id, "tools/call", json!({"name": READ, "arguments": {}}));
-    let by_bridge = read_by_bridge(&bridge.ask(&ask(1)));
+    let by_bridge = read_by_stdio_proxy(&stdio.ask(&ask(1)));
     assert_eq!(by_bridge, by_command);
 
     // Then both at once.
@@ -193,13 +193,13 @@ async fn a_command_and_an_mcp_client_read_through_one_engine_and_the_application
         }
     });
     let by_bridge = tokio::task::spawn_blocking(move || {
-        let answer = bridge.ask(&ask(2));
-        (bridge, answer)
+        let answer = stdio.ask(&ask(2));
+        (stdio, answer)
     });
     let (code, read) = at_once.await.unwrap();
     assert_eq!(read_by_command(code, &read), by_command);
-    let (bridge, answer) = by_bridge.await.unwrap();
-    assert_eq!(read_by_bridge(&answer), by_command);
+    let (stdio, answer) = by_bridge.await.unwrap();
+    assert_eq!(read_by_stdio_proxy(&answer), by_command);
 
     // One sign-in, the person's, and nothing written.
     let after = app.auth_report().await.unwrap();
@@ -214,7 +214,7 @@ async fn a_command_and_an_mcp_client_read_through_one_engine_and_the_application
     );
     assert!(app.writes().await.unwrap().is_empty());
 
-    let (code, _, said) = bridge.close();
+    let (code, _, said) = stdio.close();
     assert_eq!(code, Some(0), "{said}");
     let (code, _) = command(&machine, &["engine", "stop"]).await;
     assert_eq!(code, Some(0));

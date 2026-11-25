@@ -488,7 +488,7 @@ async fn a_request_the_page_made_drafts_a_page_http_read_that_reads_each_order_b
         everything.extend(one.found().as_bytes());
     }
     everything.extend(bytes_below(folder.path()));
-    // The trace is the telemetry's folder; the browser's own profile, where
+    // The trace is the logs and traces's folder; the browser's own profile, where
     // the page's cookie lives as the browser keeps it, is not looked in.
     everything.extend(bytes_below(&scene.stand.folder.path().join("logs")));
     for secret in PAGE_SECRETS {

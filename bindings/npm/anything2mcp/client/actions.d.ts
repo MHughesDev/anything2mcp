@@ -1,5 +1,5 @@
 // GENERATED: do not edit. Written by scripts/generate-actions.js from the OpenAPI
-// document the engine serves at /api/v1/openapi.json (engine version 0.0.1).
+// document the engine serves at /api/v1/openapi.json (engine version 0.1.0).
 // A test fails when this file differs from what the generator writes. To change a
 // method, change the action in the engine, save the new document, and run the
 // generator.
@@ -26,6 +26,14 @@ export interface ActionRunInput {
  */
 export interface ActionSearchInput {
   query?: string;
+}
+
+/**
+ * The input of `assertion.confirm`.
+ */
+export interface AssertionConfirmInput {
+  target: string;
+  assertions?: string[];
 }
 
 /**
@@ -84,6 +92,11 @@ export interface ClientConnectInput {
   toolset?: "use" | "build";
   yes?: boolean;
 }
+
+/**
+ * The input of `component.list`.
+ */
+export type ComponentListInput = Record<string, never>;
 
 /**
  * The input of `config.show`.
@@ -419,6 +432,13 @@ export interface RunResumeInput {
 }
 
 /**
+ * The input of `run.trace`.
+ */
+export interface RunTraceInput {
+  run_id: string;
+}
+
+/**
  * The input of `scout.report`.
  */
 export interface ScoutReportInput {
@@ -634,6 +654,13 @@ export interface ToolsetUpdateInput {
 }
 
 /**
+ * The input of `trace.export`.
+ */
+export interface TraceExportInput {
+  run_id: string;
+}
+
+/**
  * The input of `trace.show`.
  */
 export interface TraceShowInput {
@@ -664,6 +691,14 @@ export interface VersionPublishInput {
   compiled_target_hash?: string;
   tools?: string[];
   version?: string;
+}
+
+/**
+ * The input of `version.rollback`.
+ */
+export interface VersionRollbackInput {
+  target: string;
+  version: string;
 }
 
 /**
@@ -758,13 +793,21 @@ export declare abstract class Actions {
   actionSearch(input?: ActionSearchInput, options?: CallOptions): Promise<Response>;
 
   /**
+   * Confirm the reads a target's drafts assert, as the person, so that a try of the
+   * drafts in an environment of kind `test` may let a page send them. A person's act,
+   * carried out on the engine's page, never an agent's. The engine action is
+   * `assertion.confirm`.
+   */
+  assertionConfirm(input: AssertionConfirmInput, options?: CallOptions): Promise<Response>;
+
+  /**
    * Read the audit log, oldest first, and check its chain. The engine action is
    * `audit.query`.
    */
   auditQuery(input?: AuditQueryInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * The sign-in method of a surface, with evidence, and a recommended identity mode.
+   * The sign-in method of a surface, with evidence, and a recommended identity kind.
    * Read only. The engine action is `auth.detect`.
    */
   authDetect(input: AuthDetectInput, options?: CallOptions): Promise<Response>;
@@ -793,11 +836,18 @@ export declare abstract class Actions {
   captureStop(input: CaptureStopInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Give the configuration an MCP client needs to start the bridge for this project:
-   * printed for the `generic` profile, or set in the file a client profile names, shown
-   * first and written by a local person. The engine action is `client.connect`.
+   * Give the configuration an MCP client needs to start the stdio proxy for this
+   * project: printed for the `generic` client profile, or set in the file a client
+   * profile names, shown first and written by a local person. The engine action is
+   * `client.connect`.
    */
   clientConnect(input?: ClientConnectInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The outside programs providers need: found or not, with path and digest, known or
+   * unverified. Starts nothing. The engine action is `component.list`.
+   */
+  componentList(input?: ComponentListInput, options?: CallOptions): Promise<Response>;
 
   /**
    * The effective settings, and for each the layer that set it. With a key, that key's
@@ -1087,6 +1137,13 @@ export declare abstract class Actions {
   runResume(input: RunResumeInput, options?: CallOptions): Promise<Response>;
 
   /**
+   * A summary of one of the caller's own runs' trace: each step's kind, outcome, and
+   * time, with references to its kept captures, and never a value. The engine action is
+   * `run.trace`.
+   */
+  runTrace(input: RunTraceInput, options?: CallOptions): Promise<Response>;
+
+  /**
    * The last scout's report on a target: found, drafted, proven, open, and what to look
    * at first. Each list is counted and shows its first entries; `part` reads one whole,
    * in pages. The engine action is `scout.report`.
@@ -1152,8 +1209,8 @@ export declare abstract class Actions {
 
   /**
    * A new scout of a target, handed a description the system publishes about itself as
-   * a file of the project's `sources` folder: exactly `scout.run` with `files` naming
-   * it `description`. Drafts by rule; never writes to the system. The engine action is
+   * a file of the project's `inputs` folder: exactly `scout.run` with `files` naming it
+   * `description`. Drafts by rule; never writes to the system. The engine action is
    * `spec.import`.
    */
   specImport(input: SpecImportInput, options?: CallOptions): Promise<Response>;
@@ -1219,7 +1276,7 @@ export declare abstract class Actions {
 
   /**
    * Create a toolset: who may connect, which tools it selects, the highest effect class
-   * and the identity mode of its runs. A toolset only narrows what grants allow. A
+   * and the identity kind of its runs. A toolset only narrows what grants allow. A
    * person's act, published as a new version of the policy set. The engine action is
    * `toolset.create`.
    */
@@ -1244,7 +1301,15 @@ export declare abstract class Actions {
   toolsetUpdate(input: ToolsetUpdateInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * View one run's evidence: its trace lines and artifact references. The engine action
+   * Export one run's evidence to one file in the project's working folder,
+   * `.anything2mcp/exports/<run>.json`: its events, its step trace, and its text
+   * captures, with a manifest that names each piece and what was left out and why. The
+   * engine action is `trace.export`.
+   */
+  traceExport(input: TraceExportInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * View one run's evidence: its trace lines and capture references. The engine action
    * is `trace.show`.
    */
   traceShow(input: TraceShowInput, options?: CallOptions): Promise<Response>;
@@ -1265,6 +1330,13 @@ export declare abstract class Actions {
    * an agent's. The engine action is `version.publish`.
    */
   versionPublish(input: VersionPublishInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Make another published version of a target the one that runs now: an earlier one,
+   * or a later one again after a rollback. A person's act, never an agent's. The engine
+   * action is `version.rollback`.
+   */
+  versionRollback(input: VersionRollbackInput, options?: CallOptions): Promise<Response>;
 
   /**
    * The changes a watch recorded after a number: added, changed, unseen, gaps, pauses,

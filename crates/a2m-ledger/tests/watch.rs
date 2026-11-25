@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use a2m_core::{
-    CanonicalJson, Digest, EffectClass, Environment, Failure, FailureClass, FailureCode,
+    CanonicalJson, Coverage, Digest, EffectClass, Environment, Failure, FailureClass, FailureCode,
     OperationName, RecordKey, RunId, RunState, SurfaceName, Timestamp, Value, Values,
 };
 use a2m_ledger::{
@@ -153,8 +153,15 @@ fn result_of(orders: Vec<Value>) -> Vec<u8> {
     CanonicalJson::encode(&values).unwrap().as_bytes().to_vec()
 }
 
-/// Completes a run with `result` stored as its result, as the engine does.
+/// Completes a run with `result` stored as its result, as the engine does,
+/// with no coverage stated.
 async fn complete_with(store: &Store, run: RunId, result: Option<Vec<u8>>) {
+    complete_covering(store, run, result, Coverage::Unknown).await;
+}
+
+/// Completes a run with `result` stored as its result and the coverage the
+/// engine stated with it (decision 0472).
+async fn complete_covering(store: &Store, run: RunId, result: Option<Vec<u8>>, coverage: Coverage) {
     let stored = match result {
         Some(plain) => Some(
             store
@@ -178,7 +185,7 @@ async fn complete_with(store: &Store, run: RunId, result: Option<Vec<u8>>) {
             ledger.set_state(&fence, RunState::Validating, None)?;
             ledger.set_state(&fence, RunState::Running, None)?;
             if let Some(stored) = stored {
-                ledger.store_result(&fence, stored)?;
+                ledger.store_result(&fence, stored, coverage)?;
             }
             ledger.set_state(&fence, RunState::Completed, None)
         })
@@ -216,11 +223,22 @@ async fn check(
     index: u64,
     orders: Vec<Value>,
 ) -> a2m_ledger::CheckEnded {
+    check_covering(store, watch, index, orders, Coverage::Unknown).await
+}
+
+/// The same, with the coverage the engine stated with the result.
+async fn check_covering(
+    store: &Store,
+    watch: WatchId,
+    index: u64,
+    orders: Vec<Value>,
+    coverage: Coverage,
+) -> a2m_ledger::CheckEnded {
     let run = begin(store, watch, index, the_read(1, b"status=open"))
         .await
         .unwrap();
     let result = result_of(orders);
-    complete_with(store, run, Some(result.clone())).await;
+    complete_covering(store, run, Some(result.clone()), coverage).await;
     let seq = running_check(store, watch).await;
     end_with(store, watch, seq, Some(result)).await.unwrap()
 }
@@ -472,7 +490,7 @@ async fn checks_report_by_key_and_output_name_and_keep_no_value() {
 }
 
 #[tokio::test]
-async fn a_completed_check_never_reports_a_removal_while_completeness_is_not_recorded() {
+async fn a_completed_check_never_reports_a_removal_while_its_run_states_no_coverage() {
     let store = memory().await;
     let watch = confirmed(&store).await;
     let all = || vec![order("A-1", "open", 1), order("A-2", "open", 1)];
@@ -504,6 +522,116 @@ async fn a_completed_check_never_reports_a_removal_while_completeness_is_not_rec
     assert!(back.comparison.unwrap().is_quiet());
     let row = store.read(move |tx| tx.watches().get(watch)).await.unwrap();
     assert!(!row.baseline_complete);
+}
+
+/// Decision 0472: a record is removed only between two checks whose runs'
+/// results the engine stated `complete`. A partial check after complete
+/// ones tells the record unseen; the next complete check proves it gone,
+/// once; and a complete check that saw no record after a baseline that held
+/// some proves nothing (decision 0262, B9).
+#[tokio::test]
+async fn a_record_is_removed_only_between_two_checks_that_returned_every_record() {
+    let store = memory().await;
+    let watch = confirmed(&store).await;
+    let three = || {
+        vec![
+            order("A-1", "open", 1),
+            order("A-2", "open", 1),
+            order("A-3", "open", 1),
+        ]
+    };
+    let first = check_covering(&store, watch, 0, three(), Coverage::Complete).await;
+    assert_eq!(first.check.outcome, CheckOutcome::Complete);
+    // The system holds more than the read returned: A-3 is out of view.
+    let partial = check_covering(
+        &store,
+        watch,
+        1,
+        vec![order("A-1", "open", 1), order("A-2", "open", 1)],
+        Coverage::Partial,
+    )
+    .await;
+    assert_eq!(partial.check.outcome, CheckOutcome::CutShort);
+    let counts = partial.check.counts.unwrap();
+    assert_eq!((counts.removed, counts.unseen), (0, 1));
+    // Every record again, but A-2: A-2 is removed, by key, and A-3 is back.
+    let gone = check_covering(
+        &store,
+        watch,
+        2,
+        vec![order("A-1", "open", 1), order("A-3", "open", 1)],
+        Coverage::Complete,
+    )
+    .await;
+    assert_eq!(gone.check.outcome, CheckOutcome::Complete);
+    let compared = gone.comparison.unwrap();
+    assert_eq!(compared.removed.len(), 1);
+    assert!(compared.added.is_empty() && compared.unseen.is_empty());
+    // Told once: the next complete check of the same records is quiet.
+    let again = check_covering(
+        &store,
+        watch,
+        3,
+        vec![order("A-1", "open", 1), order("A-3", "open", 1)],
+        Coverage::Complete,
+    )
+    .await;
+    assert!(again.comparison.unwrap().is_quiet());
+    // A complete check that saw nothing proves nothing: both are unseen.
+    let empty = check_covering(&store, watch, 4, Vec::new(), Coverage::Complete).await;
+    assert_eq!(empty.check.outcome, CheckOutcome::CutShort);
+    let counts = empty.check.counts.unwrap();
+    assert_eq!((counts.removed, counts.unseen), (0, 2));
+    let told: Vec<ChangeKind> = changes(&store, watch)
+        .await
+        .iter()
+        .map(|change| change.kind)
+        .collect();
+    assert_eq!(
+        told,
+        vec![
+            ChangeKind::Confirmed,
+            ChangeKind::Unseen,
+            ChangeKind::Removed,
+            ChangeKind::Unseen,
+            ChangeKind::Unseen,
+        ]
+    );
+}
+
+/// The coverage is stated with the result and never after the run ends,
+/// whoever writes the store.
+#[tokio::test]
+async fn a_runs_coverage_is_stated_with_its_result_and_never_changes_after_it_ends() {
+    let folder = Folder::new("watch-coverage");
+    let store = on_disk(&folder).await;
+    let watch = confirmed(&store).await;
+    let run = begin(&store, watch, 0, the_read(1, b"status=open"))
+        .await
+        .unwrap();
+    // No result yet: no coverage may be stated.
+    raw_refused(
+        &folder,
+        &format!("UPDATE runs SET result_coverage = 'complete' WHERE id = '{run}'"),
+    );
+    complete_covering(
+        &store,
+        run,
+        Some(result_of(vec![order("A-1", "open", 1)])),
+        Coverage::Partial,
+    )
+    .await;
+    assert_eq!(
+        store
+            .read(move |tx| tx.ledger().result_coverage(run))
+            .await
+            .unwrap(),
+        Coverage::Partial
+    );
+    raw_refused(
+        &folder,
+        &format!("UPDATE runs SET result_coverage = 'complete' WHERE id = '{run}'"),
+    );
 }
 
 #[tokio::test]

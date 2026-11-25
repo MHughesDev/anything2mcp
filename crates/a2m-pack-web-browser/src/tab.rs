@@ -19,7 +19,7 @@ use tokio::sync::{mpsc, watch};
 
 use crate::browsers::{Address, BrowserInner, Shared};
 use crate::client::{Client, ClientError};
-use crate::error::{BrowserError, Dispatch, Reason, RequestShape};
+use crate::error::{BrowserError, Dispatch, REFUSED_WHEN_MADE, Reason, RequestShape};
 use crate::origin::{Origins, origin_of, path_of, shown_origin};
 use crate::page_read::{PageAnswer, PagePath};
 use crate::page_write::{PageWrite, TokenProblem};
@@ -93,8 +93,12 @@ const REFUSED_BINDING: &str = "__anything2mcpRefused";
 /// (decision 0292). A name already refused by it is passed over, so the
 /// script can be placed again in a worker an earlier tab locked.
 const REFUSE_SOCKETS: &str = r#"(() => {
+  // The address as the page would have reached it: a relative one is
+  // resolved against the page's own, so the refusal names where it led.
   const report = (what, address) => {
-    try { globalThis.__anything2mcpRefused(what + " " + String(address)); } catch (_) {}
+    let whole = String(address);
+    try { whole = new URL(whole, globalThis.location ? globalThis.location.href : undefined).href; } catch (_) {}
+    try { globalThis.__anything2mcpRefused(what + " " + whole); } catch (_) {}
   };
   const mark = Symbol.for("anything2mcp.refused");
   const refusal = () => new DOMException("Refused while the page is only observed.", "SecurityError");
@@ -135,8 +139,12 @@ const SOCKET_REACH: &str = "/*a2m:reach*/[]";
 /// observing tab's, this lock is a script in the page.
 const HOLD_SOCKETS: &str = r#"(() => {
   const reach = /*a2m:reach*/[];
+  // The address as the page would have reached it: a relative one is
+  // resolved against the page's own, so the refusal names where it led.
   const report = (what, address) => {
-    try { globalThis.__anything2mcpRefused(what + " " + String(address)); } catch (_) {}
+    let whole = String(address);
+    try { whole = new URL(whole, globalThis.location ? globalThis.location.href : undefined).href; } catch (_) {}
+    try { globalThis.__anything2mcpRefused(what + " " + whole); } catch (_) {}
   };
   const refusal = () => new DOMException("Refused: outside what this tab may reach.", "SecurityError");
   const inside = (address) => {
@@ -270,6 +278,13 @@ pub enum By {
     Title {
         /// The title.
         text: String,
+    },
+    /// The one heading of this level, whatever it is named: a record's
+    /// page whose heading is the record's own value is found by it, never
+    /// by the value (decision 0473).
+    Heading {
+        /// The heading's level, 1 to 6.
+        level: u32,
     },
     /// A selector. The last resort.
     Css {
@@ -420,6 +435,15 @@ pub enum ReadWhat {
     Attribute {
         /// The attribute's name.
         name: String,
+    },
+    /// The text of each element of one role inside the element, and not
+    /// inside another of that role below it, in the page's order, each with
+    /// its white space collapsed, one to a line: the items of a list, or
+    /// the paragraphs of a part of a page (decision 0473). One item never
+    /// spans two lines.
+    Items {
+        /// The role of each item: `listitem` or `paragraph`.
+        role: String,
     },
     /// The text of one cell of a row, counted from zero among its cells.
     Cell {
@@ -2945,12 +2969,13 @@ impl Page {
                 // The payload is the page's: only a known word is taken as
                 // the method, and the rest is an address like any other.
                 let (what, address) = called.payload.split_once(' ').unwrap_or(("", ""));
+                let [socket, transport, peer, shared, service] = REFUSED_WHEN_MADE;
                 let method = match what {
-                    "WebSocket" => "WEBSOCKET",
-                    "WebTransport" => "WEBTRANSPORT",
-                    "SharedWorker" => "SHAREDWORKER",
-                    "RTCPeerConnection" => "PEERCONNECTION",
-                    "ServiceWorker" => "SERVICEWORKER",
+                    "WebSocket" => socket,
+                    "WebTransport" => transport,
+                    "SharedWorker" => shared,
+                    "RTCPeerConnection" => peer,
+                    "ServiceWorker" => service,
                     _ => "REFUSED",
                 };
                 self.block(method, address);

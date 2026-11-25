@@ -24,9 +24,9 @@ use example_app::harness::TestApp;
 use serde_json::Value as Json;
 
 /// Where the test application serves its description, and the file the
-/// test keeps it in: the file a person has, in the project's `sources`.
+/// test keeps it in: the file a person has, in the project's `inputs`
 const DESCRIPTION_PATH: &str = "/api/openapi.json";
-const DESCRIPTION_FILE: &str = "sources/example-openapi.json";
+const DESCRIPTION_FILE: &str = "inputs/example-openapi.json";
 
 /// The read the report is asked to name a call for: one that takes an
 /// order from the seed.
@@ -111,8 +111,8 @@ async fn from_an_empty_folder_an_agent_reads_a_value_through_a_trial() {
     // 1. `init`.
     desk.ok(&["init"]).await;
     // The description is the file a person has: it is put in the project's
-    // `sources` folder, by hand, as the person would.
-    std::fs::create_dir_all(desk.project.path().join("sources")).unwrap();
+    // `inputs` folder, by hand, as the person would.
+    std::fs::create_dir_all(desk.project.path().join("inputs")).unwrap();
     std::fs::write(desk.project.path().join(DESCRIPTION_FILE), description).unwrap();
 
     // 2. `add`, handed the description. It ends at the report.

@@ -307,12 +307,12 @@ fn most_handed_bytes(kernel: &Kernel) -> u64 {
         .map_or(most, |allowed| allowed.min(most))
 }
 
-/// A file of the project's `sources` folder that a call names, by its path
+/// A file of the project's `inputs` folder that a call names, by its path
 /// from the project folder as the call wrote it, checked for reading: a
 /// source file of `tool.call`, or a file handed to a discovery. `what`
 /// begins each refusal's sentence. Blocking: it looks at the disk.
 ///
-/// A file is taken from the project's `sources` folder and from nowhere
+/// A file is taken from the project's `inputs` folder and from nowhere
 /// else in the project: not its target files, not its project file, not a
 /// hidden file. The checked path follows a link only while it stays
 /// inside the project, and what stands at the name must be a regular file:
@@ -320,7 +320,7 @@ fn most_handed_bytes(kernel: &Kernel) -> u64 {
 ///
 /// # Errors
 ///
-/// `input`/`path_not_allowed` for a path outside `sources/`, with a hidden
+/// `input`/`path_not_allowed` for a path outside `inputs/`, with a hidden
 /// part, absolute, with `..`, through a link out of the project, or at
 /// which no regular file stands; `input`/`file_unavailable` when nothing
 /// stands there.
@@ -335,8 +335,8 @@ fn source_file(
             format!("{what} is not read: {why}."),
             format!(
                 "Put the file in the project's `{}` folder and give its path from the project folder, such as `{}/items.csv`.",
-                crate::project::SOURCES_FOLDER,
-                crate::project::SOURCES_FOLDER
+                crate::project::INPUTS_FOLDER,
+                crate::project::INPUTS_FOLDER
             ),
         )
     })?;
@@ -364,7 +364,7 @@ fn source_file(
 /// it. Each path is checked here, when asked, by the code that checks a
 /// source file of `tool.call`, and must be at most the bytes a caller may
 /// hand in; nothing is read. Empty when the call names none. The engine
-/// checks each path again, under a root of the `sources` folder alone,
+/// checks each path again, under a root of the `inputs` folder alone,
 /// before any discoverer runs.
 ///
 /// # Errors
@@ -392,7 +392,7 @@ pub(crate) async fn discovery_files(
                     "The file named `{}` is not given as a path.",
                     codes::shown(name)
                 ),
-                "Give each file as its path from the project folder, such as `sources/example-openapi.json`.",
+                "Give each file as its path from the project folder, such as `inputs/example-openapi.json`.",
             ));
         };
         files.insert(name.clone(), path.to_owned());
@@ -430,7 +430,7 @@ pub(crate) async fn discovery_files(
 }
 
 /// What the discovery of a surface of a compiled target is about, as the
-/// registry asks which discoverers suit it: the surface's kind and archetype,
+/// registry asks which discoverers suit it: the surface's kind and access kind,
 /// and its address in the compiled target's default environment. `None` when
 /// no enabled provider serves its kind.
 pub(crate) fn surface_described(
@@ -451,7 +451,7 @@ pub(crate) fn surface_described(
         .map_or_else(|| surface.address.clone(), |over| over.address.clone());
     Some(a2m_provider::SurfaceDescription {
         kind: surface.kind.clone(),
-        archetype: entry.archetype,
+        access_kind: entry.access_kind,
         address,
         facts: Values::new(),
     })
@@ -592,12 +592,12 @@ pub(crate) fn sched_health(kernel: &Kernel) -> SchedHealth {
 /// A kill switch is the policy engine's (spec section 212): it is checked
 /// first on every decision about work on a system, and its refusal is
 /// `policy`, `kill_switch_on`. The scheduler's hold is the same switch seen
-/// from the queue, so its `busy`, `on_hold` is not passed on. The question
+/// from the queue, so its `busy`, `scheduler_paused` is not passed on. The question
 /// is put to the policy engine, which records its refusal, and that refusal
 /// is the answer: a caller sees one code for a kill switch, wherever it
 /// was met.
 async fn held(kernel: &Kernel, call: &Call, work: &HeldWork<'_>, refused: Failure) -> Failure {
-    if refused.code() != &a2m_sched::codes::ON_HOLD {
+    if refused.code() != &a2m_sched::codes::SCHEDULER_PAUSED {
         return refused;
     }
     let switched = || {
@@ -1263,7 +1263,7 @@ fn no_such_run() -> Failure {
     )
 }
 
-fn run_id(call: &Call) -> Result<RunId, Failure> {
+pub(super) fn run_id(call: &Call) -> Result<RunId, Failure> {
     call.required("run_id")?.parse::<RunId>().map_err(|_| {
         codes::input(
             codes::SCHEMA_INVALID,
@@ -1280,7 +1280,7 @@ impl Kernel {
     /// whatever role they hold: a run acts under its person's session, and
     /// a session is its person's alone. Another person's run is answered
     /// as no run at all.
-    async fn own_run(&self, call: &Call, run: RunId) -> Result<RunRow, Failure> {
+    pub(super) async fn own_run(&self, call: &Call, run: RunId) -> Result<RunRow, Failure> {
         let row = self.run_in_workspace(call, run).await?;
         if call.caller.principal.person() == Some(row.principal) {
             Ok(row)
@@ -1294,7 +1294,11 @@ impl Kernel {
     /// auditor's role is for, and the dispatcher's decision was that the
     /// caller holds the role the action needs. It shows what happened and
     /// can neither resume nor change the run.
-    async fn run_in_workspace(&self, call: &Call, run: RunId) -> Result<RunRow, Failure> {
+    pub(super) async fn run_in_workspace(
+        &self,
+        call: &Call,
+        run: RunId,
+    ) -> Result<RunRow, Failure> {
         let row = self.store()?.read(move |tx| tx.ledger().run(run)).await?;
         if row.workspace == call.caller.principal.workspace {
             Ok(row)
@@ -1873,30 +1877,35 @@ handler!(
     }
 );
 
+/// A run's events, in order, as `trace.show` and `trace.export` show them.
+pub(super) async fn shown_events(kernel: &Kernel, run: RunId) -> Result<Vec<Json>, Failure> {
+    let events = kernel
+        .store()?
+        .read(move |tx| tx.ledger().events(run, 0, 10_000))
+        .await?;
+    Ok(events
+        .iter()
+        .map(|event| {
+            json!({
+                "seq": event.seq,
+                "lease": event.epoch.get(),
+                "kind": event.kind.as_str(),
+                "detail": neutral_said(
+                    serde_json::from_str::<Json>(&event.payload).unwrap_or(Json::Null)
+                ),
+                "evidence": event.evidence.map(|blob| format!("blob:{blob}")),
+            })
+        })
+        .collect())
+}
+
 handler!(
     /// `trace.show`: one run's events, in order, and its trace reference.
     trace_show,
     |kernel, call| {
         let run = run_id(&call)?;
         let row = kernel.run_in_workspace(&call, run).await?;
-        let events = kernel
-            .store()?
-            .read(move |tx| tx.ledger().events(run, 0, 10_000))
-            .await?;
-        let shown: Vec<Json> = events
-            .iter()
-            .map(|event| {
-                json!({
-                    "seq": event.seq,
-                    "lease": event.epoch.get(),
-                    "kind": event.kind.as_str(),
-                    "detail": neutral_said(
-                        serde_json::from_str::<Json>(&event.payload).unwrap_or(Json::Null)
-                    ),
-                    "evidence": event.evidence.map(|blob| format!("blob:{blob}")),
-                })
-            })
-            .collect();
+        let shown = shown_events(kernel, run).await?;
         let mut out = json!({"run_id": run.to_string(), "events": shown});
         if let (Some(trace), Json::Object(map)) = (row.trace, &mut out) {
             map.insert("trace".to_owned(), json!(format!("blob:{trace}")));
@@ -1907,12 +1916,12 @@ handler!(
             // with a line missing, added, or moved is shown as broken, and
             // its signature is not passed on as if it stood.
             if let Ok(opened) = kernel.store()?.blobs().get(&trace).await
-                && let Ok(lines) = a2m_telemetry::read_trace(opened.expose())
+                && let Ok(lines) = a2m_logs::read_trace(opened.expose())
             {
-                let check = a2m_telemetry::check_trace(&lines);
+                let check = a2m_logs::check_trace(&lines);
                 map.insert("trace_check".to_owned(), json!(check.as_str()));
-                if check != a2m_telemetry::TraceCheck::Broken
-                    && let Some(a2m_telemetry::TraceLine::End(end)) = lines.last()
+                if check != a2m_logs::TraceCheck::Broken
+                    && let Some(a2m_logs::TraceLine::End(end)) = lines.last()
                 {
                     map.insert("signature".to_owned(), json!(end.signature.to_string()));
                     map.insert("records".to_owned(), json!(end.records));
@@ -2048,6 +2057,15 @@ handler!(
                 return Err(super::build::noting_held(Failure::from(problems), &held));
             }
         };
+        // The asserted reads of the drafts their person confirmed, which
+        // the trial may let a page send (decision 0475).
+        let confirmed = kernel
+            .confirmed_reads_of(
+                &target,
+                &compiled.compiled_target,
+                &compiled.review.asserted,
+            )
+            .await;
         let compiled_target = std::sync::Arc::new(compiled.compiled_target);
         let Some(tool) = compiled_target.tool(&name).cloned() else {
             // A tool whose draft is held is refused by name, with its
@@ -2118,6 +2136,7 @@ handler!(
             &target,
             compiled.encoded.hash,
             std::sync::Arc::clone(&compiled_target),
+            confirmed,
         );
         let asked_at = kernel.inner.clock.now();
         let run = submit_trial(kernel, &call, &found, &input, environment, binding).await?;
@@ -2466,10 +2485,13 @@ pub(crate) async fn compiled_target_in(
         .await?;
         if let Some(compiled) = compiled {
             let compiled_target = std::sync::Arc::new(compiled.compiled_target);
+            // A discovery's compiled target lets no asserted read through
+            // (decision 0475).
             kernel.keep_draft(
                 target,
                 compiled.encoded.hash,
                 std::sync::Arc::clone(&compiled_target),
+                a2m_provider::ConfirmedReads::none(),
             );
             return Ok((compiled.encoded.hash, compiled_target));
         }

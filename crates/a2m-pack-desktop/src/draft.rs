@@ -696,7 +696,7 @@ fn textless_sentence(left: &[String]) -> String {
 }
 
 /// Why a rule from a `window` finding drafts nothing, in plain words, with
-/// what a person could do instead (field test 10, finding 58).
+/// what a person could do instead (copy test 10, finding 58).
 mod why {
     pub(super) const CUT_SHORT: &str = "The window's snapshot was cut short at a bound of the walk, so a table's rows or a control may be missing. Raise the pack's settings `max_nodes` or `max_depth` and scout again, or write the window's screen by hand.";
     pub(super) const NO_TARGET: &str = "The target has no name in its target file, and a read is named after its target. Name the target, then draft again.";

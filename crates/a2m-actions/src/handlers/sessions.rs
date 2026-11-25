@@ -648,7 +648,7 @@ handler!(
             id,
         )?;
         keeper
-            .revoke(&key_from(&session, workspace), EndedBy::Owner)
+            .revoke(&key_from(&session, workspace), EndedBy::SessionOwner)
             .await?;
         kernel
             .audit(

@@ -65,7 +65,7 @@ The policy engine answers a fixed set of questions. Each is one authorization re
 | Question | Asked when | A denial means |
 | --- | --- | --- |
 | May this caller use this tool? | On every call, and again before the write phase and on resume | `policy` / `not_granted` |
-| May this run act as this identity? | When the identity mode is resolved from the toolset | `policy` / `identity_not_allowed` |
+| May this run act as this identity? | When the identity kind is resolved from the toolset | `policy` / `identity_not_allowed` |
 | May this write proceed without a person's approval? | After the preview | The run waits at `needs_approval` |
 | May this person approve this run? | When an approval arrives | The approval is refused |
 | May this caller see fields with this sensitivity label? | When a result is returned | Those fields are masked or left out |
@@ -81,11 +81,11 @@ Treating "without approval" and "may see" as questions of their own keeps the an
 | Principals | People, groups, AI agents with their own identity, programs with a key | People belong to groups; an agent records the person it acts for, if any |
 | Resources | Operations and pipelines | Tool in module in target in workspace; toolsets and environments alongside |
 | Other resources | Sensitivity labels, runs, target versions, runners, sessions | Flat |
-| Context | Effect class, hazard, record count, toolset, environment, client, time, identity mode, the session's owner, whether the caller is an agent and for whom it acts | Built by `a2m-actions` from verified facts and from what the engine reports, never by the caller |
+| Context | Effect class, hazard, record count, toolset, environment, client, time, identity kind, the session owner, whether the caller is an agent and for whom it acts | Built by `a2m-actions` from verified facts and from what the engine reports, never by the caller |
 
 Because tools sit inside modules inside targets, one grant on a target covers every tool in it, and a grant on a module covers that module.
 
-The engine never sees a policy type. At guard it asks through `Control`, with its own question naming the run, the tool, the effect class, the hazard, and the binding chosen; `a2m-actions` turns that into a policy request ([section 207](207-the-engine-loop.md)).
+The engine never sees a policy type. At guard it asks through `ControlPort`, with its own question naming the run, the tool, the effect class, the hazard, and the binding chosen; `a2m-actions` turns that into a policy request ([section 207](207-the-engine-loop.md)).
 
 ### Who writes the rules
 
@@ -110,7 +110,7 @@ A lower layer is compiled as a further restriction. A target file, toolset, or w
 - A session signed in as a person is used only by that person or an agent acting for them, as [section 215](215-sessions-and-the-session-keeper.md) defines. No role, including administrator, can run as someone else. A delegation from a person to an agent counts only while it is unrevoked and unexpired, and only for the toolset it names.
 - The hazard rules of section 213: any hazard other than `none` forbids writing without a person; `device_function` and `physical` forbid a standing approval.
 
-**Grants, not a language, for everyday use.** Administrators write grants in the console or a file with `grant.add`: a principal, a scope (target, module, or name pattern), a highest effect class, and an identity mode. Each grant is one permit. Roles are bundles of grants. A pre-approval rule may carry a condition in the expression language; nothing else is written in a language.
+**Grants, not a language, for everyday use.** Administrators write grants in the console or a file with `grant.add`: a principal, a scope (target, module, or name pattern), a highest effect class, and an identity kind. Each grant is one permit. Roles are bundles of grants. A pre-approval rule may carry a condition in the expression language; nothing else is written in a language.
 
 ### Policy is a versioned, tested artifact
 
@@ -210,6 +210,6 @@ A decision on a warm cache: under 100 microseconds. Loading a new policy version
 - Whether asking tool by tool is fast enough to list the tools a caller may use over a large catalog. One decision of the core takes about 0.07 microseconds; the two reads of the store beside it are not measured. Hypothesis H-11.
 - Whether administrators ever need a policy language. Today they write roles, grants, and pre-approval rules, whose conditions are expressions (decision 0082).
 - The exact claims to rely on for groups and roles from each identity provider.
-- The shape of the presence proof the local approval surface hands in. Settled in part by decision 0145: each operating system's prompt has its own word (`polkit`, `local_authentication`, `windows_hello`, and `field_harness`, which only a field test's harness records, decision 0310), and the proof's time and prompt name come with the approval.
+- The shape of the presence proof the local approval surface hands in. Settled in part by decision 0145: each operating system's prompt has its own word (`polkit`, `local_authentication`, `windows_hello`, and `field_harness`, which only a copy test's harness records, decision 0310), and the proof's time and prompt name come with the approval.
 - Consent records are kept by `a2m-policy`, because only the decider should ask whether one exists; whether they belong with the scout instead is open.
 - The approval and steering defenses rest on design judgment and the MCP specification; dedicated research on approval patterns in organizations is still to do.

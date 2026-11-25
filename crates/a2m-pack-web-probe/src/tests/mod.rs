@@ -18,9 +18,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, CompiledSurface, Digest, Environment, Failure, Finding, NoSecrets, PackPayload,
+    AccessKind, CompiledSurface, Digest, Environment, Failure, Finding, NoSecrets, PackPayload,
     Redact, SurfaceKind, SurfaceName, TargetName, Value, Values,
 };
+use a2m_logs::LogSettings;
 use a2m_pack_web_browser::{PROFILE_ROOT, SharedBrowsers, test_support};
 use a2m_provider::{
     Access, BoxFuture, CheckedPaths, Deadline, DiscovererHandle, DiscoveryReport, DiscoveryScope,
@@ -28,7 +29,6 @@ use a2m_provider::{
     RootName, Roots, SandboxPort, StepFailure, StepInput, StepOutcome, Supervisor,
     SupervisorLimits, SurfaceDescription, SurfaceRef,
 };
-use a2m_telemetry::TelemetrySettings;
 use axum::Router;
 use axum::extract::State;
 use axum::http::header::CONTENT_TYPE;
@@ -126,12 +126,8 @@ impl Bench {
             supervisor: supervisor.clone(),
             roots,
             redact: Arc::clone(&redact),
-            telemetry: a2m_telemetry::start(
-                &TelemetrySettings::default(),
-                Arc::clone(&redact),
-                &logs,
-            )
-            .unwrap(),
+            logs_and_traces: a2m_logs::start(&LogSettings::default(), Arc::clone(&redact), &logs)
+                .unwrap(),
         };
         let shared = SharedBrowsers::default();
         let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
@@ -150,7 +146,7 @@ impl Bench {
     fn description(address: &str) -> SurfaceDescription {
         SurfaceDescription {
             kind: SurfaceKind::new(SURFACE_KIND).unwrap(),
-            archetype: Archetype::Interface,
+            access_kind: AccessKind::Interface,
             address: address.to_owned(),
             facts: Values::new(),
         }

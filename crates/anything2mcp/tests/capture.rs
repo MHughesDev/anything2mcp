@@ -38,13 +38,13 @@ use a2m_local::{
     Availability, FAILURE_CODE_HEADER, LocalSurface, PresencePrompt, PromptAnswer, PromptName,
     PromptText, SurfaceParts,
 };
+use a2m_logs::{Clock, SystemClock};
 use a2m_provider::{
     CaptureEnd, CaptureSource, CapturedTraffic, CompilerRegistrations, Deadline, DescribeForm,
     Describer, Description, Discoverer, DiscovererName, DiscoveryReport, DiscoveryScope,
     FindingSink, Pack, PackContext, Registrar, RegistryBuilder, Roots, SandboxPort, Supervisor,
     SupervisorLimits, SurfaceDescription, SurfaceRef, TrafficCapture,
 };
-use a2m_telemetry::{Clock, SystemClock};
 use a2m_vault::{MemoryKeyStore, OsRandom};
 use common::{Folder, USER};
 use serde_json::{Value as Json, json};
@@ -483,6 +483,15 @@ async fn a_capture_records_only_once_its_person_begins_it_on_the_page_and_ends_a
     let (text, _, _) = world.page(&link).await;
     assert!(text.contains("capture.start"), "{text}");
     assert!(text.contains("What is kept"), "{text}");
+    // A screen keeps the names of its headings, links, and buttons, which
+    // can show a record's words, and the page says so (field test 11,
+    // finding 65).
+    assert!(
+        text.contains("the names a page gives its headings, links, and buttons, which can show a record&#39;s words")
+            || text.contains("the names a page gives its headings, links, and buttons, which can show a record's words"),
+        "{text}"
+    );
+    assert!(!text.contains("or are shown"), "{text}");
 
     // The agent cannot begin it itself by naming it.
     let named = world

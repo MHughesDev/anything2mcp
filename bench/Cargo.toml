@@ -16,7 +16,7 @@ a2m-actions = { path = "../crates/a2m-actions" }
 a2m-auth = { path = "../crates/a2m-auth" }
 a2m-core = { path = "../crates/a2m-core" }
 a2m-policy = { path = "../crates/a2m-policy" }
-a2m-telemetry = { path = "../crates/a2m-telemetry" }
+a2m-logs = { path = "../crates/a2m-logs" }
 a2m-vault = { path = "../crates/a2m-vault" }
 anything2mcp = { path = "../crates/anything2mcp" }
 # The test application states its own TLS provider when the product's

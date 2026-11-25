@@ -12,7 +12,7 @@ use crate::material::KeyMaterial;
 /// key derived from it, so nothing can be matched across workspaces.
 ///
 /// It is made by [`Vault::keyed_digest`](crate::Vault::keyed_digest), and
-/// handed, as a `KeyedDigest`, to the ledger for blob names and to telemetry
+/// handed, as a `KeyedDigest`, to the ledger for blob names and to logs and traces
 /// for restricted values.
 pub struct VaultDigest {
     key: Zeroizing<Vec<u8>>,

@@ -5,7 +5,7 @@
 //! a register and nothing scans addresses. The first protocol offers no
 //! listing of a device's own objects, so identification is all there is to
 //! observe. The drafting rule drafts no map from it: a map comes from the
-//! device's published register map (field test 8, finding 52).
+//! device's published register map (copy test 8, finding 52).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -15,11 +15,11 @@ use a2m_core::{
     ProducedBy, Source, Step, Subject, Value, Values,
 };
 use a2m_files::{DraftContext, DraftDoc, DraftingRule};
+use a2m_logs::Clock;
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
     DiscoveryScope, FindingSink, SandboxPort, StepInput, StepOutcome, SurfaceDescription,
 };
-use a2m_telemetry::Clock;
 
 use crate::codes;
 use crate::lower::StepPayload;
@@ -196,7 +196,7 @@ impl Describer for IdentityDescriber {
 ///
 /// A device on the first protocol lists no register, so what it reported
 /// gives a map with no register: nothing to try, and a second map beside
-/// the one the device's documentation gives (field test 8, finding 52). The
+/// the one the device's documentation gives (copy test 8, finding 52). The
 /// rule drafts no file and says so; the identity stays in the finding, and
 /// the describer shows it.
 pub(crate) struct MapFromIdentity {
@@ -224,7 +224,7 @@ impl DraftingRule for MapFromIdentity {
         // A finding that cannot be read is still refused as one.
         reported(finding)?;
         cx.not_drafted(
-            "The device identified itself and lists no register, so no map is drafted from it: put the device's published register map in the project's `sources` folder and run the scout again, and the map and a read of each register are drafted from that.",
+            "The device identified itself and lists no register, so no map is drafted from it: put the device's published register map in the project's `inputs` folder and run the scout again, and the map and a read of each register are drafted from that.",
         );
         Ok(Vec::new())
     }

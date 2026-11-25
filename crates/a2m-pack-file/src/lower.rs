@@ -7,8 +7,9 @@
 //! fills the value of a key or of a field, and nothing else.
 
 use a2m_core::{
-    CodeEntry, EffectClass, FailsAs, FileKindName, IdentityStrategy, LintCode, Mode, PackPayload,
-    PackRef, SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
+    CodeEntry, EffectClass, FailsAs, FileKindName, LintCode, Mode, PackPayload, PackRef,
+    RecordMatching, SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType,
+    Verb,
 };
 use a2m_files::{
     BindingStatement, CompileMode, Diagnostic, Diagnostics, Doc, FixedPlace, JsonSchema, Level,
@@ -379,12 +380,12 @@ impl Lowering for FileLowering {
         &self.schema
     }
 
-    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         match strategy {
-            IdentityStrategy::Natural | IdentityStrategy::Composite | IdentityStrategy::None => {
+            RecordMatching::Natural | RecordMatching::Composite | RecordMatching::None => {
                 Possible::Yes
             }
-            IdentityStrategy::Stamped | IdentityStrategy::Find => Possible::No(
+            RecordMatching::Stamped | RecordMatching::Find => Possible::No(
                 "a file never assigns a key, so it has no field that carries a stamp and no search."
                     .to_owned(),
             ),
@@ -634,7 +635,7 @@ impl Lowering for FileLowering {
             // The `save` that commits carries every one of them again, so
             // that what the write sends is plain to an offline test, which
             // compares the committing step's arguments with the values its
-            // `<step>.request.json` states (finding 22 of field test 4).
+            // `<step>.request.json` states (finding 22 of copy test 4).
             // The driver reads none of them at `save`: it saves what
             // `set` built.
             let save_args: Vec<StepArg> = key.iter().cloned().chain(fields.clone()).collect();

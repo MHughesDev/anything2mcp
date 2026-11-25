@@ -484,7 +484,7 @@ mod tests {
         );
     }
 
-    /// Field test 7, finding 43: a broker that asks for no sign-in, on
+    /// Copy test 7, finding 43: a broker that asks for no sign-in, on
     /// another machine or in a container of its own, was refused because
     /// plain TCP went to the loopback address only, though the rule is there
     /// to keep a credential off a plain link. With no credential, a plain

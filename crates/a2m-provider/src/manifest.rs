@@ -10,8 +10,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use a2m_core::{
-    Archetype, ControlName, Digest, EffectClass, EvidenceLevel, Failure, FailureClass, FailureCode,
-    FileKindName, FindingKind, LintCode, Mode, StepKind, SurfaceKind, Value, Values, Verb, Version,
+    AccessKind, ControlName, Digest, EffectClass, EvidenceLevel, Failure, FailureClass,
+    FailureCode, FileKindName, FindingKind, LintCode, Mode, StepKind, SurfaceKind, Value, Values,
+    Verb, Version,
 };
 use serde::Deserialize;
 
@@ -237,8 +238,11 @@ pub struct RunSection {
 pub struct ModeDecl {
     /// The mode's name.
     pub name: Mode,
-    /// Its one archetype.
-    pub archetype: Archetype,
+    /// Its one access kind.
+    /// Read from the manifest's key `archetype`, the old name, which a
+    /// pack's manifest already carries (decision 0402).
+    #[serde(rename = "archetype")]
+    pub access_kind: AccessKind,
     /// The verbs a binding of the mode may state.
     #[serde(default)]
     pub verbs: Vec<Verb>,
@@ -335,8 +339,10 @@ impl ModeDecl {
 pub struct SurfaceKindDecl {
     /// The surface kind's name.
     pub name: SurfaceKind,
-    /// Its archetype.
-    pub archetype: Archetype,
+    /// Its access kind.
+    /// Read from the manifest's key `archetype` (decision 0402).
+    #[serde(rename = "archetype")]
+    pub access_kind: AccessKind,
     /// Whether the keeper holds a session on a surface of this kind.
     #[serde(default)]
     pub session: bool,
@@ -394,7 +400,9 @@ pub struct Points {
 #[serde(deny_unknown_fields)]
 struct RawDiscoverer {
     name: String,
-    archetype: Archetype,
+    // Read from the manifest's key `archetype` (decision 0402).
+    #[serde(rename = "archetype")]
+    access_kind: AccessKind,
     #[serde(default)]
     surface_kinds: Vec<SurfaceKind>,
     kinds: Vec<FindingKind>,
@@ -456,10 +464,10 @@ pub struct Bounds {
 pub struct DiscovererDecl {
     /// Its name within the provider.
     pub name: DiscovererName,
-    /// The archetype of what it observes.
-    pub archetype: Archetype,
+    /// The access kind of what it observes.
+    pub access_kind: AccessKind,
     /// The surface kinds it applies to. Empty means any surface of its
-    /// archetype.
+    /// access kind.
     pub surface_kinds: Vec<SurfaceKind>,
     /// The finding kinds it may return.
     pub kinds: Vec<FindingKind>,
@@ -470,7 +478,7 @@ pub struct DiscovererDecl {
     /// Its bounds.
     pub bounds: Bounds,
     /// The names under which it reads files a person hands a discovery, in
-    /// the order the manifest lists them: a file of the project's `sources`
+    /// the order the manifest lists them: a file of the project's `inputs`
     /// folder reaches it as the path of that name in
     /// [`crate::DiscoveryScope::paths`] (decision 0263). Each is a name of
     /// lowercase letters, digits, and underscores. Empty, the default: it
@@ -1035,12 +1043,12 @@ impl Manifest {
             }
         };
 
-        // Modes and surface kinds: one entry, one archetype.
+        // Modes and surface kinds: one entry, one access kind.
         if !unique(raw.modes.iter().map(|mode| &mode.name)) {
             return Err(codes::failure(
                 &codes::row::MODE_CONFLICT,
                 format!("The provider `{}` registers one mode twice.", provider.name),
-                "State each mode once, with its one archetype.",
+                "State each mode once, with its one access kind.",
             ));
         }
         if !unique(raw.surface_kinds.iter().map(|kind| &kind.name)) {
@@ -1050,7 +1058,7 @@ impl Manifest {
                     "The provider `{}` registers one surface kind twice.",
                     provider.name
                 ),
-                "State each surface kind once, with its one archetype.",
+                "State each surface kind once, with its one access kind.",
             ));
         }
         for mode in &raw.modes {
@@ -1208,7 +1216,7 @@ impl Manifest {
             }
             discoverers.push(DiscovererDecl {
                 name: DiscovererName::new(&found.name)?,
-                archetype: found.archetype,
+                access_kind: found.access_kind,
                 surface_kinds: found.surface_kinds,
                 kinds: found.kinds,
                 sources: found.sources,

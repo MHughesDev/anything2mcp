@@ -83,7 +83,7 @@
  "info": {
   "description": "Every route is generated from an action of the registry. The body of every answer is the whole response: ok, action, then result, warnings, and next, or error.",
   "title": "Anything2MCP REST interface",
-  "version": "0.0.1"
+  "version": "0.1.0"
  },
  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
  "openapi": "3.1.0",
@@ -738,6 +738,446 @@
     "x-sdk": true
    }
   },
+  "/api/v1/actions/assertion.confirm": {
+   "post": {
+    "operationId": "assertion_confirm",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "assertions": {
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
+         "target": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "target"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": false,
+             "properties": {
+              "confirmed": {
+               "items": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "state": {
+               "type": "string"
+              },
+              "target": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "target",
+              "state",
+              "confirmed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": false,
+             "properties": {
+              "confirmed": {
+               "items": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "state": {
+               "type": "string"
+              },
+              "target": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "target",
+              "state",
+              "confirmed"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Confirm the reads a target's drafts assert, as the person, so that a try of the drafts in an environment of kind `test` may let a page send them. A person's act, carried out on the engine's page, never an agent's.",
+    "x-action": "assertion.confirm",
+    "x-sdk": true
+   }
+  },
   "/api/v1/actions/audit.query": {
    "post": {
     "operationId": "audit_query",
@@ -1176,7 +1616,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "The sign-in method of a surface, with evidence, and a recommended identity mode. Read only.",
+    "summary": "The sign-in method of a surface, with evidence, and a recommended identity kind. Read only.",
     "x-action": "auth.detect",
     "x-sdk": true
    }
@@ -2863,7 +3303,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Give the configuration an MCP client needs to start the bridge for this project: printed for the `generic` profile, or set in the file a client profile names, shown first and written by a local person.",
+    "summary": "Give the configuration an MCP client needs to start the stdio proxy for this project: printed for the `generic` client profile, or set in the file a client profile names, shown first and written by a local person.",
     "x-action": "client.connect",
     "x-sdk": true
    }
@@ -2919,8 +3359,51 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "components": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "digest": {
+                "type": "string"
+               },
+               "fix": {
+                "type": "string"
+               },
+               "known_digests": {
+                "type": "integer"
+               },
+               "name": {
+                "type": "string"
+               },
+               "path": {
+                "type": "string"
+               },
+               "provider": {
+                "type": "string"
+               },
+               "state": {
+                "enum": [
+                 "known",
+                 "unverified",
+                 "missing"
+                ]
+               },
+               "versions": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "provider",
+               "name",
+               "state",
+               "known_digests"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -2949,7 +3432,9 @@
              "type": "object"
             }
            },
-           "required": [],
+           "required": [
+            "components"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -2991,8 +3476,51 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "components": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "digest": {
+                "type": "string"
+               },
+               "fix": {
+                "type": "string"
+               },
+               "known_digests": {
+                "type": "integer"
+               },
+               "name": {
+                "type": "string"
+               },
+               "path": {
+                "type": "string"
+               },
+               "provider": {
+                "type": "string"
+               },
+               "state": {
+                "enum": [
+                 "known",
+                 "unverified",
+                 "missing"
+                ]
+               },
+               "versions": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "provider",
+               "name",
+               "state",
+               "known_digests"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -3021,7 +3549,9 @@
              "type": "object"
             }
            },
-           "required": [],
+           "required": [
+            "components"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -3053,9 +3583,9 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "The outside programs providers need: found or not, with path and digest.",
+    "summary": "The outside programs providers need: found or not, with path and digest, known or unverified. Starts nothing.",
     "x-action": "component.list",
-    "x-sdk": false
+    "x-sdk": true
    }
   },
   "/api/v1/actions/config.set": {
@@ -19296,8 +19826,36 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "attempt": {
+             "type": "integer"
+            },
+            "captures": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "compiled_target_hash": {
+             "type": "string"
+            },
+            "engine": {
+             "type": "string"
+            },
+            "kept": {
+             "type": "integer"
+            },
+            "level": {
+             "type": "string"
+            },
+            "limitations": {
+             "items": {},
+             "type": "array"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -19324,9 +19882,58 @@
               "when"
              ],
              "type": "object"
+            },
+            "records": {
+             "type": "integer"
+            },
+            "run_id": {
+             "type": "string"
+            },
+            "signature": {
+             "type": "string"
+            },
+            "status": {
+             "type": "string"
+            },
+            "steps": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "steps_total": {
+             "type": "integer"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            },
+            "trace": {
+             "type": "string"
+            },
+            "trace_check": {
+             "type": "string"
+            },
+            "trace_unreadable": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "run_id",
+            "tool",
+            "target",
+            "status",
+            "attempt",
+            "compiled_target_hash",
+            "captures",
+            "steps_total",
+            "steps"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -19368,8 +19975,36 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "attempt": {
+             "type": "integer"
+            },
+            "captures": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "compiled_target_hash": {
+             "type": "string"
+            },
+            "engine": {
+             "type": "string"
+            },
+            "kept": {
+             "type": "integer"
+            },
+            "level": {
+             "type": "string"
+            },
+            "limitations": {
+             "items": {},
+             "type": "array"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -19396,9 +20031,58 @@
               "when"
              ],
              "type": "object"
+            },
+            "records": {
+             "type": "integer"
+            },
+            "run_id": {
+             "type": "string"
+            },
+            "signature": {
+             "type": "string"
+            },
+            "status": {
+             "type": "string"
+            },
+            "steps": {
+             "items": {
+              "additionalProperties": {},
+              "properties": {},
+              "required": [],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "steps_total": {
+             "type": "integer"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            },
+            "trace": {
+             "type": "string"
+            },
+            "trace_check": {
+             "type": "string"
+            },
+            "trace_unreadable": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "run_id",
+            "tool",
+            "target",
+            "status",
+            "attempt",
+            "compiled_target_hash",
+            "captures",
+            "steps_total",
+            "steps"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -19430,9 +20114,9 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "A summary of one run's trace, with references to its kept artifacts.",
+    "summary": "A summary of one of the caller's own runs' trace: each step's kind, outcome, and time, with references to its kept captures, and never a value.",
     "x-action": "run.trace",
-    "x-sdk": false
+    "x-sdk": true
    }
   },
   "/api/v1/actions/run.undo": {
@@ -23444,7 +24128,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "A new scout of a target, handed a description the system publishes about itself as a file of the project's `sources` folder: exactly `scout.run` with `files` naming it `description`. Drafts by rule; never writes to the system.",
+    "summary": "A new scout of a target, handed a description the system publishes about itself as a file of the project's `inputs` folder: exactly `scout.run` with `files` naming it `description`. Drafts by rule; never writes to the system.",
     "x-action": "spec.import",
     "x-sdk": true
    }
@@ -26293,7 +26977,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Create a toolset: who may connect, which tools it selects, the highest effect class and the identity mode of its runs. A toolset only narrows what grants allow. A person's act, published as a new version of the policy set.",
+    "summary": "Create a toolset: who may connect, which tools it selects, the highest effect class and the identity kind of its runs. A toolset only narrows what grants allow. A person's act, published as a new version of the policy set.",
     "x-action": "toolset.create",
     "x-sdk": true
    }
@@ -27459,8 +28143,20 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "bytes": {
+             "type": "integer"
+            },
+            "digest": {
+             "type": "string"
+            },
+            "file": {
+             "type": "string"
+            },
+            "left_out": {
+             "type": "integer"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -27487,9 +28183,22 @@
               "when"
              ],
              "type": "object"
+            },
+            "pieces": {
+             "type": "integer"
+            },
+            "run_id": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "run_id",
+            "file",
+            "bytes",
+            "digest",
+            "pieces",
+            "left_out"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -27531,8 +28240,20 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "bytes": {
+             "type": "integer"
+            },
+            "digest": {
+             "type": "string"
+            },
+            "file": {
+             "type": "string"
+            },
+            "left_out": {
+             "type": "integer"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -27559,9 +28280,22 @@
               "when"
              ],
              "type": "object"
+            },
+            "pieces": {
+             "type": "integer"
+            },
+            "run_id": {
+             "type": "string"
             }
            },
-           "required": [],
+           "required": [
+            "run_id",
+            "file",
+            "bytes",
+            "digest",
+            "pieces",
+            "left_out"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -27593,9 +28327,9 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Export one run's evidence to a file in the project.",
+    "summary": "Export one run's evidence to one file in the project's working folder, `.anything2mcp/exports/<run>.json`: its events, its step trace, and its text captures, with a manifest that names each piece and what was left out and why.",
     "x-action": "trace.export",
-    "x-sdk": false
+    "x-sdk": true
    }
   },
   "/api/v1/actions/trace.show": {
@@ -27847,7 +28581,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "View one run's evidence: its trace lines and artifact references.",
+    "summary": "View one run's evidence: its trace lines and capture references.",
     "x-action": "trace.show",
     "x-sdk": true
    }
@@ -30065,38 +30799,162 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "changed": {
+               "type": "boolean"
+              },
+              "compiled_target_hash": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "current": {
+               "type": "boolean"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "previous": {
                "type": "string"
               },
-              "when": {
+              "target": {
+               "type": "string"
+              },
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "target",
+              "version",
+              "compiled_target_hash",
+              "changed",
+              "current"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -30137,38 +30995,162 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
-           "properties": {
-            "next": {
+           "anyOf": [
+            {
              "additionalProperties": false,
              "properties": {
-              "action": {
+              "changed": {
+               "type": "boolean"
+              },
+              "compiled_target_hash": {
                "type": "string"
               },
-              "args": {
-               "additionalProperties": {},
-               "properties": {},
-               "required": [],
+              "current": {
+               "type": "boolean"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
                "type": "object"
               },
-              "tool": {
+              "previous": {
                "type": "string"
               },
-              "when": {
+              "target": {
+               "type": "string"
+              },
+              "version": {
                "type": "string"
               }
              },
              "required": [
+              "target",
+              "version",
+              "compiled_target_hash",
+              "changed",
+              "current"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
               "action",
-              "tool",
-              "args",
-              "when"
+              "person",
+              "expires_at"
              ],
              "type": "object"
             }
-           },
-           "required": [],
-           "type": "object"
+           ]
           },
           "warnings": {
            "items": {
@@ -30199,9 +31181,9 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Make an earlier version of a target current.",
+    "summary": "Make another published version of a target the one that runs now: an earlier one, or a later one again after a rollback. A person's act, never an agent's.",
     "x-action": "version.rollback",
-    "x-sdk": false
+    "x-sdk": true
    }
   },
   "/api/v1/actions/watch.changes": {
@@ -30738,6 +31720,9 @@
               "requests_per_check": {
                "type": "integer"
               },
+              "resource": {
+               "type": "string"
+              },
               "state": {
                "enum": [
                 "asked",
@@ -30774,7 +31759,8 @@
               "surface",
               "requests_per_check",
               "compared",
-              "ignore"
+              "ignore",
+              "resource"
              ],
              "type": "object"
             },
@@ -30997,6 +31983,9 @@
               "requests_per_check": {
                "type": "integer"
               },
+              "resource": {
+               "type": "string"
+              },
               "state": {
                "enum": [
                 "asked",
@@ -31033,7 +32022,8 @@
               "surface",
               "requests_per_check",
               "compared",
-              "ignore"
+              "ignore",
+              "resource"
              ],
              "type": "object"
             },
@@ -31348,6 +32338,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -31384,7 +32377,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -31519,6 +32513,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -31555,7 +32552,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -31730,6 +32728,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -31766,7 +32767,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -31889,6 +32891,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -31925,7 +32930,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -32100,6 +33106,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -32136,7 +33145,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -32259,6 +33269,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -32295,7 +33308,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -32475,6 +33489,9 @@
                "requests_per_check": {
                 "type": "integer"
                },
+               "resource": {
+                "type": "string"
+               },
                "state": {
                 "enum": [
                  "asked",
@@ -32511,7 +33528,8 @@
                "surface",
                "requests_per_check",
                "compared",
-               "ignore"
+               "ignore",
+               "resource"
               ],
               "type": "object"
              },
@@ -32650,6 +33668,9 @@
                "requests_per_check": {
                 "type": "integer"
                },
+               "resource": {
+                "type": "string"
+               },
                "state": {
                 "enum": [
                  "asked",
@@ -32686,7 +33707,8 @@
                "surface",
                "requests_per_check",
                "compared",
-               "ignore"
+               "ignore",
+               "resource"
               ],
               "type": "object"
              },
@@ -32870,6 +33892,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -32906,7 +33931,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -33029,6 +34055,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -33065,7 +34094,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -33240,6 +34270,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -33276,7 +34309,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -33399,6 +34433,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -33435,7 +34472,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -35459,6 +36497,235 @@
     "summary": "Find operations and pipelines of the published targets by words or module. Returns names, one-line descriptions, effects, and whether each can be called now; call tool.describe for a schema.",
     "x-action": "tool.search",
     "x-sdk": true
+   }
+  },
+  "/api/v1/watches/{watch_id}/changes": {
+   "get": {
+    "operationId": "watch_changes_stream",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "watch_id",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "description": "The `seq` of the last change seen. 0, the default, starts at the first.",
+      "in": "query",
+      "name": "after",
+      "required": false,
+      "schema": {
+       "minimum": 0,
+       "type": "integer"
+      }
+     },
+     {
+      "description": "The most changes in a page. A stream ignores it.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "maximum": 100,
+       "minimum": 1,
+       "type": "integer"
+      }
+     },
+     {
+      "description": "What a reconnecting stream sends: the id of the last change it saw. It stands in place of `after`.",
+      "in": "header",
+      "name": "Last-Event-ID",
+      "required": false,
+      "schema": {
+       "minimum": 0,
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "$schema": "https://json-schema.org/draft/2020-12/schema",
+           "additionalProperties": false,
+           "properties": {
+            "after": {
+             "type": "integer"
+            },
+            "changes": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "at": {
+                "type": "integer"
+               },
+               "check": {
+                "type": "integer"
+               },
+               "failure": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "kind": {
+                "enum": [
+                 "confirmed",
+                 "added",
+                 "changed",
+                 "removed",
+                 "unseen",
+                 "gap",
+                 "paused",
+                 "resumed",
+                 "ended",
+                 "condition_met"
+                ]
+               },
+               "missed": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "older_check": {
+                "type": "integer"
+               },
+               "older_run_id": {
+                "type": "string"
+               },
+               "outputs": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               },
+               "reason": {
+                "type": "string"
+               },
+               "record": {},
+               "run_id": {
+                "type": "string"
+               },
+               "seq": {
+                "type": "integer"
+               }
+              },
+              "required": [
+               "seq",
+               "kind",
+               "at"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "complete": {
+             "type": "boolean"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "state",
+            "changes",
+            "after",
+            "complete"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       },
+       "text/event-stream": {
+        "schema": {
+         "type": "string"
+        }
+       }
+      },
+      "description": "A page of changes; or a stream of them, each with its `seq` as its id, ended by one event named `ended` once the watch has ended."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "The changes a watch of the caller's person recorded, after a number: one page as JSON in the shape watch.changes returns, or, for a caller that accepts text/event-stream, a stream of them that stays open while the watch lasts and ends with one event named `ended`."
    }
   }
  },

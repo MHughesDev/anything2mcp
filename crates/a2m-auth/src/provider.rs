@@ -400,7 +400,7 @@ pub trait AuthProvider: Send + Sync {
     -> BoxFuture<'a, Result<Material, Failure>>;
 
     /// The provider's own view of whether `material` still signs in at
-    /// `now`. It does not reach the system; the target's probe does that.
+    /// `now`. It does not reach the system; the target's session check does that.
     fn is_signed_in<'a>(
         &'a self,
         material: &'a Material,

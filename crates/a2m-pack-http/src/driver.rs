@@ -16,11 +16,11 @@ use std::time::Duration;
 use a2m_auth::{ChallengeScheme, CredentialSink, RawSign, SessionLease};
 use a2m_core::EnvironmentKind;
 use a2m_core::{Failure, Redact, Secret, Step, SurfaceIndex, Value, Values};
+use a2m_logs::{Acting, Detail, record_headers};
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
-use a2m_telemetry::{Acting, Detail, record_headers};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::codes;
@@ -930,7 +930,7 @@ impl HttpDriver {
                 .iter()
                 .map(String::as_str)
                 .chain(secret_header)
-                .map(|name| a2m_telemetry::RecordedHeader {
+                .map(|name| a2m_logs::RecordedHeader {
                     name: name.to_owned(),
                     value: None,
                 }),

@@ -16,7 +16,7 @@ It is the only way anything starts a process. A pack's driver, and the plug-in h
 ## Starting something
 
 1. **Identify it.** At every start, immediately before it, the program is found at a declared place, opened once, and its digest is taken through that handle; the file that is started is that same file wherever the operating system can start an open file, and otherwise the path is looked at once more before the start. Where digests were declared for the program, in a manifest, in a requirement's known digests, or in a published compiled target, a digest that is none of them is refused as `effect_not_declared` and nothing starts. Where none was declared, it is not refused; it is recorded as unverified, and everything that passes through the subsystem carries that mark ([section 219](219-the-evidence-ladder.md)).
-2. **Give the launch an identity.** A random run identifier, a random token, and a random owner mark, new for each launch. The token proves the subsystem at the handshake; the owner mark proves at stopping that a process belongs to this launch.
+2. **Give the launch an identity.** A random run identifier, a random token, and a random process mark, new for each launch. The token proves the subsystem at the handshake; the process mark proves at stopping that a process belongs to this launch.
 3. **Hand them over privately.** Through a pipe the child inherits, or a file only the user can read that is deleted once read. Never on a command line, where other programs can see it.
 4. **Start it in a group the runtime can end as a whole.** A process group on POSIX systems; a job object on Windows, set to end with its owner, in which the child is placed before it runs anything.
 5. **Shake hands before any work.** The subsystem must return the run identifier, its own version, the limits it will honor, and, where it is attached to something, the identity of that thing. A subsystem attached to a different file, page, or document than expected is refused.
@@ -25,8 +25,8 @@ Steps 1 to 4 hold for everything started. Step 5 holds for a subsystem that spea
 
 | Link | Identified and owned by | What the supervisor still does |
 | --- | --- | --- |
-| A protocol someone else fixed, such as a browser's debugging pipe | The program's digest, the version it reports through its own protocol, and the owner mark. It cannot return the run identifier | Starts, counts, bounds, and stops it. The pack frames the bytes, and a frame the pack cannot parse still closes the link |
-| A one-shot child that performs no handshake: a command run to completion | The program's digest and the owner mark | Arguments as a list, never a shell line; the environment allowlist; a checked working directory; output cut at its bound and counted; the deadline; the whole group ended at exit or deadline. A deadline passed on a committing run is reported as unknown, so the write is `possible_commit` |
+| A protocol someone else fixed, such as a browser's debugging pipe | The program's digest, the version it reports through its own protocol, and the process mark. It cannot return the run identifier | Starts, counts, bounds, and stops it. The pack frames the bytes, and a frame the pack cannot parse still closes the link |
+| A one-shot child that performs no handshake: a command run to completion | The program's digest and the process mark | Arguments as a list, never a shell line; the environment allowlist; a checked working directory; output cut at its bound and counted; the deadline; the whole group ended at exit or deadline. A deadline passed on a committing run is reported as unknown, so the write is `possible_commit` |
 
 ## Talking to it
 
@@ -63,7 +63,7 @@ These are not sessions. A session is a signed-in state and belongs to the sessio
 
 ## Stopping something
 
-- The runtime ends only what proves it belongs to the runtime. At the moment of stopping, each process in the group is checked for the launch's owner mark. A process that cannot be checked is not skipped and not killed: cleanup is reported as incomplete. As built, a child is started in its own process group (a job object on Windows), and the supervisor signals a group only while its leader is unreaped, so the signal reaches nothing it did not start ([decision 0090](../../decisions/0090-the-supervisor-ends-a-group-only-while-its-leader-is-unreaped.md)). Ownership records in the store, which would let a restarted engine find leftovers, are not built yet.
+- The runtime ends only what proves it belongs to the runtime. At the moment of stopping, each process in the group is checked for the launch's process mark. A process that cannot be checked is not skipped and not killed: cleanup is reported as incomplete. As built, a child is started in its own process group (a job object on Windows), and the supervisor signals a group only while its leader is unreaped, so the signal reaches nothing it did not start ([decision 0090](../../decisions/0090-the-supervisor-ends-a-group-only-while-its-leader-is-unreaped.md)). Ownership records in the store, which would let a restarted engine find leftovers, are not built yet.
 - Incomplete cleanup is a state, not a log line. It names what remains, it blocks new starts of that kind until it is retried, and `doctor.run` shows it.
 - The process list comes from the operating system through fixed system paths, so that nothing on a caller's search path can hide or replace it.
 - On shutdown every caller that asks joins the same cleanup. Anything that failed to stop stays owned and is retried.
@@ -71,7 +71,7 @@ These are not sessions. A session is a signed-in state and belongs to the sessio
 
 ## Bridges inside a host application
 
-Many systems are best reached from inside: an application with a scripting interface, an add-in mechanism, or an automation interface can run a small piece of code that answers typed requests. This is the bridge archetype of [section 201](201-archetypes-and-modes.md), and it is how REA places itself inside the analysis tools it drives.
+Many systems are best reached from inside: an application with a scripting interface, an add-in mechanism, or an automation interface can run a small piece of code that answers typed requests. This is the bridge access kind of [section 201](201-access-kinds-and-modes.md), and it is how REA places itself inside the analysis tools it drives.
 
 | Way of getting in | When | Rule |
 | --- | --- | --- |

@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-17
 
-**Settles:** the outside crate for logging in the [`a2m-telemetry` design](../architecture/crates/a2m-telemetry.md), and the form of its span and metric interface. **Changes that interface from the design's sketch.**
+**Settles:** the outside crate for logging in the [`a2m-telemetry` design](../architecture/crates/a2m-logs.md), and the form of its span and metric interface. **Changes that interface from the design's sketch.**
 
 ## Context
 
@@ -50,4 +50,4 @@ Logging shows up in the engine's benchmarks, or the OpenTelemetry exporter needs
 ## Spec sections
 
 - [217-traces-evidence-and-repair.md](../spec/2-kernel/217-traces-evidence-and-repair.md)
-- [The `a2m-telemetry` design](../architecture/crates/a2m-telemetry.md)
+- [The `a2m-telemetry` design](../architecture/crates/a2m-logs.md)

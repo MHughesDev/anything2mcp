@@ -22,7 +22,7 @@ use a2m_ledger::{
     WatchReason, WatchRow, WatchShape, WatchState,
 };
 use a2m_sched::{
-    BudgetKey, CheckAdmission, CheckStarted, DueCheck, HoldScope, JobKind, Priority, RateLimit,
+    BudgetKey, CheckAdmission, CheckStarted, DueCheck, JobKind, PauseScope, Priority, RateLimit,
     SHORTEST_INTERVAL_FLOOR, SchedSettings, Submission, WatchLimits, codes, due_at,
 };
 use common::*;
@@ -173,7 +173,7 @@ async fn complete(
             let mut ledger = tx.ledger();
             ledger.set_state(&fence, RunState::Validating, None)?;
             ledger.set_state(&fence, RunState::Running, None)?;
-            ledger.store_result(&fence, stored)?;
+            ledger.store_result(&fence, stored, a2m_core::Coverage::Unknown)?;
             ledger.set_state(&fence, RunState::Completed, None)
         })
         .await
@@ -429,7 +429,7 @@ async fn a_hold_defers_the_check_and_leaves_a_gap_when_released() {
     let watch = confirmed(&stand, 1).await;
     stand
         .sched
-        .hold(HoldScope::Target(workspace(), target()))
+        .pause(PauseScope::Target(workspace(), target()))
         .await
         .unwrap();
     move_to(&stand, first_due(&watch));
@@ -442,7 +442,7 @@ async fn a_hold_defers_the_check_and_leaves_a_gap_when_released() {
     else {
         panic!("a held target admits no check");
     };
-    assert_eq!(refused.code(), &codes::ON_HOLD);
+    assert_eq!(refused.code(), &codes::SCHEDULER_PAUSED);
     assert_eq!(
         stand.counted("SELECT COUNT(*) FROM runs"),
         0,
@@ -454,7 +454,7 @@ async fn a_hold_defers_the_check_and_leaves_a_gap_when_released() {
     stand.advance(INTERVAL * 2);
     stand
         .sched
-        .release_hold(HoldScope::Target(workspace(), target()))
+        .release_pause(PauseScope::Target(workspace(), target()))
         .await
         .unwrap();
     let due = stand.sched.due_watches().await.unwrap().checks;

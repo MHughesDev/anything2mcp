@@ -91,6 +91,7 @@ fn locator_schema(depth: u8) -> JsonSchema {
         .optional("contains", JsonSchema::bool())
         .optional("test_id", JsonSchema::text())
         .optional("title", JsonSchema::text())
+        .optional("heading", JsonSchema::int())
         .optional("css", JsonSchema::text());
     if depth == 0 {
         schema
@@ -167,12 +168,13 @@ pub(crate) fn screen_schema() -> JsonSchema {
     let rows = JsonSchema::object()
         .required("locate", locate_schema())
         .optional("fingerprint", fingerprint_schema())
-        .required("header", JsonSchema::non_empty_list(JsonSchema::text()))
+        .optional("header", JsonSchema::non_empty_list(JsonSchema::text()))
+        .optional("items", JsonSchema::words(crate::model::ITEM_ROLES))
         .required(
             "columns",
             JsonSchema::map_of(
                 JsonSchema::object()
-                    .required("header", JsonSchema::text())
+                    .optional("header", JsonSchema::text())
                     .required("type", JsonSchema::field_type()),
             ),
         );
@@ -292,6 +294,21 @@ impl Reader {
         if let Some(title) = text("title") {
             kinds.push(LocateBy::Title(title));
         }
+        if let Some(level) = doc.get("heading") {
+            match level.as_int().and_then(|level| u32::try_from(level).ok()) {
+                Some(level @ 1..=6) => kinds.push(LocateBy::Heading(level)),
+                _ => {
+                    self.refuse(
+                        "locator_invalid",
+                        &doc.at,
+                        "A locator by `heading` states the heading's level, from 1 to 6."
+                            .to_owned(),
+                        "Write the level the page gives the heading.",
+                    );
+                    return None;
+                }
+            }
+        }
         if let Some(selector) = text("css") {
             kinds.push(LocateBy::Css(selector));
         }
@@ -299,7 +316,7 @@ impl Reader {
             self.refuse(
                 "locator_invalid",
                 &doc.at,
-                "A locator matches in exactly one way: `role` with `name`, `label`, `placeholder`, `text`, `test_id`, `title`, or `css`; `contains` goes with `text` only.".to_owned(),
+                "A locator matches in exactly one way: `role` with `name`, `label`, `placeholder`, `text`, `test_id`, `title`, `heading`, or `css`; `contains` goes with `text` only.".to_owned(),
                 "Write one of them; add a second locator to the list for a second way.",
             );
             return None;
@@ -566,8 +583,45 @@ impl Reader {
     fn rows(&mut self, doc: &Located<Doc>) -> Option<Rows> {
         let locate = self.locators(doc)?;
         let fingerprint = self.fingerprint(doc, &locate)?;
-        let header: Vec<String> = doc
-            .get("header")?
+        // Items: each one row of one cell, its text; no heading at all
+        // (decision 0473).
+        if let Some(role) = doc.text("items") {
+            let entries = doc.get("columns")?.entries();
+            let stray = doc.get("header").is_some()
+                || entries.len() != 1
+                || entries
+                    .iter()
+                    .any(|entry| entry.value.get("header").is_some());
+            if stray {
+                self.refuse(
+                    "column_unknown",
+                    &doc.at,
+                    "Rows read as `items` have no `header`, and exactly one column, with no `header` of its own: the text of each item.".to_owned(),
+                    "Remove `header`, and keep one column under `columns`.",
+                );
+                return None;
+            }
+            return Some(Rows {
+                locate,
+                fingerprint,
+                header: Vec::new(),
+                columns: entries
+                    .iter()
+                    .map(|entry| (entry.key.value.clone(), 0))
+                    .collect(),
+                items: Some(role.to_owned()),
+            });
+        }
+        let Some(listed) = doc.get("header") else {
+            self.refuse(
+                "column_unknown",
+                &doc.at,
+                "A table's rows state its `header`: the text of every column's heading.".to_owned(),
+                "Write the headings as the page shows them, or `items:` for a list.",
+            );
+            return None;
+        };
+        let header: Vec<String> = listed
             .items()
             .iter()
             .filter_map(|item| item.as_text().map(str::to_owned))
@@ -600,6 +654,7 @@ impl Reader {
             fingerprint,
             header,
             columns,
+            items: None,
         })
     }
 
@@ -963,7 +1018,10 @@ impl LintRule for NoFingerprint {
 
 /// The surface's profile, when the surface names one that exists and is not
 /// `auto`. A name that exists nowhere is `web.profile_unknown`'s.
-fn profile_of(view: &ResolvedView<'_>, surface: &str) -> Option<&'static crate::profiles::Profile> {
+fn platform_profile_of(
+    view: &ResolvedView<'_>,
+    surface: &str,
+) -> Option<&'static crate::profiles::PlatformProfile> {
     let named = view
         .target()
         .surface(surface)?
@@ -1012,7 +1070,7 @@ impl LintRule for GeneratedId {
         for screen in view.entries(&SCREEN_KIND, &WEB_SURFACE) {
             let Some(profile) = screen
                 .text("surface")
-                .and_then(|surface| profile_of(view, surface))
+                .and_then(|surface| platform_profile_of(view, surface))
             else {
                 continue;
             };
@@ -1035,7 +1093,7 @@ impl LintRule for GeneratedId {
 
 impl GeneratedId {
     fn look(
-        profile: &crate::profiles::Profile,
+        profile: &crate::profiles::PlatformProfile,
         part: &str,
         locator: &Located<Doc>,
         out: &mut Vec<Diagnostic>,
@@ -1074,9 +1132,9 @@ impl GeneratedId {
 }
 
 /// `web.profile_unknown`.
-pub(crate) struct ProfileUnknown;
+pub(crate) struct PlatformProfileUnknown;
 
-impl LintRule for ProfileUnknown {
+impl LintRule for PlatformProfileUnknown {
     fn code(&self) -> LintCode {
         code("profile_unknown")
     }
@@ -1122,9 +1180,9 @@ impl LintRule for ProfileUnknown {
 /// profile has the tier `read_only` or `unsupported`. It holds whatever
 /// mode binds the screen, since a mode that acts on the page acts on
 /// controls the profile says are not checked for writing.
-pub(crate) struct ProfileReadonly;
+pub(crate) struct PlatformProfileReadonly;
 
-impl LintRule for ProfileReadonly {
+impl LintRule for PlatformProfileReadonly {
     fn code(&self) -> LintCode {
         code("profile_readonly")
     }
@@ -1160,7 +1218,7 @@ impl LintRule for ProfileReadonly {
                     .iter()
                     .find(|screen| screen.text("screen") == Some(name))
                     .and_then(|screen| screen.text("surface"))
-                    .and_then(|surface| Some((surface, profile_of(view, surface)?)))
+                    .and_then(|surface| Some((surface, platform_profile_of(view, surface)?)))
                 else {
                     continue;
                 };

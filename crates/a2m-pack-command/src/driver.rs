@@ -16,13 +16,13 @@ use a2m_auth::SessionLease;
 use a2m_core::{
     CodeEntry, Digest, EnvironmentKind, Failure, RecordKey, Redact, Step, Value, Values,
 };
+use a2m_logs::{Acting, Detail};
 use a2m_provider::{
     Access, BoxFuture, Capture, CheckedPath, Cleanup, ConnFailure, Deadline, Driver, DriverHealth,
     EntryKind, EnvAllowlist, Exit, Finished, LaunchSpec, Leftover, Observed, OneShot, Posture,
     PrepareContext, Prepared, ProgramRef, Ran, RootName, Roots, ScopedSupervisor, StepFailure,
     StepInput, StepOutcome, SubsystemKind, SurfaceRef, current_platform,
 };
-use a2m_telemetry::{Acting, Detail};
 
 use crate::args::{self, Given};
 use crate::codes::{

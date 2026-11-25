@@ -1516,7 +1516,7 @@ impl a2m_provider::FindingSink for Kept {
 
 #[tokio::test]
 async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_states() {
-    use a2m_core::{Archetype, EvidenceLevel, SurfaceKind};
+    use a2m_core::{AccessKind, EvidenceLevel, SurfaceKind};
     use a2m_provider::{
         CheckedPaths, Deadline, DescribeForm, DiscoveryScope, ReadOnlyPort, RootName,
         SurfaceDescription,
@@ -1526,7 +1526,7 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
     let surface = scene.surface("price_files");
     let description = SurfaceDescription {
         kind: SurfaceKind::new("file").unwrap(),
-        archetype: Archetype::Artifact,
+        access_kind: AccessKind::File,
         address: "prices".to_owned(),
         facts: Values::new(),
     };
@@ -1699,13 +1699,13 @@ async fn drafted_from(
     label: &str,
     names: &[&str],
 ) -> (std::path::PathBuf, a2m_files::DraftReport) {
-    use a2m_core::{Archetype, SurfaceKind};
+    use a2m_core::{AccessKind, SurfaceKind};
     use a2m_provider::{CheckedPaths, Deadline, DiscoveryScope, ReadOnlyPort, RootName};
 
     let surface = scene.surface("price_files");
     let description = a2m_provider::SurfaceDescription {
         kind: SurfaceKind::new("file").unwrap(),
-        archetype: Archetype::Artifact,
+        access_kind: AccessKind::File,
         address: "prices".to_owned(),
         facts: Values::new(),
     };
@@ -2002,13 +2002,13 @@ async fn discovered_surface(
     name: &str,
     depth: Option<u32>,
 ) -> (Vec<a2m_core::Finding>, a2m_provider::DiscoveryReport) {
-    use a2m_core::{Archetype, SurfaceKind};
+    use a2m_core::{AccessKind, SurfaceKind};
     use a2m_provider::{Deadline, DiscoveryScope, ReadOnlyPort};
 
     let surface = scene.surface(name);
     let description = a2m_provider::SurfaceDescription {
         kind: SurfaceKind::new("file").unwrap(),
-        archetype: Archetype::Artifact,
+        access_kind: AccessKind::File,
         address: surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -2427,7 +2427,7 @@ async fn settings_files_are_discovered_by_key_and_shape_drafted_as_reads_and_no_
         .registry
         .discoverers_for(&a2m_provider::SurfaceDescription {
             kind: a2m_core::SurfaceKind::new("file").unwrap(),
-            archetype: a2m_core::Archetype::Artifact,
+            access_kind: a2m_core::AccessKind::File,
             address: "config".to_owned(),
             facts: Values::new(),
         })
@@ -2740,6 +2740,7 @@ async fn the_driver_itself_refuses_a_save_where_nothing_may_be_written_or_that_i
             destinations: &a2m_provider::Destinations::default(),
             paths: &a2m_provider::CheckedPaths::none(),
             supervisor: &supervisor,
+            confirmed: a2m_provider::ConfirmedReads::none(),
         };
         let mut prepared = driver.prepare(&cx, None).await.unwrap();
         let mut last = None;
@@ -3128,7 +3129,7 @@ async fn a_column_named_as_a_secret_is_never_drafted_as_a_field_or_an_output() {
 
 #[tokio::test]
 async fn a_drafted_list_of_delimited_text_ends_at_the_end_of_the_data_not_at_an_empty_cell() {
-    // Finding 24 of field test 4, decision 0342: a cell may be empty, in
+    // Finding 24 of copy test 4, decision 0342: a cell may be empty, in
     // any column, in the first column, in the last, and a row of empty
     // cells but one. The data is invented.
     const FILE: &str = "prices/gaps.csv";
@@ -3185,7 +3186,7 @@ async fn a_drafted_list_of_delimited_text_ends_at_the_end_of_the_data_not_at_an_
 
 #[tokio::test]
 async fn a_workbook_saved_with_no_table_is_drafted_as_the_rows_under_its_header_row() {
-    // Finding 25 of field test 4: a spreadsheet as an office suite saves
+    // Finding 25 of copy test 4: a spreadsheet as an office suite saves
     // it has rows under a header row on a sheet and no table object. The
     // package is built byte by byte, in the shape the suite writes, with
     // invented data.
@@ -3252,7 +3253,7 @@ async fn a_workbook_saved_with_no_table_is_drafted_as_the_rows_under_its_header_
 
 #[tokio::test]
 async fn the_fields_of_a_json_list_are_typed_by_their_json_type_and_only_the_untypable_is_asked() {
-    // Finding 26 of field test 4: the drafter gives a JSON field the type
+    // Finding 26 of copy test 4: the drafter gives a JSON field the type
     // its values have, as it does a field of delimited text. The data is
     // invented.
     const FILE: &str = "config/customers.json";
@@ -3314,7 +3315,7 @@ async fn the_fields_of_a_json_list_are_typed_by_their_json_type_and_only_the_unt
 
 #[test]
 fn the_committing_step_carries_the_key_and_the_values_it_writes_for_an_offline_test() {
-    // Finding 22 of field test 4: the arguments of the step that commits
+    // Finding 22 of copy test 4: the arguments of the step that commits
     // are what an offline test's `<step>.request.json` is compared with. A
     // `save` that carried none could only be answered by `{}`. The values
     // are those `set` was given, and the key; a delete has the key alone.

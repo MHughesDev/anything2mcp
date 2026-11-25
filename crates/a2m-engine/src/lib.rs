@@ -11,7 +11,7 @@
 //! `a2m-provider` for the driver of a binding's mode and reaches it only
 //! through the handle. It opens no store, calls no policy engine, and reads
 //! no target file: everything it needs from outside its loop it asks for
-//! through [`Control`]. Nothing in a run calls a model or improvises; a
+//! through [`ControlPort`]. Nothing in a run calls a model or improvises; a
 //! step that cannot be done as written stops with a named failure class.
 //!
 //! The crates this one may depend on are set by the layering table in
@@ -35,14 +35,14 @@ mod shadow;
 mod tool;
 mod values;
 
-/// The boxed future every method of [`Control`] returns: the same type the
+/// The boxed future every method of [`ControlPort`] returns: the same type the
 /// provider contract uses.
 pub use a2m_provider::BoxFuture;
 
 pub use binding::{BindingPin, binding_digest, default_binding};
 pub use compare::Comparison;
 pub use control::{
-    Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, PassedOver, Preview,
+    Clearance, ControlPort, EngineEvent, Evidence, GuardQuestion, KeptCapture, PassedOver, Preview,
     SessionWant, ShadowCompared,
 };
 pub use diff::{

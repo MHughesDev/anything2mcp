@@ -7,7 +7,9 @@
 use std::sync::Weak;
 
 use a2m_core::Failure;
-use a2m_vault::{BoxFuture, Generation, KeyId, KeyRecord, KeyRecords, KeyRef, Layer, Wrapped};
+use a2m_vault::{
+    BoxFuture, KeyId, KeyRecord, KeyRecords, KeyRef, KeyRotationNumber, Layer, Wrapped,
+};
 
 use crate::codec::{parse, small};
 use crate::store::{Inner, upgrade};
@@ -36,12 +38,12 @@ impl std::fmt::Debug for StoreKeyRecords {
 fn record(row: &Row) -> Result<KeyRecord, Failure> {
     Ok(KeyRecord {
         id: parse::<KeyId>(row.text(0)?)?,
-        generation: Generation::new(small(row.int(1)?)?),
+        rotation: KeyRotationNumber::new(small(row.int(1)?)?),
         layer: parse::<Layer>(row.text(2)?)?,
         wrapped: Wrapped::from_bytes(row.bytes(3)?.to_vec()),
         wrapped_by: KeyRef {
             id: parse::<KeyId>(row.text(4)?)?,
-            generation: Generation::new(small(row.int(5)?)?),
+            rotation: KeyRotationNumber::new(small(row.int(5)?)?),
         },
     })
 }
@@ -49,11 +51,11 @@ fn record(row: &Row) -> Result<KeyRecord, Failure> {
 fn values(record: &KeyRecord) -> Vec<SqlValue> {
     vec![
         SqlValue::from(record.id.to_string()),
-        SqlValue::from(record.generation.get()),
+        SqlValue::from(record.rotation.get()),
         SqlValue::from(record.layer.as_str()),
         SqlValue::from(record.wrapped.as_bytes().to_vec()),
         SqlValue::from(record.wrapped_by.id.to_string()),
-        SqlValue::from(record.wrapped_by.generation.get()),
+        SqlValue::from(record.wrapped_by.rotation.get()),
     ]
 }
 
@@ -61,11 +63,11 @@ impl KeyRecords for StoreKeyRecords {
     fn get<'a>(
         &'a self,
         id: &'a KeyId,
-        generation: Generation,
+        rotation: KeyRotationNumber,
     ) -> BoxFuture<'a, Result<Option<KeyRecord>, Failure>> {
         let params = vec![
             SqlValue::from(id.to_string()),
-            SqlValue::from(generation.get()),
+            SqlValue::from(rotation.get()),
         ];
         Box::pin(async move {
             // Read on the writing thread: a key written a moment ago must be

@@ -62,7 +62,7 @@ An operation with any hazard other than `none` is `irreversible` unless its pack
 
 ## Commands are not a shell
 
-For the command archetype ([section 201](201-archetypes-and-modes.md)):
+For the command access kind ([section 201](201-access-kinds-and-modes.md)):
 
 - A program is named by path, and its digest is recorded.
 - Arguments are built from a typed template, position by position, exactly as request templates are ([section 502](../5-security/502-defending-against-a-manipulated-agent.md)). No input is ever joined into a line that a shell reads.

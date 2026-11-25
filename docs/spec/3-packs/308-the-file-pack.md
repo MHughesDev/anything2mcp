@@ -1,6 +1,6 @@
 # 308. The file pack
 
-The file pack treats a file in a known format as the system being operated on: a spreadsheet, a delimited text file, a structured configuration or data file, a document. It is the artifact archetype ([section 201](../2-kernel/201-archetypes-and-modes.md)). It registers one mode, `file` ([decision 0102](../../decisions/0102-the-file-mode-and-what-the-file-pack-registers.md), under the rule of [record 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)). Packages H1 to H3 of the [roadmap](../../plan/roadmap.md) build it. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
+The file pack treats a file in a known format as the system being operated on: a spreadsheet, a delimited text file, a structured configuration or data file, a document. It is the file access kind ([section 201](../2-kernel/201-access-kinds-and-modes.md)). It registers one mode, `file` ([decision 0102](../../decisions/0102-the-file-mode-and-what-the-file-pack-registers.md), under the rule of [record 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)). Packages H1 to H3 of the [roadmap](../../plan/roadmap.md) build it. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 The pack also reads a folder as a collection of entries and writes its entries, reads and updates the values of settings files (INI files and property lists), and reads a growing file from where the last read stopped ([decision 0246](../../decisions/0246-the-file-pack-reads-folders-settings-files-and-growing-files.md)).
 
@@ -129,7 +129,7 @@ A settings file's readers stop by name at every form whose meaning differs betwe
 
 ## Verbs and steps
 
-The artifact archetype's steps are `open`, `locate`, `set`, `read`, and `save` ([section 201](../2-kernel/201-archetypes-and-modes.md)).
+The file access kind's steps are `open`, `locate`, `set`, `read`, and `save` ([section 201](../2-kernel/201-access-kinds-and-modes.md)).
 
 | Verb | Lowers to | Commit point |
 | --- | --- | --- |
@@ -307,7 +307,7 @@ The workbook reader itself is `a2m-sources`' choice, made once, and this pack us
 | --- | --- | --- |
 | 1 | A driver, no retries inside | The driver, part by part |
 | 2 | A read-back rule for every write | Opening the saved file again; a format that cannot round-trip is read-only |
-| 3 | Each identity strategy | Identity, effects, hazards, and paths |
+| 3 | Each record matching | Identity, effects, hazards, and paths |
 | 4 | A test stand with ground truth | Files in a temporary folder, read by the stand's own reader |
 | 5 | A discoverer that claims no more than it saw | The file's own structure as `discovered`; header and key guesses as `inferred` |
 | 6 | Failures mapped to the classes | Failures |
@@ -320,7 +320,7 @@ The workbook reader itself is `a2m-sources`' choice, made once, and this pack us
 2. **H2.** Reads from delimited text and JSON, then from workbooks through `a2m-sources`, with positions added to its parsed form; the proof is a value read from a named place in each. Then the discoverer, the drafting rules, and the scout's tries. Done, except the scout's tries.
 3. **H3.** Writes to delimited text and JSON: the patch editor, the untouched check, the replace, read-back, and reconcile by digest; the proof is case 3. Done for `update`, `create`, and `delete` of one record; `upsert` and a list of rows in one save wait for the engine. Then workbooks with the formula rule, then YAML and TOML, each when an editor passes the round-trip tests: not built, and YAML, TOML, XML, and text documents are not read yet either.
 4. **Decision 0246.** Folders, settings files, and growing files: built, with their stand cases 13 to 15. Discovering and drafting them, reads only: built ([decision 0255](../../decisions/0255-the-file-pack-discovers-and-drafts-folders-settings-files-and-growing-files-as-reads.md)).
-5. Record what the kernel had to change, for hypothesis H-26, and whether `file` fitted the artifact archetype without bending it, for H-29.
+5. Record what the kernel had to change, for hypothesis H-26, and whether `file` fitted the file access kind without bending it, for H-29.
 
 ## Open points
 

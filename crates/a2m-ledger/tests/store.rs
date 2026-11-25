@@ -20,7 +20,9 @@ use a2m_ledger::{
     Opened, Owner, PublishedVersion, ReadBack, RetentionClass, Settlement, Store, StoreConfig,
     UnknownStatus, codes, migrations, replay, table_owner,
 };
-use a2m_vault::{Generation, KeyId, KeyRecord, KeyRecords, KeyRef, Layer, OwnerRef, Wrapped};
+use a2m_vault::{
+    KeyId, KeyRecord, KeyRecords, KeyRef, KeyRotationNumber, Layer, OwnerRef, Wrapped,
+};
 use common::*;
 
 // ---- opening, migrations, owners ----
@@ -1131,14 +1133,14 @@ async fn the_vaults_keys_are_kept_as_rows_inserted_once_and_replaced_only_when_u
         .await
         .unwrap();
     let records = store.key_records();
-    let record = |id: KeyId, generation: u32, bytes: u8| KeyRecord {
+    let record = |id: KeyId, rotation: u32, bytes: u8| KeyRecord {
         id,
         layer: Layer::Workspace,
-        generation: Generation::new(generation),
+        rotation: KeyRotationNumber::new(rotation),
         wrapped: Wrapped::from_bytes(vec![bytes; 4]),
         wrapped_by: KeyRef {
             id: KeyId::root(),
-            generation: Generation::FIRST,
+            rotation: KeyRotationNumber::FIRST,
         },
     };
     let main = KeyId::workspace(&workspace());
@@ -1151,14 +1153,20 @@ async fn the_vaults_keys_are_kept_as_rows_inserted_once_and_replaced_only_when_u
     let again = records.insert(record(main, 1, 9)).await.unwrap_err();
     assert_eq!(again.code(), &a2m_vault::codes::KEY_RECORD_CONFLICT);
     assert_eq!(
-        records.get(&main, Generation::FIRST).await.unwrap(),
+        records.get(&main, KeyRotationNumber::FIRST).await.unwrap(),
         Some(record(main, 1, 1))
     );
     assert_eq!(
         records.newest(&main).await.unwrap(),
         Some(record(main, 2, 2))
     );
-    assert_eq!(records.get(&other, Generation::new(2)).await.unwrap(), None);
+    assert_eq!(
+        records
+            .get(&other, KeyRotationNumber::new(2))
+            .await
+            .unwrap(),
+        None
+    );
 
     let stale = Wrapped::from_bytes(vec![7; 4]);
     let lost = records
@@ -1180,7 +1188,7 @@ async fn the_vaults_keys_are_kept_as_rows_inserted_once_and_replaced_only_when_u
         .unwrap();
     let records = store.key_records();
     assert_eq!(
-        records.get(&main, Generation::FIRST).await.unwrap(),
+        records.get(&main, KeyRotationNumber::FIRST).await.unwrap(),
         Some(record(main, 1, 5))
     );
     assert_eq!(

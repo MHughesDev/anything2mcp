@@ -13,7 +13,7 @@ mod common;
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, EvidenceLevel, Failure, FailureClass, Finding, Source, Subject, SurfaceKind, Values,
+    AccessKind, EvidenceLevel, Failure, FailureClass, Finding, Source, Subject, SurfaceKind, Values,
 };
 use a2m_files::{Drafter, TargetRoot};
 use a2m_provider::{
@@ -43,7 +43,7 @@ async fn discovery_identifies_the_device_and_changes_nothing() {
     let port = ReadOnlyPort::new(handle, prepared);
     let surface = SurfaceDescription {
         kind: SurfaceKind::new("device_link").unwrap(),
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -117,7 +117,7 @@ async fn discovery_identifies_the_device_and_changes_nothing() {
 
     // No draft: a device that lists no register gives no map, because a
     // map with no register is nothing to try and stands beside the map
-    // the device's documentation gives (field test 8, finding 52). The
+    // the device's documentation gives (copy test 8, finding 52). The
     // report says why, and the folder holds nothing new.
     let folder = Folder::new("draft");
     std::fs::copy(
@@ -169,7 +169,7 @@ async fn the_map_reader_reads_the_file_it_is_handed_under_its_declared_name() {
     let scene = Scene::start().await;
     let surface = SurfaceDescription {
         kind: SurfaceKind::new("device_link").unwrap(),
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -191,7 +191,7 @@ async fn the_map_reader_reads_the_file_it_is_handed_under_its_declared_name() {
     let project = Folder::new("handed-map");
     std::fs::write(project.path().join("example-map.csv"), PUBLISHED).unwrap();
     std::fs::write(project.path().join("example-map.txt"), PUBLISHED).unwrap();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots
         .add(root.clone(), project.path(), Access::Read)
@@ -249,7 +249,7 @@ async fn a_published_map_drafts_reads_that_read_the_stand_and_send_no_frame_to_d
     let port = ReadOnlyPort::new(handle, prepared);
     let surface = SurfaceDescription {
         kind: SurfaceKind::new("device_link").unwrap(),
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -354,7 +354,7 @@ async fn a_published_map_drafts_reads_that_read_the_stand_and_send_no_frame_to_d
     }
     // A scaled register's read states the places its scale gives, so two
     // reads of one map say the same of their precision: a tenth is one
-    // place, a hundredth two (field test 8, finding 51).
+    // place, a hundredth two (copy test 8, finding 51).
     let read_of = |name: &str| {
         std::fs::read_to_string(
             folder
@@ -505,7 +505,7 @@ Top,input,4294967295,u32,,
     let port = ReadOnlyPort::new(handle, prepared);
     let surface = SurfaceDescription {
         kind: SurfaceKind::new("device_link").unwrap(),
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -635,7 +635,7 @@ Api key,input,41,u16,,
     let port = ReadOnlyPort::new(handle, prepared);
     let surface = SurfaceDescription {
         kind: SurfaceKind::new("device_link").unwrap(),
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };

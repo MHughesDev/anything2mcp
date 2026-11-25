@@ -126,7 +126,7 @@ fn not_looked_at(done: &BTreeMap<u8, Json>) -> Vec<Json> {
     out
 }
 
-/// What the report says a person does with its open questions (field
+/// What the report says a person does with its open questions (copy
 /// test 6, finding 36). `unknown.settle` is not built, so the way through is
 /// the target's own files, outside the holding folder, and the scout run
 /// again; for an MCP read held because its one string may be a key or a
@@ -251,7 +251,7 @@ pub(crate) fn assemble(
 /// discovery ended with when it saw nothing for one: its run failed or was
 /// refused, or every discoverer of it failed and it found nothing. A
 /// surface with no provider or no discoverer was not observed, and is not
-/// listed (field test 9, finding 56).
+/// listed (copy test 9, finding 56).
 pub(crate) fn observed(report: &Json) -> Vec<(String, Option<Json>)> {
     list(&report["content"]["surfaces"])
         .filter(|surface| {

@@ -25,7 +25,7 @@
 use std::collections::BTreeMap;
 
 use a2m_core::{
-    Digest, EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload, SectionIndex,
+    Digest, EffectClass, FailsAs, FileKindName, Mode, PackPayload, RecordMatching, SectionIndex,
     StepKind, SurfaceKind, SurfaceName, Verb,
 };
 use a2m_files::{
@@ -751,12 +751,12 @@ impl Lowering for ApiLowering {
         &self.schema
     }
 
-    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         match strategy {
-            IdentityStrategy::None | IdentityStrategy::Natural | IdentityStrategy::Composite => {
+            RecordMatching::None | RecordMatching::Natural | RecordMatching::Composite => {
                 Possible::Yes
             }
-            IdentityStrategy::Stamped | IdentityStrategy::Find => Possible::No(
+            RecordMatching::Stamped | RecordMatching::Find => Possible::No(
                 "finding a record by a stamp or a search is not built in this version of the HTTP pack."
                     .to_owned(),
             ),

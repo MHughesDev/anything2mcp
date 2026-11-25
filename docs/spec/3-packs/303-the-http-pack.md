@@ -1,6 +1,6 @@
 # 303. The HTTP pack
 
-The HTTP pack lets a target be a service reached by HTTP requests, described or not. Requests are built from typed templates, sent from code with no browser at run time, and checked against their schemas. It brings two modes in the request archetype: `http`, for requests sent directly, and `api`, for calls generated from a published description of the service. It owns the endpoint catalog, the `endpoints/` file kind, which the web pack's `page_http` mode also reads. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
+The HTTP pack lets a target be a service reached by HTTP requests, described or not. Requests are built from typed templates, sent from code with no browser at run time, and checked against their schemas. It brings two modes in the request access kind: `http`, for requests sent directly, and `api`, for calls generated from a published description of the service. It owns the endpoint catalog, the `endpoints/` file kind, which the web pack's `page_http` mode also reads. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 The pack is one crate, `a2m-pack-http`. It has no base crate and depends on no other pack. Its [design](../../architecture/crates/a2m-pack-http.md) is the exact statement of how the code is arranged; this section says what the pack does and why.
 
@@ -26,19 +26,19 @@ The pack is one crate, `a2m-pack-http`. It has no base crate and depends on no o
 
 ## Modes
 
-| Mode | Archetype | How it reaches the system | Needs | Best for | Main risk |
+| Mode | Access kind | How it reaches the system | Needs | Best for | Main risk |
 | --- | --- | --- | --- | --- | --- |
 | `http` | Request | Requests sent directly from code, with no browser at run time | A session cookie or token from the session keeper | Bulk and high-volume work; servers without a browser | Undocumented endpoints change; bot defenses |
 | `api` | Request | Calls generated from a published description | A token or key | Systems with an official interface | Coverage gaps |
 
-Both modes are from [decision 0005](../../decisions/0005-seven-modes-behind-one-driver-interface.md). Their ranks in the pack's manifest put them ahead of `page_http` and `ui` in the default order of bindings, so the cheapest verified binding is tried first ([section 201](../2-kernel/201-archetypes-and-modes.md)). gRPC reflection, once listed under `api`, is not in the first release; it needs its own stand.
+Both modes are from [decision 0005](../../decisions/0005-seven-modes-behind-one-driver-interface.md). Their ranks in the pack's manifest put them ahead of `page_http` and `ui` in the default order of bindings, so the cheapest verified binding is tried first ([section 201](../2-kernel/201-access-kinds-and-modes.md)). gRPC reflection, once listed under `api`, is not in the first release; it needs its own stand.
 
 ## What it registers
 
 | Registration | Content |
 | --- | --- |
 | Surface kinds | `http` |
-| Modes | `http` and `api`, archetype request |
+| Modes | `http` and `api`, access kind request |
 | Step kinds | `token`, `request`, `validate`, `extract` for `http`; `call`, `validate`, `extract` for `api`; and `probe`, which only a discoverer makes, in both. Checked names within each mode |
 | Drivers | One per mode |
 | File kinds | Owns `endpoints/`, for `http` surfaces and, for requests made from inside a page, `web` surfaces. The web pack declares that it reads the kind and is handed the validated entries as data. Owns `descriptions/`, a pinned description, the endpoint catalog's entries for `api` reads: the pack's reading of an imported description's drafted reads, one document each, with the digest of the text it was read from and the path it was served at, which an `api` binding names ([decision 0389](../../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) |
@@ -108,7 +108,7 @@ The full format is in the [file formats](../../reference/file-formats.md#endpoin
 | `api` | The same; before the first `call` of a pass, the description read again where it was served, and its digest compared with the one the compiled target pins: a description that changed stops the call as `drift`, `description_changed`, with nothing sent ([decision 0389](../../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) | `call` | The same | Not built: `api` binds reads only, and a write is an `http` binding |
 
 - **Every failure says whether the request was sent.** A write request sent wholly or in part with no complete answer is `possible_commit`; before any byte of a write was sent, a lost connection is `transient`.
-- **A write that was sent is settled only by the application's verdict.** An answer that is not one, a redirect to another origin or an answer too large to read, leaves the write in doubt as `possible_commit`, and the read-back or reconcile decides. The driver never reports such a write in a class the ledger takes as settled ([decision 0139](../../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)).
+- **A write that was sent is settled only by the system's verdict.** An answer that is not one, a redirect to another origin or an answer too large to read, leaves the write in doubt as `possible_commit`, and the read-back or reconcile decides. The driver never reports such a write in a class the ledger takes as settled ([decision 0139](../../decisions/0139-a-write-that-was-sent-is-never-settled-by-an-answer-that-is-not-the-applications-verdict.md)).
 - **A 404 on a declared lookup is an answer, not a failure:** the record is absent.
 - **Outside a live run, nothing that may write is sent.** A request whose method HTTP does not mark safe, whose method override (the header `X-HTTP-Method-Override`, `X-HTTP-Method`, or `X-Method-Override`, or the query entry `_method`) names such a method or no method, or whose endpoint is marked `write`, is sent in a live run; in the sandbox only as the commit point of a write to a declared test record, in the context prepared for it, or, for an endpoint marked `read` that says with `read_asserted: true` that its unsafe method only reads and carries no such override, when the compiled target is a published version's and the run's environment is of kind `test` in it; in a discovery never. Under the drafts the environment's kind and the assertion are the drafts' own word, so an asserted read is tried only once published. Refused, it is `policy`, `read_only_posture`, and nothing is sent ([decision 0249](../../decisions/0249-the-http-pack-reads-in-bounded-work-and-sends-nothing-that-may-write-outside-a-live-run.md), [decision 0270](../../decisions/0270-the-http-pack-sends-an-asserted-read-only-from-a-published-version-and-bounds-what-it-leaves-running.md)). The publish page names each asserted read, with its method, its path, and its body's fields, and says that the person's word is the only evidence that it changes nothing ([decision 0426](../../decisions/0426-the-publish-page-names-each-asserted-read-after-the-sign-ins-from-what-each-file-kind-says-it-asserts.md)).
 - **The product's own headers never leave it.** A header whose name begins `a2m-` carries something between the product's parts, such as a browser's state; one a session's provider places is refused, `policy`, `product_header_refused`, before anything is sent ([decision 0270](../../decisions/0270-the-http-pack-sends-an-asserted-read-only-from-a-published-version-and-bounds-what-it-leaves-running.md)).
@@ -200,7 +200,7 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | `unknown_variant` | `anti_forgery_unreadable` | The page holds two different tokens where the endpoint says, or one that cannot be sent. Not sent |
 | `drift` | `response_schema_mismatch` | The body does not fit the schema |
 | `unknown_variant` | `unexpected_status` | A status the endpoint does not declare |
-| `possible_commit` | `no_confirmation` | A write request was sent, wholly or in part, and no complete answer came back, or what came back is not the application's verdict: a redirect to another origin, or an answer over the limit on its size |
+| `possible_commit` | `no_confirmation` | A write request was sent, wholly or in part, and no complete answer came back, or what came back is not the system's verdict: a redirect to another origin, or an answer over the limit on its size |
 | `transient` | `timeout`, `connection_lost`, `upstream_unavailable` | Before any byte of a write was sent; an answer to a read not read by the step's deadline; a declared maintenance answer, with its retry time |
 | `policy` | `surface_not_declared` | A template that would resolve outside the declared surfaces, or, for a read, a redirect to another origin |
 | `policy` | `read_only_posture` | Outside a live run, a request that may write and is not the commit point of a write to a declared test record, nor a read the endpoint asserts, of a published version, against an environment of kind `test`; nothing was sent. The provider contract's code |
@@ -237,7 +237,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 | --- | --- | --- |
 | 1 | A driver, no retries inside | One per mode. A redirect is not followed across origins |
 | 2 | Read-back for every write | The named read endpoint or operation. A write without one is `irreversible` |
-| 3 | Each identity strategy | `natural`: a GET by key. `composite`: a nested path, parent first. `stamped`: the record's spare field, or the `idempotency_header` where the service honors one, then a list request filtered on it. `find`: a search endpoint with `settle`. `none`: `irreversible` |
+| 3 | Each record matching | `natural`: a GET by key. `composite`: a nested path, parent first. `stamped`: the record's spare field, or the `idempotency_header` where the service honors one, then a list request filtered on it. `find`: a search endpoint with `settle`. `none`: `irreversible` |
 | 4 | A test stand | The test application's JSON interface, as above |
 | 5 | A discoverer | `http_description` and `http_surface` |
 | 6 | Failures mapped | The table above |

@@ -80,7 +80,7 @@ vocabulary! {
 
 vocabulary! {
     /// How a write's record is found again (spec section 209).
-    pub enum IdentityStrategy: "identity strategy" {
+    pub enum RecordMatching: "record matching" {
         /// By an input that is the system's own key.
         Natural => "natural",
         /// By several inputs that are unique together, within a parent.
@@ -153,7 +153,7 @@ impl DescriptionBy {
 
 vocabulary! {
     /// How a sign-in comes to exist (spec section 215).
-    pub enum SignInMode: "sign-in mode" {
+    pub enum SignInKind: "sign-in kind" {
         /// What the device already has.
         UseExisting => "use_existing",
         /// A person signs in once, in a place the engine owns.
@@ -524,7 +524,7 @@ pub struct AddressOverride {
 /// sign-in holds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CompiledProbe {
+pub enum CompiledSessionCheck {
     /// A read operation of the target, run through the engine as any read
     /// is, with these inputs.
     Operation {
@@ -581,11 +581,11 @@ pub struct CompiledAuth {
     /// The surfaces the entry covers. No surface is covered twice.
     pub surfaces: Vec<SurfaceIndex>,
     /// How the sign-in comes to exist.
-    pub mode: SignInMode,
+    pub mode: SignInKind,
     /// The auth provider that signs in.
     pub provider: AuthProviderName,
     /// The read that shows the sign-in still holds.
-    pub probe: CompiledProbe,
+    pub probe: CompiledSessionCheck,
     /// The signs that the session has ended, in declared order, each in the
     /// form the surface's pack defines. Opaque here.
     pub expiry_signals: Vec<PackPayload>,
@@ -801,7 +801,7 @@ fn is_false(flag: &bool) -> bool {
 #[serde(deny_unknown_fields)]
 pub struct CompiledIdentity {
     /// The strategy.
-    pub strategy: IdentityStrategy,
+    pub strategy: RecordMatching,
     /// The inputs whose normalized values are the record key, in declared
     /// order, parent first. Empty for `natural` only where the record is one
     /// fixed place that every binding names in the target's files, and no
@@ -828,8 +828,8 @@ pub struct PermissionManifest {
 /// what its operation declares.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DecisionPoint {
-    /// The decision point's name, unique within the operation.
+pub struct RunQuestion {
+    /// The run question's name, unique within the operation.
     pub name: String,
     /// The question, as the person is asked it.
     pub question: String,
@@ -861,14 +861,52 @@ pub struct CompiledOperation {
     /// inputs.
     pub examples: Vec<Values>,
     /// The questions a person may have to answer during a run.
-    pub decision_points: Vec<DecisionPoint>,
+    /// Written as `decision_points`, the old name, so that every compiled
+    /// target keeps its bytes and its hash (decision 0402).
+    #[serde(rename = "decision_points")]
+    pub run_questions: Vec<RunQuestion>,
+    /// The records of a read's list outputs, where its file declares them
+    /// (decision 0472): each list output is one column, the record `i` is
+    /// the `i`th item of each, and the key names the columns that make a
+    /// record's key. `None` for an operation that declares none, which a
+    /// watch compares whole. Left out of the encoded compiled target when
+    /// `None`, so a compiled target that declares none is the bytes it was
+    /// before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub records: Option<CompiledRecords>,
+}
+
+/// The records a read returns as its list outputs (decision 0472). Every
+/// list output of the operation is a column; the record `i` is the `i`th
+/// item of each column, so a result whose columns differ in length is not
+/// of this shape. An output that is not a list is a fact of the whole
+/// result, such as whether there were more, and is no part of any record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompiledRecords {
+    /// The list outputs whose items make a record's key, in order, parent
+    /// first. At least one, each a list output, none twice.
+    pub key: Vec<String>,
+}
+
+impl CompiledOperation {
+    /// The operation's list outputs, by name, in declared order: the
+    /// columns of its records, where it declares records.
+    #[must_use]
+    pub fn list_outputs(&self) -> Vec<&str> {
+        self.outputs
+            .iter()
+            .filter(|output| matches!(output.ty, ValueType::List(_)))
+            .map(|output| output.name.as_str())
+            .collect()
+    }
 }
 
 /// One way of carrying out an operation, through one mode.
 ///
 /// The engine treats a binding by what its steps and its operation state:
 /// which steps commit, which is a lookup, the operation's effect, and its
-/// identity strategy. The verb is kept for traces and messages and is never
+/// record matching. The verb is kept for traces and messages and is never
 /// read for its spelling (decision 0068).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1372,14 +1410,16 @@ impl CompiledTarget {
                 signed_in.push(*index);
             }
             match &entry.probe {
-                CompiledProbe::Operation { operation, .. } => {
+                CompiledSessionCheck::Operation { operation, .. } => {
                     within("operation", operation.get(), self.operations.len())?;
                 }
-                CompiledProbe::Entry(reference) => {
+                CompiledSessionCheck::Entry(reference) => {
                     within("pack section", reference.section.get(), self.packs.len())?;
                 }
                 // The draft version is `0.0.0` (`a2m-files`' `DRAFT_VERSION`).
-                CompiledProbe::Pending { .. } if self.header.version != Version::new(0, 0, 0) => {
+                CompiledSessionCheck::Pending { .. }
+                    if self.header.version != Version::new(0, 0, 0) =>
+                {
                     return Err(refused(
                         FailureCode::COMPILED_TARGET_UNREADABLE,
                         format!(
@@ -1388,7 +1428,7 @@ impl CompiledTarget {
                         ),
                     ));
                 }
-                CompiledProbe::Pending { .. } => {}
+                CompiledSessionCheck::Pending { .. } => {}
             }
         }
         for environment in &self.environments {
@@ -1472,7 +1512,7 @@ impl CompiledTarget {
                 return unsafe_compiled_target(position, "has a hazard and is not irreversible");
             }
             if operation.effect == EffectClass::Write
-                && operation.identity.strategy == IdentityStrategy::None
+                && operation.identity.strategy == RecordMatching::None
             {
                 return unsafe_compiled_target(position, "writes and cannot find its record again");
             }
@@ -1484,7 +1524,7 @@ impl CompiledTarget {
             }
             let needs_read_back = operation.effect == EffectClass::Write
                 || (operation.effect == EffectClass::Irreversible
-                    && operation.identity.strategy != IdentityStrategy::None);
+                    && operation.identity.strategy != RecordMatching::None);
             for binding in &operation.bindings {
                 let commits = |steps: &[Step]| steps.iter().filter(|step| step.commits).count();
                 if commits(&binding.confirm)
@@ -1675,8 +1715,8 @@ impl CompiledTarget {
 /// verified by that read (spec section 208; decision 0193). The compiler
 /// and the compiled target's check ask this one question.
 #[must_use]
-pub fn acknowledgement_may_stand(strategy: IdentityStrategy, read_back: &[Step]) -> bool {
-    strategy == IdentityStrategy::None || read_back.is_empty()
+pub fn acknowledgement_may_stand(strategy: RecordMatching, read_back: &[Step]) -> bool {
+    strategy == RecordMatching::None || read_back.is_empty()
 }
 
 #[cfg(test)]
@@ -1767,7 +1807,7 @@ mod tests {
                 },
             ],
             identity: CompiledIdentity {
-                strategy: IdentityStrategy::Natural,
+                strategy: RecordMatching::Natural,
                 key: vec![InputIndex::new(0)],
             },
             commit_points: 1,
@@ -1791,10 +1831,11 @@ mod tests {
                 destinations: vec!["https://files.example.test".to_owned()],
             },
             examples: vec![Values::new().with("order_id", "SO-1001")],
-            decision_points: vec![DecisionPoint {
+            run_questions: vec![RunQuestion {
                 name: "which_order".to_owned(),
                 question: "Two orders match. Which one?".to_owned(),
             }],
+            records: None,
         };
         CompiledTarget {
             header: CompiledTargetHeader {
@@ -1865,9 +1906,9 @@ mod tests {
             }],
             auth: vec![CompiledAuth {
                 surfaces: vec![SurfaceIndex::new(0)],
-                mode: SignInMode::Custom,
+                mode: SignInKind::Custom,
                 provider: AuthProviderName::new("api_key").unwrap(),
-                probe: CompiledProbe::Operation {
+                probe: CompiledSessionCheck::Operation {
                     operation: OperationIndex::new(0),
                     inputs: Values::new().with("order_id", "SO-1001"),
                 },
@@ -2235,13 +2276,13 @@ mod tests {
                 compiled_target.auth.push(compiled_target.auth[0].clone());
             }),
             ("operation", |compiled_target| {
-                compiled_target.auth[0].probe = CompiledProbe::Operation {
+                compiled_target.auth[0].probe = CompiledSessionCheck::Operation {
                     operation: OperationIndex::new(1),
                     inputs: Values::new(),
                 };
             }),
             ("pack section", |compiled_target| {
-                compiled_target.auth[0].probe = CompiledProbe::Entry(PackRef {
+                compiled_target.auth[0].probe = CompiledSessionCheck::Entry(PackRef {
                     section: SectionIndex::new(1),
                     entry: "order".to_owned(),
                 });
@@ -2302,7 +2343,7 @@ mod tests {
     #[test]
     fn a_probe_not_yet_drafted_stands_only_in_a_draft() {
         let mut compiled_target = sample();
-        compiled_target.auth[0].probe = CompiledProbe::Pending {
+        compiled_target.auth[0].probe = CompiledSessionCheck::Pending {
             name: "order_get".to_owned(),
         };
         let failure = compiled_target.encode().unwrap_err();
@@ -2365,7 +2406,7 @@ mod tests {
             }),
             ("cannot find its record again", |compiled_target| {
                 compiled_target.operations[0].identity = CompiledIdentity {
-                    strategy: IdentityStrategy::None,
+                    strategy: RecordMatching::None,
                     key: Vec::new(),
                 };
             }),
@@ -2444,7 +2485,7 @@ mod tests {
         // With no key there is nothing to read it back by.
         let mut keyless = compiled_target.clone();
         keyless.operations[0].identity = CompiledIdentity {
-            strategy: IdentityStrategy::None,
+            strategy: RecordMatching::None,
             key: Vec::new(),
         };
         keyless.encode().unwrap();
@@ -2452,11 +2493,11 @@ mod tests {
         compiled_target.operations[0].bindings[0].read_back.clear();
         compiled_target.encode().unwrap();
         assert!(super::acknowledgement_may_stand(
-            IdentityStrategy::None,
+            RecordMatching::None,
             &sample().operations[0].bindings[0].read_back
         ));
         assert!(!super::acknowledgement_may_stand(
-            IdentityStrategy::Natural,
+            RecordMatching::Natural,
             &sample().operations[0].bindings[0].read_back
         ));
     }
@@ -2489,7 +2530,7 @@ mod tests {
         sent.operations[0].bindings[0].read_back.clear();
         assert!(sent.encode().is_err());
         sent.operations[0].identity = CompiledIdentity {
-            strategy: IdentityStrategy::None,
+            strategy: RecordMatching::None,
             key: Vec::new(),
         };
         sent.encode().unwrap();

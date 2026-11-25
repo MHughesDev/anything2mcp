@@ -126,14 +126,43 @@ def main():
             elif f"{parts[0]}.{'_'.join(parts[1:])}" not in actions:
                 note("naming", f"{k}: {t} has no action in the catalog")
 
+    # 3a. The catalog marks "not built" exactly the actions package 5.1's test names as having no
+    #     handler (decision 0456, point 6). A row names one or more actions; it is marked in its
+    #     last cell, and all of its actions are on the list or none are.
+    unbuilt_src = (repo / "crates/a2m-actions/src/tests/unbuilt.rs").read_text(encoding="utf-8")
+    unbuilt = set(re.findall(r'^\s+"([a-z]+\.[a-z_]+)",$', unbuilt_src, re.M))
+    if not unbuilt:
+        note("catalog", "crates/a2m-actions/src/tests/unbuilt.rs: no list of unbuilt actions found")
+    seen = set()
+    for line in catalog[:catalog.index("## What is deliberately absent")].splitlines():
+        m = re.match(r"^\| (`[^|]*`) \|.*\| ([^|]*) \|$", line)
+        if not m:
+            continue
+        names = re.findall(r"`([a-z]+\.[a-z_]+)`", m.group(1))
+        marked = m.group(2).strip().endswith("not built")
+        for a in names:
+            seen.add(a)
+            if marked and a not in unbuilt:
+                note("catalog", f"action-catalog.md: `{a}` is marked not built and has a handler")
+            if not marked and a in unbuilt:
+                note("catalog", f"action-catalog.md: `{a}` has no handler and is not marked not built")
+    for a in sorted(unbuilt - seen):
+        note("catalog", f"action-catalog.md: `{a}`, which has no handler, has no row")
+
     # 4. Crates: spec 29 layout and the layering table agree; nothing else is named.
     layout = set(re.findall(r"\b(a2m-[a-z-]+)/", md["docs/spec/6-running-it/605-packaging-and-release.md"]))
     layer_text = ref[ref.index("## Crate layering"):ref.index("## Driver interface")]
     layering = set(re.findall(r"`(a2m-[a-z-]+)`", layer_text))
     for c in sorted(layout ^ layering):
         note("crates", f"{c} is in only one of the layout in spec section 605 and the layering table")
+    # A crate renamed by decision 0330 keeps its old name in history, which is never rewritten;
+    # anywhere else the old name is a finding like any other.
+    renamed = {"a2m-telemetry", "a2m-field-harness"}
+    kept_as_history = history + ("docs/research/", "docs/reviews/", "docs/hypotheses/H-", "CHANGELOG.md")
     for k, v in md.items():
         for c in set(re.findall(r"`(a2m-[a-z]+(?:-[a-z]+)*)`", v)) - layout:
+            if c in renamed and k.startswith(kept_as_history):
+                continue
             note("crates", f"{k}: {c} is not in the layout in spec section 605")
 
     # 5. Failure classes agree between the engine section and the reference.
@@ -171,6 +200,9 @@ def main():
     for k, v in md.items():
         for code in re.findall(r"`anything2mcp ([a-z]+(?: [a-z]+)?)[^`]*`", v):
             words = code.split()
+            # `bridge` is the old name of `stdio` (decision 0330), which history keeps.
+            if words[0] == "bridge" and k.startswith(kept_as_history + ("docs/architecture/page/",)):
+                continue
             if words[0] not in known:
                 note("commands", f"{k}: `anything2mcp {words[0]}` is not a shortcut, process command, or noun")
             elif len(words) == 2 and words[0] in nouns and words[0] not in shortcuts and f"{words[0]}.{words[1]}" not in actions:
@@ -314,7 +346,7 @@ def main():
             stands.add(stand)
 
     on_disk = {}
-    places = {"a2m-field-harness": "tools/field-harness"}
+    places = {"a2m-copy-test-harness": "tools/copy-test-harness"}
     crates_dir = repo / "crates"
     for manifest_path in sorted(crates_dir.glob("*/Cargo.toml")) if crates_dir.is_dir() else []:
         folder = manifest_path.parent.name
@@ -330,7 +362,7 @@ def main():
         for stand in sorted(stands & internal_dependencies(manifest, ("dependencies", "build-dependencies"))):
             note("layering", f"{folder} depends on {stand} outside its tests; "
                              "a crate under targets/ is test equipment and may only be a dev-dependency")
-    # The field harness is the one program under tools/ that is built as part of the workspace:
+    # The copy test harness is the one program under tools/ that is built as part of the workspace:
     # it is named in the layout and the layering table like a crate, and sits in tools/<name>
     # as the package a2m-<name> (decision 0310).
     tools_dir = repo / "tools"
@@ -406,6 +438,13 @@ def main():
         licence, copy = repo / "LICENSE", pip_file.parent / "LICENSE"
         if not copy.is_file() or not licence.is_file() or copy.read_bytes() != licence.read_bytes():
             note("release", "bindings/python/LICENSE must be an exact copy of LICENSE")
+        # The notices file of third-party licence texts: written from Cargo.lock by tools/notices.py,
+        # which CI's dependencies job holds to the tree; the wheel carries the copy beside the project.
+        notices, notices_copy = repo / "THIRD-PARTY-NOTICES.txt", pip_file.parent / "THIRD-PARTY-NOTICES.txt"
+        if not notices.is_file():
+            note("release", "THIRD-PARTY-NOTICES.txt is missing; run python3 tools/notices.py write")
+        elif not notices_copy.is_file() or notices_copy.read_bytes() != notices.read_bytes():
+            note("release", "bindings/python/THIRD-PARTY-NOTICES.txt must be an exact copy of THIRD-PARTY-NOTICES.txt")
 
     # 15. The product's earlier names appear only in history (decision 0056).
     earlier = re.compile(r"Web2MCP|web2mcp|w2mcp|\bw2m[-_]|\bW2M_")

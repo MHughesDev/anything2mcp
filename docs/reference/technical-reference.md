@@ -11,7 +11,7 @@ Layers 1 to 8 are the kernel. Layers 9 and 10 are the packs ([spec section 202](
 | Layer | Crates | May depend on |
 | --- | --- | --- |
 | 1. Types | `a2m-core` | Nothing internal |
-| 2. Foundations | `a2m-expr`, `a2m-vault`, `a2m-telemetry`, `a2m-netstate` | Layer 1 |
+| 2. Foundations | `a2m-expr`, `a2m-vault`, `a2m-logs`, `a2m-netstate` | Layer 1 |
 | 3. Stores | `a2m-files`, `a2m-ledger` | Layers 1 to 2 |
 | 4. Services | `a2m-policy`, `a2m-auth`, `a2m-sources` | Layers 1 to 3 |
 | 5. Contract | `a2m-provider` | Layers 1 to 4 |
@@ -21,7 +21,7 @@ Layers 1 to 8 are the kernel. Layers 9 and 10 are the packs ([spec section 202](
 | 9. Pack bases | `a2m-pack-web-browser` | Layers 1 to 5 |
 | 10. Packs | `a2m-pack-web-ui`, `a2m-pack-web-probe`, `a2m-pack-http`, `a2m-pack-mcp`, `a2m-pack-desktop`, `a2m-pack-command`, `a2m-pack-data`, `a2m-pack-file`, `a2m-pack-stream`, `a2m-pack-device` | Layers 1 to 5, and the base of its own pack |
 | 11. Product | `anything2mcp` | Everything |
-| 12. Field harness | `a2m-field-harness` | Everything |
+| 12. Copy test harness | `a2m-copy-test-harness` | Everything |
 
 Three rules follow from the table, and the audit states each one by name when it is broken:
 
@@ -37,7 +37,7 @@ The crate `a2m-core` holds the words every other crate shares. A word with a fix
 
 | Type | Values | Defined in |
 | --- | --- | --- |
-| `Archetype` | Seven, fixed | [Spec section 201](../spec/2-kernel/201-archetypes-and-modes.md) |
+| `AccessKind` | Seven, fixed | [Spec section 201](../spec/2-kernel/201-access-kinds-and-modes.md) |
 | `EffectClass` | Three, ordered from least to most serious | [Spec section 212](../spec/2-kernel/212-policy-and-approvals.md) |
 | `Hazard` | Five, ordered from least to most serious | [Spec section 213](../spec/2-kernel/213-effects-hazards-and-consent.md) |
 | `FailureClass` | Twelve | "Failure codes" below, and [spec section 207](../spec/2-kernel/207-the-engine-loop.md) |
@@ -53,9 +53,9 @@ The crate `a2m-core` holds the words every other crate shares. A word with a fix
 | `Availability` | Eight; the default is `unknown`, which is never `ready` | [Spec section 203](../spec/2-kernel/203-the-provider-contract.md) |
 | `SubsystemState`, `SubsystemMove` | Four and three | [Spec section 204](../spec/2-kernel/204-supervising-subsystems.md) |
 | `DoctorState` | Seven; the default is `unknown` | [Spec section 204](../spec/2-kernel/204-supervising-subsystems.md) |
-| `IdentityStrategy` | Five | [Spec section 209](../spec/2-kernel/209-record-identity-and-dependent-records.md) |
+| `RecordMatching` | Five | [Spec section 209](../spec/2-kernel/209-record-identity-and-dependent-records.md) |
 | `FieldBase`, `Sensitivity`, `EnvironmentKind`, `TestKind`, `Checkpoint` | Ten, three in order, two, two, two | [File formats](file-formats.md) |
-| `SignInMode`, `DriftRisk`, `WhitespaceRule`, `DecimalMark` | Three, three in order, three, two | [File formats](file-formats.md) |
+| `SignInKind`, `DriftRisk`, `WhitespaceRule`, `DecimalMark` | Three, three in order, three, two | [File formats](file-formats.md) |
 | `CaptureLevel` | Three, each including the one before | [Spec section 217](../spec/2-kernel/217-traces-evidence-and-repair.md) |
 | `ApproveWrites` | Three, ordered from least to most strict | [Spec section 226](../spec/2-kernel/226-configuration.md) |
 | `Rounding` | Seven: `half_up`, `half_even`, `half_down`, `up`, `down`, `ceiling`, `floor` | [Decision 0068](../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md) |
@@ -66,7 +66,7 @@ Some words are checked names and not enums, because their values arrive with pac
 
 | Type | Shape | Who supplies the values |
 | --- | --- | --- |
-| `Mode` | Lowercase letters, digits, and underscores, starting with a letter; at most 32 characters | A provider registers each mode it brings, with its archetype |
+| `Mode` | Lowercase letters, digits, and underscores, starting with a letter; at most 32 characters | A provider registers each mode it brings, with its access kind |
 | `FailureCode` | The same shape; at most 64 characters | Each crate names the codes it can produce; a code never changes once released |
 | `SurfaceKind`, `StepKind`, `Verb`, `FileKindName`, `FindingKind`, `ControlName` | The same shape; at most 32 characters | A provider registers each one it brings. A step kind is a name within its mode |
 | `AuthProviderName` | The same shape; at most 32 characters | The auth providers handed to the session keeper |
@@ -114,6 +114,7 @@ The driver interface, the manifest, the registry, and the supervisor are built i
 - **`Authority`** is what a step is run under: the right to read, or the intent token for one write.
 - **`Destinations`** are the addresses a run may reach: the compiled target's surfaces and the operation's manifest, compared as written. Each carries the scope read from its own address when the set is made (`Destinations::scope_of`); nothing else sets it, and it decides nothing yet ([decision 0240](../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)). `Destinations::place_of(address, &MachineState)` derives its **network place** from that scope and from the subnets of the machine's own interfaces that are up: `this_machine`, `local_network`, `public_internet`, `via_gateway` (never derived until a person can name a gateway), or `unknown`, which is every name, every address that cannot be told, and every address when the interfaces cannot be read. A place is never set by an input and no name is resolved ([decision 0313](../decisions/0313-the-place-of-an-address-is-derived-from-its-scope-and-the-machines-subnets.md)).
 - **`StepInput`** is what one step is given, with its values already evaluated. **`StepOutcome`** is how a step ended when it did not fail.
+- **`Observed::coverage`**, a **`Coverage`** of `a2m-core`, says whether a step's values hold every record the system has that matches its input: `complete` only when the driver knows it, `partial` when it knows the system holds more, `unknown` by default ([decision 0472](../decisions/0472-a-read-declares-its-records-over-its-list-outputs-and-a-driver-states-whether-it-returned-every-record.md)). The data pack's list read states it; the engine keeps the weakest of a pass's steps that returned values, and a watch reports a removal only between runs stored `complete`.
 - **`StepFailure`** is a failure together with **`Sent`**, which says whether the request was not sent, was answered, or is unknown. What the system itself said travels on the failure, apart from its sentence (`StepFailure::with_said`).
 - What a record's earlier steps recorded reaches a driver while it acts, as **`Prepared::recorded`**; how a step was done is the capture **`Capture::acting`**; the run's project folder is **`CheckedPaths::project_folder`**; a verified save in steps is **`CheckedPath::create_temporary`** and **`Temporary`** ([decision 0162](../decisions/0162-the-provider-contracts-second-pass-what-a-step-is-handed-and-hands-back.md)).
 - A root bound to no folder, which stands for each request's project folder, is **`Roots::add_project`**; **`Roots::check_in`** and **`Roots::folder_in`** resolve it in the run's project folder ([decision 0193](../decisions/0193-the-core-the-contract-the-compiler-and-the-scheduler-after-the-second-pass.md)).
@@ -161,11 +162,11 @@ The check of who may change a program, and what it gives the supervisor, are in 
 
 A folder's writes act through the folder held from the root down ([decision 0272](../decisions/0272-the-file-packs-folder-writes-act-through-a-held-folder-after-a-second-reader.md)):
 
-- **`CheckedPath::hold_folder`** gives a **`HeldFolder`**: the folder, reached from the root down with no link followed. Each of its calls (`kind`, `identity`, `names`, `create_new`, `link`, `remove_file_if`, `remove_empty_folder`, `sync`) names one entry directly in it and follows no link at that name, and gives the system's own `std::io::Error`. On Linux and macOS the held folder is its own descriptor; on Windows every folder from the root down is held open, and none of them can be renamed, removed, or replaced by a link while it is held. **`HeldFolder::still_at_its_path`** says whether the folder reached afresh from the root is still the one held.
-- **`HeldFolder::remove_file_if`** removes a file only where it is the file expected and the caller's check of its bytes, read through a handle of that file, says yes. It answers a **`Removal`**: `Removed`, or `NotThatFile { put_back }`.
+- **`CheckedPath::folder_handle`** gives a **`FolderHandle`**: the folder, reached from the root down with no link followed. Each of its calls (`kind`, `identity`, `names`, `create_new`, `link`, `remove_file_if`, `remove_empty_folder`, `sync`) names one entry directly in it and follows no link at that name, and gives the system's own `std::io::Error`. On Linux and macOS the folder handle is its own descriptor; on Windows every folder from the root down is held open, and none of them can be renamed, removed, or replaced by a link while it is held. **`FolderHandle::still_at_its_path`** says whether the folder reached afresh from the root is still the one held.
+- **`FolderHandle::remove_file_if`** removes a file only where it is the file expected and the caller's check of its bytes, read through a handle of that file, says yes. It answers a **`Removal`**: `Removed`, or `NotThatFile { put_back }`.
 - **`FileIdentity`** is the system's identifier of a file: the device and the file number on Linux and macOS, and on Windows the volume's serial number and the file's identifier. **`FileIdentity::to_bytes`** gives it as 24 bytes, for a digest that tells one file from another; it is never shown.
 
-A discovery is handed files by name ([decision 0263](../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)):
+A discovery is input files by name ([decision 0263](../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)):
 
 - **`DiscovererDecl::files`** lists the names under which a discoverer reads a file a person hands a discovery, from the manifest's `files`; empty by default. Each is lowercase letters, digits, and underscores, starting with a letter, at most 32 bytes.
 - **`Registry::files_taken`** gives every name that the discoverers suiting a surface declare.
@@ -258,15 +259,15 @@ The design of [`a2m-vault`](../architecture/crates/a2m-vault.md) gives the inter
 
 - **`Vault`** seals a plain item into a **`Sealed`** envelope under a **`SealContext`**, and opens it again only under the same context. The caller stores the envelope.
 - **`KeyStore`** is the back end that holds the root key. `OsKeyStore`, `PassphraseKeyStore`, and `MemoryKeyStore` implement it. A root, and the passphrase route's salt through `PassphraseSalt::load_or_create`, is made once, under a lock that two engines starting together both take.
-- **`KeyRecords`** is where wrapped keys persist, as one **`KeyRecord`** per key and **`Generation`**. `a2m-ledger` implements it.
+- **`KeyRecords`** is where wrapped keys persist, as one **`KeyRecord`** per key and **`KeyRotationNumber`**. `a2m-ledger` implements it.
 - **`Redactor`** implements `Redact`, and **`VaultDigest`** implements `KeyedDigest`, both from `a2m-core`. A text that arrives in pieces is redacted through the redactor's **`RedactStream`**, never piece by piece.
 
-## Telemetry interface
+## Logs and traces interface
 
-The design of [`a2m-telemetry`](../architecture/crates/a2m-telemetry.md) gives the interface in full. The main types:
+The design of [`a2m-logs`](../architecture/crates/a2m-logs.md) gives the interface in full. The main types:
 
 - **`TraceBuilder`** takes one **`StepRecord`** per step, redacts it, and ends as a **`FinishedTrace`**: the bytes and the trace signature. A trace that still holds a secret ends as a **`TraceRefused`**.
-- **`Telemetry`**, made by `start` from **`TelemetrySettings`**, is the handle for spans, metrics, and the engine's own logs.
+- **`LogsAndTraces`**, made by `start` from **`LogSettings`**, is the handle for spans, metrics, and the engine's own logs.
 - **`Clock`** is how time is given, so that a test can fix it.
 
 ## Compiler registration points
@@ -308,7 +309,7 @@ The design of [`a2m-auth`](../architecture/crates/a2m-auth.md) gives the interfa
 
 - **`Keeper`** answers a **`LeaseRequest`** with a **`SessionLease`**, takes a driver's report of an **`ExpirySign`**, signs in, gives a session's status, and revokes. Nothing else calls an **`AuthProvider`**.
 - **`ProviderSet`** holds the providers handed to the keeper, by name.
-- **`KeeperWork`** is how a probe, a renewal, or a sign-in runs on a session's home runner. **`InProcessWork`** is the same for one process.
+- **`KeeperWork`** is how a session check, a renewal, or a sign-in runs on a session's home runner. **`InProcessWork`** is the same for one process.
 - **`CredentialSink`** is what `inject` places credentials into. No method of it returns a value.
 
 ## Source reader interface
@@ -334,15 +335,17 @@ The design of [`a2m-engine`](../architecture/crates/a2m-engine.md) gives the int
 
 - **`Engine`**, made from **`EngineDeps`**, carries out a job through `run_job`, and a discovery through `discover`, for the runner that holds the job's lease.
 - **`JobSpec`** names the compiled target, the tool, the input, and the job's **`JobKind`**: a preview, an execute, a try, a reconcile, a check after a loss, a canary, or a discovery. The job ends as a **`JobOutcome`**.
-- **`Control`** is everything the engine asks of the kernel around it: the compiled target, the guard's decision, a session lease, the preview, the approval, locks, intents, and the signed trace. In one process it is the action registry's `InProcessControl`. Two of its calls have defaults: `other_records` answers what other records of an operation recorded, as a value that may have landed, and `step_observed` tells the registry what a reading step observed, which `fixture.record` holds in memory for its trial alone ([decision 0196](../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)).
+- **`ControlPort`** is everything the engine asks of the kernel around it: the compiled target, the guard's decision, a session lease, the preview, the approval, locks, intents, and the signed trace. In one process it is the action registry's `InProcessControl`. Two of its calls have defaults: `other_records` answers what other records of an operation recorded, as a value that may have landed, and `step_observed` tells the registry what a reading step observed, which `fixture.record` holds in memory for its trial alone ([decision 0196](../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)).
+
+What [decision 0472](../decisions/0472-a-read-declares-its-records-over-its-list-outputs-and-a-driver-states-whether-it-returned-every-record.md) changed in the engine: **`EngineEvent::Result`** is `{ values, coverage }`, the coverage of a tool that is one operation called once and `unknown` for any other; the control plane stores it with the result (`Ledger::store_result`, read back by `Ledger::result_coverage`). A compiled operation may carry **`CompiledRecords`**, the key of the records its list outputs hold (`CompiledOperation::records`, `CompiledOperation::list_outputs`).
 
 What [decision 0263](../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md) added to the engine:
 
-- **`Control::discovery_files`** gives a discovery job the files the call that started it handed its discoverers: each declared name, to the path the call gave under the project's `sources` folder. The engine checks each path again under a read-only root of that folder before any discoverer runs, and adds only the checked files to `DiscoveryScope::paths`. By default it gives none.
+- **`ControlPort::discovery_files`** gives a discovery job the files the call that started it handed its discoverers: each declared name, to the path the call gave under the project's `inputs` folder. The engine checks each path again under a read-only root of that folder before any discoverer runs, and adds only the checked files to `DiscoveryScope::paths`. By default it gives none.
 
 What [decision 0251](../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md) added to the engine:
 
-- **`Control::shadow_rate`** asks the control plane for a rate budget for a binding in shadow, all at once or nothing, without waiting, and leaving the share a caller's reads need; by default it grants nothing.
+- **`ControlPort::shadow_rate`** asks the control plane for a rate budget for a binding in shadow, all at once or nothing, without waiting, and leaving the share a caller's reads need; by default it grants nothing.
 - **`shadow_evidence_environments`** gives the environments a compiled target's shadow evidence must come from, and **`verified_binding`** the verified binding of an operation that acts beside one in shadow.
 - **`Engine::shadow_comparisons_lost`** counts the comparisons that were not kept within the shadow budget.
 
@@ -354,7 +357,9 @@ The design of [`a2m-actions`](../architecture/crates/a2m-actions.md) gives the i
 - **`Kernel`** is the handle every front door holds. Its `dispatch` takes a **`Request`** and gives a **`Response`**: it checks the input, the health state, and the person need, records one policy decision, runs the handler, and redacts the result.
 - **`PersonSurface`** is how the kernel reaches a person. **`ApprovalDesk`** is where a person approves or declines a diff, and where an approval page reads what the diff would change (**`ApprovalPreview`**); no action reaches it. A decline ends the run as `expired`.
 - **`Kernel::events`** and **`Kernel::next_events`** give a page of **`RunEvents`** after a sequence number, the second after waiting for one, to the caller that started the run ([decision 0132](../decisions/0132-the-action-registrys-second-pass-a-decline-ends-the-run-and-a-wait-reads-the-schedulers-own-table.md)). **`Kernel::next_events_from`** waits from a **`Followed`**, what the follower last saw, and answers at once when the run came to rest or began again since ([decision 0159](../decisions/0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md)).
+- **`Kernel::watch_changes`** gives a page of a watch's changes after a number, a **`WatchChanges`**, waiting for the first when asked, and **`Kernel::watch_last_change`** the number of its last change; both only for a watch of the person the caller acts for. `watch.changes` answers with the first, and the MCP subscription and the REST change stream follow a watch with both, with no decision for each wait ([decision 0478](../decisions/0478-a-watch-is-an-mcp-resource-of-watch-changes-and-its-changes-are-followed-without-a-decision-for-each-wait.md)).
 - The faces are data generated from the registry: `command_faces`, `mcp_tools`, `rest_routes`, `sdk_methods`, and **`McpResultFace`**. An action has an SDK method, and its routes say `x-sdk: true` in the API description, when `has_sdk_method` holds: it has an SDK face and a handler, so an action that answers `action_not_built` has none until it is built ([decision 0437](../decisions/0437-what-a-release-publishes-is-kept-and-every-later-build-is-checked-against-it.md), point 5).
+- An action may have a fifth face, an MCP resource: **`ActionDef::resource`**, a **`ResourceTemplate`** of a URI with `{field}` for a field of one segment and the fields its query may give. **`mcp_resources`** lists them as **`McpResourceFace`**, and **`ActionRegistry::by_resource_uri`** gives the action and input a URI fills, or nothing for a URI no template matches exactly. **`watch_resource`** is a watch's URI ([decision 0478](../decisions/0478-a-watch-is-an-mcp-resource-of-watch-changes-and-its-changes-are-followed-without-a-decision-for-each-wait.md)). `a2m-api` serves **`WATCH_CHANGES_PATH`** beside **`RUN_EVENTS_PATH`**.
 
 The settings schema and loader of `a2m-actions` carry what [decision 0241](../decisions/0241-protected-settings-loosen-only-from-an-administrators-file-and-every-key-says-whether-it-is-built.md) added:
 
@@ -380,7 +385,7 @@ This is the data model as designed. The tables that exist are those the migratio
 | `targets`, `target_versions` | Targets and their immutable published versions | target, version, hash, signature, compiled target, status |
 | `bindings_health` | Health of each binding | operation, mode, status, last check |
 | `shadow_comparisons`, `shadow_promotions` | How a binding in shadow compared, and its promotion by a person ([decision 0207](../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md)) | operation, binding digest, outcome, differing outputs by name; who promoted it, on how many matches |
-| `toolsets`, `toolset_items` | Named tool selections | toolset, version, operation or pipeline, identity mode, approval policy |
+| `toolsets`, `toolset_items` | Named tool selections | toolset, version, operation or pipeline, identity kind, approval policy |
 | `principals`, `grants` | Callers and what they may do | principal, scope pattern, max effect, role |
 | `policy_versions`, `decisions` | Published policy sets; every decision with the rules that made it | version, hash, tests passed; request, answer, determining rules |
 | `sessions` | Signed-in states | identity, target, runner affinity, expiry, vault reference |
@@ -458,7 +463,7 @@ The table is generated by `tools/failure_codes.py` from each crate's `failure_co
 | `policy` | `offline_writes_nothing` | `a2m-actions` | An offline test asked for something that would store, lease, or clear a write; its control plane holds nothing and refuses (decision 0177). | Keep the offline test to its own tool against its fixture; a write is proven against a test stand. | no |
 | `policy` | `origin_not_declared` | `a2m-pack-web-ui` | The page, a frame of it, or a worker sent a request to an origin that is neither the surface's nor one the operation declares. The browser failed it before it left (decision 0292). | Declare the origin in the operation's `permissions.destinations`, with its scheme, if the system's pages really load from it; otherwise look at why the page sends there. | no |
 | `policy` | `package_runner_refused` | `a2m-pack-mcp` | The local server program is a package runner, which fetches the code it runs at the moment it starts; nothing the product starts fetches code then (decision 0299). Nothing is started. | Install the server's package, then name the launcher of the provider's table as the surface's `program` and the installed entry file as `entry`, each with its digest. | no |
-| `policy` | `page_write_refused` | `a2m-pack-web-ui` | The page sent a request that could change the system while a read ran, and the tab, which cannot write, failed it (decision 0195). | Look at what the page does when it loads. When a page request asserts the request with `read_asserted: true`, run the tool from a published version, live or in an environment of kind `test` (decision 0394); a page that writes by itself is not read by the web pack, so read the record another way. | no |
+| `policy` | `page_write_refused` | `a2m-pack-web-ui` | The page sent a request that could change the system while a read ran, and the tab, which cannot write, failed it (decision 0195); or, in the tab a write is made in, the page made a socket or a worker the tab refuses. | Look at what the page does when it loads. When a page request asserts the request with `read_asserted: true`, run the tool from a published version, live or in an environment of kind `test` (decision 0394); a page that writes by itself is not read by the web pack, so read the record another way. | no |
 | `policy` | `password_read_refused` | `a2m-pack-desktop`, `a2m-pack-web-browser`, `a2m-pack-web-ui` | A step would read the value of a control that holds a secret. | Read another field. A secret is never an output of a tool. | no |
 | `policy` | `password_set_refused` | `a2m-pack-desktop` | A step would set a control that holds a secret. Sign-in to a desktop application is not built. | Leave the field out. Signing in to a desktop application is not built in this version. | no |
 | `policy` | `peer_not_allowed` | `a2m-local` | A connection from another user, or an engine owned by another user. | Check who owns the engine's runtime directory, remove what is not yours to trust, and start the engine again. | no |
@@ -468,6 +473,7 @@ The table is generated by `tools/failure_codes.py` from each crate's `failure_co
 | `policy` | `presence_required` | `a2m-policy` | A change to a protected setting that only a person, present, may make. | Have the person make the change and pass the user-presence prompt. | no |
 | `policy` | `product_header_refused` | `a2m-pack-http`, `a2m-pack-mcp` | The session's provider placed a header whose name begins `a2m-`, one of the product's own carriers between its parts, which never goes on the wire. Nothing is sent (decision 0270). | Sign in to this surface with a provider made for an HTTP service, such as `api_key`, `bearer_static`, or `http_basic`. | no |
 | `policy` | `program_path_unsafe` | `a2m-pack-command`, `a2m-pack-mcp` | The path is not absolute, is a script, is a shell, or the file or a folder above it can be written by another user. | Name the program by its absolute path, and give the file and every folder above it to the engine's user or the administrator, with no write access for anyone else. | no |
+| `policy` | `program_refused` | `a2m-pack-desktop` | The surface lets the pack start its program, and the program's file is not one the pack starts: it is missing, is a shell, an interpreter, or a script, or another user can replace it or a folder on its way. Nothing was started. | Declare the installed program's own file, in a folder only you or the system's administrator can change. | no |
 | `policy` | `read_only_posture` | `a2m-provider` | A step that commits was asked for where nothing may be written. | Run the operation live, or against a declared test record. | no |
 | `policy` | `read_statement_wrote` | `a2m-pack-data` | A statement declared a read tried to change data. | Correct the statement or declare it `effect: write`; do not use the binding as a read. | no |
 | `policy` | `record_limit_exceeded` | `a2m-engine` | The run would touch more records than its limit allows. | Split the source, or raise the pipeline's limit and publish again. | no |
@@ -515,7 +521,7 @@ The table is generated by `tools/failure_codes.py` from each crate's `failure_co
 | `input` | `body_too_large` | `a2m-api` | The body is larger than the limit, or ended early. Served as 413. | Send a smaller input, whole. | no |
 | `input` | `capture_not_offered` | `a2m-actions` | No enabled pack watches a person's use of the surface: no discoverer a person drives suits it, so no capture of it can be asked for. | Scout the target with `scout.run` instead, or enable a pack whose discoverer a person drives. | no |
 | `input` | `client_action` | `a2m-actions` | The action is carried out by the client end, which did not do so. | Run it as a command on the machine the engine runs on. | no |
-| `input` | `client_config_refused` | `a2m-actions` | `client.connect` cannot set a client's configuration: its profile does not read, names no file for this system, or the client's file does not read as a JSON object (decision 0219). Nothing is written. | Correct the client's profile or its file, as the message names, then run the command again. | no |
+| `input` | `client_config_refused` | `a2m-actions` | `client.connect` cannot set a client's configuration: its client profile does not read, names no file for this system, or the client's file does not read as a JSON object (decision 0219). Nothing is written. | Correct the client profile or its file, as the message names, then run the command again. | no |
 | `input` | `command_file_unreadable` | `a2m-pack-command` | A file handed to the scout as a completion file or a manual page cannot be read as one: it is not UTF-8 text, it is compressed in a form other than gzip, its gzip form is damaged, or it is no manual page in the `man` or the `mdoc` macros. | Hand the file as plain UTF-8 text, or a manual page compressed with gzip; uncompress a page compressed any other way first. | no |
 | `input` | `compiled_expression_unloadable` | `a2m-expr` | A compiled target's expression names a library this engine does not have, no longer checks as the type it states, or was run without a name it reads. | Compile the target again with this engine. | no |
 | `input` | `compiled_target_format_unsupported` | `a2m-core` | A compiled target's format is not one this engine loads. | Compile the target again with this engine, or run the engine the compiled target was compiled for. | no |
@@ -555,11 +561,12 @@ The table is generated by `tools/failure_codes.py` from each crate's `failure_co
 | `input` | `kind_owner_missing` | `a2m-provider` | A kind a provider reads has no enabled owner. | Enable the provider that owns the kind, as the message names it. | no |
 | `input` | `lint_failed` | `a2m-files` | A target's files have an error diagnostic, so they do not compile. | Correct the file at the place the first diagnostic names, as its fix says, and compile again. | no |
 | `input` | `local_api_mismatch` | `a2m-local` | The client and the engine speak different versions of the local API. | Install the same version of the client and the engine, then run the command again. | no |
+| `input` | `log_settings_invalid` | `a2m-logs` | The settings the logs and traces were started with cannot be used, such as a log file size of zero. | Set the log file size to at least one byte, then start the engine again. | no |
 | `input` | `manifest_invalid` | `a2m-provider` | A manifest does not parse, or a field of it is wrong. | Correct the field of the provider's manifest the message names, then load it again. | no |
 | `input` | `mcp_not_served` | `a2m-mcp` | The service was asked for a toolset or a revision it does not serve. | Ask for a toolset and a revision this build serves; the message names what was asked for. | no |
 | `input` | `message_too_large` | `a2m-pack-stream` | A message is larger than its channel allows. | Shorten the message; nothing was sent. | no |
 | `input` | `method_not_allowed` | `a2m-api` | The route exists and does not take this method. Served as 405. | Read /api/v1/openapi.json for the method of each route. | no |
-| `input` | `mode_conflict` | `a2m-provider` | A mode or surface kind is registered twice, or with two archetypes. | State each mode and surface kind once, with its one archetype, or disable one of the two providers. | no |
+| `input` | `mode_conflict` | `a2m-provider` | A mode or surface kind is registered twice, or with two access kinds. | State each mode and surface kind once, with its one access kind, or disable one of the two providers. | no |
 | `input` | `mode_unknown` | `a2m-provider` | Nobody registered the mode. | Enable the provider that brings the mode; `anything2mcp provider list` shows them. | no |
 | `input` | `name_case_conflict` | `a2m-pack-file` | A folder holds a name that differs from the one given only in case. | Give the name exactly as the folder holds it, or choose a name that differs in more than case. | no |
 | `input` | `network_not_recognizable` | `a2m-actions` | The network the machine is on states too few facts to be recognized again, so no reach can be named on it. | Connect to a network with a default route and a gateway that answers, then name it again. | no |
@@ -568,6 +575,7 @@ The table is generated by `tools/failure_codes.py` from each crate's `failure_co
 | `input` | `not_made_ready_not_a_read` | `a2m-actions` | `draft.ready` was named a tool that is a write or a pipeline: it makes reads ready alone, and leaves a write's test, fixture, and promote to be done by hand and by a person (decision 0443). | Write the write's offline test and fixture with `draft.write`, run `test.run`, and have a person promote its binding; or leave it out of `tools`. | no |
 | `input` | `not_made_ready_untried` | `a2m-actions` | `draft.ready` was named a read that no trial in this project has read a value through: the newest finished scout did not prove it, and the caller has no completed trial of it made since (decision 0443). | Try the read with `draft.try` and an input it answers, or sign in where it waits for a sign-in, then call `draft.ready` again. | no |
 | `input` | `not_registered` | `a2m-provider` | Nobody registered the reader, action, or discoverer asked for. | Enable the provider that brings it. | no |
+| `input` | `nothing_asserted` | `a2m-actions` | `assertion.confirm` was asked for a target whose drafts assert no read: no entry says `read_asserted: true` (decision 0475). | Assert the read in its entry with `effect: read` and `read_asserted: true`, with an `enum` on the field that tells a read from a write, then ask again. | no |
 | `input` | `nothing_recorded` | `a2m-pack-stream` | A step that settles a record by what its earlier steps recorded was given nothing recorded, or nothing of the form it needs; nothing was sent. | Settle the record by hand, with what the run's ledger holds for it. | no |
 | `input` | `pack_settings_invalid` | `a2m-provider` | A pack's settings group does not fit the schema its manifest declares. | Correct the setting, or remove it to take the default. | no |
 | `input` | `page_not_found` | `a2m-local` | No page waits at that address on the loopback listener: it was answered, its window ended, the engine started again, or the address never held one. | Look at the run with `anything2mcp run get`; if it still waits, resume it for a new link. | no |
@@ -608,10 +616,9 @@ The table is generated by `tools/failure_codes.py` from each crate's `failure_co
 | `input` | `source_too_large` | `a2m-sources` | The bytes, the rows, the cells, or one cell exceed the caller's limits. | Give a smaller input, or have the limits raised by whoever sets them. | no |
 | `input` | `step_not_usable` | `a2m-pack-command`, `a2m-pack-desktop`, `a2m-pack-http`, `a2m-pack-web-ui` | A step this driver cannot carry out as the compiled target wrote it: a command that writes on a step that is no commit point, or a step whose program was not started first. | Compile the target again with the version of the command pack that is enabled. | no |
 | `input` | `target_unreadable` | `a2m-files` | The target folder could not be read, or a draft could not be written into it. | Make the target folder exist and be readable and writable by this user, then try again. | no |
-| `input` | `telemetry_settings_invalid` | `a2m-telemetry` | The settings telemetry was started with cannot be used, such as a log file size of zero. | Set the log file size to at least one byte, then start the engine again. | no |
 | `input` | `tls_not_enabled` | `a2m-auth`, `a2m-pack-http`, `a2m-pack-mcp` | This build cannot make HTTPS requests, and an address needs one. | Use a build of the engine with the `tls` feature switched on. | no |
 | `input` | `tls_setup_failed` | `a2m-auth`, `a2m-pack-http`, `a2m-pack-mcp` | The TLS configuration of this machine could not be made. | Run `anything2mcp doctor`, and report it if it says nothing more. | no |
-| `input` | `trace_holds_secret` | `a2m-telemetry` | A finished trace still held a registered secret at the check on the way out. The trace is dropped and never reaches the store. | Register every secret with the vault before the run uses it, then run again. | no |
+| `input` | `trace_holds_secret` | `a2m-logs` | A finished trace still held a registered secret at the check on the way out. The trace is dropped and never reaches the store. | Register every secret with the vault before the run uses it, then run again. | no |
 | `input` | `trust_roots_unreadable` | `a2m-auth` | A file of further trust roots holds no certificate, or one that cannot be read. | Name a PEM file that holds the certificate of the authority, and start the engine again. | no |
 | `input` | `value_absent` | `a2m-expr` | A value was absent where the expression needs one. | Give the value, or a default with coalesce, and run again. | no |
 | `input` | `value_begins_formula` | `a2m-pack-file` | A value for delimited text begins with a character that makes a spreadsheet program run the text as a formula. | Give a value that begins otherwise, or mark the field `may_begin_formula: true` in the document if no spreadsheet program opens the file. | no |
@@ -748,13 +755,16 @@ The table is generated by `tools/failure_codes.py` from each crate's `failure_co
 | `possible_commit` | `no_confirmation` | `a2m-provider`, `a2m-engine`, `a2m-pack-device`, `a2m-pack-stream` | A write was sent and nothing says whether it happened. | Reconcile the record: read it back before anything is written again. | no |
 | `possible_commit` | `reconcile_required` | `a2m-ledger` | A record of the run is still in doubt from an earlier lease and has not been read back. | Reconcile the run: read each record in doubt and settle it, then continue. | no |
 | `possible_commit` | `runner_lost` | `a2m-ledger` | A call carries a lease number other than the run's, or a lease ended without a result, so a write may or may not have been sent. | Stop; wait for the run to be reconciled under its current lease, then resume it. | no |
+| `stale` | `assertion_changed` | `a2m-actions` | The reads a target's drafts assert changed between the confirmation's page and the person's press: what would be confirmed is not what the person read, so nothing was (decision 0475). | Ask for the confirmation again, and confirm the reads as they are now. | no |
 | `stale` | `binding_changed` | `a2m-engine` | The binding a test or a trial named is no longer the one at its place: it moved, changed its mode, or changed what it does. | Run the test or the trial again against the drafts as they are now. | no |
 | `stale` | `capture_ended` | `a2m-actions` | The capture was ended, by the one who asked for it, before its person began it on its page, so nothing was recorded. | Ask for a new capture with `capture.start`. | no |
 | `stale` | `changed_since_preview` | `a2m-ledger`, `a2m-engine`, `a2m-pack-data`, `a2m-pack-file` | A record no longer matches what the preview saw. | Preview again and ask for the new diff to be approved. | no |
 | `stale` | `drafts_changed` | `a2m-actions` | The drafts of a publish a person was shown changed before they pressed: they compile to another compiled target. | Ask again, and read the new page before pressing. | no |
+| `stale` | `export_changed` | `a2m-actions` | `trace.export` wrote its file and, read back, the file did not hold what was written: something changed it in between. | Export again, and let nothing else write in the project's working folder meanwhile. | no |
 | `stale` | `record_absent` | `a2m-pack-command` | A write's exit says the record it names is not there. | Read the record again; it may have been removed. | no |
 | `stale` | `token_not_read` | `a2m-pack-http` | A write that sends an anti-forgery token, in a pass that fetched none for it, or whose token was already sent. Nothing is sent (decision 0357). | Run the tool again, so that the page is fetched and its token read before the write. | no |
 | `stale` | `version_conflict` | `a2m-pack-command`, `a2m-pack-data`, `a2m-pack-http` | An exit declared `stale`. | Read the record again and decide whether the change still applies. | no |
+| `stale` | `version_moved` | `a2m-actions` | `version.rollback` made its version current and stored that, and when it read the store back another version was current: a publish or a rollback came between. | Call `target.status` to see which version is current, and roll back again if it is not the one wanted. | no |
 | `stale` | `version_not_read` | `a2m-pack-http` | A write that sends a record's version as a precondition, in a pass that read no version for the record. Nothing is sent. | Preview the change again, so that the record is read before it is written. | no |
 | `transient` | `connection_lost` | `a2m-provider`, `a2m-local`, `a2m-pack-device`, `a2m-pack-mcp`, `a2m-pack-stream` | A stream to a subsystem broke. | Try again; if the stream keeps breaking, run `anything2mcp doctor`. | yes |
 | `transient` | `device_busy` | `a2m-pack-device` | The device answered that it is busy. Nothing was carried out. | Run the operation again when the device is free. | yes |
@@ -770,6 +780,7 @@ The table is generated by `tools/failure_codes.py` from each crate's `failure_co
 | `busy` | `accessibility_off` | `a2m-pack-desktop` | The session's accessibility switch is off and the application publishes no tree (Linux), or the person has not allowed this program to use the system's accessibility interface (macOS). The pack changes no setting. | Turn on the desktop's accessibility setting, or allow the program that started the engine to use the system's accessibility interface, then run the tool again. | no |
 | `busy` | `acknowledgement_not_kept` | `a2m-engine` | The control plane cannot end a record on the system's acknowledgement alone; the record stays `acted`, in doubt. | Look at the system and settle the record; the run stops until it is settled. | no |
 | `busy` | `application_not_running` | `a2m-pack-desktop` | No running application is the program and the name the surface states. The pack starts nothing. | Start the application as you normally do, then run the tool again. | no |
+| `busy` | `application_not_started` | `a2m-pack-desktop` | The pack started the surface's program, and no application of it published itself on the accessibility interface by the deadline. The pack stopped what it started. | Start the application as you normally do and check that it shows its window, then run the tool again. | no |
 | `busy` | `blocked_by_parent` | `a2m-engine` | A record waits on a parent record that failed. | Settle the earlier record, then resume the run. | no |
 | `busy` | `browser_stopped_at_start` | `a2m-pack-web-browser`, `a2m-pack-web-ui` | The browser program started and stopped before it answered, and wrote why, such as a sandbox it cannot make (decision 0450). | Act on what the browser wrote, which the message shows. Where it names its sandbox, run the engine as a user that is not root, and let that user make user namespaces; in a container, give it a filter that allows them. The engine never starts a browser without its sandbox. | no |
 | `busy` | `browser_unavailable` | `a2m-pack-web-browser`, `a2m-pack-web-ui` | No browser program was found. | Install Chrome, Edge, or Chromium, or name the browser program in the settings. | no |
@@ -790,13 +801,13 @@ The table is generated by `tools/failure_codes.py` from each crate's `failure_co
 | `busy` | `key_record_conflict` | `a2m-vault` | A key record already exists, or changed before it could be replaced. | Make the call again; it reads the record that was written first. | yes |
 | `busy` | `key_store_entry_missing` | `a2m-vault` | The root that wrapped a key is no longer in the key store. | Sign in again to make each saved session anew; what was sealed under the lost root cannot be read. | no |
 | `busy` | `key_store_unreachable` | `a2m-vault` | The key store does not answer. The kernel is degraded until it does. | Unlock or start the key store, then try again; run `anything2mcp doctor` to see which key store is in use. | no |
+| `busy` | `keys_not_built` | `a2m-pack-desktop` | An action is done by a key, and this version does one only on Linux, where the accessibility interface lists the key an element's action is bound to. Nothing was sent. | Name the element's action with `perform`, or run the write on Linux. | no |
 | `busy` | `lease_too_short` | `a2m-actions` | A step may take longer than a job's lease lasts. | Raise `runners.lease_seconds` above the tool's longest step time limits, then resume the run. | no |
-| `busy` | `log_unreadable` | `a2m-telemetry` | A file of the engine's log is there and cannot be read. | Make the logs folder and its files readable by your user, then ask for the log again. | no |
+| `busy` | `log_unreadable` | `a2m-logs` | A file of the engine's log is there and cannot be read. | Make the logs folder and its files readable by your user, then ask for the log again. | no |
 | `busy` | `memory_short` | `a2m-pack-web-browser`, `a2m-pack-web-ui` | The engine's browsers hold their memory ceiling or more, or one of them could not be measured, so no new browser work is started (decision 0425). | Call again after the wait the failure gives; a browser past its own limit is recycled between runs. If it persists, close other work on the machine, or raise the ceiling in the settings. | yes |
 | `busy` | `message_may_be_held` | `a2m-pack-stream` | A message delivered again may be held by the record that took it first; nothing was taken. | Settle the record that took the message first; the message is then taken by the next run. | no |
 | `busy` | `no_binding` | `a2m-engine` | No binding qualifies, for a reason that is not a session, an edge block, or drift. | Check the binding's status and its provider with `anything2mcp engine status`, and enable a provider that drives a mode of the surface. | no |
 | `busy` | `no_rate_budget` | `a2m-engine` | No rate budget was granted for a surface. | Call the tool again later. | yes |
-| `busy` | `on_hold` | `a2m-sched` | The work is covered by a hold, such as the stop-everything switch. | Have whoever set the hold release it, then call again. | no |
 | `busy` | `path_locked` | `a2m-provider` | Another program holds the file, or a lock on it. | Close the program that holds the file, then call again. | no |
 | `busy` | `program_busy` | `a2m-pack-command` | An exit declared `busy`, or another start holds the surface. | Try again when the other start has ended. | yes |
 | `busy` | `prompt_busy` | `a2m-local` | A presence prompt is already up on this machine, and one is raised at a time. | Answer or close that prompt, or let its page close, then run the command again. | yes |
@@ -813,6 +824,7 @@ The table is generated by `tools/failure_codes.py` from each crate's `failure_co
 | `busy` | `run_reconciling` | `a2m-sched` | A resume found the run's reconcile as its one job: what is in doubt is settled first. | Wait for the reconcile to end, then resume the run again. | yes |
 | `busy` | `run_time_exceeded` | `a2m-engine` | The run passed the longest time its pipeline allows. | Resume the run; what it verified stays verified. | no |
 | `busy` | `runner_unavailable` | `a2m-sched` | No runner can serve the job. | Start or enroll a runner that offers what the message names as missing, then call again. | no |
+| `busy` | `scheduler_paused` | `a2m-sched` | The work is covered by a scheduler pause, such as the stop-everything switch. | Have whoever set the pause release it, then call again. | no |
 | `busy` | `service_not_running` | `a2m-pack-desktop` | No connection owns the bus name the surface states as its service (Linux). The pack starts nothing, whatever a `.service` file says. | Start the application as you normally do, then run the tool again. | no |
 | `busy` | `session_in_use` | `a2m-sched`, `a2m-pack-desktop` | A wait for a place on a session ran out. | Call again when the work on that session has finished. | yes |
 | `busy` | `shadow_not_kept` | `a2m-engine` | The control plane keeps no shadow comparisons, so no binding is run in shadow. | Compare a binding in shadow on an engine that keeps the comparisons; the call's result is the verified binding's. | no |
@@ -820,8 +832,9 @@ The table is generated by `tools/failure_codes.py` from each crate's `failure_co
 | `busy` | `shadow_write_not_built` | `a2m-ledger` | The shadow of a binding of an operation that writes is not built: its comparison cannot be stored, and it is never promotable through shadow. | Keep the operation on its verified binding. | no |
 | `busy` | `shutting_down` | `a2m-provider` | The supervisor is stopping and starts nothing. | Start the engine again. | no |
 | `busy` | `start_failed` | `a2m-provider` | A program could not be started by the operating system. | Check that the program can be run on this machine, then try again. | no |
+| `busy` | `start_not_built` | `a2m-pack-desktop` | The surface lets the pack start its program, no application of it is running, and this version starts an application only on Linux. Nothing was started. | Start the application as you normally do, then run the tool again. | no |
 | `busy` | `step_not_built` | `a2m-pack-desktop` | A read of a management class's property or of a COM property get was drafted and compiles, and this version of the pack carries out no such step. | Use the read once a version of the desktop pack that carries out the step is enabled. | no |
-| `busy` | `storage_full` | `a2m-telemetry`, `a2m-ledger`, `a2m-pack-file` | Something cannot be written, such as a log, a record of the ledger, or a file: the disk or the folder it goes to is full, or does not take the write. | Free space on the disk the message points to, or make its folder writable, then try again. | no |
+| `busy` | `storage_full` | `a2m-logs`, `a2m-ledger`, `a2m-pack-file` | Something cannot be written, such as a log, a record of the ledger, or a file: the disk or the folder it goes to is full, or does not take the write. | Free space on the disk the message points to, or make its folder writable, then try again. | no |
 | `busy` | `store_corrupt` | `a2m-ledger` | The integrity check, a stored row, a stored compiled target's hash, or the audit chain fails. | Stop writing, keep the data directory as it is, and restore the last backup. | no |
 | `busy` | `store_locked` | `a2m-pack-data` | Another connection held the store's lock for the whole time limit. | Try again when the other program has finished its work. | yes |
 | `busy` | `store_unavailable` | `a2m-ledger` | The database cannot commit, or the store is not ready. | Try again; if it lasts, run `anything2mcp doctor run` and repair what it names. | no |
@@ -855,12 +868,12 @@ Names the hand-kept list held before the table was generated, which no crate dec
 
 ## Command line
 
-Every action in the [action catalog](action-catalog.md) is a command of the form `anything2mcp <noun> <verb>`, with a matching MCP tool, REST route, and SDK method. The nouns are `tool`, `run`, `session`, `target`, `auth`, `screen`, `capture`, `endpoints`, `spec`, `draft`, `test`, `fixture`, `shadow`, `version`, `publish`, `binding`, `toolset`, `grant`, `policy`, `runner`, `killswitch`, `audit`, `secret`, `vault`, `delegation`, `engine`, `config`, `doctor`, `net`, `reach`, `browser`, `plugin`, `client`, `trace`, `action`, `docs`, `self`, `provider`, `component`, `discover`, `finding`, `unknown`, and `scout`.
+Every action in the [action catalog](action-catalog.md) is a command of the form `anything2mcp <noun> <verb>`, with a matching MCP tool, REST route, and SDK method. The nouns are `tool`, `run`, `session`, `target`, `auth`, `screen`, `capture`, `endpoints`, `spec`, `draft`, `assertion`, `test`, `fixture`, `shadow`, `version`, `publish`, `binding`, `toolset`, `grant`, `policy`, `runner`, `killswitch`, `audit`, `secret`, `vault`, `delegation`, `engine`, `config`, `doctor`, `net`, `reach`, `browser`, `plugin`, `client`, `trace`, `action`, `docs`, `self`, `provider`, `component`, `discover`, `finding`, `unknown`, and `scout`.
 
 | Kind | Commands |
 | --- | --- |
-| Shortcuts | `init`, `add`, `learn`, `lint`, `try`, `test`, `ready`, `publish`, `status`, `call`, `run`, `diff`, `connect`, `doctor`, `docs`; a shortcut is offered only when every step is built, so `bundle`, `rollback`, and `migrate` wait for their actions |
-| Process commands | `serve`, `runner`, `bridge`, `completion` |
+| Shortcuts | `init`, `add`, `learn`, `lint`, `try`, `test`, `ready`, `publish`, `status`, `call`, `run`, `diff`, `rollback`, `connect`, `doctor`, `docs`; a shortcut is offered only when every step is built, so `bundle` and `migrate` wait for their actions |
+| Process commands | `serve`, `runner`, `stdio`, `channel`, `completion` |
 
 On a local machine no command approves a write; see spec section 222. On a server, approvals are given in the console or a chat card after the approver signs in.
 
@@ -936,6 +949,6 @@ Each cell is measured in CI against the built-in test application and compared w
 | Single write with read-back | All | Overhead; round trips used |
 | 100-record pipeline | `ui`, `page_http`, `http` | Total time; records per second |
 | 50 callers reading at once | `http`, `ui` | Throughput; queue wait |
-| Cold start to first result | Solo profile | Wall time |
+| Cold start to first result | Solo deployment shape | Wall time |
 | Tool listing with 500 operations | MCP | Response time and size |
 | Idle and loaded memory | Control plane, runner with 10 contexts | Resident memory |

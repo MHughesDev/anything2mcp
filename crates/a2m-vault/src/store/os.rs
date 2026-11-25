@@ -259,14 +259,14 @@ fn platform_store() -> Result<(&'static str, Arc<CredentialStore>), Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::names::{Generation, KeyId, Layer};
+    use crate::names::{KeyId, KeyRotationNumber, Layer};
     use crate::store::creation::tests::Folder;
 
     fn binding() -> Binding {
         Binding {
             key: KeyId::root(),
             layer: Layer::Workspace,
-            generation: Generation::FIRST,
+            rotation: KeyRotationNumber::FIRST,
         }
     }
 

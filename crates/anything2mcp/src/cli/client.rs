@@ -154,7 +154,7 @@ pub(crate) async fn find(
 }
 
 /// Starts the engine on demand for a client that cannot run it inside
-/// itself, the bridge, and connects to it.
+/// itself, the stdio proxy, and connects to it.
 ///
 /// # Errors
 ///

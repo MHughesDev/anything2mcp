@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, CompiledSurface, Environment, EvidenceLevel, Failure, FailureClass, Finding,
+    AccessKind, CompiledSurface, Environment, EvidenceLevel, Failure, FailureClass, Finding,
     NoSecrets, PackPayload, Step, SurfaceKind, SurfaceName, TargetName, Values,
 };
 use a2m_provider::{
@@ -245,7 +245,7 @@ fn registry_of(pack: &Watching) -> Registry {
 fn description() -> SurfaceDescription {
     SurfaceDescription {
         kind: SurfaceKind::new("web").unwrap(),
-        archetype: Archetype::Interface,
+        access_kind: AccessKind::Interface,
         address: "http://127.0.0.1:8080/".to_owned(),
         facts: Values::new(),
     }

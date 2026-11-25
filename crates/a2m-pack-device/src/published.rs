@@ -39,11 +39,11 @@ use a2m_core::{
 use a2m_files::{
     DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, names_a_secret,
 };
+use a2m_logs::Clock;
 use a2m_provider::{
     BoxFuture, CheckedPath, DescribeForm, Describer, Description, Discoverer, DiscovererName,
     DiscoveryReport, DiscoveryScope, FindingSink, SandboxPort, SurfaceDescription,
 };
-use a2m_telemetry::Clock;
 use serde::{Deserialize, Serialize};
 
 use crate::codes;
@@ -54,7 +54,7 @@ pub(crate) const PUBLISHED_MAP: &str = "device_register_map";
 
 /// The name, among a discovery's checked paths, of a published map given
 /// as a file: the one name the manifest's `device_register_map` declares
-/// under `files`, so the engine hands it a file of the project's `sources`
+/// under `files`, so the engine hands it a file of the project's `inputs`
 /// folder under it (decision 0263). No other path is read.
 pub const REGISTER_MAP_FILE: &str = "register_map";
 
@@ -288,7 +288,7 @@ impl Drafted {
     /// number is an exact decimal, and a raw number an integer.
     /// What a scaled number's read says of its precision: the places its
     /// scale gives, so that two reads of one map say the same of theirs
-    /// (field test 8, finding 51). Nothing for a number that is not scaled.
+    /// (copy test 8, finding 51). Nothing for a number that is not scaled.
     /// The places are said in the description, because a target's field
     /// type is not the drafter's to write (decision 0441).
     fn places_said(&self) -> String {

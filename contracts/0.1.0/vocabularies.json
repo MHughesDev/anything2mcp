@@ -1,0 +1,88 @@
+{
+ "access_kind": [
+  "interface",
+  "request",
+  "command",
+  "bridge",
+  "artifact",
+  "stream",
+  "device"
+ ],
+ "coverage": [
+  "complete",
+  "partial",
+  "unknown"
+ ],
+ "effect_class": [
+  "read",
+  "write",
+  "irreversible"
+ ],
+ "evidence_level": [
+  "inferred",
+  "discovered",
+  "reconstructed",
+  "schema_verified",
+  "executed",
+  "behavior_verified",
+  "approved"
+ ],
+ "failure_class": [
+  "policy",
+  "input",
+  "session_expired",
+  "edge_blocked",
+  "drift",
+  "unknown_variant",
+  "rejected",
+  "mismatch",
+  "possible_commit",
+  "stale",
+  "transient",
+  "busy"
+ ],
+ "hazard": [
+  "none",
+  "data_elsewhere",
+  "sends_outside",
+  "device_function",
+  "physical"
+ ],
+ "record_state": [
+  "planned",
+  "unchanged",
+  "intent",
+  "acted",
+  "verified",
+  "failed"
+ ],
+ "run_state": [
+  "queued",
+  "validating",
+  "rejected",
+  "needs_approval",
+  "expired",
+  "running",
+  "needs_input",
+  "needs_login",
+  "stopped",
+  "completed",
+  "failed",
+  "cancelled"
+ ],
+ "session_state": [
+  "absent",
+  "signing_in",
+  "valid",
+  "suspect",
+  "renewing",
+  "needs_person",
+  "expired",
+  "revoked"
+ ],
+ "write_evidence": [
+  "read_back",
+  "response",
+  "acknowledged"
+ ]
+}

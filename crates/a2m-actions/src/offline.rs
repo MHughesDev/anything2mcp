@@ -32,7 +32,7 @@ use a2m_core::{
     PrincipalId, RunId, RunState, TestKind, ToolRuns, Value, Values, WorkspaceId,
 };
 use a2m_engine::{
-    BindingPin, BoxFuture, Clearance, Conditions, Control, Engine, EngineEvent, Evidence,
+    BindingPin, BoxFuture, Clearance, Conditions, ControlPort, Engine, EngineEvent, Evidence,
     GuardQuestion, JobKind, JobOutcome, JobSpec, LeaseClock, Parallelism, Preview, SessionWant,
     ToolRef,
 };
@@ -41,8 +41,8 @@ use a2m_ledger::{
     NewRun, Opened, ReadBack, Reconciled, RecordIntent, RecordRef, RetentionClass, Settled, Store,
     StoreConfig, ToolKind, WriteClearance,
 };
+use a2m_logs::CaptureLevel;
 use a2m_provider::{CheckedPath, EntryKind, Recorded, RecordedAnswer, Replay};
-use a2m_telemetry::CaptureLevel;
 use a2m_vault::{OwnerRef, Vault};
 use serde_json::{Value as Json, json};
 
@@ -185,7 +185,7 @@ impl OfflineControl {
     }
 }
 
-impl Control for OfflineControl {
+impl ControlPort for OfflineControl {
     fn compiled_target<'a>(
         &'a self,
         _hash: &'a Digest,
@@ -373,7 +373,7 @@ impl Control for OfflineControl {
     fn send<'a>(&'a self, event: EngineEvent) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
             match event {
-                EngineEvent::Result(values) => {
+                EngineEvent::Result { values, .. } => {
                     *self.result.lock().unwrap_or_else(PoisonError::into_inner) = Some(values);
                     Ok(())
                 }
@@ -1432,7 +1432,7 @@ fn tested_as_compiled(
 /// The folder of one fixture, `fixtures/<name>` inside the target's
 /// folder, reached part by part: each part must be a folder itself, never a
 /// link, so that no fixture is read from another target's folder or from
-/// the project's sources (audit finding A-2).
+/// the project's inputs (audit finding A-2).
 pub(crate) fn fixture_folder(target: &CheckedPath, fixture: &str) -> Result<CheckedPath, Json> {
     let wrong = |problem: String| json!({"folder": untrusted(fixture), "problem": problem});
     let mut at = target.clone();

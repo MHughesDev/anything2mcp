@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, Coverage, Environment, EvidenceLevel, Failure, Finding, LimitationCode, NoSecrets,
+    AccessKind, Coverage, Environment, EvidenceLevel, Failure, Finding, LimitationCode, NoSecrets,
     Redact, Step, SurfaceKind, Values,
 };
 use a2m_pack_command::binary::BinaryFound;
@@ -101,7 +101,7 @@ fn scene(redact: Arc<dyn Redact>) -> Scene {
 fn description(surface: &SurfaceRef) -> SurfaceDescription {
     SurfaceDescription {
         kind: SurfaceKind::new("program").unwrap(),
-        archetype: Archetype::Command,
+        access_kind: AccessKind::Command,
         address: surface.surface.address.clone(),
         facts: Values::new(),
     }
@@ -114,10 +114,10 @@ async fn read(
     bytes: &[u8],
     redact: &dyn Redact,
 ) -> Result<(DiscoveryReport, Vec<Finding>), Failure> {
-    let sources = scene.folder.path().join("sources");
+    let sources = scene.folder.path().join("inputs");
     std::fs::create_dir_all(&sources).unwrap();
     std::fs::write(sources.join("program.bin"), bytes).unwrap();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots.add(root.clone(), &sources, Access::Read).unwrap();
     let mut paths = CheckedPaths::none();

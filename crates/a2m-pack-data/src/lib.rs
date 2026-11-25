@@ -182,7 +182,7 @@ impl Pack for DataPack {
         to.discoverer(
             Arc::new(discover::CatalogDiscoverer::new(
                 names.table.clone(),
-                cx.telemetry().clock(),
+                cx.logs_and_traces().clock(),
             )?),
             Arc::new(discover::CatalogDescriber { kind: names.table }),
         )?;

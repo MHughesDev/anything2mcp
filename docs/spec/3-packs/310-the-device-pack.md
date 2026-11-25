@@ -1,6 +1,6 @@
 # 310. The device pack
 
-The device pack lets a target be a device reached through its own interface: registers or objects on a fieldbus, or a console on a serial line or a raw socket. It is the device archetype of [section 201](../2-kernel/201-archetypes-and-modes.md): exchanging frames with hardware over a bus or a link. It brings one mode, `device`, registered when the pack was built ([decision 0107](../../decisions/0107-the-device-mode-and-the-device-pack-as-building-it-settled-it.md)), as item 8 of the entry bar requires; the same record lists where building changed this section. No device pack is built until the command pack has tested the kernel boundary ([decision 0054](../../decisions/0054-devices-through-their-own-interfaces-and-firmware-through-the-devices-own-update.md)). Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
+The device pack lets a target be a device reached through its own interface: registers or objects on a fieldbus, or a console on a serial line or a raw socket. It is the device access kind of [section 201](../2-kernel/201-access-kinds-and-modes.md): exchanging frames with hardware over a bus or a link. It brings one mode, `device`, registered when the pack was built ([decision 0107](../../decisions/0107-the-device-mode-and-the-device-pack-as-building-it-settled-it.md)), as item 8 of the entry bar requires; the same record lists where building changed this section. No device pack is built until the command pack has tested the kernel boundary ([decision 0054](../../decisions/0054-devices-through-their-own-interfaces-and-firmware-through-the-devices-own-update.md)). Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 This section holds the rules for any device operation, whichever pack carries it out, and the design of the pack under those rules. A device is the place where a write can move something in the world, and everything here is arranged around that. Where the engine loop fits a device well, this section says so; where it strains, it says so too.
 
@@ -17,9 +17,9 @@ The REA project, studied for this ([research note 16](../../research/16-rea-meth
 
 ## Ways to reach a device, best first
 
-| Route | Archetype | Served by | Read-back means | Worst outcome | Stance |
+| Route | Access kind | Served by | Read-back means | Worst outcome | Stance |
 | --- | --- | --- | --- | --- | --- |
-| The device's management protocol over a network | Request | The request packs: HTTP ([section 303](303-the-http-pack.md)), or a later mode of the request archetype | Read the same object after the change is committed | Locking oneself out by changing the network or the credentials in use | Preferred |
+| The device's management protocol over a network | Request | The request packs: HTTP ([section 303](303-the-http-pack.md)), or a later mode of the request access kind | Read the same object after the change is committed | Locking oneself out by changing the network or the credentials in use | Preferred |
 | A console reached by starting a program, such as a remote session client | Command | The command pack ([section 306](306-the-command-pack.md)) | A declared query command | As for a console | Allowed, with a closed list of commands |
 | A console on a serial line or a raw socket, with no program between | Device | This pack | A declared query command, its answer parsed by a strict pattern | A saved setting that stops the device starting; nothing protects the link from noise | Allowed, with a closed list of commands |
 | Registers or objects on a fieldbus | Device | This pack | Read the register again | Many writes are commands with nothing to read; some move machinery | Allowed for readable registers; the rest is `irreversible` with a hazard |
@@ -65,7 +65,7 @@ These hold for every pack that operates a device.
 | Registration | Content |
 | --- | --- |
 | Surface kinds | `device_link`: a network address and port, or a serial port with its settings; the protocol; the unit address on a shared bus, from 0 to 255; and `serials`, the serial of the device that answers in each environment, by the environment's name. Serial ports are not built: the address is a socket address, and the one protocol is `modbus_tcp` |
-| Modes | `device`, archetype device, with the verbs `read`, `update`, and `submit` |
+| Modes | `device`, access kind device, with the verbs `read`, `update`, and `submit` |
 | Step kinds | `open`, `build_frame`, `write_frame`, `read_frame`, `expect`, checked names within the mode |
 | Driver | One |
 | File kinds | `registers/`, one file per device model and map |
@@ -314,7 +314,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 | --- | --- | --- |
 | 1 | A driver, no retries inside | The `device` driver, with no automatic retry of any write, even as `transient` |
 | 2 | Read-back for every write | Read the register again. A `write` register, a console command, or a register with a `read_effect` has none, and its write is `irreversible`. Any hazard other than `none` makes a write `irreversible` whatever its read-back |
-| 3 | Each identity strategy | `natural`, by the register's or object's name in the map. A command is `none`. `composite`, `stamped`, and `find` are refused with a reason |
+| 3 | Each record matching | `natural`, by the register's or object's name in the map. A command is `none`. `composite`, `stamped`, and `find` are refused with a reason |
 | 4 | A test stand | The simulated device above, with its control interface |
 | 5 | A discoverer | Identification, the device's own listing, a published map, and firmware inspection through the optional provider. Identification, a published map, and firmware inspection are built |
 | 6 | Failures mapped | The table above |

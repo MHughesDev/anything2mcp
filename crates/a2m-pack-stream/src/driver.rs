@@ -19,11 +19,11 @@ use a2m_core::{
     CanonicalJson, Failure, FailureClass, FailureCode, PackPayload, RecordKey, Redact, Secret,
     Step, Value, Values,
 };
+use a2m_logs::{Acting, Detail};
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Deadline, Driver, DriverHealth, Observed, Posture, PrepareContext,
     Prepared, RecordedElsewhere, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
-use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
 
 use crate::channel::{ChannelEntry, MessageSchema, Ownership, SECTION_FORMAT, Shape};

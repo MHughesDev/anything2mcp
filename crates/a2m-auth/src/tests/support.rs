@@ -14,7 +14,7 @@ use a2m_core::{
     Secret, TargetName, Timestamp, WorkspaceId,
 };
 use a2m_ledger::{Store, StoreConfig};
-use a2m_telemetry::{Clock, LogLevel, ManualClock, Telemetry};
+use a2m_logs::{Clock, LogLevel, LogsAndTraces, ManualClock};
 use a2m_vault::{
     Binding, BoxFuture, KeyMaterial, KeyStore, MemoryKeyStore, StoreDescription, StoreHealth,
     Vault, Wrapped,
@@ -25,9 +25,9 @@ use crate::failure;
 use crate::{
     AskPerson, AuthEntry, AuthProvider, ChallengeScheme, CredentialRef, CredentialSink, ExpirySign,
     InProcessWork, Keeper, KeeperJob, KeeperWork, KeeperWorker, LeaseRequest, Material,
-    PersonAnswer, PersonAsk, ProbeOutcome, ProviderName, ProviderNeeds, ProviderSet, Purpose,
-    RawSign, RunProbe, SessionKey, SessionLease, SessionRef, SessionStore, SignInContext, SignedIn,
-    StoredCredentials, Wait, Work, WorkOutcome,
+    PersonAnswer, PersonAsk, ProviderName, ProviderNeeds, ProviderSet, Purpose, RawSign,
+    RunSessionCheck, SessionCheckOutcome, SessionKey, SessionLease, SessionRef, SessionStore,
+    SignInContext, SignedIn, StoredCredentials, Wait, Work, WorkOutcome,
 };
 
 /// The start of every test's clock.
@@ -271,8 +271,8 @@ impl Relay {
 }
 
 impl KeeperWork for Relay {
-    fn probe<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
-        self.work.probe(session)
+    fn check_session<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, SessionCheckOutcome> {
+        self.work.check_session(session)
     }
 
     fn perform(&self, job: KeeperJob) -> BoxFuture<'_, WorkOutcome> {
@@ -354,11 +354,11 @@ impl AskPerson for Person {
     }
 }
 
-/// The target's probe, with the outcome the test sets.
+/// The target's session check, with the outcome the test sets.
 pub(super) struct Probe {
-    pub(super) outcome: Mutex<ProbeOutcome>,
+    pub(super) outcome: Mutex<SessionCheckOutcome>,
     calls: AtomicU32,
-    /// A probe waits here, after it is counted, while the test holds it.
+    /// A session check waits here, after it is counted, while the test holds it.
     pub(super) gate: Gate,
 }
 
@@ -368,8 +368,8 @@ impl Probe {
     }
 }
 
-impl RunProbe for Probe {
-    fn probe<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
+impl RunSessionCheck for Probe {
+    fn check_session<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, SessionCheckOutcome> {
         Box::pin(async move {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.gate.pass().await;
@@ -623,7 +623,7 @@ pub(super) struct World {
     pub(super) worker: Arc<KeeperWorker>,
     pub(super) relay: Arc<Relay>,
     pub(super) keeper: Keeper,
-    pub(super) telemetry: Telemetry,
+    pub(super) logs_and_traces: LogsAndTraces,
 }
 
 impl World {
@@ -645,7 +645,7 @@ impl World {
             Arc::new(Fake::new(needs)),
             Arc::new(Person::new()),
             Arc::new(Probe {
-                outcome: Mutex::new(ProbeOutcome::SignedIn),
+                outcome: Mutex::new(SessionCheckOutcome::SignedIn),
                 calls: AtomicU32::new(0),
                 gate: Gate::new(),
             }),
@@ -707,16 +707,16 @@ impl World {
             probe.clone(),
         )));
         let work = Arc::clone(&relay) as Arc<dyn KeeperWork>;
-        // The telemetry is given a redactor that knows no secret, so that a
+        // The logs and traces are given a redactor that knows no secret, so that a
         // secret the keeper logged would be seen by the test.
-        let telemetry = Telemetry::in_memory(
+        let logs_and_traces = LogsAndTraces::in_memory(
             LogLevel::Trace,
             Arc::new(NoSecrets) as Arc<dyn Redact>,
             clock.clone() as Arc<dyn Clock>,
         );
         let keeper = Keeper::builder(store.clone(), providers, work, clock.clone())
             .local_worker(Arc::clone(&worker))
-            .telemetry(telemetry.clone())
+            .logs_and_traces(logs_and_traces.clone())
             .build();
         Self {
             clock,
@@ -732,13 +732,13 @@ impl World {
             worker,
             relay,
             keeper,
-            telemetry,
+            logs_and_traces,
         }
     }
 
     /// A second engine over the same store: a keeper and its worker of its
     /// own, sharing only the store's rows, the clock, the key store, and
-    /// the world outside (the system, the person, the probe). What two
+    /// the world outside (the system, the person, the session check). What two
     /// keepers know of each other is what the store's compare-and-set on
     /// the session's state and epoch tells them.
     pub(super) fn second_engine(&self) -> Keeper {
@@ -832,14 +832,14 @@ pub(super) fn block<T>(work: impl Future<Output = T>) -> T {
         .block_on(work)
 }
 
-/// Runs `work` on a one-thread runtime with the telemetry receiving every
+/// Runs `work` on a one-thread runtime with the logs and traces receiving every
 /// log line the keeper writes.
-pub(super) fn logged<T>(telemetry: &Telemetry, work: impl Future<Output = T>) -> T {
+pub(super) fn logged<T>(logs_and_traces: &LogsAndTraces, work: impl Future<Output = T>) -> T {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-    telemetry.scoped(|| runtime.block_on(work))
+    logs_and_traces.scoped(|| runtime.block_on(work))
 }
 
 /// Fails if any text holds a planted value.

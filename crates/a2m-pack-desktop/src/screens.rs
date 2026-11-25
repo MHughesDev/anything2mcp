@@ -126,12 +126,14 @@ pub(crate) fn screen_schema() -> JsonSchema {
 }
 
 /// One action: where it is done, which of the element's actions is done
-/// (`click` unless stated), what the window shows once it is done, and
-/// whether it saves.
+/// (`click` unless stated, or the one the element binds to a `key` of the
+/// pack's closed list), what the window shows once it is done, and whether
+/// it saves.
 fn action_schema() -> JsonSchema {
     JsonSchema::object()
         .required("locate", locate_schema())
         .optional("perform", JsonSchema::name())
+        .optional("key", JsonSchema::words(crate::keys::KEYS))
         .required("confirm", condition_schema(1))
         .optional("commits", JsonSchema::bool())
 }
@@ -343,11 +345,25 @@ impl Reader {
             let value = &entry.value;
             let locate = self.locators(value);
             let confirm = value.get("confirm").and_then(|cond| self.condition(cond));
+            let key = value.text("key").map(str::to_owned);
+            if key.is_some() && value.get("perform").is_some() {
+                self.refuse(
+                    "key_and_perform",
+                    &value.at,
+                    format!(
+                        "The action `{}` states both `perform` and `key`; it is done one way only.",
+                        shown(&entry.key.value)
+                    ),
+                    "Keep `key` for an action the element binds to a key, or `perform` for one it names.",
+                );
+                continue;
+            }
             if let (Some(locate), Some(confirm)) = (locate, confirm) {
                 actions.insert(
                     entry.key.value.clone(),
                     Action {
                         locate,
+                        key,
                         perform: value.text("perform").unwrap_or(DEFAULT_PERFORM).to_owned(),
                         confirm,
                         commits: value.get("commits").and_then(Located::as_bool) == Some(true),

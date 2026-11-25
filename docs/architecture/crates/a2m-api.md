@@ -9,7 +9,7 @@ The REST face of the kernel, and the server's network listener. It serves `/api/
 | Side | Kernel |
 | Layer | 8, Roles |
 | May depend on | Layers 1 to 7 |
-| Depends on | `a2m-core`, `a2m-actions`, `a2m-telemetry`. Outside: Tokio, Axum, Hyper with rustls, as spec section 605 lists them, to be verified; an HTTP client for webhooks, to be verified |
+| Depends on | `a2m-core`, `a2m-actions`, `a2m-logs`. Outside: Tokio, Axum, Hyper with rustls, as spec section 605 lists them, to be verified; an HTTP client for webhooks, to be verified |
 | Roadmap packages | Roadmap package 1.4 (the router on the local channel, the action route); 6.4 (the full interface, OpenAPI, events, webhooks); 6.5 (the approval and sign-in pages and the console on a server); 7.3 (the hosted sign-in page) |
 | Carries out | Spec sections [222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md) for REST, [601](../../spec/6-running-it/601-deployment-configurations.md), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) on a server; the [REST endpoints](../../reference/technical-reference.md#rest-endpoints) of the technical reference |
 
@@ -92,7 +92,7 @@ The `/api/v1/admin/...` row of the technical reference is not a separate surface
 
 ## OpenAPI
 
-The document is generated from the registry when the router is built: one operation per route, request and response schemas from the action's schemas, the failure body as one shared schema, and the security schemes in use. The route of a run's events is described in it with both of its answers, a page as JSON and a stream, and carries no `x-action`. Every operation of an action carries `x-action`, its name, and `x-sdk`, whether it has an SDK method: an SDK face (`faces.sdk`) and a handler (`ActionDef::built`), as `RestRouteFace::sdk` and `has_sdk_method` in `a2m-actions` say; the clients' generators write a method only where `x-sdk` is true, so an action that answers `action_not_built` has no method until it is built ([decision 0420](../../decisions/0420-the-api-description-says-which-actions-have-a-client-method.md), refined by [decision 0437](../../decisions/0437-what-a-release-publishes-is-kept-and-every-later-build-is-checked-against-it.md), point 5). `tools/contracts.py check` holds the saved description's `x-sdk` to the actions `handler_for` gives a function or the client carries out, the same list it keeps a release's built actions by. It is also written into the recorded catalog, which the SDK generators read. A toolset can be exported as its own document, listing that toolset's target tools as operations, for platforms that consume OpenAPI instead of MCP (spec section 222).
+The document is generated from the registry when the router is built: one operation per route, request and response schemas from the action's schemas, the failure body as one shared schema, and the security schemes in use. The route of a run's events is described in it with both of its answers, a page as JSON and a stream, and carries no `x-action`. Every operation of an action carries `x-action`, its name, and `x-sdk`, whether it has an SDK method: an SDK face (`faces.sdk`) and a handler (`ActionDef::built`), as `RestRouteFace::sdk` and `has_sdk_method` in `a2m-actions` say; the clients' generators write a method only where `x-sdk` is true, so an action that answers `action_not_built` has no method until it is built ([decision 0420](../../decisions/0420-the-api-description-says-which-actions-have-a-client-method.md), refined by [decision 0437](../../decisions/0437-what-a-release-publishes-is-kept-and-every-later-build-is-checked-against-it.md), point 5). `tools/contracts.py check` holds the saved description's `x-sdk` to the actions `handler_for` gives a function or the client carries out, the same list it keeps a release's built actions by. It is also written into the action catalog, which the SDK generators read. A toolset can be exported as its own document, listing that toolset's target tools as operations, for platforms that consume OpenAPI instead of MCP (spec section 222).
 
 ## Events
 
@@ -117,6 +117,16 @@ The document is generated from the registry when the router is built: one operat
 Events pass the redactor before they are stored, and their detail passes it again as the kernel hands it out, so the stream never holds a secret.
 
 **No redaction pass of its own.** Unlike the MCP door, this crate does not walk what it sends through the redactor. Everything it sends is the dispatcher's response or the kernel's events, both redacted before they are handed over, and this door's own texts quote nothing a caller sent except the HTTP method and, for a JSON error, a line and a column. The MCP door needs its pass because its protocol errors echo a tool's name, a request's id, and a progress token. A route of this crate that comes to quote its input must add the pass.
+
+## A watch's changes
+
+`GET /api/v1/watches/{watch_id}/changes` gives the changes a watch recorded ([decision 0478](../../decisions/0478-a-watch-is-an-mcp-resource-of-watch-changes-and-its-changes-are-followed-without-a-decision-for-each-wait.md), as [decision 0234](../../decisions/0234-a-watch-is-a-read-repeated-on-a-schedule-a-person-confirmed-and-a-change-is-reported-never-acted-on.md) planned it). It is built as the route of a run's events is: fixed in the router, listed by `served_routes` with an empty action before the document's own, described in the document with its page taken from `watch.changes`'s own output, and no action's. Following a watch records no decision for each wait: `Kernel::watch_changes` shows a caller only a watch of the person it acts for, which is what every `watch.*` action shows it.
+
+1. A request that accepts `text/event-stream` gets a stream; any other gets one page as JSON, `result` in the shape `watch.changes` returns: `watch_id`, `state`, `changes`, `after`, `complete`.
+2. `after`, `limit` (1 to 100), and `Last-Event-ID` are read as for a run's events, by the same function. A watch of another person, or none, is `input`/`not_found`; a path that holds no watch's identifier is `schema_invalid`.
+3. Each change is one event, its `seq` as its `id` and its data the change as `watch.changes` shows it, holding no value. A full page is read on at once; otherwise each wait is the kernel's, on its notice that something changed.
+4. A watch is meant to be followed for its whole life, so the stream stays open while the watch lasts, unlike a run's, which ends at a rest. Once the watch has ended and every change is sent, the stream ends with one event named `ended`. A failure after the stream began is its last event, `failed`.
+5. A comment line after 15 s of silence, and `READER_PATIENCE` for each line, as for a run's events.
 
 ## Webhooks
 
@@ -182,7 +192,7 @@ The dispatcher's, rendered. This crate adds, before the dispatcher is reached: `
 1. Done: the router with the action route, carried on whatever the product crate mounts it on; the caller comes as a request extension; limits on body size and time. Package 1.4.
 2. Done, partly: the aliases the registry declares as `rest_alias` data: `tool.search`, `run.get`, `run.resume`, `run.cancel`, `session.status`. Not built: `POST /operations/{name}/calls` and `/pipelines/{name}/runs` for `tool.call`, because the catalog gives `tool.call` no alias and one action has at most one; `a2m-actions` must give it one (or two) with `{name}` filling `tool`.
 3. Done: the OpenAPI document and its test (every served route described, nothing else, every operation called). Not built: a toolset's own document. Package 6.4.
-4. Done: a run's events, as a page and as a stream, over `Kernel::events` and `Kernel::next_events`. Not built: the outbox and the deliverer; the store has no outbox table and settings no destinations. Package 6.4.
+4. Done: a run's events, as a page and as a stream, over `Kernel::events` and `Kernel::next_events`; a watch's changes, the same way, over `Kernel::watch_changes` ([decision 0478](../../decisions/0478-a-watch-is-an-mcp-resource-of-watch-changes-and-its-changes-are-followed-without-a-decision-for-each-wait.md); `a_watchs_changes_are_refused_for_a_watch_that_is_not_the_callers` and the product's watch test). Not built: the outbox and the deliverer; the store has no outbox table and settings no destinations. Package 6.4.
 5. Not built: the server listener, its token checks, protected resource metadata; `verify_caller` refuses bearer tokens and API keys in this build. With package 6.2.
 6. Not built: `ServerSurface` and the console's approval page; needs a person's sign-in on a server and the console's pages. Package 6.5.
 

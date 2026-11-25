@@ -14,8 +14,8 @@ mod common;
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, Digest, EvidenceLevel, Failure, FailureClass, Finding, Source, Subject, SurfaceKind,
-    Values,
+    AccessKind, Digest, EvidenceLevel, Failure, FailureClass, Finding, Source, Subject,
+    SurfaceKind, Values,
 };
 use a2m_provider::{
     Access, CheckedPaths, Deadline, DescribeForm, DiscoveryScope, FindingSink, Manifest, Posture,
@@ -37,7 +37,7 @@ impl FindingSink for Kept {
 fn surface(scene: &Scene) -> SurfaceDescription {
     SurfaceDescription {
         kind: SurfaceKind::new("device_link").unwrap(),
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     }
@@ -47,7 +47,7 @@ fn surface(scene: &Scene) -> SurfaceDescription {
 fn the_provider_is_off_unless_it_is_added_and_declares_what_it_raises() {
     let surface = SurfaceDescription {
         kind: SurfaceKind::new("device_link").unwrap(),
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         address: "127.0.0.1:502".to_owned(),
         facts: Values::new(),
     };
@@ -108,7 +108,7 @@ async fn inspect(
         .into_iter()
         .find(|found| found.declared().name.as_str() == "firmware_image")
         .unwrap();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots
         .add(root.clone(), project.path(), Access::Read)

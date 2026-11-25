@@ -1,6 +1,6 @@
 # 307. The data pack
 
-The data pack reaches data stores directly: relational databases first, and reads before writes; document and key-value stores later. It is a request pack ([section 201](../2-kernel/201-archetypes-and-modes.md)). It brings one mode, `sql`, for relational stores, registered by [decision 0100](../../decisions/0100-the-mode-sql-and-the-data-packs-contract-as-building-it-settled-it.md) under the rule of [record 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md). What is built so far, and what is not, is in the design of [`a2m-pack-data`](../../architecture/crates/a2m-pack-data.md). Packages G1 to G3 of the [roadmap](../../plan/roadmap.md) build it. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
+The data pack reaches data stores directly: relational databases first, and reads before writes; document and key-value stores later. It is a request pack ([section 201](../2-kernel/201-access-kinds-and-modes.md)). It brings one mode, `sql`, for relational stores, registered by [decision 0100](../../decisions/0100-the-mode-sql-and-the-data-packs-contract-as-building-it-settled-it.md) under the rule of [record 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md). What is built so far, and what is not, is in the design of [`a2m-pack-data`](../../architecture/crates/a2m-pack-data.md). Packages G1 to G3 of the [roadmap](../../plan/roadmap.md) build it. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 The pack exists because a database is the plainest place to read many records, and because a write to one can be checked with exactly the same tool that made it: a query by key. It is also where an overlay can do the most damage, so most of this section is about what it refuses.
 
@@ -122,7 +122,7 @@ A read-only transaction stops changes to stored data. It does not stop a functio
 
 ## Verbs and steps
 
-The request archetype's existing steps are HTTP's. The pack adds its own, fixed when it is built: `begin` (a transaction with a declared isolation and access mode), `execute` (one prepared statement with bound parameters), `fetch` (rows into typed values, up to a limit), `expect_rows` (the count against the declared one), and `commit`. Rollback is not a step. The driver rolls back whenever a step fails before `commit`, and when it releases a connection.
+The request access kind's existing steps are HTTP's. The pack adds its own, fixed when it is built: `begin` (a transaction with a declared isolation and access mode), `execute` (one prepared statement with bound parameters), `fetch` (rows into typed values, up to a limit), `expect_rows` (the count against the declared one), and `commit`. Rollback is not a step. The driver rolls back whenever a step fails before `commit`, and when it releases a connection.
 
 | Verb | Lowers to | Commit point |
 | --- | --- | --- |
@@ -281,7 +281,7 @@ One client per protocol is preferred to a layer over many databases: the pack ne
 
 ## Document and key-value stores
 
-They wait. They fit the request archetype ([section 201](../2-kernel/201-archetypes-and-modes.md)): a read by key, a keyed write, the store's acknowledgement. But they offer no statements to declare, and many have neither transactions nor a read-only mode the store enforces, so the proof of a read moves from the transaction to the identity's rights, which the store must report. They will get a mode of their own, by its own record, after relational writes are proven. Their discoverer is already described above: sampled shapes, `inferred`.
+They wait. They fit the request access kind ([section 201](../2-kernel/201-access-kinds-and-modes.md)): a read by key, a keyed write, the store's acknowledgement. But they offer no statements to declare, and many have neither transactions nor a read-only mode the store enforces, so the proof of a read moves from the transaction to the identity's rights, which the store must report. They will get a mode of their own, by its own record, after relational writes are proven. Their discoverer is already described above: sampled shapes, `inferred`.
 
 ## The entry bar
 
@@ -289,7 +289,7 @@ They wait. They fit the request archetype ([section 201](../2-kernel/201-archety
 | --- | --- | --- |
 | 1 | A driver, no retries inside | The driver, part by part |
 | 2 | A read-back rule for every write | A read statement by key, in a new transaction; a `call` without one is `irreversible` |
-| 3 | Each identity strategy | Identity |
+| 3 | Each record matching | Identity |
 | 4 | A test stand with ground truth | The embedded stand, and the server stand for what it cannot show |
 | 5 | A discoverer that claims no more than it saw | The catalog as `discovered`; samples as `inferred` |
 | 6 | Failures mapped to the classes | Failures |
@@ -301,7 +301,7 @@ They wait. They fit the request archetype ([section 201](../2-kernel/201-archety
 1. **G1.** The embedded stand and its control interface, with its own tests.
 2. **G2.** A read by key through the engine loop: a `statements/` file, prepare and describe, a read-only connection read back, `one_or_none`; the proof is that a statement that writes is refused by the store. Then the catalog discoverer, the drafting rules, and the scout's tries, which measure hypothesis H-31 for data stores. Then the server stand, and the same reads against it.
 3. **G3.** `form: table` updates with a guard and `expect_rows`; read-back by key; `possible_commit` through the relay that cuts the connection. Then inserts with an assigned key, `stamped`, and `find`; then `form: statement` writes, procedures, and `stands: beneath`.
-4. Record what the kernel had to change, for hypothesis H-26, and whether `sql` fitted the request archetype without bending it, for H-29.
+4. Record what the kernel had to change, for hypothesis H-26, and whether `sql` fitted the request access kind without bending it, for H-29.
 
 ## Open points
 

@@ -20,9 +20,16 @@ fn code_of(response: &Response) -> String {
         .clone()
 }
 
-/// Every built action whose input names a run (`run.undo`, `run.trace`, and
-/// `trace.export` are not built and answer `action_not_built` to everyone).
-const NAMING_A_RUN: [&str; 4] = ["run.get", "run.resume", "run.cancel", "trace.show"];
+/// Every built action whose input names a run (`run.undo` is not built and
+/// answers `action_not_built` to everyone).
+const NAMING_A_RUN: [&str; 6] = [
+    "run.get",
+    "run.resume",
+    "run.cancel",
+    "run.trace",
+    "trace.show",
+    "trace.export",
+];
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_input_naming_another_persons_run_or_workspace_is_refused_and_changes_nothing() {

@@ -1,6 +1,6 @@
 # 304. The MCP pack
 
-The MCP pack lets a target be an MCP server that a system already provides. It reaches the server and re-exposes chosen tools of it, with this runtime's policy, approval, audit, and verification around every call. It brings one mode, `mcp`, in the request archetype. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
+The MCP pack lets a target be an MCP server that a system already provides. It reaches the server and re-exposes chosen tools of it, with this runtime's policy, approval, audit, and verification around every call. It brings one mode, `mcp`, in the request access kind. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 Three ideas define it. **A mapping file names the only tools that can be reached,** each pinned by the digest of its definition, so the mapping is the upstream server's manifest. **Verification is added, not borrowed:** a server's success answer shows it accepted a call, never that the record holds what was sent. **The server's own tool list is a discoverer,** and a change to a mapped tool stops the bindings that use it.
 
@@ -30,7 +30,7 @@ The pack is one crate, `a2m-pack-mcp`. It has no base crate and depends on no ot
 
 ## The mode
 
-| Mode | Archetype | How it reaches the system | Needs | Best for | Main risk |
+| Mode | Access kind | How it reaches the system | Needs | Best for | Main risk |
 | --- | --- | --- | --- | --- | --- |
 | `mcp` | Request | Connects to an MCP server the system already provides and re-exposes chosen tools with this runtime's policy, approval, audit, and verification around them | The server's endpoint or program, and its authorization | Systems that ship their own MCP server | Its tools may be too broad or too thin |
 
@@ -55,7 +55,7 @@ Policy, approval, and audit wrap every call, as for any operation. The tools an 
 | Registration | Content |
 | --- | --- |
 | Surface kinds | `mcp` |
-| Modes | `mcp`, archetype request |
+| Modes | `mcp`, access kind request |
 | Step kinds | `call_tool`, a checked name within the mode; `list_tools`, which only the discoverer sends, through the sandbox port |
 | Driver | One |
 | File kinds | `mappings/`: one file per `mcp` surface |
@@ -130,11 +130,11 @@ The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-
 | From a finding of kind | The drafter writes | Left to the developer |
 | --- | --- | --- |
 | A tool on the server's list, marked read-only by the server | A mapping entry with its digest, and a pass-through read operation with one binding | Its name in the language of the work; whether the marking is believed |
-| A tool not marked read-only | A mapping entry only, with `effect` left as an open question | The operation, its identity strategy, its read-back tool |
+| A tool not marked read-only | A mapping entry only, with `effect` left as an open question | The operation, its record matching, its read-back tool |
 
 As built, the drafter writes the mapping entry for either kind of tool, and the pass-through read operation for a read-only tool whose entry holds no question ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)); an entry that holds one is drafted into a mapping file of its own. It also proposes `untrusted_fields` from the output schema's free-text members, and `result: text` for a tool with no output schema: it sees no answer, so it never proposes `json_text`. For a tool whose whole input is one string it leaves `free_text` as an open question, and drafts the read once the target's mapping answers `free_text: false` for the definition listed. For each tool it drafts no read for, it gives its reason [decision 0365](../../decisions/0365-an-mcp-servers-json-answered-as-text-is-a-declared-result-form-and-the-pack-speaks-the-earlier-handshake-revision.md).
 
-`spec.import` is to accept an upstream server's tool list as well as a published description; that is not built. As built, `spec.import` is a scout handed one file of the project's `sources` folder under the name `description`, and the only discoverer that reads that name is the HTTP pack's reader of an OpenAPI description ([decision 0263](../../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)). An upstream server's tools are found today by the scout's discovery of an MCP surface. A server mapped with `purpose: discovery` is a discovery provider: its results are to be stored as findings at `inferred`, and its tools are never bound or called. As built, a binding to one of its tools does not compile (`mcp.discovery_bound`) and the driver refuses to call one; taking its results as findings is not built, and has no package of its own since package E6 was withdrawn ([decision 0279](../../decisions/0279-what-the-three-surveys-left-open-against-decision-0276-is-settled.md)).
+`spec.import` is to accept an upstream server's tool list as well as a published description; that is not built. As built, `spec.import` is a scout handed one file of the project's `inputs` folder under the name `description`, and the only discoverer that reads that name is the HTTP pack's reader of an OpenAPI description ([decision 0263](../../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)). An upstream server's tools are found today by the scout's discovery of an MCP surface. A server mapped with `purpose: discovery` is a discovery provider: its results are to be stored as findings at `inferred`, and its tools are never bound or called. As built, a binding to one of its tools does not compile (`mcp.discovery_bound`) and the driver refuses to call one; taking its results as findings is not built, and has no package of its own since package E6 was withdrawn ([decision 0279](../../decisions/0279-what-the-three-surveys-left-open-against-decision-0276-is-settled.md)).
 
 **A property named as a secret is never drafted as an input or an output.** The drafted read leaves out of its outputs each property of the tool's output schema whose name the compiler takes for a secret's, and the last sentence of the drafted description tells the names left out; an optional input so named is no input, and a tool with a required input so named is not drafted as a read ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
 
@@ -206,7 +206,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 | --- | --- | --- |
 | 1 | A driver, no retries inside | The `mcp` driver |
 | 2 | Read-back for every write | The mapped read tool; without one, `irreversible` |
-| 3 | Each identity strategy | `natural`: the read tool by key. `composite`: where the read tool takes a parent and a child key. `stamped`: a field the tool accepts and its read or list tool returns. `find`: a list or search tool with `settle`. `none`: `irreversible` |
+| 3 | Each record matching | `natural`: the read tool by key. `composite`: where the read tool takes a parent and a child key. `stamped`: a field the tool accepts and its read or list tool returns. `find`: a list or search tool with `settle`. `none`: `irreversible` |
 | 4 | A test stand | The small MCP server above |
 | 5 | A discoverer | `mcp_tools`, which lists and never calls |
 | 6 | Failures mapped | The table above |

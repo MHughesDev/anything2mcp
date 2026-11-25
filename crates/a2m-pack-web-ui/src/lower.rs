@@ -14,7 +14,7 @@
 //! empty (decision 0112).
 
 use a2m_core::{
-    EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef, SectionIndex,
+    EffectClass, FailsAs, FileKindName, Mode, PackPayload, PackRef, RecordMatching, SectionIndex,
     Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb, WriteEvidence,
 };
 use a2m_files::{
@@ -622,10 +622,10 @@ impl Lowering for UiLowering {
         &self.schema
     }
 
-    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         match strategy {
-            IdentityStrategy::None => Possible::Yes,
-            IdentityStrategy::Natural | IdentityStrategy::Composite => {
+            RecordMatching::None => Possible::Yes,
+            RecordMatching::Natural | RecordMatching::Composite => {
                 let reads = READ_VERBS.contains(&binding.verb.as_str());
                 if reads || binding.field("read_back").is_some() {
                     Possible::Yes
@@ -636,7 +636,7 @@ impl Lowering for UiLowering {
                     )
                 }
             }
-            IdentityStrategy::Stamped | IdentityStrategy::Find => Possible::No(
+            RecordMatching::Stamped | RecordMatching::Find => Possible::No(
                 "finding a record by a stamp or a search is not built in this version of the web pack."
                     .to_owned(),
             ),
@@ -976,9 +976,9 @@ impl Lowering for SiteToolsLowering {
         WriteEvidence::Acknowledged
     }
 
-    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         match strategy {
-            IdentityStrategy::None => Possible::Yes,
+            RecordMatching::None => Possible::Yes,
             _ => Possible::No(
                 "a call of a page's tool names no read of the record it changes, so no identity is known."
                     .to_owned(),

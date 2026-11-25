@@ -31,14 +31,14 @@ pub use failure::{
     POLICY_TESTS_FAILED, PRESENCE_REQUIRED, SECOND_ADMIN_REQUIRED,
 };
 pub use model::{
-    ActingFor, ActionName, ActionRef, Context, GroupName, IdentityMode, ModuleName, OptionName,
+    ActingFor, ActionName, ActionRef, Context, GroupName, IdentityKind, ModuleName, OptionName,
     PrincipalKind, PrincipalRef, Question, Request, Resource, Role, RuleId, RunRef, ToolRef,
     ToolsetName,
 };
 pub use rules::{Answer, RuleKind};
 pub use set::{
-    ApproveWrites, BuiltIn, CONDITION_NAMES, CandidateSet, Grant, LabelGrant, OptionGrant,
-    PolicyLayers, PolicyTest, PreApproval, Profile, Quota, RoleBinding, SET_FORMAT, Scope,
+    ApproveWrites, BuiltIn, CONDITION_NAMES, CandidateSet, DeploymentShape, Grant, LabelGrant,
+    OptionGrant, PolicyLayers, PolicyTest, PreApproval, Quota, RoleBinding, SET_FORMAT, Scope,
     Settings, Subject, TestFailure, TestReport,
 };
 pub use toolset::{RoleGrant, Toolset};

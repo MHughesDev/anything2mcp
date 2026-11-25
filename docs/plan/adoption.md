@@ -23,7 +23,7 @@ Its findings under "What this product has that they do not" add what this projec
 | --- | --- |
 | One-line first result | **No.** Nothing is published, so no package runner can fetch it. From source, a first read takes a clone, a build, six setup lines, and four commands; a published tool takes a loop and four more commands, and then a person's presence prompt that many machines cannot raise (see "What the first run by hand showed" below) |
 | The package manager a person has | **Built, not published.** [`.github/workflows/release.yml`](../../.github/workflows/release.yml) builds eight maturin wheels and a source distribution, and nine npm packages (a launcher and eight `@anything2mcp/<os>-<cpu>` packages) whose binaries are taken from the wheels; it checks each set together and has never published. None of the three names is held ([publishing setup](publishing-setup.md)). crates.io has no job: `publish = false` and the unpublished `a2m-*` crates block it, and a decision is needed. `bindings/python` and `bindings/npm` hold the packages and thin clients; the `bindings` CI job builds and tests them on three systems |
-| README leads with client configuration | **Now partly.** The README gives the generic stdio block for `anything2mcp bridge`. `connect` (the action `client.connect`) is in the catalog and answers `action_not_built` |
+| README leads with client configuration | **Now partly.** The README gives the generic stdio block for `anything2mcp stdio`. `connect` (the action `client.connect`) is in the catalog and answers `action_not_built` |
 | A tool to see the tools | **Partly.** `tool search --full` and `tool describe` give a published tool's name, version, effect, hazard, compiled target hash, schemas, and annotations; `target show` prints a compiled target. Nothing shows a binding's evidence level or the gates a version passed, after the publish page closes |
 | Frequent small releases | **None yet.** [CHANGELOG.md](../../CHANGELOG.md) has only "Unreleased", and its first line, "Nothing usable yet", is out of date. [RELEASING.md](../../RELEASING.md) has the steps |
 | A registry listing | **None.** Needs a published package first |
@@ -40,7 +40,7 @@ These were found by running the README's commands in an empty folder with the bi
 4. **The publish cannot be finished on a machine without a presence prompt**: a container, a machine reached over SSH, or a Linux desktop whose administrator has not installed the polkit policy file, which no package carries yet. The page says so plainly. The macOS and Windows prompts have not been run by a person.
 5. **The scout's terminal output is about 500 lines**; its readable summary (`text`) is last.
 6. **Next steps disagree.** After the scout, `target status` and `lint` name `publish.request` and `version.publish` as next while every operation still lacks a test; `test` exits 0 with `passed: false`.
-7. **The bridge's own instructions name the wrong field.** They say to call `a2m_action_run` "with its `action` and `args`"; the tool's schema takes `action` and `input`, and `args` is refused.
+7. **The stdio proxy's own instructions name the wrong field.** They say to call `a2m_action_run` "with its `action` and `args`"; the tool's schema takes `action` and `input`, and `args` is refused.
 8. **Removing unwanted drafts takes one command each**, five for the test application.
 9. **The publish page lists an environment `production`** that the target file written by `target add` does not declare.
 
@@ -75,7 +75,7 @@ Each package is one branch and one pull request, unless it is the owner's act. "
 | What | One command that lists a project's published tools with, for each: effect class, hazard, the evidence level of each binding that may act, the gates the version passed, the gates that did not run because they are not built, who published it and when, and the compiled target hash. `tool.search --full` already gives the effect, hazard, compiled target hash, schemas, and annotations; the rest is held in the store at publish time and shown only on the publish page |
 | Choice | Extend `tool.describe` and `tool.search --full` with an `evidence` block, or add a new action. An action's output schema is what every face is generated from, so either is a decision record |
 | Crates | `a2m-actions`; where the publish's gate results are kept, `a2m-engine` or `a2m-ledger` |
-| Proof | A product test publishes the first hour's read and the inspector shows its binding at `executed`, the two gates passed, and the ten not run, matching the publish page; it shows no secret and no value from a fixture. Separately, by hand and written in the journal: an outside MCP inspector client lists the same tools through `bridge` |
+| Proof | A product test publishes the first hour's read and the inspector shows its binding at `executed`, the two gates passed, and the ten not run, matching the publish page; it shows no secret and no value from a fixture. Separately, by hand and written in the journal: an outside MCP inspector client lists the same tools through `stdio` |
 | Whose | Agent |
 
 ### AD4. Client configuration written by `connect`
@@ -85,8 +85,8 @@ Each package is one branch and one pull request, unless it is the owner's act. "
 | What | Build `client.connect`. A client profile is data in one file, as [section 222](../spec/2-kernel/222-front-doors-and-the-local-engine.md) says ("a client profile row in a data file … changes presentation only"): where that client keeps its configuration on each system, and the shape of its entry. `connect generic` prints the block the README shows. No profile changes what is allowed or which tools exist; adding a client is adding a row and a test |
 | Rules it keeps | It writes no passphrase or other secret into a client's file; it adds or replaces only its own entry and keeps every other server's; it writes full paths; it says what it wrote and where |
 | Crates | `a2m-actions` (the handler), `anything2mcp` (the profile file) |
-| Proof | For every profile and for `generic`, a test writes into a temporary home, parses the result, finds the entry and every entry that was there before, and runs `bridge` from the written command line to answer `initialize` and `tools/list`. Writing twice gives the same file |
-| Note | [Section 404](../spec/4-building-tools/404-setup-and-ease-of-use.md) shows `connect` with profile names of particular clients. When built, the README and the docs name the generic block first and list profiles without ranking them |
+| Proof | For every profile and for `generic`, a test writes into a temporary home, parses the result, finds the entry and every entry that was there before, and runs `stdio` from the written command line to answer `initialize` and `tools/list`. Writing twice gives the same file |
+| Note | [Section 404](../spec/4-building-tools/404-setup-and-ease-of-use.md) shows `connect` with client profile names of particular clients. When built, the README and the docs name the generic block first and list profiles without ranking them |
 | Whose | Agent |
 
 ### AD5. A listing in the public MCP registry

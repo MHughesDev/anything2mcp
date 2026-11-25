@@ -14,7 +14,7 @@ Three small things were left open by earlier records, each of which named the de
 
 [Decision 0302](0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md), points 2 and 3, says the scout reports the read that is not drafted and counts the properties left out. A drafting rule returned no document and said nothing, so the scout could not tell a read left to a person from a finding the rule did not read.
 
-[Section 201](../spec/2-kernel/201-archetypes-and-modes.md) says that where an operation states no order of its bindings, the compiler sets it from each mode's `rank` in its provider's manifest. Nothing said how an operation states one, and nothing set the order.
+[Section 201](../spec/2-kernel/201-access-kinds-and-modes.md) says that where an operation states no order of its bindings, the compiler sets it from each mode's `rank` in its provider's manifest. Nothing said how an operation states one, and nothing set the order.
 
 ## Decision
 

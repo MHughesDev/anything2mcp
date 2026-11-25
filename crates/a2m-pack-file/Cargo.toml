@@ -14,7 +14,7 @@ a2m-expr = { path = "../a2m-expr" }
 a2m-files = { path = "../a2m-files" }
 a2m-provider = { path = "../a2m-provider" }
 a2m-sources = { path = "../a2m-sources" }
-a2m-telemetry = { path = "../a2m-telemetry" }
+a2m-logs = { path = "../a2m-logs" }
 getrandom.workspace = true
 serde.workspace = true
 serde_json.workspace = true

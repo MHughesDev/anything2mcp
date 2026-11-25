@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-17
 
-**Settles:** four open points of [spec section 217](../spec/2-kernel/217-traces-evidence-and-repair.md) and of the [`a2m-telemetry` design](../architecture/crates/a2m-telemetry.md): the unit of a record, how a restricted value enters the signature, the check on the way out, and the allowlist of headers. It also fixes what the signature covers and the first version of the trace schema. **Changes sentences of section 217.**
+**Settles:** four open points of [spec section 217](../spec/2-kernel/217-traces-evidence-and-repair.md) and of the [`a2m-telemetry` design](../architecture/crates/a2m-logs.md): the unit of a record, how a restricted value enters the signature, the check on the way out, and the allowlist of headers. It also fixes what the signature covers and the first version of the trace schema. **Changes sentences of section 217.**
 
 ## Context
 
@@ -61,4 +61,4 @@ A pack cannot say which details are `means`; a real driver shows variation the s
 
 - [217-traces-evidence-and-repair.md](../spec/2-kernel/217-traces-evidence-and-repair.md)
 - [403-testing-and-publish-gates.md](../spec/4-building-tools/403-testing-and-publish-gates.md)
-- [The `a2m-telemetry` design](../architecture/crates/a2m-telemetry.md)
+- [The `a2m-telemetry` design](../architecture/crates/a2m-logs.md)

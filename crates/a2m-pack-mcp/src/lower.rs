@@ -3,8 +3,8 @@
 //! finds a binding's tool for both, so they cannot disagree.
 
 use a2m_core::{
-    EffectClass, FailsAs, FailureClass, FileKindName, IdentityStrategy, LintCode, Mode,
-    PackPayload, PackRef, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb, WriteEvidence,
+    EffectClass, FailsAs, FailureClass, FileKindName, LintCode, Mode, PackPayload, PackRef,
+    RecordMatching, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb, WriteEvidence,
 };
 use a2m_files::{
     BindingStatement, CompileMode, Diagnostic, Diagnostics, Doc, EnvironmentVariable, JsonSchema,
@@ -350,7 +350,7 @@ impl Lowering for McpLowering {
     fn evidence(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
         let operation = binding.operation;
         if operation.effect() == EffectClass::Irreversible
-            && operation.strategy() == IdentityStrategy::None
+            && operation.strategy() == RecordMatching::None
             && binding.field("read_back").is_none()
             && lowered.read_back.is_empty()
             && lowered.act.iter().any(|step| step.commits)
@@ -388,12 +388,12 @@ impl Lowering for McpLowering {
     /// the mapped read tool; `none` needs nothing. `stamped` and `find` need
     /// a `lookup` tool in the binding: a list or search tool that finds the
     /// record.
-    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         match strategy {
-            IdentityStrategy::Natural | IdentityStrategy::Composite | IdentityStrategy::None => {
+            RecordMatching::Natural | RecordMatching::Composite | RecordMatching::None => {
                 Possible::Yes
             }
-            IdentityStrategy::Stamped | IdentityStrategy::Find => {
+            RecordMatching::Stamped | RecordMatching::Find => {
                 if binding.field("lookup").is_some() {
                     Possible::Yes
                 } else {
@@ -623,7 +623,7 @@ impl Lowering for McpLowering {
         // no record key: the arguments its mapping names under `key_args`
         // are filled here, from the operation's key inputs in order, where
         // the binding states none of its own. So what lint and the offline
-        // test see is what the live call sends (field test 6, finding 38).
+        // test see is what the live call sends (copy test 6, finding 38).
         if !entry.writes() {
             for (argument, name) in entry.key_args.iter().zip(operation.key()) {
                 if act_args.iter().any(|arg| &arg.name == argument) {
@@ -761,7 +761,7 @@ impl Lowering for McpLowering {
                 }
             }
         }
-        if operation.strategy() == IdentityStrategy::Stamped && entry.stamp.is_none() {
+        if operation.strategy() == RecordMatching::Stamped && entry.stamp.is_none() {
             problems.push(Diagnostic::error(
                 names::BINDING_INCOMPLETE,
                 Stage::Lower,
@@ -1111,7 +1111,7 @@ impl LintRule for Rule {
                 .into_iter()
                 .filter(|(surface, _, entry, _)| {
                     // A read tool whose result is its text gives a read-back
-                    // no field to compare (field test 6, finding 39).
+                    // no field to compare (copy test 6, finding 39).
                     entry.text("effect") == Some("write")
                         && !entry
                             .text("read_back")

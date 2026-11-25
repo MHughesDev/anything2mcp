@@ -1,0 +1,17 @@
+seccomp-default.json is the default system-call filter of the Docker engine, copied
+unchanged from the repository github.com/moby/profiles, file seccomp/default.json, at
+commit a0fa70805f742f7da15b367770d802ea2a86c68b (fetched 2026-11-25). Its SHA-256 is
+3320527d4568265ac97a077609b1bfd4cfd0d789eeb9239b7e094b1526675406, and
+tools/copy_test.py refuses to use it when the file no longer has that hash.
+
+Copyright The Moby Authors. Licensed under the Apache License, Version 2.0; a copy of the
+licence is at https://www.apache.org/licenses/LICENSE-2.0. The file is test equipment of
+the copy-test runner and is never packaged.
+
+The runner never uses this file alone: it adds to it the rules of one named filter, which
+are written in tools/copy_test.py (decision 0447).
+
+desktop-session.sh is the project's own: the desktop session the runner starts in the box
+for a desktop application (decision 0459). It names no application; a recipe gives the
+program and its arguments. It is test equipment of the copy-test runner and is never
+packaged.

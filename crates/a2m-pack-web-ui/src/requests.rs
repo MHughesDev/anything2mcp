@@ -934,20 +934,23 @@ impl FileKind for RequestKind {
     }
 }
 
-/// The asserted reads of the surface a run is prepared for, and whether the
-/// run hands them to its observing tab (decision 0394, point 4).
+/// The asserted reads of the surface a run is prepared for, and which of
+/// them the run hands its observing tab (decision 0394, point 4; decision
+/// 0475).
 ///
-/// They are handed under decision 0270's rule: only from a published
-/// version, whose plan's version is not the draft version, and only in a
-/// live run or, in a try or a shadow, in an environment of kind `test`.
-/// Never under the drafts, and never in discovery.
+/// They are handed under decision 0270's rule: from a published version,
+/// whose plan's version is not the draft version, in a live run or, in a
+/// try or a shadow, in an environment of kind `test`. Under the drafts an
+/// entry is handed only in a try in an environment of kind `test`, and only
+/// when its person confirmed it on the engine's page, as the kernel says in
+/// `PrepareContext::confirmed`. Never in discovery.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct AssertedReads {
-    /// Each asserted read of the surface: its entry's name, its path, and
-    /// what it lets through.
-    entries: Vec<(String, Vec<Segment>, AssertedRead)>,
-    /// Whether the run hands them to the tab.
-    handed: bool,
+    /// Each asserted read of the surface: its entry's name, its path, what
+    /// it lets through, and whether the run hands it to the tab.
+    entries: Vec<(String, Vec<Segment>, AssertedRead, bool)>,
+    /// Whether the run is under the drafts.
+    drafted: bool,
 }
 
 impl AssertedReads {
@@ -955,6 +958,22 @@ impl AssertedReads {
     /// target's page requests.
     pub(crate) fn of(cx: &PrepareContext<'_>) -> Result<Self, StepFailure> {
         let surface = &cx.surface.surface;
+        let published = cx.compiled_target.header.version != a2m_files::DRAFT_VERSION;
+        let in_test = cx
+            .compiled_target
+            .environment_named(&cx.surface.environment)
+            .is_some_and(|environment| environment.kind == EnvironmentKind::Test);
+        let handed = |name: &str| match cx.posture {
+            Posture::Live => published,
+            Posture::Sandbox { .. } => {
+                in_test
+                    && (published
+                        || cx
+                            .confirmed
+                            .covers(REQUEST_KIND.as_str(), surface.name.as_str(), name))
+            }
+            Posture::Discovery => false,
+        };
         let mut entries = Vec::new();
         for section in &cx.compiled_target.packs {
             let own = section.pack == PACK
@@ -978,36 +997,26 @@ impl AssertedReads {
                     continue;
                 }
                 if let Some(asserted) = entry.asserted {
-                    entries.push((name, entry.path, asserted));
+                    let handed = handed(&name);
+                    entries.push((name, entry.path, asserted, handed));
                 }
             }
         }
-        let published = cx.compiled_target.header.version != a2m_files::DRAFT_VERSION;
-        let in_test = || {
-            cx.compiled_target
-                .environment_named(&cx.surface.environment)
-                .is_some_and(|environment| environment.kind == EnvironmentKind::Test)
-        };
-        let handed = published
-            && match cx.posture {
-                Posture::Live => true,
-                Posture::Sandbox { .. } => in_test(),
-                Posture::Discovery => false,
-            };
-        Ok(Self { entries, handed })
+        Ok(Self {
+            entries,
+            drafted: !published,
+        })
     }
 
     /// What the observing tab lets through on the surface at `origin`: the
-    /// asserted reads when they are handed, and nothing otherwise.
+    /// asserted reads the run hands it, and nothing else.
     pub(crate) fn safe_requests(&self, origin: &str) -> SafeRequests {
-        if !self.handed {
-            return SafeRequests::default();
-        }
         SafeRequests {
             allowed: self
                 .entries
                 .iter()
-                .map(|(_, path, asserted)| SafeRequest {
+                .filter(|(_, _, _, handed)| *handed)
+                .map(|(_, path, asserted, _)| SafeRequest {
                     method: asserted.method.clone(),
                     origin: origin.to_owned(),
                     path: pattern(path),
@@ -1029,7 +1038,7 @@ impl AssertedReads {
             .split('/')
             .filter(|segment| !segment.is_empty())
             .collect();
-        let (name, _, _) = self.entries.iter().find(|(_, template, asserted)| {
+        let (name, _, _, handed) = self.entries.iter().find(|(_, template, asserted, _)| {
             asserted.method == method
                 && template.len() == sent.len()
                 && template
@@ -1041,13 +1050,17 @@ impl AssertedReads {
                     })
         })?;
         let name = shown(name);
-        Some(if self.handed {
+        Some(if *handed {
             format!(
                 "The page request `{name}` asserts a read by this method at this path, and the request the page sent did not fit it: its body, its media type, a query, or a header that overrides its method. Look at what the page sends; widen the entry only if the system's owner confirms that what it sends changes nothing."
             )
+        } else if self.drafted {
+            format!(
+                "The page request `{name}` asserts that this request only reads, and an observing tab lets it through under the drafts only in a try in an environment of kind `test`, once its person has confirmed it on the engine's page: ask the person with `assertion.confirm`, then try again. Publish the target instead, and the tool runs it from the published version."
+            )
         } else {
             format!(
-                "The page request `{name}` asserts that this request only reads, and an observing tab lets it through only from a published version: in a live run, or in a try or a shadow in an environment of kind `test`; never under the drafts, and never in discovery. Publish the target, and run the tool from the published version."
+                "The page request `{name}` asserts that this request only reads, and an observing tab lets it through from a published version only in a live run, or in a try or a shadow in an environment of kind `test`; never in discovery. Run the tool live, or try it in an environment of kind `test`."
             )
         })
     }

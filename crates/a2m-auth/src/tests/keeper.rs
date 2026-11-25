@@ -15,7 +15,7 @@ use super::support::{
 };
 use crate::{
     AUTOMATIC_SIGN_INS, AuthEntry, EndedBy, ExpirySign, KeeperJob, KeeperSettings, PersonAnswer,
-    PersonAsk, PersonReason, ProbeOutcome, ProviderName, RENEWALS, Returned, SessionKey,
+    PersonAsk, PersonReason, ProviderName, RENEWALS, Returned, SessionCheckOutcome, SessionKey,
     SessionLease, SessionRef, SignInBy, Wait, Work, WorkOutcome, codes,
 };
 
@@ -108,7 +108,7 @@ async fn ten_runs_meet_an_expired_session_and_exactly_one_renewal_happens() {
     // The count is made by the renewal's own task after its last write, so
     // it is read once that task has ended.
     world.keeper.idle().await;
-    assert_eq!(world.telemetry.metrics().counter(RENEWALS, &[]), 1);
+    assert_eq!(world.logs_and_traces.metrics().counter(RENEWALS, &[]), 1);
 
     // The lease from before the renewal is stale, and says so.
     let mut sink = super::support::Sink::default();
@@ -179,10 +179,10 @@ async fn two_engines_over_one_store_make_one_renewal() {
     world.fake.release_renewals();
     // Which engine won the compare-and-set is the scheduler's choice. The
     // renewal's task ends after its last write, and only the first engine
-    // has telemetry, which counts the renewal when that engine made it.
+    // has logs and traces, which counts the renewal when that engine made it.
     world.keeper.idle().await;
     other.idle().await;
-    let first_renewed = match world.telemetry.metrics().counter(RENEWALS, &[]) {
+    let first_renewed = match world.logs_and_traces.metrics().counter(RENEWALS, &[]) {
         1 => true,
         0 => false,
         counted => panic!("the first engine counted {counted} renewals"),
@@ -310,9 +310,9 @@ async fn ten_reports_of_one_sign_cause_one_check_and_a_stale_report_changes_noth
             .is_none()
     );
 
-    // The probe says the session is gone, so the one re-check starts the
+    // The session check says the session is gone, so the one re-check starts the
     // one renewal.
-    *world.probe.outcome.lock().unwrap() = ProbeOutcome::SignedOut;
+    *world.probe.outcome.lock().unwrap() = SessionCheckOutcome::SignedOut;
     for lease in &leases {
         world.keeper.report(lease, sign).await;
     }
@@ -328,9 +328,9 @@ async fn ten_reports_of_one_sign_cause_one_check_and_a_stale_report_changes_noth
     world.keeper.idle().await;
     assert_eq!((world.probe.calls(), world.fake.refreshes()), (1, 1));
 
-    // A sign on the new credentials that the probe does not confirm is one
+    // A sign on the new credentials that the session check does not confirm is one
     // check and no renewal.
-    *world.probe.outcome.lock().unwrap() = ProbeOutcome::SignedIn;
+    *world.probe.outcome.lock().unwrap() = SessionCheckOutcome::SignedIn;
     let fresh = world
         .keeper
         .lease(request(&key, &entry, Wait::DEFAULT))
@@ -421,7 +421,11 @@ async fn an_expired_session_with_no_renewal_path_gives_needs_login_to_every_call
 
     // Ended on purpose: `needs_login`, the old lease places nothing, and
     // nothing is retried.
-    world.keeper.revoke(&key, EndedBy::Owner).await.unwrap();
+    world
+        .keeper
+        .revoke(&key, EndedBy::SessionOwner)
+        .await
+        .unwrap();
     let revoked = world
         .keeper
         .lease(request(&key, &entry, Wait::NoWait))
@@ -777,7 +781,7 @@ async fn a_sign_in_whose_answer_nobody_can_read_is_counted_and_not_sent_again() 
         .await
         .unwrap();
     *world.fake.on_sign_in.lock().unwrap() = Step::Unreadable;
-    *world.probe.outcome.lock().unwrap() = ProbeOutcome::SignedOut;
+    *world.probe.outcome.lock().unwrap() = SessionCheckOutcome::SignedOut;
     world.keeper.report(&lease, ExpirySign::Refused).await;
     world.keeper.idle().await;
     assert_eq!(world.fake.sign_ins(), 2);
@@ -804,7 +808,7 @@ async fn a_session_signed_in_again_too_often_without_its_person_waits_for_the_pe
     let world = World::new(STORED_SIGNING_IN).await;
     let key = account_key("robot");
     let entry = fake_entry();
-    *world.probe.outcome.lock().unwrap() = ProbeOutcome::SignedOut;
+    *world.probe.outcome.lock().unwrap() = SessionCheckOutcome::SignedOut;
     let expire = |world: &World| {
         let keeper = world.keeper.clone();
         let entry = Arc::clone(&entry);
@@ -859,7 +863,7 @@ async fn a_session_signed_in_again_too_often_without_its_person_waits_for_the_pe
 
     // Sign-ins twenty-five minutes apart are never limited.
     let world = World::new(STORED_SIGNING_IN).await;
-    *world.probe.outcome.lock().unwrap() = ProbeOutcome::SignedOut;
+    *world.probe.outcome.lock().unwrap() = SessionCheckOutcome::SignedOut;
     world
         .keeper
         .lease(request(&key, &entry, Wait::NoWait))
@@ -883,9 +887,9 @@ async fn a_held_credential_the_system_refuses_is_offered_once_and_no_more() {
         .lease(request(&key, &entry, Wait::DEFAULT))
         .await
         .unwrap();
-    // The system refuses it, and the probe agrees. The credential was never
+    // The system refuses it, and the session check agrees. The credential was never
     // confirmed, and the limit is one attempt: it is not offered again.
-    *world.probe.outcome.lock().unwrap() = ProbeOutcome::SignedOut;
+    *world.probe.outcome.lock().unwrap() = SessionCheckOutcome::SignedOut;
     world.keeper.report(&lease, ExpirySign::Refused).await;
     world.keeper.idle().await;
     assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
@@ -909,7 +913,7 @@ async fn a_held_credential_the_system_refuses_is_offered_once_and_no_more() {
         .lease(request(&key, &entry, Wait::DEFAULT))
         .await
         .unwrap();
-    *world.probe.outcome.lock().unwrap() = ProbeOutcome::SignedOut;
+    *world.probe.outcome.lock().unwrap() = SessionCheckOutcome::SignedOut;
     world.keeper.report(&lease, ExpirySign::Refused).await;
     world.keeper.idle().await;
     assert_eq!(world.state(&key).await, SessionState::Valid);
@@ -1152,7 +1156,7 @@ async fn the_timers_end_a_session_at_its_maximum_age_and_probe_only_while_wanted
         .await
         .unwrap();
 
-    // Probed at half the declared idle timeout, and not before.
+    // checked at half the declared idle timeout, and not before.
     world.clock.advance(Duration::from_secs(599));
     world.keeper.tick().await;
     assert_eq!(world.probe.calls(), 0);
@@ -1179,7 +1183,7 @@ async fn the_timers_end_a_session_at_its_maximum_age_and_probe_only_while_wanted
     let probes = world.probe.calls();
 
     // Signed in again and then left alone: after the keep-alive window it
-    // is no longer probed.
+    // is no longer checked.
     world
         .keeper
         .lease(request(&key, &entry, Wait::DEFAULT))
@@ -1213,7 +1217,7 @@ async fn a_probe_that_could_not_be_made_changes_nothing_and_a_probes_lease_never
         ..AuthEntry::new(ProviderName::new("fake").unwrap()).published()
     });
 
-    // Before any sign-in a probe's lease is refused, and starts none.
+    // Before any sign-in a session check's lease is refused, and starts none.
     let mut probing = request(&key, &entry, Wait::DEFAULT);
     probing.purpose = crate::Purpose::Probe;
     let refused = world.keeper.lease(probing.clone()).await.unwrap_err();
@@ -1227,9 +1231,9 @@ async fn a_probe_that_could_not_be_made_changes_nothing_and_a_probes_lease_never
         .unwrap();
     assert_eq!(world.fake.sign_ins(), 1);
 
-    // A probe that answers nothing leaves the session valid, unchecked, and
+    // A session check that answers nothing leaves the session valid, unchecked, and
     // is not made again until a whole interval later.
-    *world.probe.outcome.lock().unwrap() = ProbeOutcome::Unknown;
+    *world.probe.outcome.lock().unwrap() = SessionCheckOutcome::Unknown;
     world.clock.advance(Duration::from_secs(600));
     world.keeper.tick().await;
     assert_eq!(world.probe.calls(), 1);
@@ -1242,7 +1246,7 @@ async fn a_probe_that_could_not_be_made_changes_nothing_and_a_probes_lease_never
     assert_eq!(world.state(&key).await, SessionState::Valid);
     assert_eq!(world.fake.refreshes(), 0);
 
-    // Once it is signed in, a probe's lease is given, and is no use: the
+    // Once it is signed in, a session check's lease is given, and is no use: the
     // session's last use stays the run's.
     world.keeper.lease(probing).await.unwrap();
     assert_eq!(world.fake.sign_ins(), 1);
@@ -1339,7 +1343,7 @@ async fn work_that_overlaps_on_one_session_keeps_it_busy_until_the_last_ends() {
         .await
         .unwrap();
 
-    // A routine probe is in flight when a driver reports a sign on the same
+    // A routine session check is in flight when a driver reports a sign on the same
     // session, which starts a re-check: two pieces of work at once.
     world.probe.gate.hold();
     world.clock.advance(HOUR / 2);
@@ -1351,7 +1355,7 @@ async fn work_that_overlaps_on_one_session_keeps_it_busy_until_the_last_ends() {
     world.keeper.report(&lease, ExpirySign::Refused).await;
     until(|| world.probe.calls() == 2).await;
 
-    // The routine probe ends. The re-check has not, so the keeper is not
+    // The routine session check ends. The re-check has not, so the keeper is not
     // idle yet.
     world.probe.gate.release_one();
     tick.await.unwrap();
@@ -1456,7 +1460,11 @@ async fn a_restore_that_ends_after_a_revoke_brings_nothing_back() {
     assert_eq!(placed(&lease).len(), 1);
 
     // The owner ends the session. The lease places nothing from here on.
-    world.keeper.revoke(&key, EndedBy::Owner).await.unwrap();
+    world
+        .keeper
+        .revoke(&key, EndedBy::SessionOwner)
+        .await
+        .unwrap();
     assert!(stale(&lease));
 
     // The first call's restore now reaches the worker.
@@ -1491,7 +1499,11 @@ async fn a_restore_is_undone_when_the_session_moved_on_while_it_ran() {
         tokio::spawn(async move { keeper.lease(req).await })
     };
     until(|| world.relay.restores_seen() == 1).await;
-    world.keeper.revoke(&key, EndedBy::Owner).await.unwrap();
+    world
+        .keeper
+        .revoke(&key, EndedBy::SessionOwner)
+        .await
+        .unwrap();
 
     world.relay.restores.release_one();
     let late = slow.await.unwrap().unwrap_err();
@@ -1594,7 +1606,11 @@ async fn work_that_ends_after_a_revoke_keeps_nothing() {
         tokio::spawn(async move { keeper.lease(req).await })
     };
     until(|| world.fake.refreshes() == 1).await;
-    world.keeper.revoke(&key, EndedBy::Owner).await.unwrap();
+    world
+        .keeper
+        .revoke(&key, EndedBy::SessionOwner)
+        .await
+        .unwrap();
     world.fake.release_renewals();
     assert!(waiting.await.unwrap().is_err());
     world.keeper.idle().await;
@@ -1627,15 +1643,18 @@ async fn a_providers_failure_is_redacted_before_it_leaves_the_worker() {
     }
 }
 
-/// What a probe that leases through the keeper holds of it.
+/// What a session check that leases through the keeper holds of it.
 #[derive(Default)]
 struct Leasing {
     strong: std::sync::OnceLock<crate::Keeper>,
     weak: std::sync::OnceLock<crate::WeakKeeper>,
 }
 
-impl crate::RunProbe for Leasing {
-    fn probe<'a>(&'a self, _session: &'a SessionRef) -> crate::BoxFuture<'a, ProbeOutcome> {
+impl crate::RunSessionCheck for Leasing {
+    fn check_session<'a>(
+        &'a self,
+        _session: &'a SessionRef,
+    ) -> crate::BoxFuture<'a, SessionCheckOutcome> {
         Box::pin(async move {
             let keeper = self
                 .strong
@@ -1643,9 +1662,9 @@ impl crate::RunProbe for Leasing {
                 .cloned()
                 .or_else(|| self.weak.get().and_then(crate::WeakKeeper::upgrade));
             if keeper.is_some() {
-                ProbeOutcome::SignedIn
+                SessionCheckOutcome::SignedIn
             } else {
-                ProbeOutcome::Unknown
+                SessionCheckOutcome::Unknown
             }
         })
     }
@@ -1663,12 +1682,12 @@ impl crate::AskPerson for Nobody {
     }
 }
 
-/// A keeper whose work holds a probe that holds the keeper, as one that
+/// A keeper whose work holds a session check that holds the keeper, as one that
 /// leases through it must. Held weakly, the keeper is freed when the
 /// engine lets go of it; held strongly, the cycle keeps it.
-async fn engine_with_probe(weakly: bool) -> crate::WeakKeeper {
+async fn engine_with_session_check(weakly: bool) -> crate::WeakKeeper {
     use a2m_ledger::{Store, StoreConfig};
-    use a2m_telemetry::ManualClock;
+    use a2m_logs::ManualClock;
     use a2m_vault::{MemoryKeyStore, Vault};
 
     let clock = Arc::new(ManualClock::starting_at(
@@ -1694,7 +1713,7 @@ async fn engine_with_probe(weakly: bool) -> crate::WeakKeeper {
     let work = Arc::new(crate::InProcessWork::new(
         Arc::clone(&worker),
         Arc::new(Nobody),
-        Arc::clone(&probe) as Arc<dyn crate::RunProbe>,
+        Arc::clone(&probe) as Arc<dyn crate::RunSessionCheck>,
     ));
     let keeper = crate::Keeper::builder(store, providers, work, clock)
         .local_worker(worker)
@@ -1714,10 +1733,10 @@ async fn engine_with_probe(weakly: bool) -> crate::WeakKeeper {
         epoch: 0,
         home: None,
     };
-    // The probe reaches the keeper while the engine holds it.
+    // The session check reaches the keeper while the engine holds it.
     assert_eq!(
-        crate::RunProbe::probe(probe.as_ref(), &session).await,
-        ProbeOutcome::SignedIn
+        crate::RunSessionCheck::check_session(probe.as_ref(), &session).await,
+        SessionCheckOutcome::SignedIn
     );
     keeper.idle().await;
     keeper.downgrade()
@@ -1725,10 +1744,10 @@ async fn engine_with_probe(weakly: bool) -> crate::WeakKeeper {
 
 #[tokio::test]
 async fn a_closed_engines_keeper_is_freed_when_its_probe_holds_it_weakly() {
-    let freed = engine_with_probe(true).await;
+    let freed = engine_with_session_check(true).await;
     assert!(freed.upgrade().is_none());
-    // The shape the check found in a test: a probe that holds the keeper
+    // The shape the check found in a test: a session check that holds the keeper
     // itself, held by the keeper's own work, is never dropped.
-    let kept = engine_with_probe(false).await;
+    let kept = engine_with_session_check(false).await;
     assert!(kept.upgrade().is_some());
 }

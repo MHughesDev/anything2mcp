@@ -2,7 +2,7 @@
 
 Everything Anything2MCP claims about a run has to be checkable afterwards. Every run can be replayed from its record, every change can be traced to a person's approval, and a change in a system is caught before a write meets it. Several parts of the system consume that record: the publish gates, the repair loop, shadow comparison, the audit, and people investigating a problem. This section says what is captured, in what form, how secrets are kept out of it, how long it is kept, how it connects to outside monitoring, and how drift is repaired ([decision 0037](../../decisions/0037-evidence-events-a-step-trace-and-artifacts-redacted-at-capture.md)). Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
-`a2m-telemetry` builds the step trace and its signature, applies the capture level, redacts at capture, and emits spans, metrics, and logs. It stores nothing durable. `a2m-ledger` seals and stores what must be kept. The engine joins the two: it asks `a2m-telemetry` for a finished piece of evidence and hands it to the store through `Control` ([crate design](../../architecture/crates/a2m-telemetry.md)).
+`a2m-logs` builds the step trace and its signature, applies the capture level, redacts at capture, and emits spans, metrics, and logs. It stores nothing durable. `a2m-ledger` seals and stores what must be kept. The engine joins the two: it asks `a2m-logs` for a finished piece of evidence and hands it to the store through `ControlPort` ([crate design](../../architecture/crates/a2m-logs.md)).
 
 ## Three layers
 
@@ -10,7 +10,7 @@ Everything Anything2MCP claims about a run has to be checkable afterwards. Every
 | --- | --- | --- | --- |
 | Run events | The ledger's append-only history: state changes, intents, verifications | Small | The store ([section 208](208-runs-the-ledger-and-resume.md)) |
 | Step trace | One structured record per step: what was chosen, matched, sent, seen, and how long it took | About 2 KB per step | A blob of kind `trace`, as JSON Lines |
-| Artifacts | Snapshots, network exchanges, screenshots, desktop window trees | Large | Blobs, referenced from the step trace |
+| Captures | Snapshots, network exchanges, screenshots, desktop window trees | Large | Blobs, referenced from the step trace |
 
 ## A step trace record
 
@@ -23,13 +23,13 @@ Everything Anything2MCP claims about a run has to be checkable afterwards. Every
 | Acting | What the driver did: in the web pack, the widget-driver rung used; for HTTP, the method, path template, status, and sizes |
 | Values | For each field: the intended value, the value read back, the normalized forms, and whether they matched, each held as its sensitivity label allows |
 | Outcome | Verified, done, or the failure class and code |
-| Artifacts | References to snapshots and exchanges taken at this step |
+| Captures | References to snapshots and exchanges taken at this step |
 
-Request and response bodies are not in the step trace. They are artifacts, captured only at the levels below. The trace has a published schema, and becomes a public format once it is fixed in Phase 1.
+Request and response bodies are not in the step trace. They are captures, kept only at the levels below. The trace has a published schema, and becomes a public format once it is fixed in Phase 1.
 
 ## The trace signature
 
-Two runs are "the same" when they did the same things, not when they took the same time. The trace signature is a hash over the parts of a step trace that should not vary: step order, step kinds, the bindings chosen, the locators matched and their positions, normalized values, and outcomes. Timings, identifiers, run and attempt numbers, the compiled target's hash, and the values the compiled target declares volatile are left out. Each record gives one SHA-256 digest over its parts, in a fixed order, with values in their canonical form; a value that is not public enters as its keyed digest. The signature chains those digests in step order and closes with their count, and the store records it on the run. Each record's digest is written in its line, so two traces that differ show where ([decision 0076](../../decisions/0076-one-trace-record-per-step-and-a-signature-chained-over-record-digests.md); the exact rule is in the [crate design](../../architecture/crates/a2m-telemetry.md)).
+Two runs are "the same" when they did the same things, not when they took the same time. The trace signature is a hash over the parts of a step trace that should not vary: step order, step kinds, the bindings chosen, the locators matched and their positions, normalized values, and outcomes. Timings, identifiers, run and attempt numbers, the compiled target's hash, and the values the compiled target declares volatile are left out. Each record gives one SHA-256 digest over its parts, in a fixed order, with values in their canonical form; a value that is not public enters as its keyed digest. The signature chains those digests in step order and closes with their count, and the store records it on the run. Each record's digest is written in its line, so two traces that differ show where ([decision 0076](../../decisions/0076-one-trace-record-per-step-and-a-signature-chained-over-record-digests.md); the exact rule is in the [crate design](../../architecture/crates/a2m-logs.md)).
 
 - The **determinism gate** passes when five runs on the same input have the same signature ([section 403](../4-building-tools/403-testing-and-publish-gates.md); hypothesis H-16).
 - The **binding-equivalence gate** compares normalized results across bindings and, for an HTTP binding against a UI binding, the shape of the request each produced.
@@ -43,7 +43,7 @@ Two runs are "the same" when they did the same things, not when they took the sa
 | `standard` | Plus a snapshot at each checkpoint and at any failure | Writes in production; the default |
 | `full` | Plus every network exchange and a screenshot per step | Building, testing, and a time-boxed window an administrator opens to investigate |
 
-The compiled target and policy decide a run's level; `a2m-telemetry` applies it. Screenshots are the riskiest evidence, because they show whatever was on the screen. Outside `full` they are kept only at a failure.
+The compiled target and policy decide a run's level; `a2m-logs` applies it. Screenshots are the riskiest evidence, because they show whatever was on the screen. Outside `full` they are kept only at a failure.
 
 **When capture fails.** A failure to capture evidence never fails a read. For a write the engine decides: under `standard`, a checkpoint snapshot that cannot be kept stops the run before the next record, because the evidence the level promises is missing. A trace that passes its size limit is cut, the cut is recorded as a `truncated` limitation, and the run is not stopped for it.
 
@@ -56,9 +56,9 @@ Redaction happens on the runner, at capture, before anything is written or sent.
 3. **Labelled fields.** A value with the sensitivity label `restricted` is kept only as a keyed digest, never as a value. One labelled `internal` is kept at `standard` and above, and as a keyed digest at `minimal`. A record's key is kept only as a keyed digest. Policy may also say a labelled field is masked or left out.
 4. **Free text.** Length-limited and stripped of markup and hidden characters.
 5. **Images are masked by the pack that took them.** Only the pack knows where the password inputs and labelled fields were on its screen. It paints over them, and sends with the image a report of what it masked. An image that arrives without that report is dropped, and a limitation is recorded. The kernel never paints over an image.
-6. **A check on the way out.** Before a finished trace or a kept artifact leaves the runner, it is scanned once more for registered secrets, with `contains_secret` on the `Redact` trait of `a2m-core`. A hit drops the piece, records a `redacted` limitation, and raises an alert. The piece never reaches the store.
+6. **A check on the way out.** Before a finished trace or a kept capture leaves the runner, it is scanned once more for registered secrets, with `contains_secret` on the `Redact` trait of `a2m-core`. A hit drops the piece, records a `redacted` limitation, and raises an alert. The piece never reaches the store.
 
-A test in CI plants a known secret in the test application's traffic and fails if it appears in any record, artifact, span, metric, or log line.
+A test in CI plants a known secret in the test application's traffic and fails if it appears in any record, capture, span, metric, or log line.
 
 ## Evidence in the store
 
@@ -71,8 +71,8 @@ A test in CI plants a known secret in the test application's traffic and fails i
 - **Step trace:** JSON Lines, one record per step, with a published schema whose version is stored with each trace blob.
 - **Network exchanges:** a subset of the HAR format, so existing viewers open them.
 - **Snapshots:** the compact accessibility snapshot the authoring tools already produce ([steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md)).
-- **Export:** `anything2mcp trace export` writes one archive with a manifest, for attaching to a bug report.
-- **Viewing:** `anything2mcp trace show` in a terminal, and a page in the admin console. `run.trace` gives a summary of a run's trace with links to its artifacts.
+- **Export:** `anything2mcp trace export` writes one file with a manifest, for attaching to a bug report: `.anything2mcp/exports/<run>.json` in the project, a JSON document of the run's events, its step trace, and its text captures. An image, a capture that can no longer be opened, and a piece that still holds a registered secret at a last check are left out and named in the manifest, and the file is read back before its digest is given. It is the auditor's, as `trace show` is ([decision 0469](../../decisions/0469-a-runs-trace-is-summarized-for-its-person-and-exported-as-one-file-in-the-working-folder.md)).
+- **Viewing:** `anything2mcp trace show` in a terminal, and a page in the admin console. `run.trace` gives the run's own person a summary of its trace: each step's kind, outcome, and time, and each kept capture by its reference, never a value (decision 0469).
 - **For agents:** the trace tool returns a summary and resource links. A whole trace is never returned inline ([section 221](221-the-tool-surface-agents-see.md)).
 
 ## Retention
@@ -91,7 +91,7 @@ The engine also writes ordinary logs for operating it: structured, one JSON obje
 
 Nothing leaves the machine unless a person switches it on ([decision 0040](../../decisions/0040-nothing-leaves-the-machine-unless-switched-on.md)). Export through OpenTelemetry is optional and off by default on a local machine. With export off, spans and metrics are kept in memory for `engine.status` and never sent.
 
-- Each MCP call produces a span that follows OpenTelemetry's semantic conventions for MCP: the span is named for the method and the tool, and carries the method name and the tool name as attributes. Those conventions are still marked as in development, so the names may change; their spelling lives in one table in `a2m-telemetry` ([research note 15](../../research/15-traces-and-key-stores.md)).
+- Each MCP call produces a span that follows OpenTelemetry's semantic conventions for MCP: the span is named for the method and the tool, and carries the method name and the tool name as attributes. Those conventions are still marked as in development, so the names may change; their spelling lives in one table in `a2m-logs` ([research note 15](../../research/15-traces-and-key-stores.md)).
 - Trace context sent by the calling agent in the request's metadata is honored, so the agent's trace and Anything2MCP's join into one.
 - Steps appear as child spans with Anything2MCP's own attributes: mode, binding, and failure class.
 - **No value, snapshot, or secret is ever placed in a span or a metric.** Spans carry names, timings, and outcomes only. Their attributes come from a closed set with no constructor for an arbitrary string.

@@ -11,15 +11,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use a2m_core::{AccountName, Environment, Failure, Identity, NoSecrets, TargetName};
+use a2m_logs::{LogLevel, LogsAndTraces, SystemClock};
 use a2m_pack_web_browser::{
-    Address, Browsers, By, Deadline, Input, Look, Origins, PROFILE_ROOT, PageEnvironment,
-    Primitive, ProfileKey, Query, RawValue, ReadWhat, TextMatch, Visibility, test_support,
+    Address, BrowserProfileKey, Browsers, By, Deadline, Input, Look, Origins, PROFILE_ROOT,
+    PageEnvironment, Primitive, Query, RawValue, ReadWhat, TextMatch, Visibility, test_support,
 };
 use a2m_provider::{
     Access, HostServices, Pack, PackContext, ProviderSettings, Registrar, RegistryBuilder,
     RootName, Roots, Supervisor, SupervisorLimits,
 };
-use a2m_telemetry::{LogLevel, SystemClock, Telemetry};
 
 use super::Folder;
 
@@ -85,7 +85,7 @@ impl Person {
             supervisor: Supervisor::new(SupervisorLimits::default()),
             roots,
             redact: Arc::new(NoSecrets),
-            telemetry: Telemetry::in_memory(
+            logs_and_traces: LogsAndTraces::in_memory(
                 LogLevel::Error,
                 Arc::new(NoSecrets),
                 Arc::new(SystemClock::new()),
@@ -115,7 +115,7 @@ impl Person {
     /// Opens `link`, presses the button named `button` as a person does,
     /// and gives the title and the text of the page that answers the press.
     pub async fn press(&self, link: &str, button: &str) -> (String, String) {
-        let profile = ProfileKey {
+        let profile = BrowserProfileKey {
             target: TargetName::new("example").unwrap(),
             environment: Environment::new("test").unwrap(),
             identity: Identity::Account(AccountName::new("person").unwrap()),

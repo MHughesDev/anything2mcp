@@ -104,7 +104,7 @@ impl Pack for McpPack {
         }
         to.compiler(compiler)?;
         to.discoverer(
-            Arc::new(McpTools::new(names.clone(), cx.telemetry().clock())),
+            Arc::new(McpTools::new(names.clone(), cx.logs_and_traces().clock())),
             Arc::new(McpDescriber::new(names)),
         )?;
         to.auth_provider(Arc::new(UpstreamMcp))?;

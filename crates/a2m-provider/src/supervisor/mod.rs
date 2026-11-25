@@ -58,8 +58,10 @@ pub use program::{
     redirects_loading, runs_its_own_code,
 };
 
-/// The variable that carries the owner mark into a child's environment.
-pub const OWNER_MARK_VARIABLE: &str = "ANYTHING2MCP_OWNER_MARK";
+/// The variable that carries the process mark into a child's environment.
+/// It keeps the mark's old name, so that a child an older build started is
+/// still known as the engine's own after an upgrade (decision 0402).
+pub const PROCESS_MARK_VARIABLE: &str = "ANYTHING2MCP_OWNER_MARK";
 
 /// The prefix of the engine's own environment variables.
 const ENGINE_VARIABLE_PREFIX: &str = "A2M_";
@@ -585,7 +587,7 @@ fn command_for(
         }
         command.env(name, value);
     }
-    command.env(OWNER_MARK_VARIABLE, mark);
+    command.env(PROCESS_MARK_VARIABLE, mark);
     match (&spec.cwd, work) {
         (Some(folder), _) => {
             command.current_dir(folder.as_path());
@@ -854,13 +856,13 @@ fn identify_and_start(
     }
 }
 
-/// A fresh owner mark: 128 random bits, as text.
-fn owner_mark() -> Result<String, Failure> {
+/// A fresh process mark: 128 random bits, as text.
+fn process_mark() -> Result<String, Failure> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).map_err(|_| {
         codes::failure(
             &codes::row::START_FAILED,
-            "The operating system gave no random bytes for an owner mark.",
+            "The operating system gave no random bytes for a process mark.",
             "Try again; if it persists, check the machine's random source.",
         )
     })?;
@@ -1072,7 +1074,7 @@ impl Supervisor {
                 "Name the program's absolute path where it is declared.",
             ));
         }
-        let mark = owner_mark()?;
+        let mark = process_mark()?;
         let for_whom = scope.map(|scope| scope.provider.clone());
         // Resolving, reading, and starting all block, so they run off the
         // async threads. If this future is dropped meanwhile, what was

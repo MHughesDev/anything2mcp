@@ -347,6 +347,13 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
         with:
           command: check
+      # The notices file carries the licence texts of every third-party
+      # crate in the binary; a change to Cargo.lock that leaves it behind
+      # fails here, on every pull request.
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      - name: Hold the notices file of third-party licence texts to Cargo.lock
+        run: python3 tools/notices.py check
 
   documents:
     name: Documents and crate layering
@@ -363,10 +370,10 @@ jobs:
         run: python3 tools/test_docs_audit.py
       - name: Prove the plan's counts are written from the rows, and a stale one fails
         run: python3 tools/test_progress.py
-      - name: Prove the field-test fault proxy
-        run: python3 tools/test_field_proxy.py
-      - name: Prove the field-test runner's closed network
-        run: python3 tools/test_field_test.py
+      - name: Prove the copy-test fault proxy
+        run: python3 tools/test_copy_test_proxy.py
+      - name: Prove the copy-test runner's closed network
+        run: python3 tools/test_copy_test.py
       - name: Prove the packaging check fails when a package holds another binary
         run: python3 tools/test_check_packages.py
       # A workflow file GitHub cannot parse fails every run at once and says
@@ -384,6 +391,14 @@ jobs:
         run: python3 tools/test_contracts.py
       - name: Prove the failure-code check names a code nothing raises
         run: python3 tools/test_failure_codes.py
+      # The release workflow builds, checks, and gates every piece of a
+      # release; this fails when one is missing (package 5.5).
+      - name: Hold the release workflow to every file of a release and its gates
+        run: python3 tools/release_files.py workflow
+      - name: Prove the release check fails on each kind of fault in a release
+        run: python3 tools/test_release_files.py
+      - name: Prove the notices check fails on a stale notices file
+        run: python3 tools/test_notices.py
 
   bindings:
     name: Wheel and npm packages on ${{ matrix.os }}
@@ -490,6 +505,47 @@ jobs:
         run: |
           node --test test/platform.test.js test/client.test.js
           node test/install.js --binary "$GITHUB_WORKSPACE/target/release/anything2mcp$EXE"
+      # The step above skips, and does not fail, a test that needs the built
+      # program when the variable is empty. On Windows the Node client reaches
+      # the engine by its pipe through the program's `channel` command, which
+      # checks who serves the pipe as every command does (decision 0466); this
+      # runs that real-engine call alone and fails if it was skipped
+      # (package 5.4b).
+      - name: Prove the Node client calls the real engine by its pipe on Windows
+        if: runner.os == 'Windows'
+        working-directory: bindings/npm
+        env:
+          A2M_TEST_BINARY: ${{ github.workspace }}/target/release/anything2mcp.exe
+        run: |
+          test -f "$A2M_TEST_BINARY"
+          node --test --test-name-pattern="the client reaches a real engine through the program's channel command" test/client.test.js 2>&1 | tee "$RUNNER_TEMP/nodepipe.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          grep -q "^ok 1 - the client reaches a real engine through the program's channel command$" "$RUNNER_TEMP/nodepipe.log"
+          grep -q "^# pass 1$" "$RUNNER_TEMP/nodepipe.log"
+          if grep -q -e "# SKIP" -e "^# skipped [1-9]" "$RUNNER_TEMP/nodepipe.log"; then echo "the Node client's pipe test was skipped"; exit 1; fi
+      # The Windows tester kit (decision 0476): the program this job built
+      # and tested, the test application, the wheel, and the guide, for a
+      # person to try the preview on a Windows machine before 0.1 is
+      # published. Last, so that it is stored only when every step passed.
+      - name: Build the test application for the Windows tester kit
+        if: runner.os == 'Windows'
+        run: cargo build --release --locked -p example-app
+      - name: Gather the Windows tester kit
+        if: runner.os == 'Windows'
+        run: |
+          mkdir kit
+          cp target/release/anything2mcp.exe target/release/example-app.exe bindings/python/dist/*.whl THIRD-PARTY-NOTICES.txt kit/
+          cp docs/plan/trying-the-preview-on-windows.md kit/README.md
+          ls -l kit
+      # Pinned by commit; this is v7.0.2.
+      - name: Store the Windows tester kit
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-tester-kit
+          path: kit/
+          if-no-files-found: error
+          retention-days: 14
 
   presence:
     name: The Linux presence prompt against a real polkit
@@ -604,8 +660,16 @@ jobs:
       # holds the build without it, which `--no-default-features` gives.
       - name: Lint with TLS off
         run: cargo clippy -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --all-targets --locked --no-default-features -- -D warnings
+      # The probe's tests each start a browser, as many of the product's do;
+      # run together, their browsers share the runner's cores, and on
+      # 2026-11-25 a capture of the probe took more than its minute to open
+      # on Linux, and a capture of the product's missed one exchange on
+      # macOS. The probe's tests run in a step of their own, with the same
+      # tests and the same deadlines.
       - name: Test with TLS off
-        run: cargo test -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --locked --no-fail-fast --no-default-features
+        run: cargo test -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp --locked --no-fail-fast --no-default-features
+      - name: Test the probe with TLS off
+        run: cargo test -p a2m-pack-web-probe --locked --no-fail-fast --no-default-features
 
   postgres:
     name: The data pack against a real PostgreSQL server
@@ -762,7 +826,7 @@ jobs:
           set -o pipefail
           cargo test --locked --no-fail-fast -p anything2mcp --test product -- signed_in_web_read:: capture_use:: 2>&1 | tee window-tests.log
           # The filters name two modules of the product's one test program; a name that matches nothing is not a pass.
-          grep -q "test result: ok. 3 passed; 0 failed; 2 ignored" window-tests.log
+          grep -q "test result: ok. 6 passed; 0 failed; 5 ignored" window-tests.log
 
   desktop-windows:
     name: The desktop pack on Windows, against its stand
@@ -792,6 +856,18 @@ jobs:
           exit 0
       - name: Test the desktop pack against its stand
         run: cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop
+      # The writes again, alone, so that the log shows they ran here: the
+      # tests of tests/write.rs that use the faults the stand builds on this
+      # system, and the stand's child (decision 0399). A filter or a gate that
+      # leaves one out is not a pass. With A2M_REQUIRE_DESKTOP a skip is
+      # already a failure; the count holds the number of tests that ran.
+      - name: Test the desktop pack's writes against its stand, and count them
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop --test write 2>&1 | tee write-tests.log
+          grep -q "test result: ok. 7 passed; 0 failed; 0 ignored" write-tests.log
 
   desktop-macos:
     name: The desktop pack on macOS, against its stand
@@ -882,3 +958,15 @@ jobs:
         run: cargo test --locked -p example-desk --test stand -- a_machine_without_the_programs_skips_unless_required --nocapture
       - name: Test the desktop pack against its stand
         run: cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop
+      # The writes again, alone, so that the log shows they ran here: the
+      # tests of tests/write.rs that use the faults the stand builds on this
+      # system, and the stand's child (decision 0399). A filter or a gate that
+      # leaves one out is not a pass. With A2M_REQUIRE_DESKTOP a skip is
+      # already a failure; the count holds the number of tests that ran.
+      - name: Test the desktop pack's writes against its stand, and count them
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop --test write 2>&1 | tee write-tests.log
+          grep -q "test result: ok. 7 passed; 0 failed; 0 ignored" write-tests.log

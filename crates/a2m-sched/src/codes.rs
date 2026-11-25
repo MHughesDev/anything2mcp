@@ -18,7 +18,7 @@
 //! - `resource_order` does not: the call asks in the wrong order, and asks
 //!   the same way again.
 //! - `rate_limited` does: the budget refills, and the failure says when.
-//! - `on_hold` does not: a person set the hold, and a person releases it.
+//! - `scheduler_paused` does not: a person set the pause, and a person releases it.
 //! - `run_reconciling` does: the scheduler hands the reconcile out itself,
 //!   and it ends without anyone acting.
 //! - `watch_too_many` does not: the person ends a watch first.
@@ -69,9 +69,9 @@ a2m_core::failure_codes! {
         meaning "A rate budget is spent and does not refill inside the lease.",
         next "Call again after the wait the failure gives.",
         passes by_itself;
-    ON_HOLD = Busy, "on_hold",
-        meaning "The work is covered by a hold, such as the stop-everything switch.",
-        next "Have whoever set the hold release it, then call again.",
+    SCHEDULER_PAUSED = Busy, "scheduler_paused",
+        meaning "The work is covered by a scheduler pause, such as the stop-everything switch.",
+        next "Have whoever set the pause release it, then call again.",
         passes not_by_itself;
     LEASE_SUPERSEDED = Policy, "lease_superseded",
         meaning "A call carries a lease that is not the job's current one, or one that has run out.",

@@ -16,8 +16,8 @@ use crate::model::{
 };
 use crate::rules::{self, Answer, RuleKind, Verdict};
 use crate::set::{
-    self, BuiltIn, CandidateSet, Compiled, Grant, PolicyLayers, PolicyTest, Profile, Settings,
-    TestReport,
+    self, BuiltIn, CandidateSet, Compiled, DeploymentShape, Grant, PolicyLayers, PolicyTest,
+    Settings, TestReport,
 };
 use crate::store;
 use crate::toolset::Toolset;
@@ -32,7 +32,7 @@ struct Inner {
     store: Store,
     /// The key to this crate's tables, which the store hands out once.
     key: PolicyKey,
-    profile: Profile,
+    profile: DeploymentShape,
     /// The installation's policy settings, from the built-in set the engine
     /// was opened with: in force under any stored set, which can only
     /// tighten them.
@@ -921,7 +921,7 @@ impl Policy {
     /// without a user-presence check; the store's failures.
     pub fn set_kill_switch(&self, tx: &mut Tx<'_>, switch: &KillSwitch) -> Result<u64, Failure> {
         let present = switch.presence.is_some_and(PresenceCheck::proves_presence);
-        if !switch.on && self.inner.profile == Profile::Local && !present {
+        if !switch.on && self.inner.profile == DeploymentShape::Local && !present {
             return Err(failure::presence_required("releasing a kill switch"));
         }
         let (scope, name) = switch.scope.stored();

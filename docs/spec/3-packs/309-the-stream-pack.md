@@ -1,8 +1,8 @@
 # 309. The stream pack
 
-Queues, topics, change feeds, and logs: systems reached by waiting for, or adding to, a flow of events. This is the stream archetype of [section 201](../2-kernel/201-archetypes-and-modes.md). The pack was designed here before it was built, as [section 202](../2-kernel/202-kernel-and-packs.md) requires, and this section answers each item of that section's entry bar. Mode: `stream`, registered when the pack was built ([record 0105](../../decisions/0105-the-stream-mode-and-the-stream-pack-as-building-it-settled-it.md)); the same record lists where building changed this section, and [record 0150](../../decisions/0150-a-take-records-its-message-before-it-acknowledges-and-an-answer-with-no-rule-leaves-a-write-in-doubt.md) lists what a safety audit of the code changed. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
+Queues, topics, change feeds, and logs: systems reached by waiting for, or adding to, a flow of events. This is the stream access kind of [section 201](../2-kernel/201-access-kinds-and-modes.md). The pack was designed here before it was built, as [section 202](../2-kernel/202-kernel-and-packs.md) requires, and this section answers each item of that section's entry bar. Mode: `stream`, registered when the pack was built ([record 0105](../../decisions/0105-the-stream-mode-and-the-stream-pack-as-building-it-settled-it.md)); the same record lists where building changed this section, and [record 0150](../../decisions/0150-a-take-records-its-message-before-it-acknowledges-and-an-answer-with-no-rule-leaves-a-write-in-doubt.md) lists what a safety audit of the code changed. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
-The stream archetype is the furthest from what the engine loop was first drawn for. The loop assumes a record that is there to be read before and after a write. A message is often not: it is sent, it is taken, and it is gone. This section says plainly where that bends the loop, and what the pack does about it.
+The stream access kind is the furthest from what the engine loop was first drawn for. The loop assumes a record that is there to be read before and after a write. A message is often not: it is sent, it is taken, and it is gone. This section says plainly where that bends the loop, and what the pack does about it.
 
 ## What it is for, and what it refuses
 
@@ -79,7 +79,7 @@ bindings:
 
 ## Verbs and lowering
 
-The steps are those [section 201](../2-kernel/201-archetypes-and-modes.md) lists: `subscribe`, `await`, `publish`, `acknowledge`. The pack adds two, `latest` and `browse`, because a look that takes nothing is not a subscription. Two of the steps save, and always: `publish` and `acknowledge`. The manifest lists them as the mode's commit steps, and the pack's driver carries out neither unless the compiled target marks the step as the one that commits. In a sandbox that writes a test record, the driver lifts its guard for that step alone, so a `take`, whose `subscribe` and `await` are not marked, runs only live.
+The steps are those [section 201](../2-kernel/201-access-kinds-and-modes.md) lists: `subscribe`, `await`, `publish`, `acknowledge`. The pack adds two, `latest` and `browse`, because a look that takes nothing is not a subscription. Two of the steps save, and always: `publish` and `acknowledge`. The manifest lists them as the mode's commit steps, and the pack's driver carries out neither unless the compiled target marks the step as the one that commits. In a sandbox that writes a test record, the driver lifts its guard for that step alone, so a `take`, whose `subscribe` and `await` are not marked, runs only live.
 
 | Verb | Effect class | Lowers to | Returns |
 | --- | --- | --- | --- |
@@ -190,7 +190,7 @@ The drafter never writes a publish, a `take`, or a subscription name.
 | Reads | A wait is a read that is not repeatable and that can take as long as its limit. It holds a runner for that time, and the trace signature of two waits differs in what arrived |
 | Ledger | A read normally has no record row. `take` needs one, so its acknowledging step commits |
 
-These strains are contained in the pack, and none needs a kernel change. One may: a long wait holding a runner may need the scheduler to count waits apart from other reads. That is recorded as evidence for hypothesis H-26 when the pack is built, and H-29 is tested by whether the stream archetype held without a special case in the engine.
+These strains are contained in the pack, and none needs a kernel change. One may: a long wait holding a runner may need the scheduler to count waits apart from other reads. That is recorded as evidence for hypothesis H-26 when the pack is built, and H-29 is tested by whether the stream access kind held without a special case in the engine.
 
 ## Failures
 

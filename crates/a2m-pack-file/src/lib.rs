@@ -1,7 +1,7 @@
 //! The file pack: the `file` driver over files under declared roots, read and replaced whole.
 //!
 //! A file in a known format is the system being operated on (spec section
-//! 308). The pack registers one mode, `file`, of the artifact archetype;
+//! 308). The pack registers one mode, `file`, of the file access kind;
 //! the surface kind `file`, a folder inside a named root; the file kinds
 //! `documents/`, which names one file and its record kinds, `folders/`, and
 //! `logs/`; a driver; a discoverer of file layouts, of a surface's folder,
@@ -123,7 +123,7 @@ impl Pack for FilePack {
         to.compiler(compiler)?;
         to.discoverer(
             Arc::new(discover::LayoutDiscoverer::new(
-                cx.telemetry().clock(),
+                cx.logs_and_traces().clock(),
                 limits,
                 cx.roots().clone(),
             )?),

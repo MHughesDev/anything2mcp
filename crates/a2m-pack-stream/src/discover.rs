@@ -11,11 +11,11 @@ use a2m_core::{
     Address, Coverage, EvidenceLevel, FailsAs, Failure, FailureClass, Finding, LimitationCode,
     ProducedBy, Source, Step, StepKind, Subject, UnknownReason, Value, Values,
 };
+use a2m_logs::Clock;
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
     DiscoveryScope, FindingSink, SandboxPort, StepInput, StepOutcome, SurfaceDescription,
 };
-use a2m_telemetry::Clock;
 
 use crate::channel::{JsonType, MessageSchema};
 use crate::codes;

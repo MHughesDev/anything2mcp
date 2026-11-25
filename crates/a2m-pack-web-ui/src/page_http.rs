@@ -37,31 +37,31 @@ use std::time::Duration;
 
 use a2m_auth::SessionLease;
 use a2m_core::{
-    EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef, SectionIndex,
+    EffectClass, FailsAs, FileKindName, Mode, PackPayload, PackRef, RecordMatching, SectionIndex,
     Step, StepArg, StepKind, SurfaceKind, SurfaceName, Value, ValueType, Values, Verb,
 };
 use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
     ResolvedBinding, Stage, Statement, StepChanges, StepCommits,
 };
+use a2m_logs::Detail;
 use a2m_pack_web_browser::{
-    ActTab, Address, AntiForgery, BodyEncoding, BrowserError, Browsers, Deadline, Dispatch,
-    FieldValue, Look, ObserveTab, Origins, PageAnswer, PageEnvironment, PagePath, PageWrite,
-    Primitive, ProfileKey, TokenFrom, TokenTo, Visibility, WriteMethod,
+    ActTab, Address, AntiForgery, BodyEncoding, BrowserError, BrowserProfileKey, Browsers,
+    Deadline, Dispatch, FieldValue, Look, ObserveTab, Origins, PageAnswer, PageEnvironment,
+    PagePath, PageWrite, Primitive, TokenFrom, TokenTo, Visibility, WriteMethod,
 };
 use a2m_provider::shape::{Misfit, MisfitKind, PathStep};
 use a2m_provider::{
     BoxFuture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
-use a2m_telemetry::Detail;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
 use crate::codes::{self, shown};
 use crate::driver::{
-    Reopen, acting, browser_failure, edge_refusal, fail, lost_page, refusal, segment, tab_setup,
-    until, within_pattern,
+    Limits, Reopen, acting, browser_failure, edge_refusal, fail, lost_page, refusal, segment,
+    tab_setup, until, within_pattern,
 };
 use crate::lower::{GOTO, REACH_ARG};
 use crate::model::{GotoStep, PAYLOAD_FORMAT, ReadItem, ScreenSection, TabKind};
@@ -675,11 +675,11 @@ impl Lowering for PageHttpLowering {
         &self.schema
     }
 
-    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         let reads = READ_VERBS.contains(&binding.verb.as_str());
         match strategy {
-            IdentityStrategy::None if reads => Possible::Yes,
-            IdentityStrategy::Natural | IdentityStrategy::Composite
+            RecordMatching::None if reads => Possible::Yes,
+            RecordMatching::Natural | RecordMatching::Composite
                 if reads || binding.field("read_back").is_some() =>
             {
                 Possible::Yes
@@ -799,7 +799,7 @@ impl PageHttpDriver {
 /// for it.
 struct ToAct {
     browsers: Browsers,
-    profile: ProfileKey,
+    profile: BrowserProfileKey,
     environment: PageEnvironment,
     origins: Origins,
 }
@@ -837,6 +837,10 @@ struct Session {
     /// browser: the browser is asked for a word before the next step there
     /// uses it, since a browser can be dead before the tab sees it.
     unsure: bool,
+    /// What the observing tab refused when its page made it, kept as a
+    /// limitation of the run (decision 0477). A page request is the
+    /// driver's own, so what the page made does not change what it reads.
+    limits: Limits,
 }
 
 /// The tab a `goto` asks for. A compiled target compiled before a `goto`
@@ -881,7 +885,7 @@ impl Session {
 
     /// What every tab refused since it was last asked.
     fn refused(&self, what: &str) -> Option<a2m_core::Failure> {
-        let mut refused = self.looking.blocked();
+        let mut refused = self.limits.keep(self.looking.blocked());
         if let Some(acting) = &self.acting {
             refused.extend(acting.blocked());
         }
@@ -1686,6 +1690,7 @@ impl PageHttpDriver {
             reopen: Reopen::new(self.browsers.clone(), setup),
             last_look: None,
             unsure: false,
+            limits: Limits::default(),
         })
     }
 }
@@ -1749,6 +1754,7 @@ impl Driver for PageHttpDriver {
                 }
                 Some(failure) => Err(StepFailure::not_sent(failure)),
                 None => {
+                    let done = session.limits.after(done, &what, false);
                     if let Ok(StepOutcome::Done(_)) = &done {
                         session.remember(step, input);
                     }

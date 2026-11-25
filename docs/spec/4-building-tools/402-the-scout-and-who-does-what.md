@@ -35,7 +35,7 @@ The scout is the mechanical half of the overlay method ([section 401](401-overla
 - **It is resumable.** Each stage stores its result. A scout that is stopped, or that hits a bound, continues from the last finished stage. Identify and discover share one discovery job per surface, because the engine runs every discoverer that suits a surface in one job ([decision 0170](../../decisions/0170-the-scout-identifies-each-surface-with-one-discovery-job-and-stores-each-stage.md)).
 - **It is bounded and polite.** Every stage has a limit on time, size, depth, and number of requests, and the report says which limits were hit. The scout identifies itself as automation, keeps to the target's rate limit, and stops at a block ([principle 9](../1-product/103-design-principles.md)).
 - **It needs consent like any discovery.** On one machine the person who added the target has given it. On a server the target's consent record must exist first ([section 213](../2-kernel/213-effects-hazards-and-consent.md)).
-- **It reads the files a person hands it, and no others.** A person who holds a file that describes the system, such as an interface's published description or a device's published register map, puts it in the project's `sources` folder and names it to `scout.run` under a name a discoverer of the target's surfaces reads: `files: {"description": "sources/example-openapi.json"}`. Each file is checked when asked and again before any discoverer runs; a path outside `sources`, a hidden file, a link, or a name no discoverer reads is refused, and nothing starts. The files are part of the scout's stored state, so a resumed scout hands the same ones. `spec.import` is this, for one description, and nothing more ([decision 0263](../../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)).
+- **It reads the files a person hands it, and no others.** A person who holds a file that describes the system, such as an interface's published description or a device's published register map, puts it in the project's `inputs` folder and names it to `scout.run` under a name a discoverer of the target's surfaces reads: `files: {"description": "inputs/example-openapi.json"}`. Each file is checked when asked and again before any discoverer runs; a path outside `inputs`, a hidden file, a link, or a name no discoverer reads is refused, and nothing starts. The files are part of the scout's stored state, so a resumed scout hands the same ones. `spec.import` is this, for one description, and nothing more ([decision 0263](../../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)).
 - **It needs a session, and cannot make one.** If a surface needs a sign-in, the scout reports `needs_login` for that surface, carries on with the others, and resumes when the person has signed in.
 
 ## What the drafter writes
@@ -78,7 +78,7 @@ Everything else is left untried: a command with unknown effect, a tool not marke
 Three things, and the report lists them in this order.
 
 1. **Meaning.** What things are called, which capabilities are worth being tools, what a field's unit is when the system does not say, what counts as the same record.
-2. **Writes.** Everything about them: the operation, its identity strategy, its read-back rule, its effect class, and above all where a test write is allowed. The developer declares test records ([section 403](403-testing-and-publish-gates.md)). Without one, a write can be drafted and can never be verified.
+2. **Writes.** Everything about them: the operation, its record matching, its read-back rule, its effect class, and above all where a test write is allowed. The developer declares test records ([section 403](403-testing-and-publish-gates.md)). Without one, a write can be drafted and can never be verified.
 3. **Open questions.** Whatever the scout could not decide is in the unknowns ledger, each with the observation that would settle it. `unknown.settle` closes one with evidence.
 
 An agent is well suited to all three, and the product gives it the same tools a person has: the report, the findings, the drafts, the sandbox. The agent works at build time. Nothing it writes runs until it has passed the compiler and the gates.
@@ -102,7 +102,7 @@ On one machine, with one user, these are light: a prompt from the operating syst
 | --- | --- |
 | The system has at least one surface that the user is entitled to use and that a pack can reach | Source code, a vendor's help, a published interface, or a stable one |
 | Reading is repeatable, or the system says when it is not | That a read is free: reads are rate-limited and counted |
-| A write is unsafe to repeat until an identity strategy proves otherwise | That a system forgives a duplicate |
+| A write is unsafe to repeat until a record matching proves otherwise | That a system forgives a duplicate |
 | The machine it runs on belongs to the user, with a key store and a browser already there | A cloud service, an account with us, or a network beyond the target |
 | Someone, a person or an agent, exercises judgment at build time | That an agent is present. Every file can be written by hand |
 | A person can be reached when authority is needed | That the person is watching. Work that needs them stops and waits |
@@ -127,7 +127,7 @@ Scouting is configured in the `authoring` group ([section 226](../2-kernel/226-c
 
 | Key | Values | Default |
 | --- | --- | --- |
-| `authoring.scout.run` | `off`: never; `scout.run` is refused by name. `on_request`: only when `scout.run` is called. `on_add`: also when a target is added; that part is not built, so today `on_add` acts as `on_request` (adding a target names `scout run` as the next step) | `on_add` in the `solo` and `workstation` profiles; `on_request` in the others |
+| `authoring.scout.run` | `off`: never; `scout.run` is refused by name. `on_request`: only when `scout.run` is called. `on_add`: also when a target is added; that part is not built, so today `on_add` acts as `on_request` (adding a target names `scout run` as the next step) | `on_add` in the `solo` and `workstation` deployment shapes; `on_request` in the others |
 | `authoring.scout.try_reads` | Whether stage 6 runs | On |
 | `authoring.scout.budget` | Limits on time, requests, and depth for one scout | Small enough that a scout of an ordinary system ends within minutes |
 | `authoring.scout.providers` | Which optional discoverers the scout may use, by name | None. The first-party discoverers are always available |

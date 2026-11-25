@@ -1,5 +1,5 @@
 // GENERATED: do not edit. Written by scripts/generate-actions.js from the OpenAPI
-// document the engine serves at /api/v1/openapi.json (engine version 0.0.1).
+// document the engine serves at /api/v1/openapi.json (engine version 0.1.0).
 // A test fails when this file differs from what the generator writes. To change a
 // method, change the action in the engine, save the new document, and run the
 // generator.
@@ -11,12 +11,14 @@ const ACTIONS = Object.freeze([
   "action.describe",
   "action.run",
   "action.search",
+  "assertion.confirm",
   "audit.query",
   "auth.detect",
   "binding.promote",
   "capture.start",
   "capture.stop",
   "client.connect",
+  "component.list",
   "config.show",
   "discover.run",
   "docs.get",
@@ -62,6 +64,7 @@ const ACTIONS = Object.freeze([
   "run.get",
   "run.list",
   "run.resume",
+  "run.trace",
   "scout.report",
   "scout.run",
   "secret.set",
@@ -86,10 +89,12 @@ const ACTIONS = Object.freeze([
   "toolset.list",
   "toolset.remove",
   "toolset.update",
+  "trace.export",
   "trace.show",
   "unknown.list",
   "version.diff",
   "version.publish",
+  "version.rollback",
   "watch.changes",
   "watch.confirm",
   "watch.create",
@@ -128,6 +133,16 @@ class Actions {
   }
 
   /**
+   * Confirm the reads a target's drafts assert, as the person, so that a try of the
+   * drafts in an environment of kind `test` may let a page send them. A person's act,
+   * carried out on the engine's page, never an agent's. The engine action is
+   * `assertion.confirm`.
+   */
+  assertionConfirm(input, options = {}) {
+    return this.call("assertion.confirm", input, options);
+  }
+
+  /**
    * Read the audit log, oldest first, and check its chain. The engine action is
    * `audit.query`.
    */
@@ -136,7 +151,7 @@ class Actions {
   }
 
   /**
-   * The sign-in method of a surface, with evidence, and a recommended identity mode.
+   * The sign-in method of a surface, with evidence, and a recommended identity kind.
    * Read only. The engine action is `auth.detect`.
    */
   authDetect(input, options = {}) {
@@ -173,12 +188,21 @@ class Actions {
   }
 
   /**
-   * Give the configuration an MCP client needs to start the bridge for this project:
-   * printed for the `generic` profile, or set in the file a client profile names, shown
-   * first and written by a local person. The engine action is `client.connect`.
+   * Give the configuration an MCP client needs to start the stdio proxy for this
+   * project: printed for the `generic` client profile, or set in the file a client
+   * profile names, shown first and written by a local person. The engine action is
+   * `client.connect`.
    */
   clientConnect(input = {}, options = {}) {
     return this.call("client.connect", input, options);
+  }
+
+  /**
+   * The outside programs providers need: found or not, with path and digest, known or
+   * unverified. Starts nothing. The engine action is `component.list`.
+   */
+  componentList(input = {}, options = {}) {
+    return this.call("component.list", input, options);
   }
 
   /**
@@ -559,6 +583,15 @@ class Actions {
   }
 
   /**
+   * A summary of one of the caller's own runs' trace: each step's kind, outcome, and
+   * time, with references to its kept captures, and never a value. The engine action is
+   * `run.trace`.
+   */
+  runTrace(input, options = {}) {
+    return this.call("run.trace", input, options);
+  }
+
+  /**
    * The last scout's report on a target: found, drafted, proven, open, and what to look
    * at first. Each list is counted and shows its first entries; `part` reads one whole,
    * in pages. The engine action is `scout.report`.
@@ -644,8 +677,8 @@ class Actions {
 
   /**
    * A new scout of a target, handed a description the system publishes about itself as
-   * a file of the project's `sources` folder: exactly `scout.run` with `files` naming
-   * it `description`. Drafts by rule; never writes to the system. The engine action is
+   * a file of the project's `inputs` folder: exactly `scout.run` with `files` naming it
+   * `description`. Drafts by rule; never writes to the system. The engine action is
    * `spec.import`.
    */
   specImport(input, options = {}) {
@@ -731,7 +764,7 @@ class Actions {
 
   /**
    * Create a toolset: who may connect, which tools it selects, the highest effect class
-   * and the identity mode of its runs. A toolset only narrows what grants allow. A
+   * and the identity kind of its runs. A toolset only narrows what grants allow. A
    * person's act, published as a new version of the policy set. The engine action is
    * `toolset.create`.
    */
@@ -764,7 +797,17 @@ class Actions {
   }
 
   /**
-   * View one run's evidence: its trace lines and artifact references. The engine action
+   * Export one run's evidence to one file in the project's working folder,
+   * `.anything2mcp/exports/<run>.json`: its events, its step trace, and its text
+   * captures, with a manifest that names each piece and what was left out and why. The
+   * engine action is `trace.export`.
+   */
+  traceExport(input, options = {}) {
+    return this.call("trace.export", input, options);
+  }
+
+  /**
+   * View one run's evidence: its trace lines and capture references. The engine action
    * is `trace.show`.
    */
   traceShow(input, options = {}) {
@@ -792,6 +835,15 @@ class Actions {
    */
   versionPublish(input, options = {}) {
     return this.call("version.publish", input, options);
+  }
+
+  /**
+   * Make another published version of a target the one that runs now: an earlier one,
+   * or a later one again after a rollback. A person's act, never an agent's. The engine
+   * action is `version.rollback`.
+   */
+  versionRollback(input, options = {}) {
+    return this.call("version.rollback", input, options);
   }
 
   /**

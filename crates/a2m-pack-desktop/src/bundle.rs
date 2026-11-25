@@ -1,7 +1,7 @@
 //! The discoverer `desktop_bundle`: what a macOS application says of itself
 //! in its own files (decision 0276, point 1; decision 0317). A person hands
 //! the scout the application's bundle folder, under `bundle`, from the
-//! project's `sources` folder; the discoverer reads two files of it, as
+//! project's `inputs` folder; the discoverer reads two files of it, as
 //! bytes, on every system, and sends nothing to any application:
 //!
 //! - `Contents/Info.plist`, in its XML or binary form: the application's
@@ -21,11 +21,11 @@ use a2m_core::{
     Coverage, Digest, EvidenceLevel, Failure, Finding, FindingKind, LimitationCode, ProducedBy,
     Source, Subject, Values,
 };
+use a2m_logs::Clock;
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
     DiscoveryScope, FindingSink, SandboxPort, SurfaceDescription,
 };
-use a2m_telemetry::Clock;
 use serde_json::{Value as Json, json};
 
 use crate::codes;

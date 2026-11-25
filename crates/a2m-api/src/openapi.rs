@@ -5,6 +5,7 @@
 use a2m_actions::{ActionRegistry, REST_PREFIX, RestRouteFace, rest_routes};
 use serde_json::{Map, Value as Json, json};
 
+use crate::changes::WATCH_CHANGES_PATH;
 use crate::events::RUN_EVENTS_PATH;
 
 /// The path of the document itself, served by this crate and not an action.
@@ -13,8 +14,8 @@ pub const OPENAPI_PATH: &str = "/api/v1/openapi.json";
 /// The version of the OpenAPI specification the document follows.
 pub const OPENAPI_VERSION: &str = "3.1.0";
 
-/// The document for every REST route of the registry, for the route of a
-/// run's events, and for the document's own route.
+/// The document for every REST route of the registry, for the routes of a
+/// run's events and of a watch's changes, and for the document's own route.
 #[must_use]
 pub fn openapi(registry: &ActionRegistry) -> Json {
     document(&rest_routes(registry))
@@ -38,6 +39,22 @@ pub(crate) fn document(routes: &[RestRouteFace]) -> Json {
         (events, crate::events::operation(envelope))
     {
         item.extend(described);
+    }
+    // A watch's changes: no action's route either. Its page is the output
+    // of `watch.changes`, as the registry has it.
+    if let Some(page) = routes
+        .iter()
+        .find(|route| route.action == "watch.changes" && !route.alias)
+        .map(|route| route.output_schema.clone())
+    {
+        let changes = paths
+            .entry(WATCH_CHANGES_PATH.to_owned())
+            .or_insert_with(|| Json::Object(Map::new()));
+        if let (Json::Object(item), Json::Object(described)) =
+            (changes, crate::changes::operation(envelope, page))
+        {
+            item.extend(described);
+        }
     }
     paths.insert(
         OPENAPI_PATH.to_owned(),

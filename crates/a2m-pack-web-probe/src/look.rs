@@ -14,13 +14,13 @@ use a2m_core::{
     AccountName, Coverage, EvidenceLevel, Failure, FailureClass, FailureCode, Finding, FindingKind,
     Identity, LimitationCode, ProducedBy, Redact, Source, Subject, Value,
 };
+use a2m_logs::Clock;
 use a2m_pack_web_browser::{
-    Address, BrowserError, By, Deadline, Look, ObserveTab, Observer, Origins, PageEnvironment,
-    ProfileKey, Query, RawValue, ReadWhat, SafeRequests, WatchStart, WatchTab, is_plain_name,
+    Address, BrowserError, BrowserProfileKey, By, Deadline, Look, ObserveTab, Observer, Origins,
+    PageEnvironment, Query, RawValue, ReadWhat, SafeRequests, WatchStart, WatchTab, is_plain_name,
     path_by_structure,
 };
 use a2m_provider::{DiscoveryScope, ProviderName};
-use a2m_telemetry::Clock;
 use serde_json::Value as Json;
 
 use crate::codes;
@@ -48,7 +48,7 @@ pub const DISCOVERY_ACCOUNT: &str = "discovery";
 pub const WATCHING_ACCOUNT: &str = "watching";
 
 /// What the first tab of a watching window says to the person in it.
-pub const WATCHING_NOTICE: &str = "Anything2MCP is watching this window while you use it. It sends nothing of its own. It keeps the structure of what you use, the paths, methods, and field names of the requests and the screens you visit, and never a value you type or are shown. Press Stop recording on the engine's page, or close this window, to end it.";
+pub const WATCHING_NOTICE: &str = "Anything2MCP is watching this window while you use it. It sends nothing of its own. It keeps the structure of what you use: the paths, methods, and field names of the requests, and the screens you visit with the names a page gives its headings, links, and buttons, which can show a record's words. It never keeps a value you type, a value a field holds, or a value a request carries. Press Stop recording on the engine's page, or close this window, to end it.";
 
 /// How long a page is waited for to show the focus's ready text.
 const READY_WAIT: Duration = Duration::from_secs(10);
@@ -307,7 +307,7 @@ impl Core {
     /// the surface it observes, and the browser keeps it there.
     pub(crate) async fn tab(&self, scope: &DiscoveryScope<'_>) -> Result<ObserveTab, Failure> {
         let (surface, _) = Self::start(scope)?;
-        let profile = ProfileKey {
+        let profile = BrowserProfileKey {
             target: scope.surface.target.clone(),
             environment: scope.surface.environment.clone(),
             identity: Identity::Account(AccountName::new(DISCOVERY_ACCOUNT)?),
@@ -335,7 +335,7 @@ impl Core {
         let (surface, _) = Self::start(scope)?;
         let origins = Origins::of([&surface]);
         let start = WatchStart::new(&surface, &origins)?;
-        let profile = ProfileKey {
+        let profile = BrowserProfileKey {
             target: scope.surface.target.clone(),
             environment: scope.surface.environment.clone(),
             identity: Identity::Account(AccountName::new(WATCHING_ACCOUNT)?),

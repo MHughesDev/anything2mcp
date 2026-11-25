@@ -11,7 +11,7 @@ Two stores are built. The embedded SQL engine, through `rusqlite`, always. A ser
 | Side | Pack: data |
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
-| Depends on | `a2m-core` (`CompiledTarget`, `Step`, `Value`, `Failure`, `Finding`), `a2m-files` (file-kind, lowering, lint, and drafting registration), `a2m-auth` (`SessionLease`, in the driver's signature only), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`, `CheckedPath`), `a2m-telemetry` (`Acting`, `Clock`). Outside: `rusqlite`, the workspace's one binding to the embedded engine, with its features `hooks`, `limits`, and `load_extension` (what each adds is under "How a connection is held to its one file"); `serde`, `serde_json`, `tokio`. With the feature `postgres`: `tokio-postgres` (feature `runtime` only), `bytes`, `futures-core`. Tests also use `a2m-expr`, `a2m-ledger`, `a2m-vault`, and the stand `example-db`, with its server side |
+| Depends on | `a2m-core` (`CompiledTarget`, `Step`, `Value`, `Failure`, `Finding`), `a2m-files` (file-kind, lowering, lint, and drafting registration), `a2m-auth` (`SessionLease`, in the driver's signature only), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`, `CheckedPath`), `a2m-logs` (`Acting`, `Clock`). Outside: `rusqlite`, the workspace's one binding to the embedded engine, with its features `hooks`, `limits`, and `load_extension` (what each adds is under "How a connection is held to its one file"); `serde`, `serde_json`, `tokio`. With the feature `postgres`: `tokio-postgres` (feature `runtime` only), `bytes`, `futures-core`. Tests also use `a2m-expr`, `a2m-ledger`, `a2m-vault`, and the stand `example-db`, with its server side |
 | Roadmap packages | Packages G2 and G3 of the [roadmap](../../plan/roadmap.md) |
 | Carries out | Spec section [307](../../spec/3-packs/307-the-data-pack.md); [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (no input changes a statement); [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (set, read back, go on only if it took) |
 | Decisions | [0100](../../decisions/0100-the-mode-sql-and-the-data-packs-contract-as-building-it-settled-it.md), [0101](../../decisions/0101-what-the-data-pack-refuses-and-how-it-names-it.md), [0141](../../decisions/0141-the-data-pack-holds-a-statement-to-one-read-or-one-keyed-write-and-a-connection-to-one-file.md), [0168](../../decisions/0168-the-data-pack-reaches-a-server-database-with-the-guarantees-of-an-embedded-file.md), [0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md), [0182](../../decisions/0182-the-file-data-and-stream-packs-after-the-first-drafted-reads.md) |
@@ -38,7 +38,7 @@ One function hands the pack to the registry builder: this crate's `pack()` retur
 
 | Registration | Content |
 | --- | --- |
-| Mode | `sql`, archetype request, rank 30, four reads and one write in a session, a write holds the surface |
+| Mode | `sql`, access kind request, rank 30, four reads and one write in a session, a write holds the surface |
 | Surface kind | `database`, with a session. Fields: `store` (required; `sqlite`), `file` (the address: the path of the store's file below its root, with forward slashes), `root` (the named root; `project` unless given) |
 | Surface kind, feature `postgres` | `database_server`, with a session. Fields: `store` (required; `postgres`), `host` (the address: an IP address on the loopback range), `port`, `database`, `schema` (`public` unless given). The role and its password come from the lease; there is no switch for the link |
 | Step kinds | `begin`, `execute`, `fetch`, `expect_rows`, `commit`; and `catalog`, which only the discoverer sends |
@@ -187,7 +187,7 @@ Every call into the store runs on a blocking thread; the connection moves there 
 | --- | --- | --- |
 | 1 | A driver, no retries inside | `SqlDriver`. A lock wait, a refusal, and a lost answer are each returned once |
 | 2 | Read-back for every write | The read by key the pack wrote for the write's record, in a new read-only transaction, held to the key asked for. A hand-written read is never a read-back. The kernel refuses a write binding without one |
-| 3 | Each identity strategy | `natural` and `composite`: the record's key. A key the store assigns: captured before `commit`; the kernel has no strategy for it, so such a create compiles as `none`. `stamped` and `find`: refused as not built. `none`: `irreversible`, by the kernel's rule |
+| 3 | Each record matching | `natural` and `composite`: the record's key. A key the store assigns: captured before `commit`; the kernel has no strategy for it, so such a create compiles as `none`. `stamped` and `find`: refused as not built. `none`: `irreversible`, by the kernel's rule |
 | 4 | A test stand | `targets/example-db`, cases 1 to 10; its server side, `example_db::server`, for a lost answer after `commit`, an administrative identity, a row lock, a statement timeout, and read-only transactions |
 | 5 | A discoverer | `catalog`: `discovered`, `live_system`, nothing sampled |
 | 6 | Failures mapped | Below |

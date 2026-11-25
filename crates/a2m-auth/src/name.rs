@@ -31,9 +31,9 @@ pub use a2m_core::{AuthProviderName as ProviderName, CredentialRef};
 /// that owns the session resolves it under the directory the engine gives
 /// it, so no caller's input can choose a file.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProfileRef(String);
+pub struct BrowserProfileRef(String);
 
-impl ProfileRef {
+impl BrowserProfileRef {
     /// The longest a profile's name may be.
     pub const LONGEST: usize = 64;
 
@@ -77,11 +77,11 @@ macro_rules! as_text {
     };
 }
 
-as_text!(ProfileRef);
+as_text!(BrowserProfileRef);
 
 #[cfg(test)]
 mod tests {
-    use super::{CredentialRef, ProfileRef, ProviderName};
+    use super::{BrowserProfileRef, CredentialRef, ProviderName};
 
     #[test]
     fn names_are_checked() {
@@ -89,9 +89,9 @@ mod tests {
         for bad in ["", "Api", "api-key", "9key", &"a".repeat(33)] {
             assert!(ProviderName::new(bad).is_err(), "{bad}");
         }
-        assert!(ProfileRef::new("s_0123abcd").is_ok());
+        assert!(BrowserProfileRef::new("s_0123abcd").is_ok());
         for bad in ["", "..", "a/b", "A"] {
-            assert!(ProfileRef::new(bad).is_err(), "{bad}");
+            assert!(BrowserProfileRef::new(bad).is_err(), "{bad}");
         }
     }
 

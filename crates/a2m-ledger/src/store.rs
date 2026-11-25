@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 use std::thread;
 
 use a2m_core::{Failure, KeyedDigest, Redact};
-use a2m_telemetry::{Clock, SystemClock, Telemetry};
+use a2m_logs::{Clock, LogsAndTraces, SystemClock};
 use a2m_vault::{OsRandom, RandomSource, Vault};
 use tokio::sync::oneshot;
 
@@ -46,7 +46,7 @@ pub struct StoreConfig {
     throwaway: bool,
     clock: Arc<dyn Clock>,
     random: Arc<dyn RandomSource>,
-    telemetry: Option<Telemetry>,
+    logs_and_traces: Option<LogsAndTraces>,
 }
 
 impl StoreConfig {
@@ -59,7 +59,7 @@ impl StoreConfig {
             throwaway: false,
             clock: Arc::new(SystemClock::new()),
             random: Arc::new(OsRandom),
-            telemetry: None,
+            logs_and_traces: None,
         }
     }
 
@@ -72,7 +72,7 @@ impl StoreConfig {
             throwaway: false,
             clock: Arc::new(SystemClock::new()),
             random: Arc::new(OsRandom),
-            telemetry: None,
+            logs_and_traces: None,
         }
     }
 
@@ -105,10 +105,10 @@ impl StoreConfig {
         self
     }
 
-    /// Reports a span for each commit to `telemetry`.
+    /// Reports a span for each commit to `logs_and_traces`.
     #[must_use]
-    pub fn with_telemetry(mut self, telemetry: Telemetry) -> Self {
-        self.telemetry = Some(telemetry);
+    pub fn with_logs_and_traces(mut self, logs_and_traces: LogsAndTraces) -> Self {
+        self.logs_and_traces = Some(logs_and_traces);
         self
     }
 }
@@ -132,7 +132,7 @@ pub(crate) struct Shared {
     pub(crate) random: Arc<dyn RandomSource>,
     pub(crate) blob_dir: Option<PathBuf>,
     attached: OnceLock<Attached>,
-    telemetry: Option<Telemetry>,
+    logs_and_traces: Option<LogsAndTraces>,
 }
 
 impl Shared {
@@ -347,7 +347,7 @@ impl Store {
             random: config.random,
             blob_dir,
             attached: OnceLock::new(),
-            telemetry: config.telemetry,
+            logs_and_traces: config.logs_and_traces,
         });
 
         let writer = Lane::start(&place, false, 1).await?;
@@ -572,8 +572,10 @@ where
     let outcome = catch_unwind(AssertUnwindSafe(|| work(&mut tx)));
     match outcome {
         Ok(Ok(value)) => {
-            let span = match (&shared.telemetry, write) {
-                (Some(telemetry), Some(_)) => Some(telemetry.span(COMMIT_SPAN, None, &[])),
+            let span = match (&shared.logs_and_traces, write) {
+                (Some(logs_and_traces), Some(_)) => {
+                    Some(logs_and_traces.span(COMMIT_SPAN, None, &[]))
+                }
                 _ => None,
             };
             db.end(write.is_some(), write.is_some())?;

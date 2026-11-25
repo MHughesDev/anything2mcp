@@ -52,7 +52,7 @@ A bad target version is the likeliest self-inflicted failure, so a published ver
 1. **Published.** The version exists and has passed its gates. Nothing uses it yet.
 2. **Candidate.** For read operations, calls are answered by the current version while the candidate runs in shadow and its results are compared. Named callers can opt in to the candidate outright.
 3. **Current.** After a set number of matching reads, or at once if a publisher says so, the toolset's pin moves to the new version. Writes switch only at this step.
-4. **Rollback.** One action moves the pin back. Runs in flight finish on the version they started with.
+4. **Rollback.** One action moves the pin back: `version.rollback`, a person's act, to any version a person published, recorded in the audit and read back before it is reported ([decision 0470](../../decisions/0470-a-rollback-is-a-persons-act-and-moves-to-any-version-a-person-published.md)). Runs in flight finish on the version they started with. Built: the move, on one machine, of the version that runs, which every toolset uses; the candidate stage and a toolset pinned to a version are not built.
 
 A toolset always names the exact version it uses, so two toolsets can be on different versions of the same target.
 

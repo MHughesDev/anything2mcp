@@ -6,7 +6,7 @@
 
 use a2m_core::{AccountName, Failure, Identity};
 use a2m_pack_web_browser::{
-    Address, Look, Observer, Origins, PageEnvironment, ProfileKey, SafeRequests,
+    Address, BrowserProfileKey, Look, Observer, Origins, PageEnvironment, SafeRequests,
     looks_like_an_action,
 };
 use a2m_provider::{BoxFuture, CaptureSource, Deadline, SurfaceRef, TrafficCapture};
@@ -29,7 +29,7 @@ impl CaptureSource for ObservingCapture {
             if looks_like_an_action(after_origin(address.as_str())) {
                 return Err(looks_like_an_action_refused("is"));
             }
-            let profile = ProfileKey {
+            let profile = BrowserProfileKey {
                 target: surface.target.clone(),
                 environment: surface.environment.clone(),
                 identity: Identity::Account(AccountName::new(DISCOVERY_ACCOUNT)?),

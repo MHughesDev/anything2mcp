@@ -8,14 +8,14 @@ use crate::testing::{self, stand_set};
 use crate::{
     BindingStatement, BindingStates, CompileMode, Compiled, CompilerSet, DRAFT_VERSION,
     Diagnostics, EnvironmentVariable, FixedPlace, JsonSchema, LAUNCHER_NOTICE, Lowered, Lowering,
-    NOT_STATED, PROBE_PENDING, PROVIDER_NOT_HELD, PlaceReview, Possible, ProbeReview, ProgramRun,
-    REACH_NOT_STATED, Reach, ReachGroup, RelPath, ResolvedBinding, SCRIPT_NOTICE,
-    SENT_TO_NOT_STATED, Sends, SentAddress, SentTo, Statement, StepCommits, TargetRoot,
+    NOT_STATED, PROVIDER_NOT_HELD, PlaceReview, Possible, ProgramRun, REACH_NOT_STATED, Reach,
+    ReachGroup, RelPath, ResolvedBinding, SCRIPT_NOTICE, SENT_TO_NOT_STATED, SESSION_CHECK_PENDING,
+    Sends, SentAddress, SentTo, SessionCheckReview, Statement, StepCommits, TargetRoot,
     VariableValue, compile, lint_one, load_files,
 };
 use a2m_core::{
-    AddressScope, CompiledProbe, Digest, EffectClass, Environment, FileKindName, IdentityStrategy,
-    Mode, StepKind, SurfaceKind, Verb, Version, WriteEvidence,
+    AddressScope, CompiledSessionCheck, Digest, EffectClass, Environment, FileKindName, Mode,
+    RecordMatching, StepKind, SurfaceKind, Verb, Version, WriteEvidence,
 };
 
 type Files = Vec<(RelPath, Vec<u8>)>;
@@ -104,7 +104,7 @@ fn a_write_of_one_fixed_place_compiles_with_no_identity_input() {
         .find(|operation| operation.name.as_str() == "example_settings_set")
         .unwrap();
     // The record's key is the place, which the files name: no input is in it.
-    assert_eq!(operation.identity.strategy, IdentityStrategy::Natural);
+    assert_eq!(operation.identity.strategy, RecordMatching::Natural);
     assert!(operation.identity.key.is_empty());
     let item = compiled
         .review
@@ -221,7 +221,7 @@ impl Lowering for Stating {
     fn binding_schema(&self) -> &JsonSchema {
         self.inner.binding_schema()
     }
-    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         self.inner.identity(binding, strategy)
     }
     fn fixed_place(&self, binding: &ResolvedBinding<'_>) -> Option<FixedPlace> {
@@ -533,7 +533,7 @@ fn a_sign_in_shows_its_provider_its_credentials_by_name_and_where_it_sends() {
     );
     assert_eq!(
         sign_in.probe,
-        ProbeReview::Declared {
+        SessionCheckReview::Declared {
             name: "example_order_get".to_owned()
         }
     );
@@ -572,7 +572,7 @@ fn a_sign_in_shows_its_provider_its_credentials_by_name_and_where_it_sends() {
 
 // ---- 3. A sign-in before its probe is drafted ----
 
-fn with_pending_probe() -> Files {
+fn with_pending_session_check() -> Files {
     let mut files = example_files();
     edit(
         &mut files,
@@ -584,26 +584,26 @@ fn with_pending_probe() -> Files {
 }
 
 #[test]
-fn a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only() {
+fn a_sign_in_may_name_its_session_check_before_the_read_is_drafted_in_a_draft_only() {
     let set = stand_set().unwrap();
-    let files = with_pending_probe();
+    let files = with_pending_session_check();
     // A draft compiles, with the sign-in marked in the lint result and in
     // the summary.
     let draft = compiled_target_with(&files, &set, CompileMode::Draft)
         .unwrap_or_else(|problems| panic!("{problems}"));
     assert_eq!(
         draft.compiled_target.auth[0].probe,
-        CompiledProbe::Pending {
+        CompiledSessionCheck::Pending {
             name: "example_session_check".to_owned()
         }
     );
-    let warning = draft.warnings.find("kernel.probe_pending").unwrap();
+    let warning = draft.warnings.find("kernel.session_check_pending").unwrap();
     assert!(warning.message.contains("not confirmed"));
     assert_eq!(
         draft.review.sign_ins[0].probe,
-        ProbeReview::Pending {
+        SessionCheckReview::Pending {
             name: "example_session_check".to_owned(),
-            says: PROBE_PENDING,
+            says: SESSION_CHECK_PENDING,
         }
     );
     // `draft.lint` reports it the same way.
@@ -616,7 +616,7 @@ fn a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only() {
         .unwrap();
     assert!(
         lint_one(&sources, auth, &set)
-            .find("kernel.probe_pending")
+            .find("kernel.session_check_pending")
             .is_some()
     );
     // A publish never compiles one: a session nobody can check is a
@@ -626,10 +626,10 @@ fn a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only() {
         published.find("kernel.unknown_name").is_some(),
         "{published}"
     );
-    assert!(published.find("kernel.probe_pending").is_none());
+    assert!(published.find("kernel.session_check_pending").is_none());
     // A probe that names an operation with errors is that operation's
     // problem, never a probe still to come.
-    let mut broken = with_pending_probe();
+    let mut broken = with_pending_session_check();
     edit(
         &mut broken,
         "auth.yaml",
@@ -644,7 +644,7 @@ fn a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only() {
     );
     let problems = compiled_target_with(&broken, &set, CompileMode::Draft).unwrap_err();
     assert!(
-        problems.find("kernel.probe_pending").is_none(),
+        problems.find("kernel.session_check_pending").is_none(),
         "{problems}"
     );
 }
@@ -692,15 +692,15 @@ fn sign_in(entry: usize, pending: bool) -> crate::SignInReview {
         entry,
         surfaces: Vec::new(),
         provider: a2m_core::AuthProviderName::new("example_form").unwrap(),
-        mode: a2m_core::SignInMode::ManagedSession,
+        mode: a2m_core::SignInKind::ManagedSession,
         credentials: Vec::new(),
         probe: if pending {
-            ProbeReview::Pending {
+            SessionCheckReview::Pending {
                 name: format!("probe_{entry}"),
-                says: PROBE_PENDING,
+                says: SESSION_CHECK_PENDING,
             }
         } else {
-            ProbeReview::Declared {
+            SessionCheckReview::Declared {
                 name: format!("probe_{entry}"),
             }
         },

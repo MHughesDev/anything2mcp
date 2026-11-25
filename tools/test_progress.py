@@ -110,10 +110,15 @@ class Progress(unittest.TestCase):
 
     def test_a_package_left_that_the_line_does_not_name_is_refused(self):
         self.copy_repository_plan()
-        self.edit(PLAN[0], "| 5.1 |", "| 5.1x |")  # a row the line does not name
+        # A package left in the roadmap gains a row the line does not name.
+        # The repository's own plan decides which packages are left, so the
+        # test adds one rather than renaming a row that may be done by now.
+        roadmap = self.text(PLAN[0])
+        row = next(line for line in roadmap.splitlines() if line.startswith("| 9.4 |"))
+        self.edit(PLAN[0], row, row + "\n" + row.replace("| 9.4 |", "| 9.4x |", 1))
         code, out = self.run_tool("--check")
         self.assertEqual(code, 1, out)
-        self.assertIn("5.1x is left in the roadmap and has no row in the line", out)
+        self.assertIn("9.4x is left in the roadmap and has no row in the line", out)
 
     def test_a_count_typed_by_hand_is_stale(self):
         self.synthetic()

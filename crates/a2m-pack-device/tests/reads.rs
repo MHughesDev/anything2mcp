@@ -17,11 +17,11 @@ use a2m_core::{
     Digest, DigestPurpose, FailureClass, KeyedDigest, OperationName, RunId, Sensitivity, Value,
     Values, WorkspaceId,
 };
-use a2m_provider::{Destinations, Posture, Sent, StepFailure};
-use a2m_telemetry::{
+use a2m_logs::{
     CaptureLevel, ChoiceReason, PassStart, Phase, StepRecord, TraceBuilder, TraceIdentity,
     TraceOutcome, TracedValue,
 };
+use a2m_provider::{Destinations, Posture, Sent, StepFailure};
 use common::{Planted, Ran, Scene, decimal};
 use example_device::{Answer, Corruption, Fault, FaultKind, FrameKind, Scope, Version};
 
@@ -147,7 +147,7 @@ fn signature(scene: &Scene, run: u8, ran: &Ran) -> Digest {
             acting,
             values: read.into_iter().collect(),
             outcome: TraceOutcome::Done,
-            artifacts: Vec::new(),
+            captures: Vec::new(),
         });
     }
     trace.finish().unwrap().signature

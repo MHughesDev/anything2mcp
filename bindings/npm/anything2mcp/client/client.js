@@ -211,9 +211,9 @@ class Client extends Actions {
 }
 
 // Opens a connection to `address` (a socket file, or a pipe's name), runs the
-// caller's check of the far end if there is one, and says hello. This is
-// the one place a transport is opened; `connect` in index.js chooses the
-// address and the check for the operating system.
+// caller's check of the far end if there is one, and says hello. `connect`
+// in index.js chooses the address and the check for macOS and Linux; on
+// Windows it uses the program's `channel` command instead (program.js).
 async function connectTo(address, { verify, name, project, timeout } = {}) {
   const socket = await new Promise((resolve, reject) => {
     const opened = net.createConnection({ path: address });
@@ -234,13 +234,25 @@ async function connectTo(address, { verify, name, project, timeout } = {}) {
         "Stop the program that made it, and start the engine again.",
       );
     }
-    const client = new Client(socket, { name, project, timeout });
-    await client._hello();
-    return client;
   } catch (error) {
     socket.destroy();
     throw error;
   }
+  return greet(socket, { name, project, timeout });
 }
 
-module.exports = { ANSWER_LIMIT, Client, LOCAL_API, REST_PREFIX, connectTo, encodePath, toResponse };
+// Says hello on a connection whose far end is checked already, and hands
+// back the client that holds it: a socket, or the stream of the program's
+// `channel` command on Windows.
+async function greet(stream, { name, project, timeout } = {}) {
+  try {
+    const client = new Client(stream, { name, project, timeout });
+    await client._hello();
+    return client;
+  } catch (error) {
+    stream.destroy();
+    throw error;
+  }
+}
+
+module.exports = { ANSWER_LIMIT, Client, LOCAL_API, REST_PREFIX, connectTo, encodePath, greet, toResponse };

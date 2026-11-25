@@ -141,7 +141,7 @@ fn a_path_inside_the_root_is_read_written_and_listed() {
 fn a_root_that_is_not_declared_cannot_be_used() {
     let (folder, roots) = scene();
     let failure = roots
-        .check(&root("sources"), "a.txt", Access::Read)
+        .check(&root("inputs"), "a.txt", Access::Read)
         .unwrap_err();
     assert_eq!(
         (failure.class(), failure.code()),
@@ -151,7 +151,7 @@ fn a_root_that_is_not_declared_cannot_be_used() {
     // when it declares reading.
     let mut all = roots.clone();
     all.add(
-        root("sources"),
+        root("inputs"),
         &folder.path().join("outside"),
         Access::Write,
     )
@@ -186,7 +186,7 @@ fn a_root_that_is_not_declared_cannot_be_used() {
     assert_eq!(
         context
             .roots()
-            .check(&root("sources"), "secret.txt", Access::Read)
+            .check(&root("inputs"), "secret.txt", Access::Read)
             .unwrap_err()
             .code(),
         &codes::EFFECT_NOT_DECLARED
@@ -869,12 +869,12 @@ fn a_private_folder_is_made_closed_to_other_users() {
 /// a removal held to the file the caller looked at leaves another file at
 /// the name where it is, and removes that file only while the name holds it.
 #[test]
-fn a_held_folder_removes_a_file_only_while_its_name_holds_the_file_looked_at() {
+fn a_folder_handle_removes_a_file_only_while_its_name_holds_the_file_looked_at() {
     let (folder, roots) = scene();
     let orders = roots
         .check(&root("project"), "orders", Access::Write)
         .unwrap();
-    let held = orders.hold_folder().unwrap();
+    let held = orders.folder_handle().unwrap();
     let looked_at = held.identity("one.txt").unwrap();
     // Another program replaces the file after the look.
     let on_disk = folder.path().join("project").join("orders");
@@ -929,7 +929,7 @@ fn a_held_folder_removes_a_file_only_while_its_name_holds_the_file_looked_at() {
 /// no longer at its path.
 #[cfg(unix)]
 #[test]
-fn a_held_folder_swapped_for_a_link_takes_every_call_and_the_link_none() {
+fn a_folder_handle_swapped_for_a_link_takes_every_call_and_the_link_none() {
     use std::time::{Duration, UNIX_EPOCH};
     let (folder, roots) = scene();
     let project = folder.path().join("project");
@@ -939,7 +939,7 @@ fn a_held_folder_swapped_for_a_link_takes_every_call_and_the_link_none() {
     let orders = roots
         .check(&root("project"), "orders", Access::Write)
         .unwrap();
-    let held = orders.hold_folder().unwrap();
+    let held = orders.folder_handle().unwrap();
     assert!(held.still_at_its_path());
     // A moment long past, which anything made or removed in the folder
     // outside would replace.
@@ -965,7 +965,7 @@ fn a_held_folder_swapped_for_a_link_takes_every_call_and_the_link_none() {
     );
     // A folder reached through the link now is refused.
     assert_eq!(
-        orders.hold_folder().unwrap_err().code(),
+        orders.folder_handle().unwrap_err().code(),
         &codes::PATH_NOT_ALLOWED
     );
 }
@@ -988,8 +988,8 @@ const RESOLVES_A_PATH: &[(&str, usize, &str)] = &[
     ),
     (
         "a2m-pack-desktop/src/backend/linux.rs",
-        2,
-        "the declared program of a desktop application and the program a running process of the engine's own user runs (`/proc/<id>/exe`), compared to prove which process is the application; nothing is read",
+        3,
+        "the declared program of a desktop application and the program a running process of the engine's own user runs (`/proc/<id>/exe`), compared to prove which process is the application, and, before a start, whether any process of that user already runs it, so no second copy is started (decision 0467); nothing is read",
     ),
     (
         "a2m-pack-command/src/safety/before_0250.rs",
@@ -1010,6 +1010,11 @@ const RESOLVES_A_PATH: &[(&str, usize, &str)] = &[
         "a2m-pack-desktop/tests/read.rs",
         1,
         "a test that names the program it starts as the driver will see it",
+    ),
+    (
+        "a2m-pack-desktop/tests/start.rs",
+        1,
+        "a test that asks the system which program the process the driver started runs",
     ),
     (
         "a2m-pack-mcp/tests/launcher.rs",

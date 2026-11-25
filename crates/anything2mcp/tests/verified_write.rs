@@ -13,8 +13,8 @@ use crate::common;
 
 use a2m_actions::PresenceProof;
 use a2m_core::{RunId, Timestamp};
+use a2m_logs::{Clock, ManualClock, SystemClock};
 use a2m_policy::{Channel, PresenceCheck, PrincipalRef};
-use a2m_telemetry::{Clock, ManualClock, SystemClock};
 use common::proxy::Proxy;
 use common::{Machine, World};
 use example_app::faults::{Fault, FaultKind};

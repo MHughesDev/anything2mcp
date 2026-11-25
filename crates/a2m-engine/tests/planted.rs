@@ -15,7 +15,7 @@ use std::sync::atomic::Ordering;
 
 use a2m_core::{Secret, Values};
 use a2m_engine::JobKind;
-use a2m_telemetry::CaptureLevel;
+use a2m_logs::CaptureLevel;
 use common::{ORDER_GET, Scene};
 
 /// The invented value the test application's hand-off answers as its
@@ -80,7 +80,7 @@ async fn a_secret_planted_in_the_applications_answer_appears_in_no_result_log_or
     // No event, no span, and no log line, in memory or in the file.
     let events = format!("{:?}", scene.control.events.lock().unwrap());
     assert!(!events.contains(PLANTED), "{events}");
-    let spans = format!("{:?}", scene.telemetry.spans());
+    let spans = format!("{:?}", scene.logs_and_traces.spans());
     assert!(!spans.contains(PLANTED), "{spans}");
     assert!(!scene.logged().contains(PLANTED));
 }

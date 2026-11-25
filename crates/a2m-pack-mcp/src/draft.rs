@@ -26,7 +26,7 @@ const OPERATION: FileKindName = FileKindName::fixed("operation");
 type Pairs = Vec<(String, DraftValue)>;
 
 /// Why the rule drafts no read for a tool: the pack's own sentences, which
-/// quote nothing the server wrote (field test 6, finding 41).
+/// quote nothing the server wrote (copy test 6, finding 41).
 mod why {
     pub(super) const NO_TARGET: &str =
         "The folder has no `target.yaml` yet, so the read has no name to be drafted under.";

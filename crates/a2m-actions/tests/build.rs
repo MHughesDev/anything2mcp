@@ -27,12 +27,12 @@ use a2m_actions::{
 use a2m_auth::PersonAnswer;
 use a2m_core::{Failure, Timestamp};
 use a2m_files::testing;
+use a2m_logs::ManualClock;
 use a2m_policy::PresenceCheck;
 use a2m_provider::{
     CompilerRegistrations, Pack, PackContext, Registrar, RegistryBuilder, Roots, Supervisor,
     SupervisorLimits,
 };
-use a2m_telemetry::ManualClock;
 use a2m_vault::MemoryKeyStore;
 use provider::{Behaviour, Folder, StubDriver};
 use serde_json::{Value as Json, json};
@@ -1199,7 +1199,7 @@ fn proof_for(world: &World, act: PersonActId) -> PresenceProof {
     PresenceProof::new(
         PresenceCheck::OsPrompt,
         world.person.principal.principal().id,
-        a2m_telemetry::Clock::now(world.clock.as_ref()),
+        a2m_logs::Clock::now(world.clock.as_ref()),
     )
     .for_act(act)
 }
@@ -1282,7 +1282,7 @@ async fn a_publish_an_agent_asks_for_is_carried_out_once_on_its_page_by_the_pers
     let bare = PresenceProof::new(
         PresenceCheck::OsPrompt,
         world.person.principal.principal().id,
-        a2m_telemetry::Clock::now(world.clock.as_ref()),
+        a2m_logs::Clock::now(world.clock.as_ref()),
     );
     let other = PersonActId::from_bytes([7; 16]);
     let someone = a2m_core::PrincipalId::from_bytes([9; 16]);
@@ -1294,7 +1294,7 @@ async fn a_publish_an_agent_asks_for_is_carried_out_once_on_its_page_by_the_pers
             PresenceProof::new(
                 PresenceCheck::OsPrompt,
                 someone,
-                a2m_telemetry::Clock::now(world.clock.as_ref()),
+                a2m_logs::Clock::now(world.clock.as_ref()),
             )
             .for_act(act),
         )
@@ -2286,7 +2286,7 @@ async fn a_scout_drafts_reads_by_rule_tries_them_and_never_writes() {
     world.kernel.close(CloseReason::Asked).await;
 }
 
-/// Field test 9, finding 56: a scout whose only surface's discovery failed
+/// Copy test 9, finding 56: a scout whose only surface's discovery failed
 /// saw nothing, and does not answer `ok`. It answers with the failure the
 /// discovery stopped with, beside the report, which is stored and read
 /// again with `scout.report`, and names the surface under "not looked at".
@@ -3705,7 +3705,7 @@ async fn a_shadow_binding_is_counted_on_live_reads_reported_without_values_and_p
 /// client's file is a person's act, shown first, keeps every other entry,
 /// and refuses a file it cannot read.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_client_is_given_the_bridge_by_a_profile_and_its_other_entries_are_kept() {
+async fn a_client_is_given_the_stdio_proxy_by_a_client_profile_and_its_other_entries_are_kept() {
     let world = World::open().await;
     let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
 
@@ -3721,7 +3721,7 @@ async fn a_client_is_given_the_bridge_by_a_profile_and_its_other_entries_are_kep
     // on macOS or in its short form on Windows.
     let project = a2m_provider::resolved_path(world.project.path()).unwrap();
     assert_eq!(args[1], project.display().to_string());
-    assert_eq!(args[2], "bridge");
+    assert_eq!(args[2], "stdio");
     assert!(printed["block"]["anything2mcp"]["command"].is_string());
     // The engine's home is given by `A2M_HOME`, and the client is told it;
     // no passphrase is in the block.

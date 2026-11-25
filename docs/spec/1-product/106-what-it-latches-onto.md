@@ -16,7 +16,7 @@ A system can be reached at many levels. Each level has its own idea of what an o
 | --- | --- | --- | --- |
 | Devices and firmware | A controller on a fieldbus, a board on a serial console, a network device | Reading or setting a parameter, a declared console command, an update through the device's own mechanism | [310](../3-packs/310-the-device-pack.md) |
 | Operating system | Services, packages, scheduled jobs, system settings, files | A declared command with typed arguments | [306](../3-packs/306-the-command-pack.md) |
-| Native programs and libraries | A command-line tool, a shared library, a program with an automation interface | Starting it with arguments, or calling a function it exports | [201](../2-kernel/201-archetypes-and-modes.md), [306](../3-packs/306-the-command-pack.md) |
+| Native programs and libraries | A command-line tool, a shared library, a program with an automation interface | Starting it with arguments, or calling a function it exports | [201](../2-kernel/201-access-kinds-and-modes.md), [306](../3-packs/306-the-command-pack.md) |
 | Language runtimes and packages | A package or a script the system ships | A fixed script started by a fixed interpreter; a function with a typed signature is cataloged, as the library row below | [306](../3-packs/306-the-command-pack.md) |
 | Data stores | Relational and other databases, files in known formats, queues | A query, a keyed write, a value at a named place, a message | [307](../3-packs/307-the-data-pack.md), [308](../3-packs/308-the-file-pack.md), [309](../3-packs/309-the-stream-pack.md) |
 | Services and protocols | HTTP and its descendants, remote procedure calls, mail, directories, an MCP server | A typed request and its response | [303](../3-packs/303-the-http-pack.md), [304](../3-packs/304-the-mcp-pack.md) |
@@ -30,7 +30,7 @@ The same target can be reached at several levels at once. An application has an 
 Two things are the same at every level, and they are the product.
 
 - **One method for building a tool:** attach, observe, model, bind, verify, publish, watch ([section 401](../4-building-tools/401-overlaying-tools-on-an-existing-system.md)). Its mechanical half runs as the scout ([section 402](../4-building-tools/402-the-scout-and-who-does-what.md)).
-- **One engine for running it:** the engine loop of guard, choose, prepare, intend, act, confirm, read back, record, with intent before action and read-back after it ([section 207](../2-kernel/207-the-engine-loop.md)). The engine does not know what kind of system it is driving; its handling differs by archetype and never by mode ([section 201](../2-kernel/201-archetypes-and-modes.md)).
+- **One engine for running it:** the engine loop of guard, choose, prepare, intend, act, confirm, read back, record, with intent before action and read-back after it ([section 207](../2-kernel/207-the-engine-loop.md)). The engine does not know what kind of system it is driving; its handling differs by access kind and never by mode ([section 201](../2-kernel/201-access-kinds-and-modes.md)).
 
 Everything that differs between kinds of system lives in a pack ([section 202](../2-kernel/202-kernel-and-packs.md)) behind one provider contract ([section 203](../2-kernel/203-the-provider-contract.md)). A kind becomes supported only by clearing the bar a new pack must clear, set in section 202.
 
@@ -47,7 +47,7 @@ Everything that differs between kinds of system lives in a pack ([section 202](.
 
 ### Applications
 
-| Kind | Archetype | Reached through | Read-back | Discovery | Test stand | State |
+| Kind | Access kind | Reached through | Read-back | Discovery | Test stand | State |
 | --- | --- | --- | --- | --- | --- | --- |
 | Web application | Interface | The browser's DevTools protocol, by role and name; the requests the page itself makes; tools a site publishes. Modes `ui`, `page_http`, `site_tools` | The field, or the save response | Snapshots; captured traffic | The test application | Designed: the web pack, [section 301](../3-packs/301-the-web-pack.md) and [section 302](../3-packs/302-the-web-pack-browser-engine.md). Built first |
 | Desktop application | Interface | The operating system's accessibility tree. Mode `desktop` | The element's value | The accessibility tree | Test application case 28 | Designed: the desktop pack, [section 305](../3-packs/305-the-desktop-pack.md). Reads built on Linux only ([decision 0198](../../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)); Windows and macOS are owed before the first release ([decision 0208](../../decisions/0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md)) |
@@ -59,7 +59,7 @@ An application built on a browser runtime is a web surface.
 
 ### Services and protocols
 
-| Kind | Archetype | Reached through | Read-back | Discovery | Test stand | State |
+| Kind | Access kind | Reached through | Read-back | Discovery | Test stand | State |
 | --- | --- | --- | --- | --- | --- | --- |
 | HTTP interface, described or not | Request | Modes `http` and `api` | The matching read request | Published descriptions; captured traffic | The test application's JSON interface | Designed: the HTTP pack, [section 303](../3-packs/303-the-http-pack.md) |
 | Graph, procedure-call, and document-style web services | Request | `api`, from the service's published schema | The matching query | The schema; reflection where offered | Small additions to the HTTP stand | GraphQL and OData designed, as import formats of the HTTP pack; gRPC after the first release ([section 303](../3-packs/303-the-http-pack.md)); SOAP and JSON-RPC cataloged, and SOAP, whose XML answers the HTTP pack now reads, waits for XML request bodies |
@@ -71,11 +71,11 @@ An application built on a browser runtime is a web surface.
 
 ### Data
 
-| Kind | Archetype | Reached through | Read-back | Discovery | Test stand | State |
+| Kind | Access kind | Reached through | Read-back | Discovery | Test stand | State |
 | --- | --- | --- | --- | --- | --- | --- |
 | Relational database | Request | Mode `sql`: a driver for the database, with declared statements and typed parameters; never text assembled from inputs | A query by key | The database's own catalog of tables, columns, and keys, read in a read-only transaction | An embedded database with seed tables and a control interface | Designed: the data pack, [section 307](../3-packs/307-the-data-pack.md). Reads first |
 | Document and key-value stores | Request | The store's client protocol | A read by key | The store's listing of collections; sampled documents, marked `inferred` | A local instance | Cataloged. A mode of its own follows relational writes ([section 307](../3-packs/307-the-data-pack.md)) |
-| Files in known formats | Artifact | Mode `file`: reading the file, and saving by writing a new file that replaces the old one in one step | Open the saved file again | The file's own structure: sheets, named ranges, keys | Files in a temporary folder | Designed: the file pack, [section 308](../3-packs/308-the-file-pack.md) |
+| Files in known formats | File | Mode `file`: reading the file, and saving by writing a new file that replaces the old one in one step | Open the saved file again | The file's own structure: sheets, named ranges, keys | Files in a temporary folder | Designed: the file pack, [section 308](../3-packs/308-the-file-pack.md) |
 | Object storage | Request | The storage interface | Read the object's digest | Listings | A local emulator | Through the HTTP kind, which reads XML listings since [decision 0217](../../decisions/0217-the-http-pack-reads-answers-that-are-not-json.md), once it signs each request, which is not designed ([section 303](../3-packs/303-the-http-pack.md)) |
 | Queues, topics, change feeds, and logs | Stream | Mode `stream`: the broker's client protocol | Only where the system offers a read: a retained value for a key, a stored message | Channel lists; registered schemas; never consuming | A small broker with a control interface | Designed: the stream pack, [section 309](../3-packs/309-the-stream-pack.md) |
 | Search indexes | Request | The index's interface | A query by identifier | The index's mappings | A local instance | Through the HTTP kind |
@@ -84,7 +84,7 @@ An application built on a browser runtime is a web surface.
 
 ### Programs and the operating system
 
-| Kind | Archetype | Reached through | Read-back | Discovery | Test stand | State |
+| Kind | Access kind | Reached through | Read-back | Discovery | Test stand | State |
 | --- | --- | --- | --- | --- | --- | --- |
 | Command-line tool | Command | Mode `cli`: starting the program by absolute path, checked by digest and version, with typed arguments; never a shell | A declared read command | The tool's own help and version output, in the forms the target declares | `example-tool`, a small tool with a control interface | Designed: the command pack, [section 306](../3-packs/306-the-command-pack.md). The second pack to be built |
 | The same on another machine | Command | A runner on that machine, the session's home runner, which starts the program locally by the same rules. Never a remote login, which hands a line to the remote shell | As above | As above | As above | Designed, for later: [section 306](../3-packs/306-the-command-pack.md) |
@@ -96,7 +96,7 @@ An application built on a browser runtime is a web surface.
 
 [Section 310](../3-packs/310-the-device-pack.md) gives the rules and the pack. A device is reached through its own interfaces, and a firmware update only through the device's own documented mechanism ([record 0054](../../decisions/0054-devices-through-their-own-interfaces-and-firmware-through-the-devices-own-update.md)).
 
-| Kind | Archetype | Reached through | Read-back | Test stand | State |
+| Kind | Access kind | Reached through | Read-back | Test stand | State |
 | --- | --- | --- | --- | --- | --- |
 | Device with a management protocol over a network | Request | The protocol the device documents, through the request packs, under the device rules of section 310 | Read the same object | As for the request pack | Through another kind |
 | Console reached by starting a program | Command | The command pack, which starts the program locally | A declared query command | As for the command pack | Through another kind |
@@ -134,7 +134,7 @@ An application built on a browser runtime is a web surface.
 
 ## Open points
 
-- Whether every system of interest fits one of the seven archetypes. Hypothesis H-29.
+- Whether every system of interest fits one of the seven access kinds. Hypothesis H-29.
 - Whether the kernel can stay neutral once a second pack exists. Hypothesis H-26, tested by Stage D of the [long-term plan](../../plan/roadmap.md).
 - The order of building after the command pack. The data pack, reads only, is the likely next.
 - Whether the terminal kind is its own mode or an interface mode of the command pack.

@@ -1,8 +1,8 @@
 # 305. The desktop pack
 
-The desktop pack lets a target be a desktop application: a program with windows that a person uses on their own machine. It reaches the application through the operating system's accessibility interface (UI Automation on Windows, the Accessibility API on macOS, AT-SPI on Linux), finds elements by role and name, and acts on them through the interface's own patterns. It brings one mode, `desktop`, in the interface archetype. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
+The desktop pack lets a target be a desktop application: a program with windows that a person uses on their own machine. It reaches the application through the operating system's accessibility interface (UI Automation on Windows, the Accessibility API on macOS, AT-SPI on Linux), finds elements by role and name, and acts on them through the interface's own patterns. It brings one mode, `desktop`, in the interface access kind. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
-**How far it has got.** The spike of package 8.1 chose its base ([decision 0120](../../decisions/0120-the-desktop-pack-stands-on-each-systems-own-interface-through-thin-bindings.md)). Reads and writes on Linux are built ([decision 0198](../../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md), [decision 0218](../../decisions/0218-the-desktop-pack-writes-on-linux-through-a-second-closed-list-and-reads-back-what-is-stored.md)); reads on Windows are built ([decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md)); reads on macOS are built, and rest on the Accessibility permission the person grants in System Settings ([decision 0244](../../decisions/0244-the-desktop-pack-reads-macos-applications-and-proves-the-record-before-every-act.md)); both passed against the stand on CI's hosted runners ([decision 0278](../../decisions/0278-what-the-first-runs-on-windows-and-macos-showed-about-the-desktop-pack-and-the-check-of-programs.md)). Writes on Windows and macOS are written and linted, through UI Automation's value pattern and `Invoke` and through `AXValue` and `AXPress`, each by a closed list of its own, and not yet run ([decision 0399](../../decisions/0399-the-desktop-pack-writes-on-windows-and-macos-through-a-closed-list-of-its-own-on-each.md)). This section says what is settled, what is assumed, and what is still to be learned; where a later step of the build has settled a point, the crate design says so first.
+**How far it has got.** The spike of package 8.1 chose its base ([decision 0120](../../decisions/0120-the-desktop-pack-stands-on-each-systems-own-interface-through-thin-bindings.md)). Reads and writes on Linux are built ([decision 0198](../../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md), [decision 0218](../../decisions/0218-the-desktop-pack-writes-on-linux-through-a-second-closed-list-and-reads-back-what-is-stored.md)); reads on Windows are built ([decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md)); reads on macOS are built, and rest on the Accessibility permission the person grants in System Settings ([decision 0244](../../decisions/0244-the-desktop-pack-reads-macos-applications-and-proves-the-record-before-every-act.md)); both passed against the stand on CI's hosted runners ([decision 0278](../../decisions/0278-what-the-first-runs-on-windows-and-macos-showed-about-the-desktop-pack-and-the-check-of-programs.md)). Writes on Windows and macOS are written and linted, through UI Automation's value pattern and `Invoke` and through `AXValue` and `AXPress`, each by a closed list of its own, and not yet run ([decision 0399](../../decisions/0399-the-desktop-pack-writes-on-windows-and-macos-through-a-closed-list-of-its-own-on-each.md)). On Linux the pack starts the application a surface allows it to start, by path and digest, and does an action by a key as the element's own action bound to it; on all three systems `desktop_probe` says what the application is and how far the pack reaches it ([decision 0467](../../decisions/0467-the-desktop-pack-starts-an-application-a-surface-allows-does-an-action-by-a-key-the-element-binds-and-probes-its-reach.md)). This section says what is settled, what is assumed, and what is still to be learned; where a later step of the build has settled a point, the crate design says so first.
 
 The pack is one crate, `a2m-pack-desktop`. It has no base crate and depends on no other pack. Its [design](../../architecture/crates/a2m-pack-desktop.md) is the exact statement of how the code is arranged; this section says what the pack does and why.
 
@@ -10,7 +10,7 @@ The pack is one crate, `a2m-pack-desktop`. It has no base crate and depends on n
 
 | Settled | Not settled |
 | --- | --- |
-| The mode `desktop`, archetype interface ([decision 0005](../../decisions/0005-seven-modes-behind-one-driver-interface.md), [decision 0050](../../decisions/0050-seven-archetypes-and-modes-that-arrive-with-packs.md)) | The accessibility library, or libraries |
+| The mode `desktop`, access kind interface ([decision 0005](../../decisions/0005-seven-modes-behind-one-driver-interface.md), [decision 0050](../../decisions/0050-seven-archetypes-and-modes-that-arrive-with-packs.md)) | The accessibility library, or libraries |
 | Elements are found by role and name in the accessibility tree; never by position on a picture of the screen | How a window is reached: started, attached, matched by title or by process |
 | Its steps are those of `ui` except `observe` ([steps reference](../../reference/steps-snapshots-and-diffs.md#steps)) | Which conditions each operating system can signal as events |
 | Its verbs are the `desktop` column below | How a desktop application's own sign-in is kept, and by which auth provider |
@@ -50,7 +50,7 @@ Open points of this section, which note 33 marks as not read: the text and behav
 
 ## The mode
 
-| Mode | Archetype | How it reaches the system | Needs | Best for | Main risk |
+| Mode | Access kind | How it reaches the system | Needs | Best for | Main risk |
 | --- | --- | --- | --- | --- | --- |
 | `desktop` | Interface | The operating system's accessibility tree | The application running on the machine, in an interactive session | Desktop clients | Applications with poor accessibility data |
 
@@ -59,7 +59,7 @@ Open points of this section, which note 33 marks as not read: the text and behav
 | Registration | Content |
 | --- | --- |
 | Surface kinds | `desktop` |
-| Modes | `desktop`, archetype interface |
+| Modes | `desktop`, access kind interface |
 | Step kinds | `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, checked names within the mode |
 | Driver | One |
 | File kinds | Owns `screens/` for surfaces of kind `desktop`. Registration is keyed by file kind and surface kind, so the web pack's registration for `web` surfaces does not collide. `reach` takes a window match (process, title, or an automation identifier) or `from` another screen with an action. The `css` locator is not accepted; `test_id` means the interface's automation identifier |
@@ -85,7 +85,7 @@ Each verb lowers into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle
 
 | Prepare | Act | Confirm | Read back |
 | --- | --- | --- | --- |
-| The application started by path and digest, or attached as a person named it; its window found, and its process proven by identifier, start time, and program digest. The first slice finds the application already running and starts nothing ([decision 0198](../../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)) | `locate`, then `set` through the widget driver, preferring the interface's value pattern; `invoke` through its invoke pattern; no synthetic key or click until a test shows one can be bound to its window (decision 0198) | The action's declared `confirm`: a window, an element, a value | The field again, after the screen is reached afresh |
+| The application started by path and digest, or attached as a person named it; its window found, and its process proven by identifier, start time, and program digest. As built the driver finds the application already running ([decision 0198](../../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md)), and on Linux, when the surface states `start: true` and none of it runs, starts it in a run through the scoped supervisor, waits by the accessibility bus's signals for it to publish itself, and stops it if it does not by the deadline; on Windows and macOS that stops as `start_not_built` ([decision 0467](../../decisions/0467-the-desktop-pack-starts-an-application-a-surface-allows-does-an-action-by-a-key-the-element-binds-and-probes-its-reach.md)) | `locate`, then `set` through the widget driver, preferring the interface's value pattern; `invoke` through its invoke pattern; an action by a `key` of a closed list (`enter`, `escape`) as the element's own action bound to that key, on Linux, and `keys_not_built` elsewhere; no synthetic key or pointer event is ever sent (decisions 0198, 0467) | The action's declared `confirm`: a window, an element, a value | The field again, after the screen is reached afresh |
 
 - **One request at a time per desktop session.** The scheduler serializes work that changes what is on a person's screen, so two runs never type into one desktop at once ([section 204](../2-kernel/204-supervising-subsystems.md)).
 - **Before every act** the driver proves that the element is in the window and the process the step expects.
@@ -93,7 +93,7 @@ Each verb lowers into `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle
 - **Every failure says whether the act was sent.** An `invoke` of a committing action that was sent, and whose confirmation did not arrive, or after which the application exited, is `possible_commit`.
 - A control that exposes no value cannot be written except as `irreversible`.
 - **Before every set, the driver reads whether the control is enabled and whether it is settable** (offers editable text and is not read-only), and stops before sending anything, as `field_read_only`, if it is not. Built on Linux and proven against the stand with a disabled field ([decision 0336](../../decisions/0336-the-desktop-pack-states-that-it-sends-to-no-address-and-checks-that-a-field-is-enabled-before-it-sets-it.md)). On Windows the read is of the element's enabled property and the value pattern's read-only property. On macOS the driver reads `AXEnabled`, then asks the interface whether `AXValue` is settable (`AXUIElementIsAttributeSettable`, which the `objc2-application-services` bindings declare); how AppKit answers it for a field that is not editable is unproven until CI runs it ([decision 0399](../../decisions/0399-the-desktop-pack-writes-on-windows-and-macos-through-a-closed-list-of-its-own-on-each.md)).
-- **What the review says.** A binding states that it starts no program, sets no variable, and sends to no address; the pack attaches to a program that is already running, and what the program does after an action is its own (decision 0336).
+- **What the review says.** A binding states that it starts no program, sets no variable, and sends to no address; the pack attaches to a program that is already running, and what the program does after an action is its own (decision 0336). Over a surface that states `start: true` it states the program it may start, by path and digest, and the variables it passes, and does not state where it sends (decision 0467).
 
 The backend is private: one implementation per operating system, or one over a library that covers all three. It finds exactly one element or fails, reads, sets, invokes, reports events (focus, structure, value, window opened), and builds the tree for snapshots.
 
@@ -107,7 +107,7 @@ A pack may not depend on another pack's crates, so this pack cannot use the web 
 | The snapshot's text form | The steps reference. An agent reads a window and a page the same way |
 | What a driver must do | The conformance suite's groups for locating, waiting, acting, and snapshots, run against case 28 as against the web cases |
 
-The code is written twice, each over its own element handle. That is the price of the rule, and it is measured: if the second copy grows large, the parts that belong to the archetype (the `screens/` skeleton, locator ordering, condition evaluation over an abstract tree) are a candidate to move into the kernel by decision record. That would be a finding for hypotheses H-26 and H-37.
+The code is written twice, each over its own element handle. That is the price of the rule, and it is measured: if the second copy grows large, the parts that belong to the access kind (the `screens/` skeleton, locator ordering, condition evaluation over an abstract tree) are a candidate to move into the kernel by decision record. That would be a finding for hypotheses H-26 and H-37.
 
 ## Sessions and sign-in
 
@@ -117,7 +117,7 @@ A desktop application's own sign-in lives inside the application, in the runner'
 
 | Discoverer | Reads | Finding |
 | --- | --- | --- |
-| `desktop_probe` | The program, its version and digest, and how many controls have no name | A surface, with a support tier |
+| `desktop_probe` | The program, the digest of its file, how many windows and controls the application shows and how many controls have no name; its version is not read, as no accessibility interface gives it. Built on all three systems (decision 0467) | A surface, with a support tier: `unsupported` with no window, `partial` when a control has no name or a walk stopped at its bound, `full` otherwise |
 | `desktop_snapshot` | The window's accessibility tree | Screens, fields, actions |
 | `desktop_bundle` | The files of a macOS application's bundle a person hands the scout under `bundle`: `Contents/Info.plist` (XML or binary) and the scripting dictionary it names | The application's identity, URL schemes, document types, services, and its dictionary's suites, commands, events, classes, and each class property with the access the dictionary states |
 | `desktop_management` | On Windows, the definition of the management class the surface's `management_class` names, asked of the system's management service | The class's properties, each with its type and whether the definition marks it writable, its methods, and whether it is a singleton |
@@ -132,7 +132,7 @@ Both read the tree and never invoke, expand, or focus anything. What is hidden b
 
 `desktop_management` asks for the definition of one class and never for an instance; on any other system it stops with `system_not_built`. `desktop_com` reads a type library as bytes with a library taken whole and fuzzed, and never loads it through the system; only the MSFT form is read, and any other is the named stop `type_library_format_unknown`. From a singleton class's property the definition does not mark writable, and from a dispatch interface's property get, the pack drafts a `read`, binding `management: {surface, class, name}` or `com: {surface, interface, name}`. The drafts compile and are not run: this version carries out no `management_get` or `com_get` step, and says so by the named stop `step_not_built` ([decision 0333](../../decisions/0333-the-desktop-pack-reads-a-management-classs-definition-and-a-com-type-library-and-drafts-reads-that-it-does-not-yet-run.md)).
 
-The drafting rules are as for the web: from a window's snapshot, a screen model with fields, roles, names, and locators; field types and every action left as open questions. As built ([decision 0462](../../decisions/0462-a-desktop-table-of-cells-is-read-by-the-column-count-it-states-and-a-title-two-windows-show-to-differ-becomes-a-pattern.md), from field test 10's findings 57 to 60):
+The drafting rules are as for the web: from a window's snapshot, a screen model with fields, roles, names, and locators; field types and every action left as open questions. As built ([decision 0462](../../decisions/0462-a-desktop-table-of-cells-is-read-by-the-column-count-it-states-and-a-title-two-windows-show-to-differ-becomes-a-pattern.md), from copy test 10's findings 57 to 60):
 
 - **Values.** A labelled `entry`, `text`, or `spin_button` the window names once is a field of one `get` read; a spin button only when the snapshot says it gives its value as text, and one that does not is named in the read's description.
 - **Tables.** Each table the window names once, and the one it gives no name, is a screen and a `list` read. A table of rows is read as before. A table whose column headers and cells are its own children, as GTK 3 publishes one, is read only by the column count its system states (on Linux, AT-SPI's `Table` interface): that many headings first, then that many cells to a row. One that states no count is never read, by a draft or a screen written by hand: the read stops as `fingerprint_mismatch` and says why. A table with no name is located by its headings alone: its screen's `rows` has no `locate`.
@@ -171,6 +171,9 @@ Hazards come from operations ([section 213](../2-kernel/213-effects-hazards-and-
 | `unknown_variant` | `field_read_only`, `unexpected_control`, `value_not_held` | A field takes no value today; an element offers no editable text or no action of the declared name; a field holds, after `set`, another value than the one set: stopped before anything is saved |
 | `policy` | `password_set_refused` | A step would set a control that holds a secret |
 | `busy` | `writes_not_built` | A write on a system whose acting half is not built: any but Linux, Windows, and macOS. Nothing is sent |
+| `busy` | `start_not_built`, `keys_not_built` | A surface allows a start and no application of it runs, or an action is done by a key, on a system where it is not built: any but Linux. Nothing is started or pressed (decision 0467) |
+| `busy` | `application_not_started` | The pack started the surface's program and no application of it published itself by the deadline; the pack stopped it (decision 0467) |
+| `policy` | `program_refused` | The program a surface allows the pack to start is missing, a shell, an interpreter, or a script, or another user can replace it; nothing is started (decision 0467) |
 | `possible_commit` | `no_confirmation` | An `invoke` of a committing action was sent and its confirmation did not arrive, or the application exited. A resume reads the stored value before it writes again |
 | `busy` | `session_in_use` | A person is using the desktop and the target does not allow sharing it; or another write of the engine held the desktop past the step's deadline |
 | `busy` | `runner_unavailable` | No interactive desktop session |
@@ -207,7 +210,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 | --- | --- | --- |
 | 1 | A driver, no retries inside | The `desktop` driver |
 | 2 | Read-back for every write | The element's value after the screen is reached again, where the window shows what is stored, never the field typed into. A field written that no output reads back compiles only as `irreversible` (`desktop.unreadable_write`, decision 0218) |
-| 3 | Each identity strategy | As for `ui`: `natural` and `composite` through a screen reached by key; `stamped` and `find` through a list or search window; `none` as `irreversible` |
+| 3 | Each record matching | As for `ui`: `natural` and `composite` through a screen reached by key; `stamped` and `find` through a list or search window; `none` as `irreversible` |
 | 4 | A test stand | Case 28 |
 | 5 | A discoverer | `desktop_probe` and `desktop_snapshot` |
 | 6 | Failures mapped | The table above |
@@ -218,7 +221,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 
 1. Slice 8.1, in `spikes/`, with brief 19: on each operating system, read a simple program's tree, find a text field by name, set it, and read it back. A decision record on the library ([research note 09](../../research/09-rust-building-blocks.md) lists candidates, none verified by use).
 2. Case 28, with its control interface.
-3. Package 8.3: reads, with `desktop_snapshot` (built on Linux, decision 0198, and on Windows, [decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md), where it is proven only once CI's Windows runner has run it, and on macOS, decision 0244, likewise); then writes with read-back, `update` and `upsert`, built on Linux ([decision 0218](../../decisions/0218-the-desktop-pack-writes-on-linux-through-a-second-closed-list-and-reads-back-what-is-stored.md)) and written for Windows and macOS (decision 0399), proven there once CI's runners have run them; then the remaining widget drivers one test at a time. It also waits on package D4: the command pack's count of kernel changes says whether the kernel is ready for another pack.
+3. Package 8.3: reads, with `desktop_snapshot` (built on Linux, decision 0198, and on Windows, [decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md), where it is proven only once CI's Windows runner has run it, and on macOS, decision 0244, likewise); then writes with read-back, `update` and `upsert`, built on Linux ([decision 0218](../../decisions/0218-the-desktop-pack-writes-on-linux-through-a-second-closed-list-and-reads-back-what-is-stored.md)) and written for Windows and macOS (decision 0399), proven there once CI's runners have run them; then starting an application, an action by a key, and `desktop_probe` (decision 0467: the first two built on Linux, the third on all three systems); then the remaining widget drivers one test at a time. It also waits on package D4: the command pack's count of kernel changes says whether the kernel is ready for another pack.
 
 ## Open points
 

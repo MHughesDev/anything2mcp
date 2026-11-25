@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-25
 
-**Changes:** `tools/field_test.py` and its tests; a new file `tools/field-box/desktop-session.sh`; the [field harness's design](../architecture/crates/a2m-field-harness.md); roadmap FT5 and its rows in the [Build Order](../plan/build-order.md); the [field test results](../reviews/field-tests.md), field test 10.
+**Changes:** `tools/field_test.py` and its tests; a new file `tools/field-box/desktop-session.sh`; the [field harness's design](../architecture/crates/a2m-copy-test-harness.md); roadmap FT5 and its rows in the [Build Order](../plan/build-order.md); the [field test results](../reviews/field-tests.md), field test 10.
 
 ## Context
 

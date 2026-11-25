@@ -34,7 +34,7 @@
   "bridge": {
    "name": "Stdio Proxy",
    "group": "Thin Client",
-   "where": "anything2mcp bridge",
+   "where": "anything2mcp stdio",
    "state": "b",
    "text": "A small program an MCP client starts. It carries MCP messages over standard input and output to the running engine and back. It holds no logic. If no engine is running it answers with a named failure until one is.",
    "rows": [
@@ -518,7 +518,7 @@
     [
      "pages-field-build",
      "pages-field-prompt",
-     "the field build's own prompt",
+     "the copy test harness's own prompt",
      "use"
     ],
     [
@@ -554,7 +554,7 @@
      ]
     },
     {
-     "text": "If the prompt succeeds, the approval desk records an approval bound to the diff hash, usable once.",
+     "text": "If the prompt succeeds, the approval recorder records an approval bound to the diff hash, usable once.",
      "at": [
       "pages-desk"
      ]
@@ -575,7 +575,7 @@
    "stepsTitle": "Approval Sequence",
    "decided": [
     "Publishing keeps the presence prompt for every version, reads included. A proposal to drop it for read-only versions was reviewed and rejected: a trial runs in a sandbox with every guard against writing on, and a published read runs live with them off.",
-    "A field test signs in and approves through a field build, a second program that is never packaged, with its own field prompt. Not: a setting of the product that turns the presence prompt off (0304).",
+    "A copy test signs in and approves through a copy test harness, a second program that is never packaged, with its own copy test prompt. Not: a setting of the product that turns the presence prompt off (0304).",
     "The publish page shows each gate as passed, failed or not built, and each tool's level, lowest first. Not: a page that lists only the gates that passed (0307).",
     "The publish page lists the surfaces first and marks each new address where it lists it, from the registry's comparison. Not: the new places in a section of their own, or matched against the addresses by the page (0418)."
    ]
@@ -1778,7 +1778,7 @@
    ],
    "rows": [
     {
-     "title": "Scout Pipeline",
+     "title": "Scout Run",
      "cols": [
       {
        "title": "Observation Stage",
@@ -2076,7 +2076,7 @@
    "group": "Kernel",
    "where": "a2m-engine, a2m-actions",
    "state": "p",
-   "text": "A watch repeats a published read at an interval a person confirmed and reports what changed. A canary is a small read that runs before real work to catch a system that has changed. Watches are partly built. Canaries on a schedule of their own, and the rest of watches (records compared by key, the MCP resource, the REST stream), wait until after the first release.",
+   "text": "A watch repeats a published read at an interval a person confirmed and reports what changed. A canary is a small read that runs before real work to catch a system that has changed. Watches are partly built: records are compared by key, and each watch is an MCP resource an agent subscribes to and a REST change stream. Canaries on a schedule of their own, and the retention of watches, which waits on the retention of runs, are not built.",
    "rows": [
     {
      "title": "Watch Creation",
@@ -2208,7 +2208,8 @@
    ],
    "stepsTitle": "Watch Lifecycle",
    "decided": [
-    "Canaries on a schedule of their own move after the first release: a canary nobody asked for sends requests nobody confirmed, and a stopped tool is shown by its mark. Not: build them before it, as 0390 first said (0397)."
+    "Canaries on a schedule of their own move after the first release: a canary nobody asked for sends requests nobody confirmed, and a stopped tool is shown by its mark. Not: build them before it, as 0390 first said (0397).",
+    "A watch is an MCP resource, the face of watch.changes, and an agent subscribes to it with subscriptions/listen; its changes are followed through the kernel with no decision for each wait. Not: a resource handler of the MCP door's own, or a subscription that calls watch.changes in a loop (0478)."
    ]
   },
   "contract": {
@@ -3949,7 +3950,7 @@
     [
      "proj-source-defs",
      "proj-pipelines",
-     "how a handed file is read and mapped",
+     "how a input file is read and mapped",
      "use"
     ]
    ],
@@ -3990,7 +3991,7 @@
      ]
     },
     {
-     "text": "Files for a pipeline to read, and descriptions handed to the scout, are the Handed Files, in the project's sources/ folder. A target's own sources/ folder holds the Source Definitions. Live sessions and the store are not in the project at all.",
+     "text": "Files for a pipeline to read, and descriptions handed to the scout, are the Input Files, in the project's sources/ folder. A target's own sources/ folder holds the Source Definitions. Live sessions and the store are not in the project at all.",
      "at": [
       "proj-sources"
      ]
@@ -4684,7 +4685,7 @@
    "group": "Foundation",
    "where": "a2m-core",
    "state": "b",
-   "text": "The shared words as types: archetypes, effect classes, hazards, failure classes, evidence levels, statuses, and the compiled target's shape. A test holds their names to the documents.",
+   "text": "The shared words as types: access kinds, effect classes, hazards, failure classes, evidence levels, statuses, and the compiled target's shape. A test holds their names to the documents.",
    "rows": [
     {
      "title": "Vocabulary Types",
@@ -4889,9 +4890,9 @@
    "stepsTitle": "Expression Lifecycle"
   },
   "telemetry": {
-   "name": "Telemetry",
+   "name": "Logs and Traces",
    "group": "Foundation",
-   "where": "a2m-telemetry",
+   "where": "a2m-logs",
    "state": "b",
    "text": "Logs and traces, with every registered secret removed before anything is written. Nothing is sent off the machine unless a person switches it on.",
    "rows": [
@@ -4941,7 +4942,7 @@
     [
      "tel-capture",
      "tel-redact",
-     "artifacts chosen to be kept",
+     "captures chosen to be kept",
      "path",
      2
     ],
@@ -4967,7 +4968,7 @@
      ]
     },
     {
-     "text": "A capture level, set by the compiled target and policy, says which artifacts are kept.",
+     "text": "A capture level, set by the compiled target and policy, says which captures are kept.",
      "at": [
       "tel-capture"
      ]
@@ -5070,7 +5071,7 @@
      ]
     },
     {
-     "text": "Network Standing joins interfaces and routes: what kind of place each address is, and which interface carries each address family's preferred default.",
+     "text": "Place Reading joins interfaces and routes: what kind of place each address is, and which interface carries each address family's preferred default.",
      "at": [
       "net-standing"
      ]
@@ -6413,7 +6414,7 @@
    "name": "Record Lookup",
    "group": "Kernel",
    "state": "b",
-   "text": "Evaluates the record's inputs, finds it by its identity strategy (natural, composite, stamped, find or none) using the write binding's own read-back, and marks it create, update or unchanged. What it finds is kept as the values seen before.",
+   "text": "Evaluates the record's inputs, finds it by its record matching (natural, composite, stamped, find or none) using the write binding's own read-back, and marks it create, update or unchanged. What it finds is kept as the values seen before.",
    "where": "a2m-engine: src/tool.rs"
   },
   "engine-pre-diff": {
@@ -6808,7 +6809,7 @@
    ]
   },
   "engine-control": {
-   "name": "Control",
+   "name": "Control Port",
    "group": "Kernel",
    "state": "b",
    "text": "The one interface through which the engine reaches everything outside its loop: the compiled target by hash, the policy decision, a session lease, rate budgets, locks, intents, acted, verified, approval. In one process the action registry answers; on another machine a runner answers over a link. The same tests run against both.",
@@ -7089,7 +7090,7 @@
    "where": "a2m-ledger"
   },
   "ledger-rule-8": {
-   "name": "Terminal Finality",
+   "name": "Final State Rule",
    "group": "Ledger Rule",
    "state": "b",
    "text": "A run in a final state never changes again.",
@@ -7298,7 +7299,7 @@
    "where": "a2m-auth: src/keeper.rs"
   },
   "keeper-ladder": {
-   "name": "Renewal Ladder",
+   "name": "Renewal Order",
    "group": "Kernel",
    "state": "b",
    "text": "Silent first, then a light prompt, then a full sign-in; a rung is never repeated. Only the keeper renews, and once per session, so two refreshes cannot cancel each other. A stored credential is tried once; if refused the session goes to needs_person.",
@@ -7394,7 +7395,7 @@
    "where": "a2m-actions: src/def.rs"
   },
   "reg-catalog": {
-   "name": "Recorded Catalog",
+   "name": "Action Catalog",
    "group": "Kernel",
    "state": "p",
    "text": "The list of actions with a digest. Every face is generated from it and checked against it, so a face cannot drift from the list. Each release keeps what it publishes in contracts/<version>/, the API description, failure codes, vocabularies, settings keys and the example's compiled target, and every build is checked against every kept release; a break passes only where the next release lists it with its record. No release is kept yet.",
@@ -7609,7 +7610,7 @@
    "text": "Add and probe a target, detect the sign-in, take a snapshot, read and write and lint and try drafts, run the tests, record a fixture, compare versions, request publication. Ask for a capture of a person's use, which the person begins and ends on the engine's page (capture.start, capture.stop). draft.ready takes every read a trial in this project read a value through, the scout's or the caller's own, records its fixture, promotes its first binding on the fixture's own trial, runs the gates, and asks for the publish, which stays the person's act on the page. endpoints.infer has no handler.",
    "where": "a2m-actions",
    "decided": [
-    "The add shortcut takes the description a person has, with a file option that puts it in the Handed Files, and ends at the report; each proven read in the report carries the call that reads it. Not: a new action that lists what can be tried (0306).",
+    "The add shortcut takes the description a person has, with a file option that puts it in the Input Files, and ends at the report; each proven read in the report carries the call that reads it. Not: a new action that lists what can be tried (0306).",
     "The steps between a proven read and a publish are one action, draft.ready: for each proven read it records the fixture, promotes the first binding and runs the gates, each by the existing action's own handler. It never touches a write, a held draft or an unproven read. Not: a shortcut of fixed actions, or folding the steps into add (0401).",
     "draft.ready takes the caller's own trial too, promotes on the fixture's own trial, and asks for the publish, answering needs_person with the page's link. Not: the scout's proven reads alone and no publish request, as 0401 had it, or promote on the trial the read was made ready from, which may have gone (0443).",
     "capture.start with no capture asks, and the same action with the capture's identifier and a proof of presence begins it, from the page. Not: a separate confirm action that only the page calls, as watches have (0433)."
@@ -7690,17 +7691,17 @@
    "where": "a2m-actions: src/paths.rs"
   },
   "proj-sources": {
-   "name": "Handed Files",
+   "name": "Input Files",
    "group": "Project File",
    "state": "b",
-   "text": "The files in the project's sources folder: what a person gives a scout or a pipeline, such as a spreadsheet for a pipeline to read or a description the system publishes about itself. Named from the project folder and never compiled. A path outside it, a hidden file or a link is refused. Not the Source Definitions, which are a target's own files.",
+   "text": "The files in the project's inputs folder: what a person gives a scout or a pipeline, such as a spreadsheet for a pipeline to read or a description the system publishes about itself. Named from the project folder and never compiled. A path outside it, a hidden file or a link is refused. Not the Source Definitions, which are a target's own files.",
    "where": "a2m-files: src/source.rs",
    "never": [
     "Read a file outside the folder."
    ],
    "decided": [
     "Handing the add shortcut a description puts the file here and gives it to the scout under the name description. Not: a separate way of giving a file to the scout (0306).",
-    "The project's sources folder is named Handed Files: what a person gives a scout or a pipeline, never compiled. The files under a target's sources folder are the Source Definitions. Neither folder is renamed on disk. Not: rename the project's folder (0309)."
+    "The project's inputs folder is named Input Files: what a person gives a scout or a pipeline, never compiled. The files under a target's sources folder are the Source Definitions. Neither folder is renamed on disk. Not: rename the project's folder (0309)."
    ]
   },
   "proj-target": {
@@ -7803,7 +7804,7 @@
    "where": "a2m-files: src/compile.rs"
   },
   "compiled-target-lower": {
-   "name": "Lowering",
+   "name": "Step Expansion",
    "group": "Compiler",
    "state": "b",
    "text": "Turns each binding's verb into the fixed list of steps its driver will run, using the lowering its pack registered. Fails on a mode or verb nobody registered.",
@@ -7842,7 +7843,7 @@
    ]
   },
   "compiled-target-emit": {
-   "name": "Emission",
+   "name": "Output Writing",
    "group": "Compiler",
    "state": "b",
    "text": "Writes the compiled target as canonical JSON (sorted keys, no spaces, whole numbers only) and takes its hash. The same files and compiler version give identical bytes.",
@@ -7899,7 +7900,7 @@
    "name": "Discovery",
    "group": "Scout",
    "state": "p",
-   "text": "Runs the enabled discoverers for each surface as one discovery job inside the engine's sandbox. A discoverer can only read. A person may hand it files from the Handed Files, which are checked when asked and again before use.",
+   "text": "Runs the enabled discoverers for each surface as one discovery job inside the engine's sandbox. A discoverer can only read. A person may hand it files from the Input Files, which are checked when asked and again before use.",
    "where": "a2m-actions: src/handlers/scout.rs",
    "never": [
     "Write to the system."
@@ -7912,7 +7913,7 @@
    "text": "Sets what a system describes against what was observed. An endpoint present in a description and never seen is reported as inferred. Each difference is a finding or an open question. The rest of it waits until after the first release.",
    "where": "a2m-actions: src/handlers/scout.rs",
    "decided": [
-    "The comparison stage, and the scout's own budget, wait until after the first release: no field test has both a description and a capture (0397, 0400)."
+    "The comparison stage, and the scout's own budget, wait until after the first release: no copy test has both a description and a capture (0397, 0400)."
    ]
   },
   "scout-draft": {
@@ -8168,7 +8169,7 @@
    "name": "Manifest",
    "group": "Provider Contract",
    "state": "b",
-   "text": "One TOML file per provider. It lists the modes with their archetype, steps, exclusive resource and, where one needs longer than 30 seconds, how long its prepare may take (prepare_within_ms, at most ten minutes), surface kinds, file kinds, finding kinds, lint rules, drafting rules, failure codes (each with one class), actions, effects (processes, read and write roots, network, sessions), requirements from the machine, platforms and settings. A provider asks for nothing it did not declare, and the registry is checked against it.",
+   "text": "One TOML file per provider. It lists the modes with their access kind, steps, exclusive resource and, where one needs longer than 30 seconds, how long its prepare may take (prepare_within_ms, at most ten minutes), surface kinds, file kinds, finding kinds, lint rules, drafting rules, failure codes (each with one class), actions, effects (processes, read and write roots, network, sessions), requirements from the machine, platforms and settings. A provider asks for nothing it did not declare, and the registry is checked against it.",
    "where": "a2m-provider: src/manifest.rs",
    "never": [
     "Let a provider do more than it declared."
@@ -8181,7 +8182,7 @@
    "name": "Provider Registry",
    "group": "Provider Contract",
    "state": "b",
-   "text": "One immutable snapshot of every provider, its modes and the objects each supplied, built once at start and replaced whole when a provider is switched. It refuses two providers that register one mode with different archetypes, and two packs that own one kind for one surface kind.",
+   "text": "One immutable snapshot of every provider, its modes and the objects each supplied, built once at start and replaced whole when a provider is switched. It refuses two providers that register one mode with different access kinds, and two packs that own one kind for one surface kind.",
    "where": "a2m-provider: src/registry.rs",
    "never": [
     "Hold a list of modes by name in the kernel."
@@ -8437,11 +8438,11 @@
     "Accept a press from the page alone."
    ],
    "decided": [
-    "The product's presence prompt is the one door an approval rests on and has no setting that opens it; a field test uses the field prompt of the field build instead. Not: a setting that turns this prompt off (0304)."
+    "The product's presence prompt is the one door an approval rests on and has no setting that opens it; a copy test uses the copy test prompt of the copy test harness instead. Not: a setting that turns this prompt off (0304)."
    ]
   },
   "pages-desk": {
-   "name": "Approval Desk",
+   "name": "Approval Recorder",
    "group": "Person Surface",
    "state": "b",
    "text": "Records an approval only when the presence prompt succeeded. It is not exposed through the local channel, so no command, tool or route can approve. It also ends a capture its person stops on the page, end_capture, and nothing else.",
@@ -8544,7 +8545,7 @@
    "where": "a2m-sched: src/watch.rs"
   },
   "watch-check": {
-   "name": "Check",
+   "name": "Watch Check",
    "group": "Watches",
    "state": "p",
    "text": "An ordinary run of the read under the person's session. A watch changes nothing in the system: it reads only.",
@@ -9400,7 +9401,7 @@
    ],
    "steps": [
     {
-     "text": "The description arrives as a file the person put among the Handed Files, or is fetched from the surface by a read-only request.",
+     "text": "The description arrives as a file the person put among the Input Files, or is fetched from the surface by a read-only request.",
      "at": [
       "hd-source"
      ]
@@ -9435,7 +9436,7 @@
    "name": "Description Source",
    "group": "HTTP Pack",
    "state": "b",
-   "text": "Takes a description given as a file from the Handed Files, or asks the surface for it with GET, HEAD or OPTIONS only. The discoverer is handed a read client that can build nothing else.",
+   "text": "Takes a description given as a file from the Input Files, or asks the surface for it with GET, HEAD or OPTIONS only. The discoverer is handed a read client that can build nothing else.",
    "where": "a2m-pack-http: src/discover.rs",
    "never": [
     "Send anything that could write."
@@ -9452,7 +9453,7 @@
    "name": "Description Parser",
    "group": "HTTP Pack",
    "state": "b",
-   "text": "Reads OpenAPI 3.0 and 3.1 and Swagger 2.0 within bounds. The first field test found the older Swagger form was refused; it is now read. GraphQL and OData descriptions are in the design.",
+   "text": "Reads OpenAPI 3.0 and 3.1 and Swagger 2.0 within bounds. The first copy test found the older Swagger form was refused; it is now read. GraphQL and OData descriptions are in the design.",
    "where": "a2m-pack-http: src/openapi.rs"
   },
   "hd-findings": {
@@ -9607,7 +9608,7 @@
    "name": "Unique Names",
    "group": "HTTP Pack",
    "state": "b",
-   "text": "No two drafted tools share a name or a file. This was fixed after the first field test found two drafts with one name.",
+   "text": "No two drafted tools share a name or a file. This was fixed after the first copy test found two drafts with one name.",
    "where": "a2m-pack-http: src/draft.rs"
   },
   "http-driver": {
@@ -10395,7 +10396,7 @@
    "name": "Closed Vocabularies",
    "group": "Kernel",
    "state": "b",
-   "text": "Archetypes, effect classes, hazards, failure classes, evidence levels and states, each an enum whose names are the documents' names. A test holds the two together.",
+   "text": "Access Kinds, effect classes, hazards, failure classes, evidence levels and states, each an enum whose names are the documents' names. A test holds the two together.",
    "where": "a2m-core: src/vocabulary.rs"
   },
   "core-names": {
@@ -10474,28 +10475,28 @@
    "group": "Kernel",
    "state": "b",
    "text": "The record of each step of a run, in JSON Lines. The ledger stores the resulting blob; this crate defines its form.",
-   "where": "a2m-telemetry: src/trace"
+   "where": "a2m-logs: src/trace"
   },
   "tel-capture": {
    "name": "Capture Levels",
    "group": "Kernel",
    "state": "b",
-   "text": "Given a level, decides which artifacts are kept and in what form, before anything is written. It applies a level; the compiled target and policy choose it.",
-   "where": "a2m-telemetry: src/collect.rs"
+   "text": "Given a level, decides which captures are kept and in what form, before anything is written. It applies a level; the compiled target and policy choose it.",
+   "where": "a2m-logs: src/collect.rs"
   },
   "tel-signature": {
    "name": "Trace Signature",
    "group": "Kernel",
    "state": "b",
    "text": "Which parts of a record enter the signature, in what order, and how they are hashed, so runs can be compared.",
-   "where": "a2m-telemetry: src/trace"
+   "where": "a2m-logs: src/trace"
   },
   "tel-redact": {
    "name": "Capture Redaction",
    "group": "Kernel",
    "state": "b",
    "text": "Runs what is captured through the redactor and checks again on the way out. It does not paint over an image; the pack that took the picture does.",
-   "where": "a2m-telemetry: src/collect.rs",
+   "where": "a2m-logs: src/collect.rs",
    "never": [
     "Keep a secret."
    ]
@@ -10505,14 +10506,14 @@
    "group": "Kernel",
    "state": "b",
    "text": "One list of headers an exchange may record, for every pack. Others are dropped.",
-   "where": "a2m-telemetry: src/headers.rs"
+   "where": "a2m-logs: src/headers.rs"
   },
   "tel-spans": {
    "name": "Spans and Metrics",
    "group": "Kernel",
    "state": "b",
    "text": "Spans and counters with a closed set of attributes that cannot carry a value, a snapshot or a secret. Export to an outside collector is off unless a person switches it on, and is not built.",
-   "where": "a2m-telemetry: src/telemetry.rs",
+   "where": "a2m-logs: src/logs_and_traces.rs",
    "never": [
     "Send anything off the machine unless switched on."
    ]
@@ -10522,7 +10523,7 @@
    "group": "Kernel",
    "state": "b",
    "text": "Structured, levelled, rotated by size and redacted.",
-   "where": "a2m-telemetry: src/log.rs"
+   "where": "a2m-logs: src/log.rs"
   },
   "net-interfaces": {
    "name": "Network Interfaces",
@@ -10567,7 +10568,7 @@
    "where": "a2m-netstate: src/sys"
   },
   "net-standing": {
-   "name": "Network Standing",
+   "name": "Place Reading",
    "group": "Kernel",
    "state": "b",
    "text": "Where this machine stands: the kind of place each address is, and which interface carries each address family's preferred default route. Served as a listed read of the local user.",
@@ -10619,7 +10620,7 @@
     "Guess which column is which."
    ],
    "decided": [
-    "The mapping comes from the Source Definitions, a target's own files, and not from the Handed Files. Not: one name for both folders (0309)."
+    "The mapping comes from the Source Definitions, a target's own files, and not from the Input Files. Not: one name for both folders (0309)."
    ]
   },
   "src-typing": {
@@ -10704,25 +10705,25 @@
    ]
   },
   "pages-field-build": {
-   "name": "Field Harness",
+   "name": "Copy Test Harness",
    "group": "Person Surface",
-   "where": "tools/field-harness/, a workspace program built from the product crate's library",
+   "where": "tools/copy-test-harness/, a workspace program built from the product crate's library",
    "state": "t",
-   "text": "A second program that is the product's own serve in every part but one: the command line's Host carries the Field Prompt, which the shipped program never sets. It runs in a container on a network with no route out, beside copies of systems the field-test runner started with invented data; at start it refuses to serve if a public address answers. The runner builds it into a folder of its own and deletes it after the run, and the packaging check fails when a wheel or npm package holds any binary but the expected ones. Not built; roadmap package FT4 (decision 0310).",
+   "text": "A second program that is the product's own serve in every part but one: the command line's Host carries the Copy Test Prompt, which the shipped program never sets. It runs in a container on a network with no route out, beside copies of systems the field-test runner started with invented data; at start it refuses to serve if a public address answers. The runner builds it into a folder of its own and deletes it after the run, and the packaging check fails when a wheel or npm package holds any binary but the expected ones. Not built; roadmap package FT4 (decision 0310).",
    "never": [
     "Ship in a wheel or an npm package.",
     "Serve when a public address can be reached."
    ],
    "decided": [
-    "The harness runs in a closed container network and says in the ledger what it is (decision 0310). Not: a field build that passed an approval named in a file (decision 0304, superseded: any program running as the user could write the file)."
+    "The harness runs in a closed container network and says in the ledger what it is (decision 0310). Not: a copy test harness that passed an approval named in a file (decision 0304, superseded: any program running as the user could write the file)."
    ]
   },
   "pages-field-prompt": {
-   "name": "Field Prompt",
+   "name": "Copy Test Prompt",
    "group": "Person Surface",
-   "where": "a2m-local (FieldPrompt), built only by the Field Harness",
+   "where": "a2m-local (CopyTestPrompt), built only by the Copy Test Harness",
    "state": "p",
-   "text": "The presence prompt of the Field Harness. It writes the prompt's text to the runner's pipe and passes only when the runner answers with the short hash it showed; the ledger records the presence as field_harness, never as an operating system's prompt. It refuses an approval of an irreversible operation, and one whose effect it was not told, without asking. Built in a2m-local; the harness that uses it is roadmap package FT4.",
+   "text": "The presence prompt of the Copy Test Harness. It writes the prompt's text to the runner's pipe and passes only when the runner answers with the short hash it showed; the ledger records the presence as field_harness, never as an operating system's prompt. It refuses an approval of an irreversible operation, and one whose effect it was not told, without asking. Built in a2m-local; the harness that uses it is roadmap package FT4.",
    "never": [
     "Pass an approval the runner did not name.",
     "Approve an irreversible operation.",
@@ -10737,9 +10738,9 @@
    "group": "Project File",
    "where": "a2m-files and a2m-sources",
    "state": "p",
-   "text": "The files under a target's sources/ folder: how a kind of handed file is read and mapped, with readers, template fingerprints and mappings. They are compiled with the target. Not the Handed Files, which are in the project's own sources folder and are never compiled.",
+   "text": "The files under a target's sources/ folder: how a kind of input file is read and mapped, with readers, template fingerprints and mappings. They are compiled with the target. Not the Input Files, which are in the project's own sources folder and are never compiled.",
    "never": [
-    "Be mistaken for the Handed Files."
+    "Be mistaken for the Input Files."
    ],
    "decided": [
     "The two folders each have a proper name and neither is renamed on disk. Not: rename the project's folder (0309)."

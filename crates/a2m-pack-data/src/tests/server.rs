@@ -10,11 +10,11 @@ use std::time::Duration;
 
 use a2m_auth::{
     AskPerson, AuthEntry, CredentialRef, InProcessWork, Keeper, KeeperWorker, LeaseRequest,
-    PersonAnswer, PersonAsk, ProbeOutcome, ProviderSet, Purpose, RunProbe, SessionKey,
-    SessionLease, SessionRef, SessionStore, StoredCredentials, Wait,
+    PersonAnswer, PersonAsk, ProviderSet, Purpose, RunSessionCheck, SessionCheckOutcome,
+    SessionKey, SessionLease, SessionRef, SessionStore, StoredCredentials, Wait,
 };
 use a2m_core::{
-    AccountName, Archetype, CompiledBinding, CompiledTarget, Decimal, DecisionId, Environment,
+    AccessKind, AccountName, CompiledBinding, CompiledTarget, Decimal, DecisionId, Environment,
     Epoch, FailureClass, Finding, Identity, NoSecrets, PackPayload, RecordKey, RunId, Secret,
     TargetName, Value, Values, WorkspaceId,
 };
@@ -70,11 +70,11 @@ impl AskPerson for NoPerson {
     }
 }
 
-struct SignedInProbe;
+struct SignedInCheck;
 
-impl RunProbe for SignedInProbe {
-    fn probe<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
-        Box::pin(async { ProbeOutcome::SignedIn })
+impl RunSessionCheck for SignedInCheck {
+    fn check_session<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, SessionCheckOutcome> {
+        Box::pin(async { SessionCheckOutcome::SignedIn })
     }
 }
 
@@ -90,7 +90,7 @@ struct Signed {
 impl Signed {
     async fn new(user: &str, password: &str) -> Self {
         let config = a2m_ledger::StoreConfig::in_memory()
-            .with_clock(Arc::new(a2m_telemetry::ManualClock::starting_at(
+            .with_clock(Arc::new(a2m_logs::ManualClock::starting_at(
                 a2m_core::Timestamp::from_unix_millis(1_800_000_000_000),
             )))
             .with_random(super::counted());
@@ -101,7 +101,7 @@ impl Signed {
             super::counted(),
         ));
         store.attach(Arc::clone(&vault)).await.unwrap();
-        let clock = Arc::new(a2m_telemetry::ManualClock::starting_at(
+        let clock = Arc::new(a2m_logs::ManualClock::starting_at(
             a2m_core::Timestamp::from_unix_millis(1_800_000_000_000),
         ));
         let sessions = SessionStore::new(store.clone());
@@ -116,7 +116,7 @@ impl Signed {
         let work = Arc::new(InProcessWork::new(
             Arc::clone(&worker),
             Arc::new(NoPerson),
-            Arc::new(SignedInProbe),
+            Arc::new(SignedInCheck),
         ));
         let keeper = Keeper::builder(sessions, providers, work, clock)
             .local_worker(worker)
@@ -294,6 +294,7 @@ impl ServerScene {
             destinations: &destinations,
             paths: &CheckedPaths::none(),
             supervisor: &supervisor,
+            confirmed: a2m_provider::ConfirmedReads::none(),
         };
         handle.prepare(&cx, Some(&lease)).await
     }
@@ -864,6 +865,7 @@ async fn a_server_off_the_loopback_address_or_with_no_session_is_refused_before_
             destinations: &destinations,
             paths: &CheckedPaths::none(),
             supervisor: &supervisor,
+            confirmed: a2m_provider::ConfirmedReads::none(),
         };
         let failure = handle.prepare(&cx, None).await.map(|_| ()).unwrap_err();
         assert_eq!(failure.failure.code(), code, "{address}");
@@ -1199,7 +1201,7 @@ async fn discovery_reads_the_servers_catalog_and_drafts_reads_only() {
     };
     let description = SurfaceDescription {
         kind: DATABASE_SERVER,
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -1299,7 +1301,7 @@ async fn the_drafted_list_returns_the_servers_rows_column_by_column_through_the_
     };
     let description = SurfaceDescription {
         kind: DATABASE_SERVER,
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -1420,7 +1422,7 @@ async fn a_table_of_moments_drafts_its_reads_and_a_missing_row_is_found_false() 
         .unwrap();
     let description = SurfaceDescription {
         kind: DATABASE_SERVER,
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };

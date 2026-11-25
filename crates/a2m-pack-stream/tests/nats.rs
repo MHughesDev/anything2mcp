@@ -123,6 +123,7 @@ impl Scene {
             destinations: &self.destinations,
             paths: &CheckedPaths::none(),
             supervisor: &supervisor,
+            confirmed: a2m_provider::ConfirmedReads::none(),
         };
         let prepared = handle.prepare(&cx, None).await?;
         Ok((handle, prepared))
@@ -910,7 +911,7 @@ async fn a_server_that_refuses_the_session_or_asks_for_tls_or_is_not_on_this_mac
     );
 }
 
-/// Field test 7, finding 43: a broker that asks for no sign-in, at an
+/// Copy test 7, finding 43: a broker that asks for no sign-in, at an
 /// address that is not this machine's loopback address written as an IP
 /// address, was refused as `transport_refused`, "would carry the session in
 /// plain text", though its session carries no credential. A connection
@@ -942,7 +943,7 @@ async fn a_broker_that_asks_for_no_sign_in_is_reached_at_an_address_off_the_loop
 
 #[tokio::test]
 async fn a_discovery_lists_streams_and_consumers_through_reads_only() {
-    use a2m_core::{Archetype, Failure, Finding, SurfaceKind};
+    use a2m_core::{AccessKind, Failure, Finding, SurfaceKind};
     use a2m_provider::{DiscoveryScope, FindingSink, ReadOnlyPort, SurfaceDescription};
 
     struct Kept(Vec<Finding>);
@@ -956,7 +957,7 @@ async fn a_discovery_lists_streams_and_consumers_through_reads_only() {
     let scene = Scene::start().await;
     let description = SurfaceDescription {
         kind: SurfaceKind::new("broker").unwrap(),
-        archetype: Archetype::Stream,
+        access_kind: AccessKind::Stream,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -1005,7 +1006,7 @@ async fn a_discovery_lists_streams_and_consumers_through_reads_only() {
 
 #[tokio::test]
 async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
-    use a2m_core::{Archetype, Failure, Finding, SurfaceKind};
+    use a2m_core::{AccessKind, Failure, Finding, SurfaceKind};
     use a2m_provider::{DiscoveryScope, FindingSink, ReadOnlyPort, SurfaceDescription};
 
     struct Kept(Vec<Finding>);
@@ -1019,7 +1020,7 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
     let mut scene = Scene::start().await;
     let description = SurfaceDescription {
         kind: SurfaceKind::new("broker").unwrap(),
-        archetype: Archetype::Stream,
+        access_kind: AccessKind::Stream,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -1069,7 +1070,7 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
     );
     // The retained stream keys by subject, which its subjects state, so
     // nothing waits in the holding folder and nothing is asked (finding 44
-    // of the field tests).
+    // of the copy tests).
     assert!(report.held.is_empty(), "{report:?}");
     assert!(report.open_questions.is_empty(), "{report:?}");
     scene.compiled_target = match common::compile(&scene.registry, &TargetRoot::new(&root)) {
@@ -1132,7 +1133,7 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
     assert_eq!(scene.stand.stream(SEED_WORK).unwrap().consumers.len(), 1);
 }
 
-/// Field test 7, finding 44: a stream that keeps one message a subject was
+/// Copy test 7, finding 44: a stream that keeps one message a subject was
 /// held on "which field of a message is its key?", though the server keys
 /// it by the last token of the subject, as the stream's subjects state, and
 /// its list, which needs no key, was held with it. The drafter now takes
@@ -1141,7 +1142,7 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
 /// channel's subject alone states no key at all.
 #[tokio::test]
 async fn a_retained_stream_keyed_by_subject_is_drafted_with_the_subject_as_its_key() {
-    use a2m_core::{Archetype, Failure, Finding, SurfaceKind};
+    use a2m_core::{AccessKind, Failure, Finding, SurfaceKind};
     use a2m_provider::{DiscoveryScope, FindingSink, ReadOnlyPort, SurfaceDescription};
 
     struct Kept(Vec<Finding>);
@@ -1160,7 +1161,7 @@ async fn a_retained_stream_keyed_by_subject_is_drafted_with_the_subject_as_its_k
     );
     let description = SurfaceDescription {
         kind: SurfaceKind::new("broker").unwrap(),
-        archetype: Archetype::Stream,
+        access_kind: AccessKind::Stream,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -1280,7 +1281,7 @@ async fn a_retained_stream_keyed_by_subject_is_drafted_with_the_subject_as_its_k
     assert!(scene.stand.received().is_empty());
 }
 
-/// Field test 7: a read by key of a key the server holds no message for
+/// Copy test 7: a read by key of a key the server holds no message for
 /// stopped the run as `output_unexpected`, as one that could be resumed. A
 /// read whose operation declares an output `found` answers it as a result,
 /// `found: false`, and every other output may then be absent (decision
@@ -2471,7 +2472,7 @@ async fn a_message_delivered_again_after_a_restart_is_taken_only_when_no_other_r
 /// invented; it is on messages the stand holds, and in no drafted file.
 #[tokio::test]
 async fn a_message_field_named_as_a_secret_is_never_drafted_as_an_output() {
-    use a2m_core::{Archetype, Failure, Finding, SurfaceKind};
+    use a2m_core::{AccessKind, Failure, Finding, SurfaceKind};
     use a2m_provider::{DiscoveryScope, FindingSink, ReadOnlyPort, SurfaceDescription};
 
     struct Kept(Vec<Finding>);
@@ -2493,7 +2494,7 @@ async fn a_message_field_named_as_a_secret_is_never_drafted_as_an_output() {
     }
     let description = SurfaceDescription {
         kind: SurfaceKind::new("broker").unwrap(),
-        archetype: Archetype::Stream,
+        access_kind: AccessKind::Stream,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };

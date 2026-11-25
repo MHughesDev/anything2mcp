@@ -28,8 +28,8 @@ a2m_core::failure_codes! {
         meaning "A manifest was written for a contract this build does not accept.",
         next "Use a version of the provider written for this contract.";
     MODE_CONFLICT = Input, "mode_conflict",
-        meaning "A mode or surface kind is registered twice, or with two archetypes.",
-        next "State each mode and surface kind once, with its one archetype, or disable one of the two providers.";
+        meaning "A mode or surface kind is registered twice, or with two access kinds.",
+        next "State each mode and surface kind once, with its one access kind, or disable one of the two providers.";
     PATH_NOT_ALLOWED = Input, "path_not_allowed",
         meaning "A path or a link leaves the folder it must stay inside, or is not a form a path may take.",
         next "Name a file inside its root by a relative path with forward slashes and no `..`, or a folder by its absolute path where a setting asks for one.";

@@ -11,7 +11,7 @@ The crates fall in eleven layers ([decision 0061](../../decisions/0061-the-layer
 | In the kernel | In a pack |
 | --- | --- |
 | Core types; target files, their loader, and the compiler; expressions and field types | The file kinds only that pack understands, with their schemas and lint rules |
-| The engine loop, the ledger, identity strategies, reconcile | The driver: how each step of its archetype is carried out |
+| The engine loop, the ledger, record matchings, reconcile | The driver: how each step of its access kind is carried out |
 | The policy engine, approvals, limits | How its verbs lower into steps |
 | The session keeper and the vault; the auth providers that only hold or exchange a credential | Its auth providers that need a surface of its kind: how a session of its kind is made and renewed |
 | Sources; the action registry; the local engine; the front doors | Its widget drivers or their equivalent |
@@ -35,7 +35,7 @@ A pack is a provider ([section 203](203-the-provider-contract.md)) that lives in
 
 Its manifest also declares the file kinds and finding kinds it reads from other packs. Packs share data shapes and never code: a kind has one owning pack, and a pack that reads it receives the validated entries from the compiler as data ([decision 0062](../../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)).
 
-**A pack is handed a context when it registers:** a supervisor scoped to what it may start, its folders as checked paths, the redactor, and telemetry. It starts a process only through that supervisor and opens a file only by a checked path ([section 204](204-supervising-subsystems.md)). The product crate joins a pack's own crates where there are several, as it does for the web pack's shared browser handle, and does nothing else with a pack.
+**A pack is handed a context when it registers:** a supervisor scoped to what it may start, its folders as checked paths, the redactor, and the logs and traces. It starts a process only through that supervisor and opens a file only by a checked path ([section 204](204-supervising-subsystems.md)). The product crate joins a pack's own crates where there are several, as it does for the web pack's shared browser handle, and does nothing else with a pack.
 
 So the compiler stays neutral: it parses, validates against whatever schemas are registered, resolves names, type-checks expressions, counts commit points, lowers through whatever lowerings are registered, and emits. "Knowledge lives in one place" becomes: knowledge about a kind of system lives in its pack.
 
@@ -79,7 +79,7 @@ A kind of system is supported only with all of these.
 | --- | --- | --- |
 | 1 | A driver that implements the driver interface for its verbs, with no retries inside | The engine loop is the same for everyone |
 | 2 | A read-back rule for every write it offers, or the write is `irreversible` | Rule three |
-| 3 | An answer for each identity strategy: how a record of its kind is found again | Resume without duplicates |
+| 3 | An answer for each record matching: how a record of its kind is found again | Resume without duplicates |
 | 4 | A test stand that imitates its kind and reports ground truth through a control interface | A test never proves a write by our own read path alone |
 | 5 | A discoverer, if its kind can be inspected, whose findings never claim more than was observed | Section 218 |
 | 6 | Its failures mapped to the existing classes | The class alone decides what happens next |

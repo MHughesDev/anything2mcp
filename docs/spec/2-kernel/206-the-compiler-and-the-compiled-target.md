@@ -26,7 +26,7 @@ All problems from stages 2 to 8 are reported together, each with a code, a plain
 
 **Commit points are counted, not assumed.** The ledger keeps one row per save in the system ([section 208](208-runs-the-ledger-and-resume.md)). Lowering runs before analysis, so the compiler counts the steps marked `commits` in each write binding's lowered steps, and the count can never disagree with what runs: in the web pack, actions marked `commits` in a UI binding; in the HTTP pack, write requests. An operation whose bindings disagree on the count, or whose count differs from what its author declared, does not compile. A write saves at least once and a read never: an operation whose effect is `write` or `irreversible` has at least one commit point in each binding, and one whose effect is `read` has none. Each pack states, once for each kind of step its lowering emits, whether a step of that kind never saves, always saves, or saves when the pack's own files say what it refers to does; a lowered step that is marked otherwise does not compile, and a kind stated as always saving can therefore never run under a read. A lowering also states the least effect a binding has by what it does, so that a verb that deletes or sends is `irreversible` whatever the operation's file declares. The compiled target's own check holds the same rules when a compiled target is loaded, so a compiled target the compiler did not make cannot run a write as a read, unrecorded, or unread ([decision 0153](../../decisions/0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md)).
 
-**Every write can be found again.** A write operation must declare an identity strategy that is possible in each of its bindings ([section 209](209-record-identity-and-dependent-records.md)). Steps that use another step's result must not form a cycle.
+**Every write can be found again.** A write operation must declare a record matching that is possible in each of its bindings ([section 209](209-record-identity-and-dependent-records.md)). Steps that use another step's result must not form a cycle.
 
 **Templates are typed.** Every placeholder in a request template is given a position and encoded for it, so an input cannot change where a request goes ([section 502](../5-security/502-defending-against-a-manipulated-agent.md)).
 
@@ -45,7 +45,7 @@ All problems from stages 2 to 8 are reported together, each with a code, a plain
 | Sign-in | For each group of surfaces that share a sign-in: the mode, the auth provider, the probe, the expiry signals, declared timeouts, the provider's settings, and credential references. Never a credential |
 | Field types | Normalizers and comparison rules, as host-function calls; beside each, as data, how the system shows a value: decimal mark, step, pattern, zone offset, case and whitespace rules |
 | Pack sections | What each pack's file kinds compiled to, such as the web pack's screens or the HTTP pack's endpoints, as one opaque payload per kind |
-| Operations | Inputs, outputs, key, effect, commit-point count, example inputs, declared decision points, and one step list per binding, in the order the bindings are tried |
+| Operations | Inputs, outputs, key, effect, commit-point count, example inputs, declared run questions, and one step list per binding, in the order the bindings are tried |
 | Pipelines | The step graph, checkpoints, limits, success checks |
 | Expressions | Every expression, already parsed and type-checked |
 | Tools | Names, descriptions, schemas, annotations, as the front doors will list them |

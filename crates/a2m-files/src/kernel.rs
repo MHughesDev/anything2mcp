@@ -6,8 +6,8 @@ use std::sync::LazyLock;
 
 use a2m_core::{
     ApproveWrites, BindingStatus, CaptureLevel, Checkpoint, DecimalMark, DescriptionBy, DriftRisk,
-    EffectClass, EnvironmentKind, FieldBase, Hazard, IdentityStrategy, Rounding, Sensitivity,
-    SignInMode, TestKind, WhitespaceRule,
+    EffectClass, EnvironmentKind, FieldBase, Hazard, RecordMatching, Rounding, Sensitivity,
+    SignInKind, TestKind, WhitespaceRule,
 };
 
 use crate::schema::JsonSchema;
@@ -181,7 +181,7 @@ fn auth() -> JsonSchema {
             "surfaces",
             JsonSchema::non_empty_list(JsonSchema::surface()),
         )
-        .required("mode", JsonSchema::words(SignInMode::NAMES))
+        .required("mode", JsonSchema::words(SignInKind::NAMES))
         .required("provider", JsonSchema::name())
         .required("probe", JsonSchema::name())
         .optional("probe_inputs", JsonSchema::map_of(JsonSchema::scalar()))
@@ -240,7 +240,7 @@ fn operation() -> JsonSchema {
         .optional(
             "identity",
             JsonSchema::object()
-                .required("strategy", JsonSchema::words(IdentityStrategy::NAMES))
+                .required("strategy", JsonSchema::words(RecordMatching::NAMES))
                 .optional("inputs", JsonSchema::list(JsonSchema::name()))
                 .optional("place", JsonSchema::words(&["fixed"])),
         )
@@ -261,6 +261,10 @@ fn operation() -> JsonSchema {
                     .optional("list", JsonSchema::bool())
                     .optional("may_be_absent", JsonSchema::bool()),
             ),
+        )
+        .optional(
+            "records",
+            JsonSchema::object().required("key", JsonSchema::non_empty_list(JsonSchema::name())),
         )
         .required(
             "bindings",

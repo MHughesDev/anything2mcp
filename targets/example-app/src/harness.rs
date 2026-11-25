@@ -335,6 +335,19 @@ impl TestApp {
         Ok(self.ask::<Stored<StoredItem>>(&path).await?.stored)
     }
 
+    /// Every order the application has stored, in the order it keeps them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the control interface could not be asked.
+    pub async fn stored_orders(&self) -> Result<Vec<StoredOrder>, HarnessError> {
+        Ok(self
+            .ask::<Stored<Vec<StoredOrder>>>("/__control/orders")
+            .await?
+            .stored
+            .unwrap_or_default())
+    }
+
     /// Exactly what the application has stored for an order, if anything.
     ///
     /// # Errors
@@ -497,7 +510,7 @@ impl TestApp {
         self.ask("/__control/auth").await
     }
 
-    /// Sets the sign-in modes: the one-time code step, and one session per account.
+    /// Sets the sign-in kinds: the one-time code step, and one session per account.
     ///
     /// # Errors
     ///

@@ -1,6 +1,6 @@
 # 6. Modes and drivers
 
-> Archived on 2026-11-17. This is section 6 of the first design, kept as it was written, with the names and numbers of its time. What it says now lives in [section 201, Archetypes and modes](../../spec/2-kernel/201-archetypes-and-modes.md).
+> Archived on 2026-11-17. This is section 6 of the first design, kept as it was written, with the names and numbers of its time. What it says now lives in [section 201, Archetypes and modes](../../spec/2-kernel/201-access-kinds-and-modes.md).
 
 The engine reaches applications through seven drivers. Every driver implements the same interface (prepare, act, read back, check health), so operations, pipelines, the ledger, and the policy gate work the same in every mode.
 

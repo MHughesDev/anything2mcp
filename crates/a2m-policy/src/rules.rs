@@ -16,7 +16,7 @@ use serde::Serialize;
 
 use crate::failure;
 use crate::model::{
-    ActingFor, ActionName, ActionRef, Context, IdentityMode, ModuleName, PrincipalKind,
+    ActingFor, ActionName, ActionRef, Context, IdentityKind, ModuleName, PrincipalKind,
     PrincipalRef, Question, Request, Resource, Role, RunRef, ToolRef, word,
 };
 use crate::set::{ApproveWrites, Compiled, PolicyTest, Scope, Settings, Subject};
@@ -303,9 +303,9 @@ fn permits(set: &Compiled, request: &Request) -> Result<Permits, Failure> {
             }
         }
         (Question::ActAs, Resource::Identity(identity)) => {
-            let fits = |mode: IdentityMode| match identity {
-                Identity::Person(_) => mode != IdentityMode::ServiceAccount,
-                Identity::Account(_) => mode == IdentityMode::ServiceAccount,
+            let fits = |mode: IdentityKind| match identity {
+                Identity::Person(_) => mode != IdentityKind::ServiceAccount,
+                Identity::Account(_) => mode == IdentityKind::ServiceAccount,
             };
             for (index, grant) in layers.grants.iter().enumerate() {
                 if grant.who.covers(principal)
@@ -493,7 +493,7 @@ pub(crate) fn describe(set: Option<&Compiled>, rule: &str) -> String {
                 let index = rest.parse::<usize>().ok()?;
                 let grant = layers.grants.get(index)?;
                 Some(format!(
-                    "Grant {index} gives {} {}, up to the effect class `{}`, with the identity mode `{}`.",
+                    "Grant {index} gives {} {}, up to the effect class `{}`, with the identity kind `{}`.",
                     who_words(&grant.who),
                     scope_words(&grant.scope),
                     grant.max_effect,
@@ -504,7 +504,7 @@ pub(crate) fn describe(set: Option<&Compiled>, rule: &str) -> String {
                 let index = rest.parse::<usize>().ok()?;
                 let grant = layers.role_grants.get(index)?;
                 Some(format!(
-                    "Role grant {index} gives everyone who holds the role `{}` {}, up to the effect class `{}`, with the identity mode `{}`.",
+                    "Role grant {index} gives everyone who holds the role `{}` {}, up to the effect class `{}`, with the identity kind `{}`.",
                     grant.role,
                     scope_words(&grant.scope),
                     grant.max_effect,
@@ -677,12 +677,12 @@ mod tests {
         POLICY_EVALUATION_FAILED,
     };
     use crate::model::{
-        ActingFor, ActionName, ActionRef, Context, IdentityMode, ModuleName, OptionName,
+        ActingFor, ActionName, ActionRef, Context, IdentityKind, ModuleName, OptionName,
         PrincipalKind, PrincipalRef, Question, Request, Resource, Role, RunRef, ToolRef,
     };
     use crate::set::{
-        ApproveWrites, BuiltIn, CandidateSet, Grant, LabelGrant, OptionGrant, PolicyLayers,
-        PolicyTest, PreApproval, Profile, RoleBinding, Scope, Settings, Subject,
+        ApproveWrites, BuiltIn, CandidateSet, DeploymentShape, Grant, LabelGrant, OptionGrant,
+        PolicyLayers, PolicyTest, PreApproval, RoleBinding, Scope, Settings, Subject,
     };
 
     fn id(byte: u8) -> PrincipalId {
@@ -727,7 +727,7 @@ mod tests {
 
     fn local() -> CandidateSet {
         let built_in = BuiltIn::local(id(1), workspace());
-        CandidateSet::compile(built_in.layers(), Profile::Local).unwrap()
+        CandidateSet::compile(built_in.layers(), DeploymentShape::Local).unwrap()
     }
 
     /// The loosest set anyone could write: everyone holds every role and a
@@ -741,7 +741,7 @@ mod tests {
                     role: *role,
                 })
                 .collect(),
-            grants: IdentityMode::ALL
+            grants: IdentityKind::ALL
                 .iter()
                 .map(|mode| Grant {
                     who: Subject::Anyone,
@@ -780,12 +780,13 @@ mod tests {
             },
             tests: Vec::new(),
         };
-        CandidateSet::compile(&layers, Profile::Server).unwrap()
+        CandidateSet::compile(&layers, DeploymentShape::Server).unwrap()
     }
 
     #[test]
     fn with_no_permit_the_answer_is_deny() {
-        let empty = CandidateSet::compile(&PolicyLayers::default(), Profile::Server).unwrap();
+        let empty =
+            CandidateSet::compile(&PolicyLayers::default(), DeploymentShape::Server).unwrap();
         let person = PrincipalRef::person(id(1));
         let questions = [
             (Question::UseTool, tool("example_orders_order_get")),
@@ -816,7 +817,7 @@ mod tests {
         ];
         for (question, resource) in questions {
             let mut context = context(EffectClass::Read);
-            context.identity_mode = Some(IdentityMode::PerUserSession);
+            context.identity_mode = Some(IdentityKind::PerUserSession);
             let verdict = evaluate(
                 &empty.compiled,
                 &ask(person.clone(), question, resource, context),
@@ -881,11 +882,11 @@ mod tests {
                     ModuleName::new("orders").unwrap(),
                 ),
                 max_effect: EffectClass::Read,
-                identity_mode: IdentityMode::ServiceAccount,
+                identity_mode: IdentityKind::ServiceAccount,
             }],
             ..PolicyLayers::default()
         };
-        let set = CandidateSet::compile(&layers, Profile::Server).unwrap();
+        let set = CandidateSet::compile(&layers, DeploymentShape::Server).unwrap();
         let user = PrincipalRef::person(id(1));
         let read = ask(
             user.clone(),
@@ -917,7 +918,7 @@ mod tests {
             condition: Some("environment == \"test\" && records <= 3".to_owned()),
         });
         layers.tests.clear();
-        let set = CandidateSet::compile(&layers, Profile::Local).unwrap();
+        let set = CandidateSet::compile(&layers, DeploymentShape::Local).unwrap();
         let user = PrincipalRef::person(id(1));
         let write = |records: u32, effect: EffectClass, hazard: Hazard| {
             let mut context = context(effect);
@@ -983,7 +984,7 @@ mod tests {
         let mut agent_context = context(EffectClass::Write);
         agent_context.caller_is_agent = true;
         let mut session = context(EffectClass::Read);
-        session.identity_mode = Some(IdentityMode::PerUserSession);
+        session.identity_mode = Some(IdentityKind::PerUserSession);
         let mut delegated = session.clone();
         delegated.acting_for = Some(ActingFor::Delegation(id(2)));
         let mut hazard = context(EffectClass::Write);
@@ -1127,7 +1128,7 @@ mod tests {
         let refusal = evaluate(&set.compiled, &agent).refusal.unwrap();
         assert_eq!(refusal.code(), &APPROVAL_REFUSED);
         let mut session = context(EffectClass::Read);
-        session.identity_mode = Some(IdentityMode::PerUserSession);
+        session.identity_mode = Some(IdentityKind::PerUserSession);
         let other = ask(
             PrincipalRef::person(id(1)),
             Question::ActAs,
@@ -1154,7 +1155,7 @@ mod tests {
         );
         assert_eq!(evaluate(&set.compiled, &as_session).answer, Answer::Deny);
         let mut service = context(EffectClass::Read);
-        service.identity_mode = Some(IdentityMode::ServiceAccount);
+        service.identity_mode = Some(IdentityKind::ServiceAccount);
         let as_service = ask(
             PrincipalRef::person(id(1)),
             Question::ActAs,
@@ -1177,7 +1178,7 @@ mod tests {
             max_records: 5,
             condition: Some("parse_int(tool) > 0".to_owned()),
         });
-        let set = CandidateSet::compile(&layers, Profile::Local).unwrap();
+        let set = CandidateSet::compile(&layers, DeploymentShape::Local).unwrap();
         let write = ask(
             PrincipalRef::person(id(1)),
             Question::WriteWithoutPerson,
@@ -1230,8 +1231,8 @@ mod tests {
         context.caller_is_agent = random.next(2) == 1;
         context.identity_mode = [
             None,
-            Some(IdentityMode::PerUserSession),
-            Some(IdentityMode::ServiceAccount),
+            Some(IdentityKind::PerUserSession),
+            Some(IdentityKind::ServiceAccount),
         ][random.next(3)];
         context.acting_for = [
             None,
@@ -1360,7 +1361,7 @@ mod tests {
 
         let mut layers = base.layers().clone();
         layers.settings.max_records_per_run = 10;
-        let tighter = CandidateSet::compile(&layers, Profile::Local).unwrap();
+        let tighter = CandidateSet::compile(&layers, DeploymentShape::Local).unwrap();
         assert_ne!(tighter.version(), base.version());
         assert!(!tighter.loosens(base.layers()));
         assert!(base.loosens(tighter.layers()));
@@ -1376,7 +1377,7 @@ mod tests {
             ),
             expect: Answer::Allow,
         });
-        let more_tests = CandidateSet::compile(&layers, Profile::Local).unwrap();
+        let more_tests = CandidateSet::compile(&layers, DeploymentShape::Local).unwrap();
         assert_ne!(more_tests.version(), base.version());
 
         // A stored set reads back as itself, and not under another version.
@@ -1384,7 +1385,7 @@ mod tests {
             base.version(),
             &base.layers_text,
             &base.tests_text,
-            Profile::Local,
+            DeploymentShape::Local,
         )
         .unwrap();
         assert_eq!(loaded.version, base.version());
@@ -1393,7 +1394,7 @@ mod tests {
                 tighter.version(),
                 &base.layers_text,
                 &base.tests_text,
-                Profile::Local
+                DeploymentShape::Local
             )
             .is_err()
         );
@@ -1445,7 +1446,7 @@ mod tests {
         for (name, change) in broken {
             let mut layers = base.clone();
             change(&mut layers);
-            let failure = CandidateSet::compile(&layers, Profile::Local).unwrap_err();
+            let failure = CandidateSet::compile(&layers, DeploymentShape::Local).unwrap_err();
             assert_eq!(failure.class(), a2m_core::FailureClass::Input, "{name}");
         }
     }
@@ -1463,7 +1464,7 @@ mod tests {
             ),
             expect: Answer::Allow,
         });
-        let report = CandidateSet::compile(&layers, Profile::Local)
+        let report = CandidateSet::compile(&layers, DeploymentShape::Local)
             .unwrap()
             .test();
         assert!(!report.ok());

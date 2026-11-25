@@ -570,7 +570,7 @@ pub const SCHEMA: &[SettingDef] = &[
             L(&["per_user_session"]),
             I,
             NextStart,
-            "The identity modes a toolset may use.",
+            "The identity kinds a toolset may use.",
         ),
         "Each target's auth file says how its identity is obtained; no toolset limits it.",
         "the server, milestone 9 of the roadmap",
@@ -1027,7 +1027,7 @@ pub const SCHEMA: &[SettingDef] = &[
         "What a capture sees is held by its discoverer's own bounds; nothing counts exchanges across captures.",
         "a limit of the installation's on every capture",
     ),
-    // Evidence and telemetry.
+    // Evidence and the logs and traces (the keys keep the word telemetry, decision 0402).
     def(
         "evidence.capture",
         Kind::Word(&["minimal", "standard", "full"]),

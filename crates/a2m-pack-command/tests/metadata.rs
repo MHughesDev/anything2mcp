@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, Environment, EvidenceLevel, Finding, NoSecrets, Redact, Source, SurfaceKind, Values,
+    AccessKind, Environment, EvidenceLevel, Finding, NoSecrets, Redact, Source, SurfaceKind, Values,
 };
 use a2m_pack_command::codes;
 use a2m_provider::{
@@ -51,7 +51,7 @@ fn source(name: &str) -> Vec<u8> {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
             .join("fixtures")
-            .join("sources")
+            .join("inputs")
             .join(name),
     )
     .unwrap()
@@ -60,14 +60,14 @@ fn source(name: &str) -> Vec<u8> {
 fn description(surface: &SurfaceRef) -> SurfaceDescription {
     SurfaceDescription {
         kind: SurfaceKind::new("program").unwrap(),
-        archetype: Archetype::Command,
+        access_kind: AccessKind::Command,
         address: surface.surface.address.clone(),
         facts: Values::new(),
     }
 }
 
 /// Runs the pack's discoverer on the stand, handed `files`: each a name
-/// and the bytes of a file put in a `sources` folder of the test's own.
+/// and the bytes of a file put in a `inputs` folder of the test's own.
 /// Also gives how many starts the stand had recorded when the discovery
 /// began, after `prepare` asked the version.
 async fn discover(
@@ -87,9 +87,9 @@ async fn discover(
         environment: Environment::new("test").unwrap(),
         surface: compiled_target.surfaces[0].clone(),
     };
-    let sources = folder.path().join("sources");
+    let sources = folder.path().join("inputs");
     std::fs::create_dir_all(&sources).unwrap();
-    let root = RootName::new("sources").unwrap();
+    let root = RootName::new("inputs").unwrap();
     let mut roots = Roots::none();
     roots.add(root.clone(), &sources, Access::Read).unwrap();
     let mut paths = CheckedPaths::none();
@@ -117,6 +117,7 @@ async fn discover(
         destinations: &Destinations::default(),
         paths: &CheckedPaths::none(),
         supervisor: &supervisor,
+        confirmed: a2m_provider::ConfirmedReads::none(),
     };
     let prepared = handle.prepare(&cx, None).await.unwrap();
     let before = stand.control().invocations().unwrap().len();
@@ -188,7 +189,7 @@ fn from(option: &serde_json::Value) -> Vec<&str> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
+async fn input_files_are_read_as_text_and_each_option_keeps_its_source() {
     let folder = Folder::new("metadata");
     let stand = Stand::start().unwrap();
     let control = stand.control().clone();
@@ -239,7 +240,7 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
     .await;
     let report = report.unwrap();
 
-    // One finding for each handed file, which says how much was read.
+    // One finding for each input file, which says how much was read.
     let files = of_kind(&findings, "command_file");
     assert_eq!(files.len(), 2);
     for file in &files {
@@ -327,7 +328,7 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
         .unwrap()
         .describe(&findings, a2m_provider::DescribeForm::Summary);
     assert!(
-        described.text.contains("2 handed files"),
+        described.text.contains("2 input files"),
         "{}",
         described.text
     );
@@ -412,7 +413,7 @@ async fn handed_files_are_read_as_text_and_each_option_keeps_its_source() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_secret_in_a_handed_file_is_redacted_and_an_unreadable_file_starts_nothing() {
+async fn a_secret_in_an_input_file_is_redacted_and_an_unreadable_file_starts_nothing() {
     const SECRET: &str = "secret-for-tests-4471";
     let folder = Folder::new("metadata-secret");
     let stand = Stand::start().unwrap();
@@ -887,7 +888,7 @@ async fn a_parameter_named_as_a_secret_is_never_drafted_as_a_param() {
     );
 }
 
-/// Field test 5, findings 28 and 29 (decision 0364): a program that prints
+/// Copy test 5, findings 28 and 29 (decision 0364): a program that prints
 /// a second version line, and help set out with tabs. The scout starts, reads
 /// every command, and says how many lines of the listing it skipped and why.
 #[tokio::test(flavor = "multi_thread")]

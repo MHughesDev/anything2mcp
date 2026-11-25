@@ -3,6 +3,7 @@
 
 mod access;
 mod admin;
+pub(crate) mod assertions;
 pub(crate) mod build;
 pub(crate) mod captures;
 mod client;
@@ -17,6 +18,8 @@ mod scout;
 pub(crate) mod scout_report;
 pub(crate) mod sessions;
 pub(crate) mod tools;
+mod traces;
+mod versions;
 pub(crate) mod watches;
 
 pub(crate) use scout::{SCOUT_SCRATCH, discovery_report_json};
@@ -61,6 +64,7 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "reach.withdraw" => reach::reach_withdraw,
         "provider.list" => provider::provider_list,
         "provider.describe" => provider::provider_describe,
+        "component.list" => provider::component_list,
         "tool.search" => tools::tool_search,
         "tool.describe" => tools::tool_describe,
         "tool.call" => tools::tool_call,
@@ -69,8 +73,11 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "run.resume" => tools::run_resume,
         "run.cancel" => tools::run_cancel,
         "trace.show" => tools::trace_show,
+        "run.trace" => traces::run_trace,
+        "trace.export" => traces::trace_export,
         "target.show" => tools::target_show,
         "version.diff" => tools::version_diff,
+        "version.rollback" => versions::version_rollback,
         "target.add" => build::target_add,
         "target.list" => drafts::target_list,
         "target.status" => drafts::target_status,
@@ -119,6 +126,7 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "session.end" => sessions::session_end,
         "watch.create" => watches::watch_create,
         "watch.confirm" => watches::watch_confirm,
+        "assertion.confirm" => assertions::assertion_confirm,
         "watch.get" => watches::watch_get,
         "watch.list" => watches::watch_list,
         "watch.changes" => watches::watch_changes,

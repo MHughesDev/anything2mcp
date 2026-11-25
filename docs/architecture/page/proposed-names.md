@@ -17,7 +17,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 - Rest or finish -> Preview Outcome: the part ends a preview by completing a run with nothing to change, or by asking policy and resting for approval; no code name fits.
 - Neither: stop -> Unresolved Outcome: the third reconcile outcome (values match neither); named after its two sibling outcomes.
 - Who does what -> Division of Work: spec section 402 title; no code type.
-- Standing -> Network Standing: code model.rs "standing"; prefixed to be unique from other uses of the word.
+- Standing -> Place Reading: code model.rs "standing"; prefixed to be unique from other uses of the word.
 - Copy across -> Message Relay: the part copies messages unchanged between standard input and the local channel.
 - Say whether it was sent -> Send Outcome: reports sent, not sent or unknown for each failure; a related glossary term is Application's verdict.
 - What the store is -> Store Kind: whether a database is the system of record (alone) or beneath an application.
@@ -61,7 +61,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Anything2MCP on One Machine | part | system | coined | One program on the person's own computer: the local engine, its stores on disk, and the thin clients and front doors around it. |
 | Append-Only History | part | ledger-rules | coined | The ledger rule that events are never updated or deleted, except whole runs by the retention job. |
 | Approval Bound to Diff | part | ledger-rules | coined | The ledger rule that a write run enters running only with an unexpired, unused approval whose diff hash equals the run's, or a policy decision that allowed it. |
-| Approval Desk | part | pages | coined | The part that records an approval only when the presence prompt succeeded. |
+| Approval Recorder | part | pages | coined | The part that records an approval only when the presence prompt succeeded. |
 | Approval Page | part | pages | coined | The page that shows one stored change and its hash for approval. |
 | Approval Sequence | group | pages | coined | The title of the numbered walk through the Person Pages view, told in 7 steps. |
 | Argument Builder | part | pack-command | coined | The building of the argument list from the template, with each value checked against its field type. |
@@ -87,7 +87,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Call Sequence | group | engine-loop | coined | The title of the numbered walk through the Engine Loop view, told in 8 steps. |
 | Callers | group | system | coined | The group in the Anything2MCP on One Machine view that holds AI Agent, Developer, Calling Program, Person. |
 | Calling Program | part | system | coined | Code that calls the engine through a generated client, for example to run a pipeline over a spreadsheet and follow it to its end. |
-| Capture Levels | part | telemetry | coined | The levels that decide which artifacts are kept and in what form. |
+| Capture Levels | part | telemetry | coined | The levels that decide which captures are kept and in what form. |
 | Capture Redaction | part | telemetry | coined | The running of captured data through the redactor, checked again on the way out. |
 | Catalog Discoverer | part | pack-data | coined | The discoverer that reads the store's own catalog inside a read-only transaction. |
 | Cell Typing | part | sources | coined | The turning of a cell into a typed value by the field type. |
@@ -97,7 +97,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Checked Names | part | core | coined | The checked names, such as a mode or a failure code, whose values arrive with packs and crates. |
 | Checked Paths | part | contract | code: a2m-provider: src/path.rs | The paths a pack may open, which can only be made by checking against its manifest's roots. |
 | Checking Stages | group | compiled-target | coined | The group in the Compiled Target view that holds Type-Checking, Lowering, Compiled Target Analysis. |
-| Clean Capture | group | telemetry | coined | The group in the Telemetry view that holds Capture Redaction, Recordable Headers. |
+| Clean Capture | group | telemetry | coined | The group in the Logs and Traces view that holds Capture Redaction, Recordable Headers. |
 | Closed Vocabularies | part | core | coined | The closed vocabularies, each an enum whose names are the documents' names. |
 | Command Declaration | group | pack-command | coined | The group in the command view that holds Commands File, Program Check. |
 | Command Discovery | group | pack-command | coined | The group in the command view that holds Help Discoverer, Command Drafting Rules. |
@@ -141,7 +141,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Decision Stage | group | engine-loop | coined | The group in the Engine Loop view that holds Approval Check. |
 | Declarations | group | contract | coined | The group in the Provider Contract view that holds Manifest, Provider Registry. |
 | Definition Pins | part | pack-mcp | coined | The digest of each mapped tool's definition, compared with the live definition before a call. |
-| Definition Source | group | registry | coined | The group in the Action Registry view that holds Action Definition, Recorded Catalog. |
+| Definition Source | group | registry | coined | The group in the Action Registry view that holds Action Definition, Action Catalog. |
 | Definition to Call | group | registry | coined | The title of the numbered walk through the Action Registry view, told in 5 steps. |
 | Describer | part | web-probe | code: a2m-pack-web-probe: src/describe.rs | The part of the probe that shows an agent, in compact text, what was seen and what was not looked at. |
 | Description Findings | part | http-description | coined | The findings made of each operation of a description, at the inferred level. |
@@ -189,7 +189,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Duplicates and Resume | part | pack-stream | coined | The handling of at-least-once delivery, with an idempotency token and no automatic resume of an irreversible publish. |
 | Early Redaction | part | http-description | coined | The passing of the description text through the redactor before parsing. |
 | Editable Formats | part | pack-file | coined | The formats the file pack can edit, those with a patch editor that passes two byte-identity tests. |
-| Emission | part | compiled-target | coined | The compiler stage that writes the compiled target as canonical JSON and takes its hash. |
+| Output Writing | part | compiled-target | coined | The compiler stage that writes the compiled target as canonical JSON and takes its hash. |
 | Endpoint Catalog | part | pack-http | code: a2m-pack-http: src/endpoints.rs | The endpoints file kind: each endpoint's method, path template, request template, status codes, answer form, and shapes. |
 | Endpoint Drafting | part | http-draft, pack-http | coined | The drafting of endpoint entries and one read for each safe method from findings. |
 | Endpoint Entries | part | http-draft | coined | The endpoint file drafted with field types from the schema. |
@@ -197,7 +197,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Engine Finder | part | bridge | coined | The part of the proxy that takes the start lock, starts the engine if needed, and checks the local channel belongs to the user. |
 | Engine Logs | part | telemetry | coined | The structured, levelled, size-rotated, and redacted logs of the engine. |
 | Engine MCP Endpoint | part | bridge | coined | The engine's own MCP endpoint, reached on the local channel. |
-| Engine Observation | group | telemetry | coined | The group in the Telemetry view that holds Spans and Metrics, Engine Logs. |
+| Engine Observation | group | telemetry | coined | The group in the Logs and Traces view that holds Spans and Metrics, Engine Logs. |
 | Engine Side | group | bridge | coined | The group in the Stdio Proxy view that holds Engine MCP Endpoint. |
 | Entry Stage | group | scheduler | coined | The group in the Scheduler view that holds Admission. |
 | Envelope Sealing | part | vault | coined | The sealing of a value into an envelope bound to its owner's key and opening it only under the context it was sealed for. |
@@ -303,7 +303,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Lost HTTP Answer | walk | pack-http | coined | A worked case in the http view, told in 4 steps, which begins: The driver builds the request from the template, places the session's credential, and sends it once. |
 | Lost Leases | part | scheduler | coined | The scheduler's handling of a job whose lease ran out: it is declared lost, stopped as possible_commit, and a reconcile job is queued after a quarantine. |
 | Lost Link | part | pack-device | coined | The handling of a link lost after a write, which may have been applied and is marked possible_commit. |
-| Lowering | part | compiled-target | coined | The compiler stage that turns each binding's verb into the fixed list of steps its driver runs. |
+| Step Expansion | part | compiled-target | coined | The compiler stage that turns each binding's verb into the fixed list of steps its driver runs. |
 | Machine Actions | part | registry | coined | The group of actions for the local engine, its settings, doctor, network view, browser install, plug-ins, and built-in docs. |
 | Machine Scope | group | registry | coined | The group in the Action Registry view that holds Machine Actions, Absent Actions, Kernel Handle. |
 | Match Wait | part | pack-stream | coined | The waiting, within a time limit, for the next message matching a key or correlation field. |
@@ -335,7 +335,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Network Readers | group | netstate | coined | The group in the Network State view that holds Network Interfaces, Network Routes, Name Servers, Network Neighbours, Local Listeners, System Proxy. |
 | Network Reading | group | netstate | coined | The title of the numbered walk through the Network State view, told in 3 steps. |
 | Network Routes | part | netstate | coined | The machine's routing table. |
-| Network Standing | part | netstate | coined | The join of interfaces and routes into what kind of place each address is and which interface carries each preferred default route. |
+| Place Reading | part | netstate | coined | The join of interfaces and routes into what kind of place each address is and which interface carries each preferred default route. |
 | Network State | part | netstate, system | code: a2m-netstate | The crate that reads which networks this machine is on and what kind of place an address is. |
 | Normalized Comparison | part | engine-loop | coined | The shared comparison that turns values into the form their field type says, so that equal values compare equal. |
 | Not-Landed Outcome | part | engine-resume | coined | The reconcile outcome in which the current values equal those seen before the write, so the record is planned again. |
@@ -394,7 +394,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Pre-Write Rules | group | ledger-rules | coined | The group in the Ledger Rules view that holds Intent Before Action, Approval Bound to Diff, One Writer per Run. |
 | Preparation | part | engine-loop | coined | The part of the engine loop that asks for a session lease through the Control Port and lets the driver get what the binding needs. |
 | Presence Prompt | part | pages | coined | The operating system's own user-presence prompt. |
-| Presence Proof | group | pages | coined | The group in the Person Pages view that holds Presence Prompt, Approval Desk. |
+| Presence Proof | group | pages | coined | The group in the Person Pages view that holds Presence Prompt, Approval Recorder. |
 | Preview | part | engine-preview, engine-loop | coined | The first stage of a write, which builds the diff before anyone is asked: it reads the source, runs the leading reads, and classes each record. |
 | Preview Inputs | group | engine-preview | coined | The group in the Preview view that holds Input Reading, Leading Reads. |
 | Preview Outcome | part | engine-preview | coined | The step of a preview that either completes a run with nothing to change, or asks policy whether the write may go without a person, or rests the run for approval. |
@@ -439,7 +439,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Record Write Sequence | group | engine-write | coined | The title of the numbered walk through the Write Path view, told in 7 steps. |
 | Record Writing | group | engine-loop | coined | The group in the Engine Loop view that holds Write Path. |
 | Recordable Headers | part | telemetry | coined | The one list of headers an exchange may record. |
-| Recorded Catalog | part | registry | code: a2m-actions: src/catalog.rs | The digested list of every action definition. |
+| Action Catalog | part | registry | code: a2m-actions: src/catalog.rs | The digested list of every action definition. |
 | Recovery Stage | group | engine-loop | coined | The group in the Engine Loop view that holds Reconciliation. |
 | Redaction Stage | group | http-description | coined | The group in the Description Reader view that holds Early Redaction. |
 | Redactor | part | vault | code: a2m-vault: src/redactor.rs | The part that knows every secret the vault has released and removes it from results, logs, traces, and errors. |
@@ -448,8 +448,8 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Register Write Sequence | group | pack-device | coined | The title of the numbered walk through the device view, told in 6 steps. |
 | Remote Runners | part | system | coined | Later workers on other machines that claim a job, hold a lease, and report back. |
 | Rendering Stage | group | command-line | coined | The group in the Command Line view that holds Output and Exit Codes. |
-| Renewal Ladder | part | session-keeper | coined | The order of renewal attempts: silent first, then a light prompt, then a full sign-in, each rung tried once. |
-| Renewal Stage | group | session-keeper | coined | The group in the Session Keeper view that holds Renewal Ladder, Person Prompt. |
+| Renewal Order | part | session-keeper | coined | The order of renewal attempts: silent first, then a light prompt, then a full sign-in, each rung tried once. |
+| Renewal Stage | group | session-keeper | coined | The group in the Session Keeper view that holds Renewal Order, Person Prompt. |
 | Reporting Stage | group | scout | coined | The group in the Scout and Drafter view that holds Scout Report. |
 | Request Sender | part | http-driver | coined | The building of the request from the template and its single sending. |
 | Resolution | part | compiled-target | coined | The compiler stage that links names: operations to screens, endpoints, and types, and pipelines to operations and sources. |
@@ -466,7 +466,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Root Key | part | vault | code: a2m-vault: src/store/ | The installation's one root key, kept in the operating system's key store or derived from a passphrase. |
 | Run Continuation | part | engine-resume | coined | The step of reconciliation after every doubtful record is settled, in which planned records go through the normal Write Path. |
 | Run Events | part | rest-face | coined | A page of a run's events, and the same as a resumable stream. |
-| Run Recording | group | telemetry | coined | The group in the Telemetry view that holds Step Trace, Capture Levels, Trace Signature. |
+| Run Recording | group | telemetry | coined | The group in the Logs and Traces view that holds Step Trace, Capture Levels, Trace Signature. |
 | Run States | part | ledger | code: a2m-core: src/state.rs | The states a run moves through, from queued to the final states rejected, expired, completed, failed, and cancelled. |
 | Run Tables | group | ledger | coined | The group in the Ledger view that holds Runs, Records, Events, Record Locks. |
 | Run Time | group | expr | coined | The group in the Expressions view that holds Evaluation, Host Functions, Field-Type Normalizers. |
@@ -524,13 +524,13 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Source Reading | group | sources | coined | The group in the Sources view that holds Content Check, Format Readers. |
 | Source Understanding | group | sources | coined | The group in the Sources view that holds Template Fingerprints, Source Mapping, Cell Typing. |
 | Source Files | group | project | coined | The group in the Project view that holds Source Definitions. |
-| Source Definitions | part | project | glossary | The files under a target's `sources/` folder: how a kind of handed file is read and mapped, compiled with the target (decision 0309). |
+| Source Definitions | part | project | glossary | The files under a target's `sources/` folder: how a kind of input file is read and mapped, compiled with the target (decision 0309). |
 | Span Patching | part | pack-file | coined | The building of new bytes by replacing only the spans of the named places. |
 | Spans and Metrics | part | telemetry | coined | The spans and counters with a closed set of attributes that cannot carry a value or a secret. |
 | Spreadsheet Import | group | sources | coined | The title of the numbered walk through the Sources view, told in 6 steps. |
 | Standard Streams | part | bridge | coined | The standard input and output through which the stdio proxy speaks MCP with the client. |
-| Standing Join | group | netstate | coined | The group in the Network State view that holds Network Standing. |
-| Standing Rules | group | ledger-rules | coined | The group in the Ledger Rules view that holds One Lock per Record, Terminal Finality, Append-Only History. |
+| Standing Join | group | netstate | coined | The group in the Network State view that holds Place Reading. |
+| Standing Rules | group | ledger-rules | coined | The group in the Ledger Rules view that holds One Lock per Record, Final State Rule, Append-Only History. |
 | State Machines | group | ledger | coined | The group in the Ledger view that holds Run States, Record States. |
 | Statements File | part | pack-data | code: a2m-pack-data: src/model.rs | The statements file kind that names a database surface, its record kinds, and every statement a binding may run. |
 | Stdio Proxy | part | bridge, system | code: anything2mcp bridge | A small program an MCP client starts, which copies messages between standard input and output and the engine's local channel and holds no engine logic. |
@@ -554,9 +554,9 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Target Layout | group | project | coined | The title of the numbered walk through the Project view, told in 6 steps. |
 | Target Systems | group | system | coined | The group in the Anything2MCP on One Machine view that holds Web Application, HTTP Service, MCP Server, Desktop Application, Command-Line Tool, Data Store, Files and Folders, Message Broker, Hardware Device. |
 | target.yaml | part | project | code: a2m-files: src/schema.rs | The target file naming surfaces, environments, locale, and defaults. |
-| Telemetry | part | telemetry, system | code: a2m-telemetry | The crate for logs and traces, with every registered secret removed before anything is written. |
+| Logs and Traces | part | telemetry, system | code: a2m-logs | The crate for logs and traces, with every registered secret removed before anything is written. |
 | Template Fingerprints | part | sources | coined | The fingerprints of a source template's structure that decide whether an input matches a known template version. |
-| Terminal Finality | part | ledger-rules | coined | The ledger rule that a run in a final state never changes again. |
+| Final State Rule | part | ledger-rules | coined | The ledger rule that a run in a final state never changes again. |
 | Test Files | group | project | coined | The group in the Project view that holds Tests and Fixtures. |
 | Tests and Fixtures | part | project | coined | The expected results per operation and the recorded pages or responses used by offline tests. |
 | Thin Clients | group | system | coined | The group in the Anything2MCP on One Machine view that holds Stdio Proxy, Command Line, Generated SDK. |
@@ -565,7 +565,7 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Tool Call | part | pack-mcp | coined | The one step kind of the mcp pack, call_tool, with typed arguments. |
 | Tool List | part | mcp-face | coined | The list of tools offered: the control tools of the use toolset and the authoring ones of the build toolset. |
 | Tool Use Actions | part | registry | coined | The group of actions for searching, calling, and following tools, runs, sessions, and watches. |
-| Trace Lifecycle | group | telemetry | coined | The title of the numbered walk through the Telemetry view, told in 5 steps. |
+| Trace Lifecycle | group | telemetry | coined | The title of the numbered walk through the Logs and Traces view, told in 5 steps. |
 | Traffic Capture | part | web-probe | coined | The probe step that records the exchanges seen while a scenario runs, as shapes tied to scenario steps. |
 | Traffic Learning | group | web-probe | coined | The group in the Web Probe view that holds Traffic Capture, Endpoint Inference. |
 | Transactional Write | part | pack-data | coined | The write in a declared transaction with bound parameters and an expected row count. |
@@ -617,9 +617,9 @@ Names that did not come from the glossary, with their source and meaning. Writte
 | Write Gate | group | ledger | coined | The group in the Ledger view that holds Intent Token, Ledger Rules. |
 | Write Path | part | engine-write, engine-loop | coined | The stage of a write that takes each record from lock to verified: lock, freshness check, intent, act, read back, compare. |
 | Write Sequence | group | engine-loop | coined | The group in the Engine Loop view that holds Preview, Approval Check, Write Path, Reconciliation. |
-| Field Harness | part | pages | glossary | The program under `tools/field-harness/`, the product's own serve with the Field Prompt, run in a closed container network in a field test (decision 0310). |
-| Field Prompt | part | pages | glossary | The presence prompt of the Field Harness; it passes only the short hash the runner answers on its pipe (decision 0310). |
-| Handed Files | part | project | glossary | The files in the project's `sources` folder that a person gives a scout or a pipeline; never compiled (decision 0309). |
+| Copy Test Harness | part | pages | glossary | The program under `tools/field-harness/`, the product's own serve with the Copy Test Prompt, run in a closed container network in a field test (decision 0310). |
+| Copy Test Prompt | part | pages | glossary | The presence prompt of the Copy Test Harness; it passes only the short hash the runner answers on its pipe (decision 0310). |
+| Input Files | part | project | glossary | The files in the project's `inputs` folder that a person gives a scout or a pipeline; never compiled (decision 0309). |
 | Waiting Reads | part | scout | glossary | The part of the scout's report that lists each read not sent because no one has signed in (decision 0303). |
 | Capture Contract | part | contract | a2m-provider, src/capture.rs | The provider contract's capability for traffic capture: a capture source a pack declares, and the one check every yield passes (decision 0391). |
 | Person-Driven Discoverer | part | contract | the title of decision 0395 | A discoverer whose manifest says `driven_by = "person"`, called only through `watch` (decision 0395). |

@@ -1,4 +1,4 @@
-//! `Control` in one process: everything the engine asks for while it runs a
+//! `ControlPort` in one process: everything the engine asks for while it runs a
 //! job, answered by the store, the policy engine, the session keeper, and
 //! the scheduler directly.
 //!
@@ -21,11 +21,11 @@ use std::time::Duration;
 
 use a2m_auth::{AuthEntry, ExpirySign, LeaseRequest, Purpose, SessionKey, SessionLease, Wait};
 use a2m_core::{
-    CompiledTarget, Digest, EffectClass, Failure, FailureClass, Identity, RunState, SurfaceIndex,
-    SurfaceName, ToolRuns, Values,
+    CompiledTarget, Coverage, Digest, EffectClass, Failure, FailureClass, Identity, RunState,
+    SurfaceIndex, SurfaceName, ToolRuns, Values,
 };
 use a2m_engine::{
-    BoxFuture, Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, Preview,
+    BoxFuture, Clearance, ControlPort, EngineEvent, Evidence, GuardQuestion, KeptCapture, Preview,
     SessionWant, ShadowCompared, encode_values,
 };
 use a2m_ledger::{
@@ -33,9 +33,9 @@ use a2m_ledger::{
     NewBlob, ReadBack, Reconciled, RecordIntent, RecordRef, RetentionClass, RunRow, Settled,
     ShadowComparison,
 };
+use a2m_logs::Phase;
 use a2m_policy::{Context, LimitCheck, ModuleName, Outcome, Question, Resource, ToolRef};
 use a2m_sched::{BudgetKey, LeaseRef, RateLimit, ResourceKey};
-use a2m_telemetry::Phase;
 use a2m_vault::OwnerRef;
 use serde_json::json;
 
@@ -81,7 +81,7 @@ pub(crate) fn entry_of(
     entry
 }
 
-/// `Control` for one job of one run, in the process that holds the store.
+/// `ControlPort` for one job of one run, in the process that holds the store.
 pub(crate) struct InProcessControl {
     kernel: Kernel,
     fence: Fence,
@@ -166,7 +166,7 @@ impl InProcessControl {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
-            .any(|((target, hash), _)| {
+            .any(|((target, hash), _, _)| {
                 *target == self.run.target && *hash == self.run.target_version
             })
     }
@@ -232,7 +232,7 @@ impl Drop for Notice {
     }
 }
 
-impl Control for InProcessControl {
+impl ControlPort for InProcessControl {
     fn compiled_target<'a>(
         &'a self,
         hash: &'a Digest,
@@ -243,6 +243,10 @@ impl Control for InProcessControl {
                 .await
                 .map_err(|failure| self.redacted(failure))
         })
+    }
+
+    fn confirmed_reads(&self, hash: &Digest) -> a2m_provider::ConfirmedReads {
+        self.kernel.confirmed_reads_kept(&self.run.target, hash)
     }
 
     fn decide<'a>(&'a self, question: &'a GuardQuestion) -> BoxFuture<'a, Result<(), Failure>> {
@@ -374,9 +378,9 @@ impl Control for InProcessControl {
             // The session is checked with the probe of the published
             // version a run last leased it under.
             if published && self.purpose == Purpose::Run {
-                self.kernel.note_probe(
+                self.kernel.note_session_check(
                     lease.session(),
-                    crate::keeper::ProbeSource {
+                    crate::keeper::SessionCheckSource {
                         target: self.run.target.clone(),
                         compiled_target: self.run.target_version,
                         probe: auth.probe.clone(),
@@ -937,7 +941,9 @@ impl Control for InProcessControl {
                         })
                         .await
                 }
-                EngineEvent::Result(values) => self.store_result(&values).await,
+                EngineEvent::Result { values, coverage } => {
+                    self.store_result(&values, coverage).await
+                }
                 EngineEvent::BindingHealth {
                     operation,
                     mode,
@@ -1157,7 +1163,7 @@ impl Control for InProcessControl {
 }
 
 impl InProcessControl {
-    async fn store_result(&self, values: &Values) -> Result<(), Failure> {
+    async fn store_result(&self, values: &Values, coverage: Coverage) -> Result<(), Failure> {
         // Everything leaving passes the redactor; the stored result is what
         // a later `run.get` returns.
         let redacted = self.kernel.redact().redact_values(values);
@@ -1185,7 +1191,7 @@ impl InProcessControl {
         self.kernel
             .store()?
             .write(self.run_durability(), move |tx| {
-                tx.ledger().store_result(&fence, blob)
+                tx.ledger().store_result(&fence, blob, coverage)
             })
             .await
     }

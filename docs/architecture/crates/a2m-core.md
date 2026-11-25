@@ -11,7 +11,7 @@ The words every other crate shares: the closed vocabularies, the checked names t
 | May depend on | Nothing internal |
 | Depends on | Outside: `serde`; `serde_json`, for the compiled target's encoding; `sha2`, for `Digest`, the compiled target's hash, and keyed digests; `rust_decimal`, wrapped by `Decimal` and named by no other crate ([decision 0068](../../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md)); `zeroize`, which wipes a dropped `Secret` ([decision 0122](../../decisions/0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md)) |
 | Roadmap packages | Stage B. Every step of the build order below is built |
-| Carries out | Spec sections [105](../../spec/1-product/105-core-concepts.md), [207](../../spec/2-kernel/207-the-engine-loop.md), [212](../../spec/2-kernel/212-policy-and-approvals.md), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), [206](../../spec/2-kernel/206-the-compiler-and-the-compiled-target.md) (what the compiled target contains, and its encoding), [201](../../spec/2-kernel/201-archetypes-and-modes.md), [203](../../spec/2-kernel/203-the-provider-contract.md) (availability), [204](../../spec/2-kernel/204-supervising-subsystems.md) (subsystem states), [209](../../spec/2-kernel/209-record-identity-and-dependent-records.md) (identity strategies, the record key), [210](../../spec/2-kernel/210-sources-and-value-normalization.md) (values), [218](../../spec/2-kernel/218-discovery-and-findings.md), [219](../../spec/2-kernel/219-the-evidence-ladder.md), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md); the [core types](../../reference/technical-reference.md#core-types); [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) (what a sign-in is made of, as data); decisions [0036](../../decisions/0036-target-files-are-compiled-into-a-hashed-plan-before-anything-runs.md), [0068](../../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md), [0069](../../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md), [0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md), and [0122](../../decisions/0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md) |
+| Carries out | Spec sections [105](../../spec/1-product/105-core-concepts.md), [207](../../spec/2-kernel/207-the-engine-loop.md), [212](../../spec/2-kernel/212-policy-and-approvals.md), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), [206](../../spec/2-kernel/206-the-compiler-and-the-compiled-target.md) (what the compiled target contains, and its encoding), [201](../../spec/2-kernel/201-access-kinds-and-modes.md), [203](../../spec/2-kernel/203-the-provider-contract.md) (availability), [204](../../spec/2-kernel/204-supervising-subsystems.md) (subsystem states), [209](../../spec/2-kernel/209-record-identity-and-dependent-records.md) (record matchings, the record key), [210](../../spec/2-kernel/210-sources-and-value-normalization.md) (values), [218](../../spec/2-kernel/218-discovery-and-findings.md), [219](../../spec/2-kernel/219-the-evidence-ladder.md), [213](../../spec/2-kernel/213-effects-hazards-and-consent.md); the [core types](../../reference/technical-reference.md#core-types); [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) (what a sign-in is made of, as data); decisions [0036](../../decisions/0036-target-files-are-compiled-into-a-hashed-plan-before-anything-runs.md), [0068](../../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md), [0069](../../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md), [0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md), and [0122](../../decisions/0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md) |
 
 ## Owns
 
@@ -33,7 +33,7 @@ All of it is built. Every name below is exported from the crate's root; a crate 
 
 ```rust
 // Closed vocabularies: each has ALL, NAMES, as_str, Display, FromStr, and serde by name.
-pub enum Archetype { Interface, Request, Command, Bridge, Artifact, Stream, Device }
+pub enum AccessKind { Interface, Request, Command, Bridge, File, Stream, Device }   // File is written `artifact` (decision 0402)
 pub enum EffectClass { Read, Write, Irreversible }            // ordered
 pub enum Hazard { None, DataElsewhere, SendsOutside, DeviceFunction, Physical }   // ordered
 pub enum FailureClass { /* twelve */ }
@@ -60,13 +60,13 @@ pub enum DoctorState {                                         // section 204; d
 }
 
 // Target files and the compiled target.
-pub enum IdentityStrategy { Natural, Composite, Stamped, Find, None }      // section 209
+pub enum RecordMatching { Natural, Composite, Stamped, Find, None }      // section 209
 pub enum Sensitivity { Public, Internal, Restricted }          // ordered; default Internal
 pub enum FieldBase { Text, Integer, Decimal, Money, Measurement, Date, Datetime, Time, Boolean, Choice }
 pub enum EnvironmentKind { Test, Production }
 pub enum TestKind { Offline, Live }
 pub enum Checkpoint { PerRecord, PerStep }
-pub enum SignInMode { UseExisting, ManagedSession, Custom }   // section 215
+pub enum SignInKind { UseExisting, ManagedSession, Custom }   // section 215
 pub enum DriftRisk { Low, Medium, High }                       // ordered
 pub enum CaptureLevel { Minimal, Standard, Full }              // section 217; ordered
 pub enum ApproveWrites { CallerConfirms, PersonEachRun, NamedApprover }   // section 226; ordered, least strict first
@@ -257,8 +257,8 @@ pub enum Stands { Alone, Beneath(SurfaceIndex) }
 
 pub struct CompiledAuth {                       // one entry of `auth.yaml`
     pub surfaces: Vec<SurfaceIndex>,        // no surface is in two entries
-    pub mode: SignInMode, pub provider: AuthProviderName,
-    pub probe: CompiledProbe,
+    pub mode: SignInKind, pub provider: AuthProviderName,
+    pub probe: CompiledSessionCheck,
     pub expiry_signals: Vec<PackPayload>,   // each in the form the surface's pack defines
     pub idle_ms: Option<u64>, pub absolute_ms: Option<u64>,
     pub sign_out: Option<String>,           // a name the provider resolves
@@ -266,7 +266,7 @@ pub struct CompiledAuth {                       // one entry of `auth.yaml`
     pub credentials: Vec<CredentialUse>,    // role, reference: CredentialRef; sorted by role
     pub attempt_limit: u32, pub movable: bool,
 }
-pub enum CompiledProbe {
+pub enum CompiledSessionCheck {
     Operation { operation: OperationIndex, inputs: Values },   // a read, run through the engine
     Entry(PackRef),                                            // an entry of a pack section, such as an endpoint
 }
@@ -288,7 +288,7 @@ pub struct CompiledOperation {
     pub bindings: Vec<CompiledBinding>,         // declared order: the order `choose` tries them
     pub manifest: PermissionManifest,       // surfaces, uploads, downloads, destinations
     pub examples: Vec<Values>,              // example inputs, each typed by the inputs
-    pub decision_points: Vec<DecisionPoint>,   // name, question
+    pub decision_points: Vec<RunQuestion>,   // name, question
 }
 pub struct CompiledBinding {
     pub mode: Mode, pub verb: Verb, pub status: BindingStatus, pub surface: SurfaceIndex,
@@ -376,7 +376,7 @@ Contracts that the signatures do not show:
 - **`Values` holds its names sorted.** The same named values are equal, encode to the same bytes, and have the same digest, whatever order they were added in. The order a person sees comes from the compiled target's schema.
 - **No type here can hold a secret except `Secret`.** `Value` has no secret variant: a secret is never a field's value.
 - **A checked name says nothing about whether it is registered.** `StepKind::new("locate")` succeeds whatever packs are enabled. Whether anyone registered it is the compiler's question and the registry's, and an unregistered one does not compile.
-- **The engine never reads a verb's spelling.** A binding is treated by what its steps and its operation state: `commits`, `lookup`, `idempotent`, the effect class, the identity strategy.
+- **The engine never reads a verb's spelling.** A binding is treated by what its steps and its operation state: `commits`, `lookup`, `idempotent`, the effect class, the record matching.
 - **Nothing here reads a clock or a random source.** `RunId::from_parts` takes the moment and the random bytes. Whoever makes an identifier brings both.
 - **A scope is read from the text alone.** `ScopedHost` resolves no name and asks the machine nothing. `this_machine` is a loopback literal, never a name. A spelling only a lenient parser widens (`127.1`), malformed text, and a path are `unreadable`. The ranges are those the Rust core library's source classifies, with the standard it cites for each; `scope::tests` holds each range at its edges.
 - **A plain link stays on this machine only to a loopback address written plainly.** `may_leave_this_machine` is true for a name, `localhost` included, for IPv4 written inside IPv6, and for an address with a zone. `a2m-auth`, the HTTP, MCP, stream, and data packs each ask it after their own parser, and `tests/address-spellings.txt` pins each of them, spelling by spelling.
@@ -386,7 +386,7 @@ Contracts that the signatures do not show:
 - **A field type's format and its normalizer say the same thing.** The compiler makes both from one rule. The format is for writing a value and describing the type; only the normalizer decides whether two values are equal.
 - **The compiled target names no kind of surface.** What one kind has, such as a viewport, is in that surface's payload. An expiry signal is a payload for the same reason.
 - **A compiled target's references are checked on the way out and on the way in.** `encode` and `decode` both refuse an index that points at a part the compiled target does not hold, so the engine indexes a decoded compiled target without checking again.
-- **A compiled target keeps the rules of a write, whoever made it** ([decision 0153](../../decisions/0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md)). `check` refuses, on the way out and on the way in: an operation with a hazard that is not `irreversible`; a `write` whose identity strategy is `none`; a read that states a commit point or has a step that commits; a write with no commit point, or with a binding whose committing steps among `act` are not exactly its commit points; a step that commits in `confirm`, `read_back`, or `lookup`; a `write`, or an `irreversible` operation with an identity, with a binding that has no read-back; a pipeline whose effect or hazard is below one of its operations'; and a tool described as read-only that runs anything but a read. The hash proves the bytes are the ones stored. These rules are what make them safe to run. The refusal is `compiled_target_unreadable` and names the operation by its position, never its content. Two of the compiler's rules are not held here: that a sign-in's probe is a read, and that a pipeline that writes has a record limit and a checkpoint.
+- **A compiled target keeps the rules of a write, whoever made it** ([decision 0153](../../decisions/0153-what-the-compiler-the-plan-and-the-redactor-hold-by-themselves-after-the-safety-audit.md)). `check` refuses, on the way out and on the way in: an operation with a hazard that is not `irreversible`; a `write` whose record matching is `none`; a read that states a commit point or has a step that commits; a write with no commit point, or with a binding whose committing steps among `act` are not exactly its commit points; a step that commits in `confirm`, `read_back`, or `lookup`; a `write`, or an `irreversible` operation with an identity, with a binding that has no read-back; a pipeline whose effect or hazard is below one of its operations'; and a tool described as read-only that runs anything but a read. The hash proves the bytes are the ones stored. These rules are what make them safe to run. The refusal is `compiled_target_unreadable` and names the operation by its position, never its content. Two of the compiler's rules are not held here: that a sign-in's probe is a read, and that a pipeline that writes has a record limit and a checkpoint.
 - **A declared program is named directly.** Beside being absolute, a path holds no `.` or `..` part, and a program on a network share is declared with its digest; `check` refuses the rest. The second supersedes one line of [decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md), which let a share path stand alone.
 - **A secret that is a number is redacted as a number's text.** `redact_value` judges a whole number, a decimal, a date, a moment, and a length of time by the text each is written as, and replaces one that holds a registered secret by the text `[redacted]`. What that costs: a short numeric secret, such as a four-digit PIN, also removes every number whose digits hold it; the value's kind becomes text, so a result's schema must allow text where a number may be redacted; and each number in a result is one more search. What it does not find: a secret written with leading zeros, or with zeros after a decimal mark, in a number that has lost them; and a secret that lies across two values.
 - **A compiled target holds expressions as text with their type.** `a2m-expr` turns its compiled form into a `CompiledExpr` and back. This crate never parses one.
@@ -399,14 +399,14 @@ Every crate uses it. It uses nothing in the workspace.
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-files` | Names and checked names, `Value`, `ValueType`, `EffectClass`, `Hazard`, `BindingStatus`, `IdentityStrategy`, `Failure`; builds and encodes the `CompiledTarget` |
+| `a2m-files` | Names and checked names, `Value`, `ValueType`, `EffectClass`, `Hazard`, `BindingStatus`, `RecordMatching`, `Failure`; builds and encodes the `CompiledTarget` |
 | `a2m-expr` | `Value`, `ValueType`, `Decimal`, `Rounding`, `Date`, `Failure`; converts its compiled form to and from `CompiledExpr` |
 | `a2m-ledger` | States, the identifiers, `RecordKey`, `Digest`, `Finding`, `Redact`, `KeyedDigest` for blob names and record keys; stores compiled target bytes without decoding them |
-| `a2m-telemetry` | `Redact`, `KeyedDigest` for restricted values, `Sensitivity`, `StepKind`, identifiers |
+| `a2m-logs` | `Redact`, `KeyedDigest` for restricted values, `Sensitivity`, `StepKind`, identifiers |
 | `a2m-policy` | `EffectClass`, `Hazard`, `Identity`, `Sensitivity`, the identifiers, `Failure` |
 | `a2m-auth` | `SessionState`, `Identity`, `SessionId`, `WorkspaceId`, `Secret`, `AuthProviderName`, `CredentialRef`; `a2m-actions` builds the keeper's entry from an `CompiledAuth` |
 | `a2m-sched` | `RunId`, `JobId`, `RunnerId`, `Epoch`, `Mode`, `Identity`, `FailureClass`, `FailureCode` |
-| `a2m-provider` and packs | `Archetype`, the checked names, `Availability`, `SubsystemState`, `SubsystemMove`, `Finding`, `Subject`, `Value`, `Values`, `Failure`, `Secret`; packs build `Step` and `PackPayload` in their lowerings and decode their payloads in their drivers |
+| `a2m-provider` and packs | `AccessKind`, the checked names, `Availability`, `SubsystemState`, `SubsystemMove`, `Finding`, `Subject`, `Value`, `Values`, `Failure`, `Secret`; packs build `Step` and `PackPayload` in their lowerings and decode their payloads in their drivers |
 | `a2m-engine` | All of it; the `CompiledTarget` through `decode` |
 | `a2m-actions` | `DoctorState` for `doctor.run`; `CompiledTarget::show` for `target.show` |
 | `a2m-vault` | `Secret`, `WorkspaceId`; implements `Redact` and `KeyedDigest`, the second through `keyed_digest_under` |
@@ -469,13 +469,13 @@ It produces no other class. The codes are declared in this crate's own `failure_
 2. Done: `Digest`, on the `sha2` crate; `Subject`, `Address`, `UnknownReason`, `Source`, `LimitationCode`, `FindingKind`, `Timestamp`, and `Finding` with its builder, the identifier rule, and the level rules.
 3. Done: `Availability`, held to section 203 by the documents test.
 4. Done: the checked identifiers `TargetName`, `OperationName`, `SurfaceName`, `Environment`, `SurfaceKind`, and with them `ControlName` and `AccountName`.
-5. Done: `CompiledTarget` and its parts, `Step`, `StepKind`, `Verb`, `PackPayload`; `IdentityStrategy`, `Sensitivity`, `FieldBase`, `EnvironmentKind`, `TestKind`, `Checkpoint`, each held to its document.
+5. Done: `CompiledTarget` and its parts, `Step`, `StepKind`, `Verb`, `PackPayload`; `RecordMatching`, `Sensitivity`, `FieldBase`, `EnvironmentKind`, `TestKind`, `Checkpoint`, each held to its document.
 6. Done: `FileKindName`, `LintCode`, and the encoding: canonical JSON, format 1 ([decision 0069](../../decisions/0069-the-plan-is-canonical-json-hashed-whole-and-keyed-digests-are-per-workspace.md)). Not done: measuring compiled target loading against its budget, which needs a compiled target of real size.
 7. Done: `Value`, `Values`, `RecordKey`, `ValueType`, `Decimal` on `rust_decimal`, `Rounding`, `Date`, `Millis` ([decision 0068](../../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md)).
 8. Done: `Redact` with `contains_secret` and its helpers, `NoSecrets`, `KeyedDigest`, `keyed_digest_under`.
 9. Done: `Identity`, `RunId`, and the other identifiers the store, the scheduler, and policy share; `Epoch`; `Version`.
 10. Done: `SubsystemState`, `SubsystemMove`, `DoctorState`.
-11. Done: what the run time needs from target files and the compiled target lacked ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)): `TargetSection`, `CompiledAuth` with `CompiledProbe`, `AuthProviderName`, and `CredentialRef`, `Stands`, an environment's test records and approval rule, an operation's examples and decision points, a tool's module, `FieldFormat` and a field type's step; with `SignInMode`, `DriftRisk`, `CaptureLevel`, `ApproveWrites`, `WhitespaceRule`, and `DecimalMark`, each held to its document.
+11. Done: what the run time needs from target files and the compiled target lacked ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)): `TargetSection`, `CompiledAuth` with `CompiledSessionCheck`, `AuthProviderName`, and `CredentialRef`, `Stands`, an environment's test records and approval rule, an operation's examples and run questions, a tool's module, `FieldFormat` and a field type's step; with `SignInKind`, `DriftRisk`, `CaptureLevel`, `ApproveWrites`, `WhitespaceRule`, and `DecimalMark`, each held to its document.
 12. Done: the public `checked_name!` with `fixed`, `FieldHasher`, and `Secret` wiped when dropped ([decision 0122](../../decisions/0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md)).
 13. Done: `DeclaredProgram` and `CompiledSurface::programs`, the programs a surface's driver may start, in the compiled target's bytes and under its hash ([decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md)).
 14. Done: `AddressScope` and `ScopedHost`, the reading of where an address is and the one question of a plain link ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)). Not done: a place in the sense of [decision 0223](../../decisions/0223-a-network-is-a-place-a-recognized-network-and-a-reach.md), which needs the machine's own state.
@@ -487,8 +487,8 @@ It produces no other class. The codes are declared in this crate's own `failure_
 
 - The compiled target's shape changed once more for decision 0161: a binding's `prefer_response` is now its `evidence`, and the sample's pinned hash moved with it. The format number stays 1, because no release has carried a compiled target: a compiled target stored before the change does not load and is compiled again.
 - The compiled target's parts have met the compiler and not yet an engine. The engine's slice confirms each one or changes it. The format number is still 1 because no release has carried a compiled target; from the first release on, a change that stored compiled targets cannot be read under raises it.
-- `CaptureLevel` and `ApproveWrites` are here because the compiled target carries them. `a2m-telemetry` and `a2m-policy` each have a list of their own with the same names, which should become these.
-- A decision point is a name and a question, which is all the file formats say. The engine's design of `needs_input` may add what a person chooses between.
+- `CaptureLevel` and `ApproveWrites` are here because the compiled target carries them. `a2m-logs` and `a2m-policy` each have a list of their own with the same names, which should become these.
+- A run question is a name and a question, which is all the file formats say. The engine's design of `needs_input` may add what a person chooses between.
 - `Mode` and `FindingKind` are written by hand and have no `fixed`. They can be declared with `checked_name!` when a pack wants a constant of one.
 - The long form of `identity` for `stamped` and `find` is not fixed in the file formats. The compiled target carries a `lookup` step list and a settle time per binding for it; slice 3.8 confirms.
 - `PackSection::pack` and `ProducedBy::provider` are plain text. A provider's name becomes a checked name when the manifest's shape is built in `a2m-provider`.

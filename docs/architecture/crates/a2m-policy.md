@@ -31,7 +31,7 @@ The store hands a transaction to a closure on its own thread, so every call that
 
 ```rust
 #[derive(Clone)]
-pub struct Policy { /* the store; the profile; the set in force as last read */ }
+pub struct Policy { /* the store; the deployment shape; the set in force as last read */ }
 impl Policy {
     /// A fresh store gets `built_in` as its first version. The second value is the one
     /// handle that can record an approval or a decline.
@@ -72,7 +72,7 @@ pub enum Resource {
 pub struct Context {
     pub effect: EffectClass, pub hazard: Hazard, pub records: Option<u32>,
     pub workspace: WorkspaceId, pub toolset: Option<ToolsetName>, pub environment: Environment,
-    pub identity_mode: Option<IdentityMode>, pub acting_for: Option<ActingFor>,
+    pub identity_mode: Option<IdentityKind>, pub acting_for: Option<ActingFor>,
     pub caller_is_agent: bool, // true for every caller of the local channel, MCP, and an SDK; in one
                                // process the process's view of its terminal: a claim, never proof of a
                                // person, which only the presence prompt gives (decision 0158)
@@ -121,16 +121,16 @@ pub struct PolicyLayers {
     pub settings: Settings, pub tests: Vec<PolicyTest>,
 }
 pub enum Subject { Principal(PrincipalId), Group(GroupName), Anyone }
-pub struct Grant { pub who: Subject, pub scope: Scope, pub max_effect: EffectClass, pub identity_mode: IdentityMode }
+pub struct Grant { pub who: Subject, pub scope: Scope, pub max_effect: EffectClass, pub identity_mode: IdentityKind }
 pub enum Scope { Target(TargetName), Module(TargetName, ModuleName), Pattern(String) }
 /// A role is a bundle of grants: everyone who holds `role` holds this permit.
-pub struct RoleGrant { pub role: Role, pub scope: Scope, pub max_effect: EffectClass, pub identity_mode: IdentityMode }
+pub struct RoleGrant { pub role: Role, pub scope: Scope, pub max_effect: EffectClass, pub identity_mode: IdentityKind }
 /// A lower layer that only narrows. It holds no permit; once a set defines toolsets, a call through
 /// a toolset the set does not define is refused. `PolicyLayers` also carries `role_grants`,
 /// `toolsets`, and `second_admin_publish` (all absent from the stored text when unused).
 pub struct Toolset {
     pub name: ToolsetName, pub who: Vec<Subject>, pub tools: Vec<Scope>,
-    pub max_effect: EffectClass, pub identity_mode: IdentityMode, pub allow_pre_approval: bool,
+    pub max_effect: EffectClass, pub identity_mode: IdentityKind, pub allow_pre_approval: bool,
 }
 pub struct Settings {
     pub approve_writes: ApproveWrites, pub max_records_per_run: u32, pub approval_window_minutes: u32,
@@ -194,7 +194,7 @@ Contracts that the signatures do not show:
 | Caller | Uses |
 | --- | --- |
 | `a2m-actions` | `Policy::open`; `decide` at every dispatch; `compile`, `test`, `publish`, `explain`, `set_kill_switch`, for the actions `grant.add`, `policy.publish`, `policy.test`, `policy.explain`, `killswitch.set`; passes the `ApprovalSurface` to the approval surface |
-| `a2m-actions` as the in-process `Control`, and `a2m-runner` on the control-plane side of the runner link | On the engine's behalf: `decide` at guard, before the write phase and on resume; `consume`; `check_limits`. The engine never names this crate |
+| `a2m-actions` as the in-process `ControlPort`, and `a2m-runner` on the control-plane side of the runner link | On the engine's behalf: `decide` at guard, before the write phase and on resume; `consume`; `check_limits`. The engine never names this crate |
 | `a2m-sched` | `kill_epoch`, to stop handing out work and to tell runners |
 | `a2m-local`, `a2m-api` | `ApprovalSurface::approve` and `decline`, through the handle `a2m-actions` gives the approval surface; the person is reached through `PersonSurface` |
 
@@ -249,7 +249,7 @@ Tables, through `a2m-ledger`: `decisions`, `approvals`, `approval_declines`, `po
 2. Done: `check_limits` (records per run, quotas) and kill switches. Phase 3, group B.
 3. Done: `record_approval`, `consume`, and `record_decline`, joined with `a2m-ledger`'s rule 3. Slices 3.3 and 3.6, the policy half.
 4. Done: protected settings on one machine: a looser set, and the release of a kill switch, need a user-presence check.
-5. Done in part: roles, grants, role grants, label and option rules, pre-approval rules with conditions, toolsets as a lower layer that only narrows, versioned sets with their own tests and a history, `publish`, `publish_reviewed` (a second administrator), `publish_change` (one grant or toolset), `explain` (naming the deciding grant, role grant, toolset, or rule), `would`, and the catalog questions (decision 0313). Not built: the lower layers of a workspace and of target files; the request budget per surface; a benchmark in `bench/`; decision timing through `a2m-telemetry`. The actions that carry these (`toolset.create`, `toolset.update`, `toolset.list`, `grant.add`, `grant.remove`, `grant.list`, `policy.publish`, `policy.test`, `policy.explain`) are `a2m-actions`' half of package 6.3.
+5. Done in part: roles, grants, role grants, label and option rules, pre-approval rules with conditions, toolsets as a lower layer that only narrows, versioned sets with their own tests and a history, `publish`, `publish_reviewed` (a second administrator), `publish_change` (one grant or toolset), `explain` (naming the deciding grant, role grant, toolset, or rule), `would`, and the catalog questions (decision 0313). Not built: the lower layers of a workspace and of target files; the request budget per surface; a benchmark in `bench/`; decision timing through `a2m-logs`. The actions that carry these (`toolset.create`, `toolset.update`, `toolset.list`, `grant.add`, `grant.remove`, `grant.list`, `policy.publish`, `policy.test`, `policy.explain`) are `a2m-actions`' half of package 6.3.
 6. Not built: standing approvals; delegations and `ActAs` with a delegation. The guardrails that the author of a version cannot be its only publisher and that an agent cannot approve a publish are held by `publish_reviewed` when the set asks for a second administrator; whether they should hold when it does not is open.
 7. Not built: consent records, with the first act that needs one.
 8. Done (the safety audit, decision 0145): the store's key, taken once; the installation's settings through `BuiltIn::with_settings`, kept as a floor; the forbids for an agent's ceiling, writes outside test records, and pre-approval off; two approvers of an irreversible run; `consume` at the point of action; the proof's time, the tool version, and the presence words checked when an approval is recorded; `explain` bound to the caller's workspace.
@@ -258,7 +258,7 @@ Tables, through `a2m-ledger`: `decisions`, `approvals`, `approval_declines`, `po
 
 - Whether every read's decision is stored in full, or summarized at scale as decision 0034 allows. Today every decision is stored in full.
 - Whether consent records belong here or with the scout. They are here because only the decider should ask whether one exists.
-- The shape of the presence proof that `a2m-local` hands in. Settled in part (decision 0145): each operating system's prompt has its word, `polkit`, `local_authentication`, `windows_hello`, and, for a field test only, `field_harness` (decision 0310), beside `os_prompt` and `signed_in`, and `not_available` records an approval only by the engine's own prompt and proves nothing: it does not loosen a protected setting or release a kill switch. The proof's time and the prompt's name come with the approval; the time is checked, and the name is kept in the audit entry the desk writes, not in the approval's row.
+- The shape of the presence proof that `a2m-local` hands in. Settled in part (decision 0145): each operating system's prompt has its word, `polkit`, `local_authentication`, `windows_hello`, and, for a copy test only, `field_harness` (decision 0310), beside `os_prompt` and `signed_in`, and `not_available` records an approval only by the engine's own prompt and proves nothing: it does not loosen a protected setting or release a kill switch. The proof's time and the prompt's name come with the approval; the time is checked, and the name is kept in the audit entry the desk writes, not in the approval's row.
 - A set published before the binary's guardrails change is not read by the newer binary, because its version was stamped with the old guardrails' hash. The built-in set is stored again at start; a person's set must be published again. Whether to republish it automatically is open.
 - `caller_confirms`, the third value of `policy.approve_writes` in section 226, has no meaning here yet: a person approves every write through the surface, and the set says only whether that person may be the caller.
 - Listing the tools a caller may use is `would` asked tool by tool. Whether that is fast enough for a large catalog is not measured.

@@ -5,7 +5,7 @@ Every stated requirement is covered by the design; five are covered only under c
 | Requirement | Verdict | How | Condition or limit |
 | --- | --- | --- | --- |
 | Run on a dedicated machine or VM for a company | Covered | Team, Company, and Cluster profiles | None |
-| Act per user, with each user's existing account | Covered, with conditions | Three per-user identity modes | Token mode needs the app's API registered in the tenant; hosted sessions fail where sign-in requires a managed device; device mode needs a runner on the user's computer |
+| Act per user, with each user's existing account | Covered, with conditions | Three per-user identity kinds | Token mode needs the app's API registered in the tenant; hosted sessions fail where sign-in requires a managed device; device mode needs a runner on the user's computer |
 | Act with its own account in the target software | Covered | `service_account` mode | The app must license the account; IT must approve it |
 | Latch on through any interface, front end or back end | Covered, within limits | Seven modes | Not reachable: pixel-only apps such as Citrix; direct HTTP where the front end signs requests; apps that talk only over WebSockets, in the first release |
 | Be exposed on the company network as a company MCP server | Covered | Streamable HTTP, OAuth through the identity provider, toolset endpoints | None |
@@ -28,7 +28,7 @@ Every stated requirement is covered by the design; five are covered only under c
 
 **Gaps this audit found in the earlier draft, now closed.**
 
-- The earlier design assumed one user. It now has four identity modes and user-device runners.
+- The earlier design assumed one user. It now has four identity kinds and user-device runners.
 - Nothing scoped tools to people. Toolsets, grants, roles, and workspaces now do.
 - The engine and server were one process. They are now a control plane and runners that can be split or combined.
 - There was no network design. Inbound paths, runner links, egress, and the Copilot Studio bridges are now specified.

@@ -14,8 +14,8 @@ use a2m_actions::{
     PersonSurface, Request, Response, Settings, StorePlace,
 };
 use a2m_core::{Timestamp, Version};
+use a2m_logs::{Clock, ManualClock};
 use a2m_provider::{RegistryBuilder, Roots, Supervisor, SupervisorLimits};
-use a2m_telemetry::{Clock, ManualClock};
 use a2m_vault::MemoryKeyStore;
 use engine::{AppPack, Counted, Folder, START};
 use example_app::harness::TestApp;
@@ -523,9 +523,9 @@ fn declare_code_sign_in(compiled_target: &mut a2m_core::CompiledTarget) {
     inputs.insert("order_id", a2m_core::Value::Text("A-100".to_owned()));
     compiled_target.auth.push(a2m_core::CompiledAuth {
         surfaces: vec![a2m_core::SurfaceIndex::new(0)],
-        mode: a2m_core::SignInMode::ManagedSession,
+        mode: a2m_core::SignInKind::ManagedSession,
         provider: a2m_auth::ProviderName::fixed(CODE_PROVIDER),
-        probe: a2m_core::CompiledProbe::Operation {
+        probe: a2m_core::CompiledSessionCheck::Operation {
             operation: a2m_core::OperationIndex::new(0),
             inputs,
         },

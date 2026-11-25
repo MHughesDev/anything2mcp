@@ -133,6 +133,8 @@ pub(crate) enum LocateBy {
     TestId(String),
     /// Title text.
     Title(String),
+    /// The one heading of this level, whatever it is named (decision 0473).
+    Heading(u32),
     /// A selector.
     Css(String),
 }
@@ -161,6 +163,7 @@ impl Locator {
             },
             LocateBy::TestId(id) => By::TestId { id: id.clone() },
             LocateBy::Title(text) => By::Title { text: text.clone() },
+            LocateBy::Heading(level) => By::Heading { level: *level },
             LocateBy::Css(selector) => By::Css {
                 selector: selector.clone(),
             },
@@ -406,11 +409,22 @@ pub(crate) struct Rows {
     pub locate: Vec<Locator>,
     /// What must also be true of the table.
     pub fingerprint: Option<Fingerprint>,
-    /// The text of every column's heading, in the table's order.
+    /// The text of every column's heading, in the table's order, each as
+    /// a person reads it (decision 0474, point 2: a table library's sort words are
+    /// not a heading's). Empty for items.
     pub header: Vec<String>,
-    /// The named columns: each name with the position of its heading.
+    /// The named columns: each name with the position of its heading. For
+    /// items, the one column, at position zero.
     pub columns: BTreeMap<String, u32>,
+    /// For items rather than a table: the role of each item, `listitem` or
+    /// `paragraph`. Each item is one row of one cell, its text (decision
+    /// 0473).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items: Option<String>,
 }
+
+/// The roles a screen's `rows` may read as items (decision 0473).
+pub(crate) const ITEM_ROLES: &[&str] = &["listitem", "paragraph"];
 
 /// Which tab a `goto` step reaches its screen in (decision 0195). The
 /// lowering knows what each binding does, and says it here: every step of

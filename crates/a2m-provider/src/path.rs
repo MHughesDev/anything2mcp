@@ -671,7 +671,7 @@ fn resolve(
 /// the check is refused and never followed, whenever it is put there. On
 /// Windows [`CheckedPath::open`] holds every folder from the root down
 /// while it opens, and opens a link at the name itself and refuses it;
-/// [`CheckedPath::hold_folder`] holds them for as long as it lives. The
+/// [`CheckedPath::folder_handle`] holds them for as long as it lives. The
 /// other methods, and the rest on Windows, look once more that the path
 /// still resolves inside the root and then use it by name; a link swapped in
 /// between those two moments is followed.
@@ -1279,9 +1279,9 @@ impl CheckedPath {
     /// `input`/`path_missing` where the folder is not there;
     /// `input`/`path_not_allowed` where a link, or anything that is not a
     /// folder, stands on the way; `input`/`file_unavailable` otherwise.
-    pub fn hold_folder(&self) -> Result<HeldFolder, Failure> {
+    pub fn folder_handle(&self) -> Result<FolderHandle, Failure> {
         match place::Folder::hold(&self.base, &self.full) {
-            Ok(folder) => Ok(HeldFolder {
+            Ok(folder) => Ok(FolderHandle {
                 path: self.clone(),
                 folder,
             }),
@@ -1618,7 +1618,7 @@ impl Drop for Temporary {
     }
 }
 
-/// A folder inside a root, held from the moment [`CheckedPath::hold_folder`]
+/// A folder inside a root, held from the moment [`CheckedPath::folder_handle`]
 /// reached it: each call acts on one name directly in this folder, and in
 /// no other, whatever is done to the folder's path meanwhile. A name is one
 /// name under the roots' rules (no separator, `.` or `..`, colon, control
@@ -1633,20 +1633,20 @@ impl Drop for Temporary {
 ///
 /// What is left: on Linux and macOS a folder moved away, whole, after it
 /// was held, to a place outside the root on the same file system, is still
-/// the folder the calls act in; [`HeldFolder::still_at_its_path`] tells it.
+/// the folder the calls act in; [`FolderHandle::still_at_its_path`] tells it.
 /// On Windows that move is refused while the folder is held, and the calls
-/// name the entry by its path through the held folders: one of them made a
+/// name the entry by its path through the folder handles: one of them made a
 /// mount point while it is held, which needs it empty and the right to
-/// write it, would be followed; [`HeldFolder::still_at_its_path`] tells
+/// write it, would be followed; [`FolderHandle::still_at_its_path`] tells
 /// that too, since a folder that became a link is not held again.
-pub struct HeldFolder {
+pub struct FolderHandle {
     path: CheckedPath,
     folder: place::Folder,
 }
 
-impl fmt::Debug for HeldFolder {
+impl fmt::Debug for FolderHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("HeldFolder")
+        f.debug_struct("FolderHandle")
             .field("path", &self.path)
             .finish_non_exhaustive()
     }
@@ -1674,7 +1674,7 @@ fn random_name(prefix: &str) -> std::io::Result<std::ffi::OsString> {
     Ok(name.into())
 }
 
-impl HeldFolder {
+impl FolderHandle {
     /// The folder's checked path, for messages and for the provider's own
     /// calls by path.
     #[must_use]

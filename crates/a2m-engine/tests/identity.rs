@@ -1,4 +1,4 @@
-//! Build-order step 8, first half: each identity strategy of spec section
+//! Build-order step 8, first half: each record matching of spec section
 //! 209 as the engine carries it out, and a header with its lines.
 //!
 //! The test application takes a line item's code from its caller. Where a

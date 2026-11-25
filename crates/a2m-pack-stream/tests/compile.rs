@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use a2m_core::{
-    Archetype, EffectClass, Hazard, IdentityStrategy, Mode, SurfaceKind, Values, WriteEvidence,
+    AccessKind, EffectClass, Hazard, Mode, RecordMatching, SurfaceKind, Values, WriteEvidence,
 };
 use a2m_provider::{Manifest, ProviderName, ProviderSettings};
 use common::{Folder, Planted, compile, compiled_target, edited, registry, registry_with};
@@ -29,7 +29,7 @@ fn a_registry_with_only_the_stream_pack_builds_and_its_digest_is_stable() {
     let first = registry(&folder);
     let second = registry(&folder);
     assert_eq!(first.digest(), second.digest());
-    assert_eq!(first.archetype(&mode()), Some(Archetype::Stream));
+    assert_eq!(first.access_kind(&mode()), Some(AccessKind::Stream));
     let handle = first.driver(&mode()).unwrap();
     assert_eq!(
         handle.choice().provider,
@@ -109,7 +109,7 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
     // ordinary write, read back by the latest value.
     let set = operation("example_order_status_set");
     assert_eq!((set.effect, set.hazard), (EffectClass::Write, Hazard::None));
-    assert_eq!(set.identity.strategy, IdentityStrategy::Natural);
+    assert_eq!(set.identity.strategy, RecordMatching::Natural);
     let binding = &set.bindings[0];
     assert_eq!(kinds(&binding.act), ["publish"]);
     assert!(binding.act[0].commits && !binding.act[0].idempotent);
@@ -124,7 +124,7 @@ fn the_example_target_compiles_twice_to_the_same_bytes() {
         (
             EffectClass::Irreversible,
             Hazard::SendsOutside,
-            IdentityStrategy::Stamped
+            RecordMatching::Stamped
         )
     );
     assert_eq!(kinds(&record.bindings[0].read_back), ["scan"]);

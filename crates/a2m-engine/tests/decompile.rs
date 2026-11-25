@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use a2m_core::{Digest, EvidenceLevel, Failure, Finding, Redact, Source};
 use a2m_engine::EngineEvent;
+use a2m_logs::SystemClock;
 use a2m_provider::decompiler::{
     Decompiler, DecompilerDescriber, DecompilerDiscoverer, DecompilerSpec, FILE_ARGUMENT,
 };
@@ -26,7 +27,6 @@ use a2m_provider::{
     DescribeForm, Describer, Pack, PackContext, ProgramTrust, Registrar, Supervisor,
     SupervisorLimits,
 };
-use a2m_telemetry::SystemClock;
 use common::{ORDER_GET, Scene, completed};
 
 const MANIFEST: &str = r#"manifest_format = 1
@@ -163,14 +163,14 @@ async fn scene_with(decompiler: Arc<Decompiler>) -> Scene {
     .await
 }
 
-/// Hands the discovery a file of the project's `sources` folder.
+/// Hands the discovery a file of the project's `inputs` folder.
 fn handing(scene: &Scene) -> common::Folder {
     let project = common::Folder::new("handed");
-    std::fs::create_dir_all(project.path().join("sources")).unwrap();
-    std::fs::write(project.path().join("sources").join("inspected.bin"), b"B").unwrap();
+    std::fs::create_dir_all(project.path().join("inputs")).unwrap();
+    std::fs::write(project.path().join("inputs").join("inspected.bin"), b"B").unwrap();
     *scene.control.project.lock().unwrap() = Some(project.path().to_path_buf());
     *scene.control.discovery_files.lock().unwrap() =
-        [("decompile".to_owned(), "sources/inspected.bin".to_owned())]
+        [("decompile".to_owned(), "inputs/inspected.bin".to_owned())]
             .into_iter()
             .collect();
     project

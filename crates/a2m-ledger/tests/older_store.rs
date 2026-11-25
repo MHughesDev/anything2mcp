@@ -29,7 +29,7 @@ use a2m_core::{RecordState, RunState, Secret, Timestamp};
 use a2m_ledger::{
     Acted, AuditEntry, ChainCheck, DATABASE_FILE_NAME, Durability, ReadBack, RunQuery, migrations,
 };
-use a2m_telemetry::ManualClock;
+use a2m_logs::ManualClock;
 use a2m_vault::{KeyStore, OsRandom, PassphraseKeyStore, PassphraseRoute, PassphraseSalt};
 use common::*;
 

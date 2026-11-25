@@ -9,7 +9,7 @@ Turns an input into validated records. It defines `SourceReader`, carries the bu
 | Side | Kernel |
 | Layer | 4, Services |
 | May depend on | Layers 1 to 3 |
-| Depends on | `a2m-core`, for values, the compiled target's `CompiledSource` and field types, digests, and failures; `a2m-expr`, for mappings, row filters, the field types' normalizers, and the date systems. Outside: `miniz_oxide`, which inflates the parts of a workbook's package ([decision 0086](../../decisions/0086-the-source-readers-are-our-own-over-one-outside-crate-that-inflates.md)). `a2m-files`, for the source definition's types, which are defined there once, beside the file formats, and used here ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)): the compiler writes a `SourceSpec` into the compiled target, and this crate reads the same type back. It does not use `a2m-telemetry` yet |
+| Depends on | `a2m-core`, for values, the compiled target's `CompiledSource` and field types, digests, and failures; `a2m-expr`, for mappings, row filters, the field types' normalizers, and the date systems. Outside: `miniz_oxide`, which inflates the parts of a workbook's package ([decision 0086](../../decisions/0086-the-source-readers-are-our-own-over-one-outside-crate-that-inflates.md)). `a2m-files`, for the source definition's types, which are defined there once, beside the file formats, and used here ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)): the compiler writes a `SourceSpec` into the compiled target, and this crate reads the same type back. It does not use `a2m-logs` yet |
 | Roadmap packages | Phase 3, group D and slice 3.9 |
 | Carries out | Spec sections [210](../../spec/2-kernel/210-sources-and-value-normalization.md), [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (a file is read once, its content checked), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md) (step 1 of the preview), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (the structure of a real file, for the drafter); the `sources/*.yaml` part of the [file formats](../../reference/file-formats.md#sourcesyaml) |
 
@@ -141,7 +141,7 @@ What happens between a pipeline call with a `source` input and the first record 
 | # | Step | Done by |
 | --- | --- | --- |
 | 1 | Resolve the path or blob reference; check the allowed roots and that it is a file | `a2m-actions`, through the file access in `a2m-provider`, before this crate |
-| 2 | Read the bytes once and store them as a blob, sealed; the run's input hash covers these bytes | `a2m-actions`, through `a2m-ledger`; the engine receives the bytes through `Control` |
+| 2 | Read the bytes once and store them as a blob, sealed; the run's input hash covers these bytes | `a2m-actions`, through `a2m-ledger`; the engine receives the bytes through `ControlPort` |
 | 3 | Check the size limit and that the content is the claimed format | `Sources::parse`, with `SourceReader::check` |
 | 4 | Parse the input once | `SourceReader::parse` |
 | 5 | Take the structure's fingerprint; find the template version that matches, or reject with the differences | `Sources::validate` |
@@ -221,7 +221,7 @@ Not built:
 - A date serial with a time of day, read into a field whose type is a date and time or a time of day. Such a cell is a problem today. A date and time written as text is read by its field type's format.
 - A workbook's protection flags that do not encrypt it, such as a sheet locked against editing. They do not stop a read and are not recorded.
 - A package in the large-file form, for files over four gigabytes. It is refused by name.
-- Spans for the telemetry of a read. The crate does not depend on `a2m-telemetry` yet.
+- Spans for a read. The crate does not depend on `a2m-logs` yet.
 - The plug-in protocol's side of a reader. `Sources::validate` is the door it will come through.
 
 ## Open points

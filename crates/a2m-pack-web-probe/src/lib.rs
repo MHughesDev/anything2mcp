@@ -132,7 +132,7 @@ impl Pack for WebProbePack {
             core: look::Core::new(
                 observer,
                 cx.provider().clone(),
-                cx.telemetry().clock(),
+                cx.logs_and_traces().clock(),
                 max_pages,
             ),
             kinds: discover::Kinds::new()?,

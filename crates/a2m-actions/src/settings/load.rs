@@ -37,8 +37,8 @@ pub const ENV_PREFIX: &str = "A2M_";
 pub enum Layer {
     /// The binary's own defaults.
     Default = 1,
-    /// The deployment profile.
-    Profile = 2,
+    /// The deployment shape, under the settings keys `profile.*` (decision 0402).
+    DeploymentShape = 2,
     /// A preset.
     Preset = 3,
     /// The installation's settings file.
@@ -59,7 +59,7 @@ impl Layer {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Default => "default",
-            Self::Profile => "profile",
+            Self::DeploymentShape => "profile",
             Self::Preset => "preset",
             Self::Installation => "installation",
             Self::User => "user",
@@ -827,7 +827,7 @@ impl Loader {
                     value: Written::Typed(value),
                     origin: format!("the profile `{profile}`"),
                 },
-                Layer::Profile,
+                Layer::DeploymentShape,
             );
         }
 
@@ -1129,7 +1129,9 @@ impl Loader {
 
         // What the layer may set.
         let may_set = match (rule.scope, layer) {
-            (_, Layer::Default | Layer::Profile | Layer::Preset | Layer::Installation) => true,
+            (_, Layer::Default | Layer::DeploymentShape | Layer::Preset | Layer::Installation) => {
+                true
+            }
             (Scope::Installation, Layer::Flag) => self.serve,
             (Scope::Installation, _) => false,
             (Scope::User, Layer::Project) => false,

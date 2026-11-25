@@ -711,9 +711,9 @@ pub enum CancelOutcome {
     AlreadyFinal(RunState),
 }
 
-/// What no job is handed out for while it is on hold.
+/// What no job is handed out for while it is paused.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum HoldScope {
+pub enum PauseScope {
     /// Every job: the stop-everything switch.
     Everything,
     /// Every job of one workspace.
@@ -724,7 +724,7 @@ pub enum HoldScope {
     Caller(WorkspaceId, PrincipalId),
 }
 
-impl HoldScope {
+impl PauseScope {
     /// The scope's word, its workspace, and its name, as the store keeps
     /// them.
     pub(crate) fn stored(&self) -> (&'static str, String, String) {

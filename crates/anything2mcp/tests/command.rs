@@ -143,7 +143,7 @@ fn both_names_are_the_same_program() {
         vec!["tool", "call"],
         vec!["runner"],
         vec!["serve", "--help"],
-        vec!["bridge", "--toolset", "admin"],
+        vec!["stdio", "--toolset", "admin"],
         // `init` writes files, so a second run of it says what it kept:
         // not the same output, by design.
         vec!["docs", "get", "approvals"],
@@ -430,7 +430,7 @@ fn the_exit_code_follows_the_failure() {
 
     // The process command of a server's role is named and not built; a
     // process command given a word it does not take is malformed, and the
-    // bridge says so on standard error alone, because its standard output
+    // stdio proxy says so on standard error alone, because its standard output
     // carries protocol messages and nothing else. A settings file that
     // does not load stops the command with the file named.
     let runner = bare.run(&["runner"]);
@@ -439,10 +439,10 @@ fn the_exit_code_follows_the_failure() {
     let serve = bare.run(&["serve", "now"]);
     assert_eq!(serve.status.code(), Some(2));
     assert_eq!(object(&serve)["error"]["code"], "schema_invalid");
-    let bridge = bare.run(&["bridge", "--toolset", "admin"]);
-    assert_eq!(bridge.status.code(), Some(2));
-    assert!(bridge.stdout.is_empty(), "{bridge:?}");
-    assert!(text(&bridge.stderr).contains("admin"), "{bridge:?}");
+    let stdio = bare.run(&["stdio", "--toolset", "admin"]);
+    assert_eq!(stdio.status.code(), Some(2));
+    assert!(stdio.stdout.is_empty(), "{stdio:?}");
+    assert!(text(&stdio.stderr).contains("admin"), "{stdio:?}");
     std::fs::write(
         bare.project.path().join("anything2mcp.toml"),
         "[tools]\nno_such_key = 1\n",

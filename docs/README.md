@@ -8,14 +8,14 @@ The scope, both sides, is one page at the root: [SCOPE.md](../SCOPE.md) says wha
 
 | Folder | What it holds | Files |
 | --- | --- | --- |
-| [spec/](spec/README.md) | The specification: what the system does and why, in seven parts | 59 sections |
+| [spec/](spec/README.md) | The specification: what the system does and why, in seven chapters | 59 sections |
 | [architecture/](architecture/README.md) | How the code is put together: who defines, implements, and joins every interface, and one design per crate | 31 designs and 3 pages |
 | [reference/](reference/technical-reference.md) | Interfaces, data model, protocols, failure codes; the [action catalog](reference/action-catalog.md), [file formats](reference/file-formats.md), [steps, snapshots, and diffs](reference/steps-snapshots-and-diffs.md), [ledger schema](reference/ledger-schema.md), [glossary](reference/glossary.md), a [walkthrough](reference/walkthrough.md), and the generated list of every [source URL](reference/sources.md) cited, by document | 8 |
-| [plan/](plan/README.md) | The [roadmap](plan/roadmap.md) of every work package, the [working method](plan/working-method.md), the [design review lenses](plan/design-review-lenses.md), the [test application plan](plan/test-application.md), the [publishing setup](plan/publishing-setup.md), the [adoption plan](plan/adoption.md) for being found, tried, and trusted, the [network awareness proposal](plan/network-awareness.md), and the [open questions for the owner](plan/open-questions-for-the-owner.md); the folder's [index](plan/README.md) sorts them by kind | 10 |
+| [plan/](plan/README.md) | The [roadmap](plan/roadmap.md) of every work package, the [working method](plan/working-method.md), the [design review lenses](plan/design-review-lenses.md), the [test application plan](plan/test-application.md), the [publishing setup](plan/publishing-setup.md), the [guide to trying the preview on Windows](plan/trying-the-preview-on-windows.md), the [adoption plan](plan/adoption.md) for being found, tried, and trusted, the [network awareness proposal](plan/network-awareness.md), and the [open questions for the owner](plan/open-questions-for-the-owner.md); the folder's [index](plan/README.md) sorts them by kind | 11 |
 | [reviews/](reviews/README.md) | The results of design review rounds: what each looked at, what it found, and where each finding went; the [coverage map](reviews/coverage-map.md) of every way a computer's software can be reached is kept here too; the folder's [index](reviews/README.md) lists them | 12 |
-| [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 442 |
+| [decisions/](decisions/README.md) | Decision records: context, choice, consequences, alternatives | 458 |
 | [hypotheses/](hypotheses/README.md) | The design's bets, each with an alternative and a test; results as they come in | 42 open |
-| [journal/](journal/README.md) | One entry per working session; the newest says where things stand | 15 entries |
+| [journal/](journal/README.md) | One entry per working session; the newest says where things stand | 16 entries |
 | [research/](research/README.md) | Research notes, code reviews, and briefs still to run | 39 |
 | [archive/](archive/README.md) | The first design's consolidated sections and its plans, kept as history; the key from old section numbers to new | 44 documents and 1 image |
 | assets/ | Diagrams | 2 |
@@ -46,7 +46,7 @@ The notes on [what remains unresearched](research/11-open-research.md) and the [
 
 ## Keeping these documents true
 
-- The spec in this folder is the master copy. It was rebuilt in seven parts on 2026-11-17; the [archive](archive/README.md) keeps what it was consolidated from.
+- The spec in this folder is the master copy. It was rebuilt in seven chapters on 2026-11-17; the [archive](archive/README.md) keeps what it was consolidated from.
 - A change in behavior means a change here, in the same commit as the code.
 - A change of mind means a new decision record, never an edit to an old one.
 - New research gets its own file in `research/`, and the brief it answers is removed from the open list.

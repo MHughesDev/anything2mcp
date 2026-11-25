@@ -16,11 +16,11 @@ Administrators decide which tools exist for whom. Three pieces do this: principa
 | Auditor | Read audit logs and traces; no calls |
 | Admin | Manage targets, grants, toolsets, sessions, settings, and kill switches |
 
-**Grants** bind a principal to a scope: a target, a module, an operation pattern such as `example_order_*`, a maximum effect class, and an identity mode. Everything is denied unless granted. Grants compile to policies evaluated by the policy engine ([section 212](212-policy-and-approvals.md)).
+**Grants** bind a principal to a scope: a target, a module, an operation pattern such as `example_order_*`, a maximum effect class, and an identity kind. Everything is denied unless granted. Grants compile to policies evaluated by the policy engine ([section 212](212-policy-and-approvals.md)).
 
 **Toolsets** are how created tasks and workflows are exposed to a given set of users. A toolset is a named, versioned selection of pipelines and operations with its own MCP endpoint, such as `/mcp/estimating`.
 
-- Each toolset lists who may connect, which identity mode its runs use, and its approval policy.
+- Each toolset lists who may connect, which identity kind its runs use, and its approval policy.
 - One server hosts many toolsets: one for a team's hosted agent, one read-only set for reporting, one for a developer's build agent.
 - Under the 2026-07-28 MCP specification, tool lists no longer vary per connection ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog)), so a toolset's list is the same for everyone connected to it, and per-user rights are enforced when a tool is called. A caller without the grant gets a clear `policy` result, not a hidden failure.
 

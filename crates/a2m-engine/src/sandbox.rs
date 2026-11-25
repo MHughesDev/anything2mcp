@@ -5,7 +5,7 @@
 //! method takes no authority, so there is nowhere to pass an intent token.
 //! The driver was prepared in the `Discovery` posture, in which the handle
 //! refuses every step that commits. And the port itself refuses such a step
-//! before the handle sees it. A discovery job asks `Control` for no lock
+//! before the handle sees it. A discovery job asks `ControlPort` for no lock
 //! and no intent, so no token exists to misuse.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,15 +15,15 @@ use std::time::Duration;
 use a2m_core::{
     EffectClass, Failure, Finding, Hazard, OperationName, Redact, RunState, Step, SurfaceIndex,
 };
+use a2m_logs::ChoiceReason;
 use a2m_provider::{
     Access, BoxFuture, CheckedPaths, Deadline, DiscoveryScope, EntryKind, FindingSink, Posture,
     ReadOnlyPort, RootName, Roots, SandboxPort, StepFailure, StepInput, StepOutcome,
     SurfaceDescription,
 };
-use a2m_telemetry::ChoiceReason;
 
 use crate::codes;
-use crate::control::{Control, EngineEvent, GuardQuestion};
+use crate::control::{ControlPort, EngineEvent, GuardQuestion};
 use crate::engine::Engine;
 use crate::guard::{Timed, caught};
 use crate::job::{JobOutcome, JobSpec, ToolRef};
@@ -126,8 +126,8 @@ impl FindingSink for Collected<'_> {
 impl Engine {
     /// Carries out a discovery job: every registered discoverer that suits
     /// the job's surface is handed the sandbox as its port, and what each
-    /// finds is sent through `Control`.
-    pub async fn discover(&self, job: &JobSpec, control: &dyn Control) -> JobOutcome {
+    /// finds is sent through `ControlPort`.
+    pub async fn discover(&self, job: &JobSpec, control: &dyn ControlPort) -> JobOutcome {
         match self.discovery(job, control).await {
             Ok(()) => JobOutcome::Finished {
                 state: RunState::Completed,
@@ -137,14 +137,14 @@ impl Engine {
         }
     }
 
-    async fn discovery(&self, job: &JobSpec, control: &dyn Control) -> Result<(), Failure> {
+    async fn discovery(&self, job: &JobSpec, control: &dyn ControlPort) -> Result<(), Failure> {
         let ToolRef::Surface(name) = &job.tool else {
             return Err(codes::job_invalid(
                 "A discovery job names a surface, and this one names a tool.",
             ));
         };
         let timed = Timed::new(control, self.deps.settings.control_timeout);
-        let control: &dyn Control = &timed;
+        let control: &dyn ControlPort = &timed;
         let loaded = self.compiled_target(&job.compiled_target, control).await?;
         let position = Self::environment(&loaded, job)?;
         let compiled_target = &loaded.compiled_target;
@@ -165,7 +165,7 @@ impl Engine {
                 surface.kind
             ))
         })?;
-        let archetype = entry.archetype;
+        let access_kind = entry.access_kind;
         let handed = control.discovery_files();
         let mut run = Run::new(
             self,
@@ -182,16 +182,16 @@ impl Engine {
         ))?;
         let description = SurfaceDescription {
             kind: surface.kind.clone(),
-            archetype,
+            access_kind,
             address: surface_ref.surface.address.clone(),
             facts: job.input.clone(),
         };
         // The project folder of the request that started the discovery, as
         // every step of the run is handed it (decision 0196), and the files
-        // of its `sources` folder the call named, each checked again here,
+        // of its `inputs` folder the call named, each checked again here,
         // before policy is asked or a driver is held: one that fails its
         // check ends the job, and no discoverer runs (decision 0263).
-        let paths = handed_files(run.paths(), &handed, &registry.files_taken(&description))?;
+        let paths = input_files(run.paths(), &handed, &registry.files_taken(&description))?;
         let tool = OperationName::new(DISCOVER_TOOL)?;
         control
             .decide(&GuardQuestion {
@@ -216,7 +216,7 @@ impl Engine {
                 "Enable a provider that drives a mode of the surface.",
             )),
         };
-        match surface_mode(registry, &surface.kind, archetype, &entry.provider) {
+        match surface_mode(registry, &surface.kind, access_kind, &entry.provider) {
             Ok((mode, handle)) => {
                 let candidate = Candidate {
                     binding: 0,
@@ -305,7 +305,7 @@ impl Engine {
 }
 
 /// The folder of a project whose files a person may hand a discovery.
-const SOURCES: &str = "sources";
+const INPUTS: &str = "inputs";
 
 /// Caller's text as an error message may hold it: no control character,
 /// and at most 80 characters.
@@ -324,16 +324,16 @@ fn shown(text: &str) -> String {
 }
 
 /// The run's checked paths with each file a call handed a discovery added
-/// under its name (decision 0263). Each path is the call's text, `sources/`
+/// under its name (decision 0263). Each path is the call's text, `inputs/`
 /// and a file below it. It is joined under a root made here of the
-/// project's `sources` folder, for reading only, by
+/// project's `inputs` folder, for reading only, by
 /// [`a2m_provider::CheckedPath::join`], which refuses an absolute path,
 /// `..`, and a link that leads out of the folder; a part that starts with
 /// a dot is refused too, and what stands at the path must be a regular
 /// file, not a link. A name that no
 /// discoverer of the surface reads is refused: a file nobody reads is a
 /// mistake, never ignored (rule 7). Nothing is read here.
-fn handed_files(
+fn input_files(
     paths: &CheckedPaths,
     handed: &BTreeMap<String, String>,
     taken: &BTreeSet<String>,
@@ -349,18 +349,18 @@ fn handed_files(
                 "The file `{}` handed to the discovery is refused: {why}.",
                 shown(path)
             ),
-            "Name a regular file inside the project's `sources` folder, as `sources/` and its path below it.",
+            "Name a regular file inside the project's `inputs` folder, as `inputs/` and its path below it.",
         )
     };
     let project = paths.project_folder()?;
     let folder = project
-        .join(SOURCES)
-        .map_err(|_| refused(SOURCES, "the project's `sources` folder cannot be used"))?;
-    let root = RootName::new(SOURCES)?;
+        .join(INPUTS)
+        .map_err(|_| refused(INPUTS, "the project's `inputs` folder cannot be used"))?;
+    let root = RootName::new(INPUTS)?;
     let mut roots = Roots::none();
     roots
         .add(root.clone(), folder.as_path(), Access::Read)
-        .map_err(|_| refused(SOURCES, "the project has no `sources` folder"))?;
+        .map_err(|_| refused(INPUTS, "the project has no `inputs` folder"))?;
     let sources = roots.folder(&root, Access::Read)?;
     for (name, path) in handed {
         if !taken.contains(name) {
@@ -376,8 +376,8 @@ fn handed_files(
             )));
         }
         let below = path
-            .strip_prefix("sources/")
-            .ok_or_else(|| refused(path, "it is not in the project's `sources` folder"))?;
+            .strip_prefix("inputs/")
+            .ok_or_else(|| refused(path, "it is not in the project's `inputs` folder"))?;
         if below.split('/').any(|part| part.starts_with('.')) {
             return Err(refused(path, "a part of it is hidden"));
         }
@@ -392,13 +392,13 @@ fn handed_files(
 
 /// The mode a discovery of a surface is made through, and its driver: of
 /// the modes the provider that serves the surface's kind declares, those of
-/// the kind's archetype whose driver the registry can hand over; the one an
+/// the kind's access kind whose driver the registry can hand over; the one an
 /// operation would try first, by the `rank` its manifest declares. Two of
 /// one rank are a choice nothing states, and none is guessed (rule 7).
 fn surface_mode(
     registry: &a2m_provider::Registry,
     kind: &a2m_core::SurfaceKind,
-    archetype: a2m_core::Archetype,
+    access_kind: a2m_core::AccessKind,
     provider: &a2m_provider::ProviderName,
 ) -> Result<(a2m_core::Mode, a2m_provider::DriverHandle), Failure> {
     let listing = registry
@@ -410,7 +410,7 @@ fn surface_mode(
     for mode in listing
         .iter()
         .flat_map(|listing| listing.manifest.modes.iter())
-        .filter(|mode| mode.archetype == archetype)
+        .filter(|mode| mode.access_kind == access_kind)
     {
         match registry.driver(&mode.name) {
             Ok(handle) => ready.push((mode.rank, mode.name.clone(), handle)),
@@ -425,7 +425,7 @@ fn surface_mode(
             codes::fail(
                 &codes::row::NO_BINDING,
                 format!(
-                    "The provider `{provider}` serves the surface kind `{kind}` and drives no mode of its archetype, so nothing on the surface can be observed."
+                    "The provider `{provider}` serves the surface kind `{kind}` and drives no mode of its access kind, so nothing on the surface can be observed."
                 ),
                 "Enable a provider that drives a mode of the surface's kind.",
             )

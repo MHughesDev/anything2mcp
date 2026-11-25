@@ -15,7 +15,7 @@ The product was first designed as a tool for wrapping web applications. Its spec
 | 3 | [103, Design principles](../spec/1-product/103-design-principles.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
 | 4 | [104, System overview](../spec/1-product/104-system-overview.md) | Consolidated | [System overview](spec-2026-11/04-system-overview.md) |
 | 5 | [105, Core concepts](../spec/1-product/105-core-concepts.md) | Consolidated | [Core concepts](spec-2026-11/05-core-concepts.md) |
-| 6 | [201, Archetypes and modes](../spec/2-kernel/201-archetypes-and-modes.md) | Consolidated | [Modes and drivers](spec-2026-11/06-modes-and-drivers.md) |
+| 6 | [201, Archetypes and modes](../spec/2-kernel/201-access-kinds-and-modes.md) | Consolidated | [Modes and drivers](spec-2026-11/06-modes-and-drivers.md) |
 | 7 | [205, Target files](../spec/2-kernel/205-target-files.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
 | 8 | [207, The engine loop](../spec/2-kernel/207-the-engine-loop.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
 | 9 | [225, Performance](../spec/2-kernel/225-performance.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
@@ -63,7 +63,7 @@ The product was first designed as a tool for wrapping web applications. Its spec
 | 51 | [502, Defending against a manipulated agent](../spec/5-security/502-defending-against-a-manipulated-agent.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
 | 52 | [224, When the engine itself fails](../spec/2-kernel/224-when-the-engine-itself-fails.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
 | 53 | [106, What it latches onto](../spec/1-product/106-what-it-latches-onto.md) | Consolidated | [Anything2MCP: the universal runtime](spec-2026-11/53-the-universal-runtime.md) |
-| 54 | [201, Archetypes and modes](../spec/2-kernel/201-archetypes-and-modes.md) | Consolidated | [Interaction archetypes](spec-2026-11/54-interaction-archetypes.md) |
+| 54 | [201, Archetypes and modes](../spec/2-kernel/201-access-kinds-and-modes.md) | Consolidated | [Interaction archetypes](spec-2026-11/54-interaction-archetypes.md) |
 | 55 | [202, Kernel and packs](../spec/2-kernel/202-kernel-and-packs.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
 | 56 | [203, The provider contract](../spec/2-kernel/203-the-provider-contract.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |
 | 57 | [204, Supervising subsystems](../spec/2-kernel/204-supervising-subsystems.md) | Moved and renumbered; the wording was kept | Not kept: the section itself moved |

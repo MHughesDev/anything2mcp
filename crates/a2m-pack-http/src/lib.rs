@@ -149,7 +149,7 @@ impl Pack for HttpPack {
                     kind: openapi::described_operation()?,
                 })),
         )?;
-        let clock = cx.telemetry().clock();
+        let clock = cx.logs_and_traces().clock();
         to.discoverer(
             Arc::new(discover::HttpSurface::new(
                 cx.provider().clone(),

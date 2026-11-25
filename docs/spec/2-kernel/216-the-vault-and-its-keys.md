@@ -33,7 +33,7 @@ Encryption is layered, so that most keys never need to leave the machine and rot
 | Machine | Root key store | Notes |
 | --- | --- | --- |
 | Windows, macOS, or Linux desktop | The operating system's credential store: Credential Manager, Keychain, or Secret Service | A maintained Rust crate family covers all three ([research note 15](../../research/15-traces-and-key-stores.md)). This build has no Secret Service back end ([decision 0123](../../decisions/0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md)), so a Linux desktop takes the row below |
-| Server | An external key service or secrets manager; the root key is used there and never exported | Preferred for every server profile |
+| Server | An external key service or secrets manager; the root key is used there and never exported | Preferred for every server deployment shape |
 | Linux with no desktop session | Secret Service is usually absent. Use an external service, or a key derived from a passphrase supplied at start | The passphrase route is reported as weaker. Where the build has an operating-system key store, choosing it is an explicit opt-in in the installation's settings; where the build has none, it is the default, because there is nothing stronger to move off ([decision 0220](../../decisions/0220-a-first-run-on-linux-needs-no-administrators-file.md)) |
 
 The engine never falls back to writing a key to disk in the clear. `anything2mcp doctor` reports which store is in use and warns about the weaker ones.
@@ -60,7 +60,7 @@ A session signed in as a person may be used only by that person or an agent acti
 
 ## Naming without revealing
 
-Evidence is named by a keyed digest of its content, not a plain hash, so that someone who can read the store cannot confirm a guessed value by hashing it. The vault keeps one digest key per installation, wrapped by the root, and derives each workspace's key from it, so nothing can be matched across workspaces ([decision 0075](../../decisions/0075-the-vaults-interface-as-building-it-settled-it.md)). The digest is offered through the same interface in `a2m-core` as the redactor, so the ledger and telemetry can ask for one without depending on each other or on the vault.
+Evidence is named by a keyed digest of its content, not a plain hash, so that someone who can read the store cannot confirm a guessed value by hashing it. The vault keeps one digest key per installation, wrapped by the root, and derives each workspace's key from it, so nothing can be matched across workspaces ([decision 0075](../../decisions/0075-the-vaults-interface-as-building-it-settled-it.md)). The digest is offered through the same interface in `a2m-core` as the redactor, so the ledger and the logs and traces can ask for one without depending on each other or on the vault.
 
 ## Rotation
 

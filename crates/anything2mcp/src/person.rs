@@ -25,8 +25,8 @@ use a2m_actions::{
 };
 use a2m_auth::PersonAnswer;
 use a2m_core::{Failure, FailureClass};
+use a2m_logs::Clock;
 use a2m_policy::PresenceCheck;
-use a2m_telemetry::Clock;
 
 /// The word a person types to say they are there.
 const YES: &str = "yes";

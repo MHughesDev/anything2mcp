@@ -126,7 +126,7 @@ impl Typed {
     /// number an exact decimal, and true or false a boolean. What no type
     /// reads (values of more than one kind, a list or a record inside, a
     /// key that holds nothing anywhere, and a finding made before the kinds
-    /// were carried) stays a question (finding 26 of field test 4).
+    /// were carried) stays a question (finding 26 of copy test 4).
     fn of_json(column: Option<&ColumnFound>) -> Self {
         match (column, Self::of_cells(column)) {
             (None, _) | (_, Self::LeftOut) => Self::Unknown,

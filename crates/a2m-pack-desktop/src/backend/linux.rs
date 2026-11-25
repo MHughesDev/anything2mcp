@@ -376,6 +376,34 @@ impl Watch {
     }
 }
 
+/// The signals after which a new application may be on the bus, from the
+/// moment the listening began (decision 0467).
+pub(crate) struct Arrivals {
+    registry: MessageStream,
+    owners: MessageStream,
+}
+
+impl Arrivals {
+    /// Waits for the next such signal. `false` when the deadline passed
+    /// first.
+    pub(crate) async fn next(&mut self, deadline: Deadline) -> Result<bool, AxError> {
+        let (registry, owners) = (&mut self.registry, &mut self.owners);
+        let next = std::future::poll_fn(|cx| {
+            if let std::task::Poll::Ready(signal) = Pin::new(&mut *registry).poll_next(cx) {
+                return std::task::Poll::Ready(signal.map(|_| ()));
+            }
+            Pin::new(&mut *owners)
+                .poll_next(cx)
+                .map(|signal| signal.map(|_| ()))
+        });
+        match tokio::time::timeout_at(deadline.at(), next).await {
+            Ok(Some(())) => Ok(true),
+            Ok(None) => Err(AxError::Lost("the bus".to_owned())),
+            Err(_) => Ok(false),
+        }
+    }
+}
+
 /// What the driver proved of the application's process when it was
 /// prepared, and proves again before every act: the process that owns the
 /// application's connection, its start time, the program it runs, and,
@@ -478,6 +506,33 @@ impl Hands<'_> {
             &(text,),
         )
         .await
+    }
+
+    /// Does the element's one action that it binds to `key` of the pack's
+    /// closed list, as its action interface lists its key bindings
+    /// (decision 0467). `Ok(None)` when it binds the key to no action, or
+    /// to more than one, and nothing was sent; `Ok(Some(false))` when the
+    /// application says it did not do it. No key event is sent.
+    pub(crate) async fn press_key(&self, node: &Node, key: &str) -> Result<Option<bool>, Acted> {
+        let (bus, path) = (node.el.bus.as_str(), node.el.path.as_str());
+        let offered: Vec<(String, String, String)> =
+            call(&self.look.a11y, bus, path, ACTION, "GetActions", &())
+                .await
+                .map_err(Acted::NotSent)?;
+        let bound: Vec<usize> = offered
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, _, binding))| crate::keys::binds(binding, key))
+            .map(|(at, _)| at)
+            .collect();
+        let [index] = bound.as_slice() else {
+            return Ok(None);
+        };
+        let index = i32::try_from(*index)
+            .map_err(|_| Acted::NotSent(AxError::Lost("an action out of range".to_owned())))?;
+        act_call(&self.look.a11y, &node.el, ACTION, "DoAction", &(index,))
+            .await
+            .map(Some)
     }
 
     /// Does the element's action named `name`. `Ok(None)` when it offers
@@ -896,6 +951,43 @@ impl Look {
             .await
             .map_err(|error| lost(&error))?;
         Ok(Watch { stream, gone })
+    }
+
+    /// Whether any process of the engine's own user runs `program`, from
+    /// the process table alone: the driver starts no second copy of a
+    /// program that runs and publishes nothing (decision 0467).
+    pub(crate) fn program_runs(&self, program: &str) -> bool {
+        let Ok(want) = std::fs::canonicalize(program) else {
+            return false;
+        };
+        std::fs::metadata("/proc/self").is_ok_and(|me| runs(&want, me.uid()))
+    }
+
+    /// Begins listening to what says a new application may have published
+    /// itself: the registry's signals (it signals a change of the
+    /// desktop's children when it embeds an application), and the bus
+    /// daemon's word of a connection's owner. A wait reads the list of
+    /// applications again on each, and never decides from a signal.
+    pub(crate) async fn arrivals(&self) -> Result<Arrivals, AxError> {
+        let registry = MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .sender(REGISTRY)
+            .build()
+            .map_err(|error| lost(&error))?;
+        let registry = MessageStream::for_match_rule(registry, &self.a11y, NonZeroUsize::new(64))
+            .await
+            .map_err(|error| lost(&error))?;
+        let owners = MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .sender("org.freedesktop.DBus")
+            .interface("org.freedesktop.DBus")
+            .member("NameOwnerChanged")
+            .build()
+            .map_err(|error| lost(&error))?;
+        let owners = MessageStream::for_match_rule(owners, &self.a11y, NonZeroUsize::new(64))
+            .await
+            .map_err(|error| lost(&error))?;
+        Ok(Arrivals { registry, owners })
     }
 
     /// What proves the application's process now: for the driver to keep,

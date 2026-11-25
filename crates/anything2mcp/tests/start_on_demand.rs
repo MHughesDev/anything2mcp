@@ -1,5 +1,5 @@
 //! Start on demand, through the real program (decision 0165): a command or
-//! a bridge that finds no engine starts one, detached, and is answered by
+//! a stdio proxy that finds no engine starts one, detached, and is answered by
 //! it; two at once start one; an idle engine stops by itself and lets go
 //! of its lock; and with `engine.in_process` on, nothing is started.
 
@@ -242,10 +242,10 @@ async fn two_commands_at_once_start_one_engine() {
     stop(&machine).await;
 }
 
-/// The real program's `bridge`, with the passphrase, so that it can start
+/// The real program's `stdio`, with the passphrase, so that it can start
 /// an engine. Gives the answer to one request and what it said on
 /// standard error.
-fn bridged(mut command: Command, message: &Json) -> (Json, String) {
+fn through_the_stdio_proxy(mut command: Command, message: &Json) -> (Json, String) {
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -265,7 +265,9 @@ fn bridged(mut command: Command, message: &Json) -> (Json, String) {
         }
     });
     let answer = loop {
-        let line = lines.recv_timeout(PATIENCE).expect("the bridge answered");
+        let line = lines
+            .recv_timeout(PATIENCE)
+            .expect("the stdio proxy answered");
         let message: Json = serde_json::from_str(&line).unwrap();
         if message.get("id").is_some() {
             break message;
@@ -296,20 +298,21 @@ fn call(id: u64) -> Json {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_bridge_starts_an_engine_and_the_engine_stops_by_itself_when_idle() {
+async fn a_stdio_proxy_starts_an_engine_and_the_engine_stops_by_itself_when_idle() {
     let app = TestApp::start().await.unwrap();
     let machine = published(&app).await;
-    let mut bridge = starting(&machine, &["bridge"]);
-    bridge.env("A2M_ENGINE__IDLE_STOP_MINUTES", "1");
-    let (answer, said) = tokio::task::spawn_blocking(move || bridged(bridge, &call(1)))
-        .await
-        .unwrap();
+    let mut stdio = starting(&machine, &["stdio"]);
+    stdio.env("A2M_ENGINE__IDLE_STOP_MINUTES", "1");
+    let (answer, said) =
+        tokio::task::spawn_blocking(move || through_the_stdio_proxy(stdio, &call(1)))
+            .await
+            .unwrap();
     let run = &answer["result"]["structuredContent"];
     assert_eq!(run["status"], "completed", "{answer} {said}");
     assert_eq!(run["result"]["customer"], "Example Customer One");
     assert_eq!(started(&machine).len(), 1, "{}", log(&machine));
 
-    // The bridge has gone and nothing is in hand: after a minute the
+    // The stdio proxy has gone and nothing is in hand: after a minute the
     // engine stops by itself, and its lock is free. Nothing asked it, so
     // its last object names nothing.
     let last = gone(&machine).await;
@@ -322,11 +325,12 @@ async fn with_engine_in_process_on_nothing_is_started_unless_asked_by_name() {
     let app = TestApp::start().await.unwrap();
     let machine = published(&app).await;
 
-    // A bridge cannot run the engine inside itself, so it says what to do.
-    let bridge = machine.program(&["bridge"]);
-    let (answer, said) = tokio::task::spawn_blocking(move || bridged(bridge, &call(1)))
-        .await
-        .unwrap();
+    // A stdio proxy cannot run the engine inside itself, so it says what to do.
+    let stdio = machine.program(&["stdio"]);
+    let (answer, said) =
+        tokio::task::spawn_blocking(move || through_the_stdio_proxy(stdio, &call(1)))
+            .await
+            .unwrap();
     assert_eq!(answer["error"]["code"], -32000, "{answer}");
     let data = answer["error"]["data"].to_string();
     assert!(data.contains("engine_unreachable"), "{answer}");
@@ -621,7 +625,7 @@ async fn killed_with_a_write_in_flight(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_started_engine_killed_with_no_warning_is_replaced_by_the_next_command_and_its_write_is_made_once()
  {
-    use a2m_telemetry::{Clock, ManualClock, SystemClock};
+    use a2m_logs::{Clock, ManualClock, SystemClock};
     let app = TestApp::start().await.unwrap();
     let (_proxy, machine, run, killed) = killed_with_a_write_in_flight(&app).await;
 

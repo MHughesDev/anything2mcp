@@ -21,7 +21,7 @@
 //!         table row: cells, one row for each line
 //!       push button "Save"
 //!       label "New customer"  -> editable entry, holding at most CUSTOMER_MOST characters
-//!       label "New status"    -> editable entry
+//!       label "New status"    -> editable entry, whose action `activate`, bound to Return, saves
 //!       label "Message"       -> entry: "Saved." once Save has stored
 //!       label "Problem"       -> entry, showing only while the application refuses a value
 //! ```
@@ -344,6 +344,10 @@ impl Model {
         let most = model.new_customer;
         model.nodes[most].most = Some(CUSTOMER_MOST);
         model.new_status = model.labelled(panel, "New status", &order.status, Kind::Edit);
+        // Saves on Enter, as many applications' fields do: its one action,
+        // `activate`, is bound to the key, and does what Save does.
+        let status = model.new_status;
+        model.nodes[status].action = true;
         model.message = model.labelled(panel, "Message", "", Kind::Shown);
         model.problem = model.labelled(panel, "Problem", "", Kind::Shown);
         model.nodes[model.problem].states &= !state::SHOWING;
@@ -920,10 +924,30 @@ impl EditableText {
     }
 }
 
-/// `org.a11y.atspi.Action`, for the Save button. A press is a write;
-/// whether it stores is the application's.
+/// `org.a11y.atspi.Action`, for the Save button and for the field
+/// labelled `New status`, whose one action, `activate`, is bound to the
+/// key Return and does what Save does. A press is a write; whether it
+/// stores is the application's.
 struct Action {
+    id: usize,
     model: Shared,
+}
+
+impl Action {
+    /// The node's one action: Save's `click`, or the field's `activate`,
+    /// bound to Return.
+    fn offered(&self) -> (String, String, String) {
+        let field = lock(&self.model).new_status == self.id;
+        if field {
+            (
+                "activate".to_owned(),
+                "Saves the order".to_owned(),
+                "Return".to_owned(),
+            )
+        } else {
+            ("click".to_owned(), String::new(), String::new())
+        }
+    }
 }
 
 #[interface(name = "org.a11y.atspi.Action")]
@@ -935,12 +959,12 @@ impl Action {
 
     fn get_actions(&self) -> Vec<(String, String, String)> {
         asked(&self.model, "Action.GetActions");
-        vec![("click".to_owned(), String::new(), String::new())]
+        vec![self.offered()]
     }
 
     fn get_name(&self, _index: i32) -> String {
         asked(&self.model, "Action.GetName");
-        "click".to_owned()
+        self.offered().0
     }
 
     async fn do_action(&self, index: i32, #[zbus(connection)] conn: &Connection) -> bool {
@@ -1142,6 +1166,7 @@ impl App {
                 .at(
                     path.as_str(),
                     Action {
+                        id,
                         model: Arc::clone(&self.model),
                     },
                 )

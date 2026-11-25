@@ -1,8 +1,8 @@
 # 601. Deployment configurations
 
-One binary covers every setup, from a single laptop to a company-wide service. Roles are switched on by configuration, and target files are identical in all of them. This section designs the setups and their roles. Built today: the `solo` profile; the workstation profile's local HTTP is not built, and the server profiles come after the first release ([section 704](../7-project/704-readiness.md)).
+One binary covers every setup, from a single laptop to a company-wide service. Roles are switched on by configuration, and target files are identical in all of them. This section designs the setups and their roles. Built today: the `solo` deployment shape; the workstation deployment shape's local HTTP is not built, and the server profiles come after the first release ([section 704](../7-project/704-readiness.md)).
 
-| Profile | Shape | Who connects | Stores | Typical identity modes |
+| Deployment shape | What it is | Who connects | Stores | Typical identity kinds |
 | --- | --- | --- | --- | --- |
 | **Solo** | One engine process per user, started on demand by the first command or MCP client and stopped when idle ([section 222](../2-kernel/222-front-doors-and-the-local-engine.md)) | That user's agents | One SQLite file, OS key store | The user's existing sign-in |
 | **Workstation service** | One background service on the machine, with local HTTP as well as stdio | Several agents and apps on that machine | SQLite, OS key store | The user's existing sign-in |
@@ -14,7 +14,7 @@ One binary covers every setup, from a single laptop to a company-wide service. R
 
 ![company server topology · callers, gateway, control plane, runners](../../assets/company-server-topology.png)
 
-In the company profile, every caller reaches one governed endpoint. The control plane never touches a target itself; runners do, as the user or as a service account.
+In the company deployment shape, every caller reaches one governed endpoint. The control plane never touches a target itself; runners do, as the user or as a service account.
 
 **Why this scales cleanly.**
 
@@ -22,6 +22,6 @@ In the company profile, every caller reaches one governed endpoint. The control 
 - **Runners pull work.** Runners connect outward and take jobs suited to them: by target, by mode, by operating system, and by identity. Adding capacity means starting more runners.
 - **Sessions live with runners, secrets with the vault.** A live browser stays on its runner; its saved state is encrypted in the vault so another runner can take over after a restart.
 
-**Build once, promote anywhere.** Tools are usually built in the Solo profile on someone's laptop, then promoted. `anything2mcp bundle` packs a target version into a signed file; the company server's publisher reviews and imports it, or the server pulls it from a Git repository. Nothing is rebuilt, because the files are the same in every profile.
+**Build once, promote anywhere.** Tools are usually built in the Solo deployment shape on someone's laptop, then promoted. `anything2mcp bundle` packs a target version into a signed file; the company server's publisher reviews and imports it, or the server pulls it from a Git repository. Nothing is rebuilt, because the files are the same in every deployment shape.
 
 **Operating systems.** The control plane and server runners run on Linux, Windows, and macOS, natively or in a container. Desktop runners need an interactive session on the operating system of the app they drive. User-device runners install as a small tray application.

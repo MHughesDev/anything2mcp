@@ -11,14 +11,14 @@ use std::time::Duration;
 
 use a2m_core::{Failure, JobId, RunId, RunnerId, Timestamp};
 use a2m_ledger::{Durability, Store, Tx};
-use a2m_telemetry::{Attr, Clock, Telemetry};
+use a2m_logs::{Attr, Clock, LogsAndTraces};
 use tokio::sync::{Notify, oneshot, watch};
 
 use crate::budget::{self, Take};
 use crate::failure;
 use crate::tables::{self, Acquired, LeaseClock, between, plus};
 use crate::types::{
-    Admitted, BudgetKey, CancelOutcome, Enqueue, HoldScope, JobEnd, JobLease, JobRow, LeaseRef,
+    Admitted, BudgetKey, CancelOutcome, Enqueue, JobEnd, JobLease, JobRow, LeaseRef, PauseScope,
     RateGrant, RateLimit, Renewal, ResourceKey, Resumed, RunnerOffer, RunnerTerms, SchedSettings,
     Slots, Submission, SweepReport,
 };
@@ -42,7 +42,7 @@ struct Inner {
     /// time of day this scheduler was made.
     leases: LeaseClock,
     settings: SchedSettings,
-    telemetry: Option<Telemetry>,
+    logs_and_traces: Option<LogsAndTraces>,
     /// Woken when a waiting claim may find work it did not find before.
     work: Notify,
     /// Held around every change to who holds an exclusive resource, so that
@@ -130,7 +130,11 @@ impl Scheduler {
     /// deadline it keeps is a moment of that clock, so a restart finds them
     /// again.
     #[must_use]
-    pub fn new(store: Store, settings: SchedSettings, telemetry: Option<Telemetry>) -> Self {
+    pub fn new(
+        store: Store,
+        settings: SchedSettings,
+        logs_and_traces: Option<LogsAndTraces>,
+    ) -> Self {
         let clock = store.clock();
         let leases = LeaseClock::new(Arc::clone(&clock));
         let (due, _) = watch::channel(0);
@@ -140,7 +144,7 @@ impl Scheduler {
                 clock,
                 leases,
                 settings,
-                telemetry,
+                logs_and_traces,
                 work: Notify::new(),
                 gate: tokio::sync::Mutex::new(()),
                 waits: Mutex::new(Waits::default()),
@@ -180,10 +184,10 @@ impl Scheduler {
     }
 
     fn count(&self, name: &'static str, attrs: &[Attr], by: usize) {
-        if let Some(telemetry) = &self.inner.telemetry
+        if let Some(logs_and_traces) = &self.inner.logs_and_traces
             && by > 0
         {
-            telemetry.count(name, attrs, u64::try_from(by).unwrap_or(u64::MAX));
+            logs_and_traces.count(name, attrs, u64::try_from(by).unwrap_or(u64::MAX));
         }
     }
 
@@ -215,7 +219,7 @@ impl Scheduler {
     ///
     /// # Errors
     ///
-    /// `busy` with `engine_degraded`, `on_hold`, `queue_full`,
+    /// `busy` with `engine_degraded`, `scheduler_paused`, `queue_full`,
     /// `caller_queue_full`, `runner_unavailable`, or `rate_limited`, each
     /// with a next step; `input`/`schema_invalid` for a malformed
     /// submission; `busy` failures of the store.
@@ -431,9 +435,9 @@ impl Scheduler {
             };
             if !leased.is_empty() {
                 self.count(LEASED_COUNT, &[], leased.len());
-                if let Some(telemetry) = &self.inner.telemetry {
+                if let Some(logs_and_traces) = &self.inner.logs_and_traces {
                     for one in &leased {
-                        telemetry.observe(QUEUE_WAIT, &[], one.waited);
+                        logs_and_traces.observe(QUEUE_WAIT, &[], one.waited);
                     }
                 }
                 self.inner
@@ -867,17 +871,17 @@ impl Scheduler {
 
     /// Puts a scope on hold: no job it covers is handed out, a submission it
     /// covers is refused, and a runner that holds such a job is told to
-    /// pause at its next heartbeat. `HoldScope::Everything` is the
+    /// pause at its next heartbeat. `PauseScope::Everything` is the
     /// stop-everything switch. Whether a hold may be set or released is the
     /// policy engine's question, asked by the caller before this.
     ///
     /// # Errors
     ///
     /// `busy` failures of the store.
-    pub async fn hold(&self, scope: HoldScope) -> Result<(), Failure> {
+    pub async fn pause(&self, scope: PauseScope) -> Result<(), Failure> {
         self.inner
             .store
-            .write(Durability::Synced, move |tx| tables::hold(tx, &scope))
+            .write(Durability::Synced, move |tx| tables::pause(tx, &scope))
             .await?;
         self.changed();
         Ok(())
@@ -890,12 +894,12 @@ impl Scheduler {
     /// # Errors
     ///
     /// `busy` failures of the store.
-    pub async fn release_hold(&self, scope: HoldScope) -> Result<bool, Failure> {
+    pub async fn release_pause(&self, scope: PauseScope) -> Result<bool, Failure> {
         let released = self
             .inner
             .store
             .write(Durability::Synced, move |tx| {
-                tables::release_hold(tx, &scope)
+                tables::release_pause(tx, &scope)
             })
             .await?;
         self.changed();
@@ -907,11 +911,11 @@ impl Scheduler {
     /// # Errors
     ///
     /// `busy` failures of the store.
-    pub async fn holds(&self) -> Result<Vec<HoldScope>, Failure> {
+    pub async fn pauses(&self) -> Result<Vec<PauseScope>, Failure> {
         self.inner
             .store
             .read(|tx| {
-                Ok(tables::scope_holds(tx)?
+                Ok(tables::scope_pauses(tx)?
                     .into_iter()
                     .map(|hold| hold.scope)
                     .collect())

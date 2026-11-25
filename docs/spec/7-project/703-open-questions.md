@@ -39,11 +39,11 @@ Decisions taken in this spec:
 | Policy decisions | The policy crate's own evaluator: deny by default, forbid wins; grants are permits ([decision 0082](../../decisions/0082-the-decision-core-is-the-policy-crates-own-evaluator.md)) | Cedar | Its tree fails the closed licence list and adds 107 crates and 5.5 MB |
 | Policy lifecycle | Versioned, tested, immutable; every decision recorded and explainable | Live-edited settings | A policy change is as risky as a code change |
 | Target files at run time | Compiled once into a hashed compiled target; never parsed during a call | Interpret YAML on each call | Speed, early errors, a hash for exactly what ran |
-| Evidence | Events, a step trace, and artifacts; redacted at capture; a trace signature for comparing runs | Logs | Gates, repair, and audit all consume it |
+| Evidence | Events, a step trace, and captures; redacted at capture; a trace signature for comparing runs | Logs | Gates, repair, and audit all consume it |
 | Keys | Root, workspace, owner, and data keys; root in the OS store or a key service | One key for everything | Rotation without re-encrypting; ownership backed by encryption |
 | Local approval surface | A diff page served for that moment, then an operating-system prompt; no tray application at first | A system dialog alone | A diff needs a page; a page alone can be approved by a script |
 | Outbound data | Nothing leaves the machine unless switched on | Usage statistics by default | The tool holds live sessions to business systems |
-| Finding a record again | Five identity strategies; assigned keys and results kept in the ledger | Class every create irreversible | Creates and header-with-lines pipelines must be resumable |
+| Finding a record again | Five record matchings; assigned keys and results kept in the ledger | Class every create irreversible | Creates and header-with-lines pipelines must be resumable |
 | A manipulated agent | Typed templates, allowed file roots, a risk-ordered publish review, protected settings | Trust the agent | Agents read text that can steer them |
 | Engine faults | No ledger, no write; nothing unverified runs; three health states | Best effort | Fail closed, and say why |
 | Version rollout | Published, then candidate with shadowed reads, then current | Switch on publish | A bad version is the likeliest self-inflicted failure |
@@ -52,7 +52,7 @@ Decisions taken in this spec:
 Open questions:
 
 - [ ] For each real target: what does it send when a record is saved (JSON to an API, form posts, or neither)?
-- [ ] For each real target: do IT and the vendor's terms allow wrapping it, and with which identity mode?
+- [ ] For each real target: do IT and the vendor's terms allow wrapping it, and with which identity kind?
 - [ ] For each real target: is there a test environment or a test record that tests may write to and restore?
 - [ ] Have the package names been reserved on PyPI and npm?
 - [ ] Which user-presence checks can a background process call on each operating system?

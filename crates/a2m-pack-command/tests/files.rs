@@ -12,7 +12,7 @@ mod common;
 
 use std::sync::Arc;
 
-use a2m_core::{Archetype, EffectClass, FailureClass, NoSecrets, SurfaceKind};
+use a2m_core::{AccessKind, EffectClass, FailureClass, NoSecrets, SurfaceKind};
 use a2m_provider::Manifest;
 use common::{FILES, Folder, changed, compile, fixture, registry};
 
@@ -23,7 +23,7 @@ fn a_registry_with_only_the_command_pack_builds_and_its_digest_is_stable() {
     let second = registry(&folder, Arc::new(NoSecrets));
     assert_eq!(first.digest(), second.digest());
     let mode = a2m_pack_command::codes::mode();
-    assert_eq!(first.archetype(&mode), Some(Archetype::Command));
+    assert_eq!(first.access_kind(&mode), Some(AccessKind::Command));
     assert!(first.driver(&mode).is_ok());
     assert!(
         first

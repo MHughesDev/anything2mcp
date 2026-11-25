@@ -1,7 +1,7 @@
 //! Toolsets and role grants, compiled to the policy engine's form.
 //!
 //! A toolset is a named selection of tools with who may connect to it, the
-//! highest effect class its runs may have, the identity mode its runs use,
+//! highest effect class its runs may have, the identity kind its runs use,
 //! and whether a write there may go without a person. It is a lower layer:
 //! it only narrows. It holds no permit, so it cannot give a caller anything
 //! a grant does not; the evaluator consults it as a set of forbids that
@@ -14,7 +14,7 @@ use a2m_core::{EffectClass, Failure};
 use serde::{Deserialize, Serialize};
 
 use crate::failure;
-use crate::model::{IdentityMode, Question, Request, Resource, Role, ToolRef, ToolsetName};
+use crate::model::{IdentityKind, Question, Request, Resource, Role, ToolRef, ToolsetName};
 use crate::set::{PolicyLayers, Scope, Subject};
 
 /// A toolset: a named selection of tools for a group of callers. It only
@@ -29,8 +29,8 @@ pub struct Toolset {
     pub tools: Vec<Scope>,
     /// The highest effect class a run through it may have.
     pub max_effect: EffectClass,
-    /// The identity mode every run through it uses.
-    pub identity_mode: IdentityMode,
+    /// The identity kind every run through it uses.
+    pub identity_mode: IdentityKind,
     /// Whether a rule may let a write through it proceed without a person.
     /// False means every write through it waits for one.
     pub allow_pre_approval: bool,
@@ -54,8 +54,8 @@ pub struct RoleGrant {
     pub scope: Scope,
     /// The highest effect class it allows.
     pub max_effect: EffectClass,
-    /// The identity mode a run under it may use.
-    pub identity_mode: IdentityMode,
+    /// The identity kind a run under it may use.
+    pub identity_mode: IdentityKind,
 }
 
 /// The rule that stands for a toolset the set does not define.
@@ -149,7 +149,7 @@ pub(crate) fn describe(layers: &PolicyLayers, rest: &str) -> Option<String> {
             toolset.max_effect
         ),
         "identity_mode" => format!(
-            "The toolset `{name}` runs only with the identity mode `{}`.",
+            "The toolset `{name}` runs only with the identity kind `{}`.",
             toolset.identity_mode
         ),
         "no_pre_approval" => format!(
@@ -164,8 +164,8 @@ mod tests {
     use a2m_core::{CanonicalJson, EffectClass};
 
     use super::Toolset;
-    use crate::model::{IdentityMode, ToolsetName};
-    use crate::set::{CandidateSet, PolicyLayers, Profile, Scope, Subject};
+    use crate::model::{IdentityKind, ToolsetName};
+    use crate::set::{CandidateSet, DeploymentShape, PolicyLayers, Scope, Subject};
 
     fn toolset(name: &str) -> Toolset {
         Toolset {
@@ -173,13 +173,13 @@ mod tests {
             who: vec![Subject::Anyone],
             tools: vec![Scope::Pattern("example_*".to_owned())],
             max_effect: EffectClass::Read,
-            identity_mode: IdentityMode::PerUserSession,
+            identity_mode: IdentityKind::PerUserSession,
             allow_pre_approval: false,
         }
     }
 
     fn compiles(layers: &PolicyLayers) -> bool {
-        CandidateSet::compile(layers, Profile::Server).is_ok()
+        CandidateSet::compile(layers, DeploymentShape::Server).is_ok()
     }
 
     #[test]

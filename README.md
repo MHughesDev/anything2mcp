@@ -17,9 +17,9 @@ Anything2MCP is a toolkit that wraps a system you are already entitled to use (a
 
 ## Status
 
-**Pre-alpha. Not yet published to PyPI or npm**: those names are not held yet, so `pip install anything2mcp` does not work today. You build it from source.
+**Preview, before version 0.1. Not yet published to PyPI or npm**: those names are not held yet, so `pip install anything2mcp` does not work today. You build it from source, or, on Windows, download the tester kit CI builds and follow [trying the preview on Windows](docs/plan/trying-the-preview-on-windows.md). Version 0.1 is to be a preview ([decision 0476](docs/decisions/0476-version-0-1-is-a-preview-and-the-checks-a-person-makes-move-to-before-1-0.md)): the presence prompt and the approval page have been passed by a person on Linux only, the first hour is measured as machine time and not with a person, and no copy test has been run from a Windows or a macOS machine.
 
-What exists and is tested in CI on Windows, macOS, and Linux: the kernel, nine packs, the local engine with its command line and stdio bridge, the tool-building flow (scout, drafts, recorded fixtures, gates, promotion, publish on a page by a person), and verified writes with reconciliation, all against the built-in test stands. Separate CI jobs run the data pack against a real PostgreSQL server, the stream pack against a real NATS server, the desktop pack on Linux against its stand, the Linux presence prompt against a real polkit, and the wheel and npm packages on the three systems.
+What exists and is tested in CI on Windows, macOS, and Linux: the kernel, nine packs, the local engine with its command line and stdio proxy, the tool-building flow (scout, drafts, recorded fixtures, gates, promotion, publish on a page by a person), and verified writes with reconciliation, all against the built-in test stands. Separate CI jobs run the data pack against a real PostgreSQL server, the stream pack against a real NATS server, the desktop pack on Linux against its stand, the Linux presence prompt against a real polkit, and the wheel and npm packages on the three systems.
 
 Not built yet: plug-ins, MCP over HTTP for a shared server, remote runners, ten of the twelve publish gates (the schema and lint gate and the offline replay run; `test` lists the rest as not run), and drafting of writes (the scout drafts reads only). The presence prompts of macOS and Windows are written and not yet run by a person. The [roadmap](docs/plan/roadmap.md) has every package and its state.
 
@@ -70,17 +70,17 @@ anything2mcp ready example --version 1.0.0   # needs_person, and a link: only th
 
 ## Connect an agent
 
-An MCP client starts `anything2mcp bridge`, which copies MCP messages over standard input and output to the local engine, and starts the engine if none runs. Most clients take a block of this shape in their configuration file; use full paths:
+An MCP client starts `anything2mcp stdio`, which copies MCP messages over standard input and output to the local engine, and starts the engine if none runs. Most clients take a block of this shape in their configuration file; use full paths:
 
 ```json
 { "mcpServers": { "anything2mcp": {
     "command": "/full/path/to/anything2mcp",
-    "args": ["bridge", "--project", "/full/path/to/first-project"],
+    "args": ["stdio", "--project", "/full/path/to/first-project"],
     "env": { "A2M_HOME": "/full/path/to/a2m-try/home" }
 } } }
 ```
 
-The default toolset, `use`, serves the published tools and the calls around them (`a2m_tool_search`, `a2m_tool_call`, `a2m_run_resume`, and others). `["bridge", "--toolset", "build", ...]` serves the authoring actions instead, so an agent can do the steps above itself; `a2m_action_run` reaches any action by name. Start the engine from a terminal first (any command does it, and it stops by itself after `engine.idle_stop_minutes` idle), so that the passphrase is in its environment and not in a client's file. Any client that speaks MCP over stdio can use it; none is preferred. `anything2mcp connect` prints this block for your project; a client profile you keep as data writes it into that client's file.
+The default toolset, `use`, serves the published tools and the calls around them (`a2m_tool_search`, `a2m_tool_call`, `a2m_run_resume`, and others). `["stdio", "--toolset", "build", ...]` serves the authoring actions instead, so an agent can do the steps above itself; `a2m_action_run` reaches any action by name. Start the engine from a terminal first (any command does it, and it stops by itself after `engine.idle_stop_minutes` idle), so that the passphrase is in its environment and not in a client's file. Any client that speaks MCP over stdio can use it; none is preferred. `anything2mcp connect` prints this block for your project; a client profile you keep as data writes it into that client's file.
 
 ## How it works
 

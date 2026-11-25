@@ -14,7 +14,7 @@ use crate::common;
 
 use anything2mcp::PASSPHRASE_VARIABLE;
 use common::Machine;
-use common::served::{Bridge, Served, output, stateless};
+use common::served::{Served, StdioProxy, output, stateless};
 use serde_json::{Value as Json, json};
 
 const VERBS: [&str; 7] = [
@@ -105,9 +105,9 @@ async fn an_agent_sees_net_standing_listed_and_reaches_the_rest_through_action_r
 {
     let machine = Machine::new("orders", &[]).with_passphrase();
     let served = Served::start(&machine);
-    let mut bridge = Bridge::start(&machine, &["bridge", "--toolset", "use"]);
+    let mut stdio = StdioProxy::start(&machine, &["stdio", "--toolset", "use"]);
 
-    let listed = bridge.ask(&stateless(1, "tools/list", json!({})));
+    let listed = stdio.ask(&stateless(1, "tools/list", json!({})));
     let names: Vec<&str> = listed["result"]["tools"]
         .as_array()
         .unwrap_or_else(|| panic!("{listed}"))
@@ -118,7 +118,7 @@ async fn an_agent_sees_net_standing_listed_and_reaches_the_rest_through_action_r
     // The other six are not listed: they are reached by name.
     assert!(!names.contains(&"a2m_net_interfaces"), "{names:?}");
 
-    let standing = bridge.ask(&stateless(
+    let standing = stdio.ask(&stateless(
         2,
         "tools/call",
         json!({"name": "a2m_net_standing", "arguments": {}}),
@@ -130,7 +130,7 @@ async fn an_agent_sees_net_standing_listed_and_reaches_the_rest_through_action_r
         "{standing}"
     );
 
-    let interfaces = bridge.ask(&stateless(
+    let interfaces = stdio.ask(&stateless(
         3,
         "tools/call",
         json!({"name": "a2m_action_run", "arguments": {"action": "net.interfaces"}}),
@@ -151,7 +151,7 @@ async fn an_agent_sees_net_standing_listed_and_reaches_the_rest_through_action_r
         command.env_remove(PASSPHRASE_VARIABLE);
         command
     };
-    let (code, _, said) = bridge.close();
+    let (code, _, said) = stdio.close();
     assert_eq!(code, Some(0), "{said}");
     let stop = output(without_key(&["engine", "stop"])).await;
     assert_eq!(stop.status.code(), Some(0), "{stop:?}");

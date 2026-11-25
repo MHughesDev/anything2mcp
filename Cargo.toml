@@ -13,7 +13,7 @@ members = [
     "targets/example-mcp",
     "targets/example-nats",
     "bench",
-    "tools/field-harness",
+    "tools/copy-test-harness",
 ]
 # Throwaway experiments are never part of the product or of its build.
 exclude = ["spikes"]
@@ -21,7 +21,7 @@ exclude = ["spikes"]
 # Every crate shares these. The version is the one number of the whole product;
 # the audit checks that the pip package carries the same one (spec section 41).
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/MHughesDev/anything2mcp"
@@ -64,7 +64,7 @@ tokio = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread", "s
 # Unicode NFC for text normalization in a2m-expr (decision 0073). Its tables
 # fix the Unicode version, so the version is part of the expression library.
 unicode-normalization = { version = "0.1.26", default-features = false }
-# Logging macros and the subscriber interface only; a2m-telemetry writes the
+# Logging macros and the subscriber interface only; a2m-logs writes the
 # subscriber itself (decision 0077). No attribute macros, so no proc-macro tree.
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 # The vault's outside crates, each verified in decision 0074: the cipher, the

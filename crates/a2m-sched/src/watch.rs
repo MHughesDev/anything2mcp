@@ -47,7 +47,7 @@ const DAY_MS: u128 = 86_400_000;
 /// The refusals of admission a check waits out: it is tried again later,
 /// and its due time becomes a gap only if the next one passes first.
 const ADMISSION_WAITS: [FailureCode; 6] = [
-    crate::failure::ON_HOLD,
+    crate::failure::SCHEDULER_PAUSED,
     crate::failure::QUEUE_FULL,
     crate::failure::CALLER_QUEUE_FULL,
     crate::failure::RUNNER_UNAVAILABLE,

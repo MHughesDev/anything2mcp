@@ -130,7 +130,7 @@ fn the_log_says_each_start_and_stop_and_never_an_input() {
     assert_eq!(result["exists"], true, "{answer}");
     assert_eq!(
         Path::new(result["file"].as_str().unwrap()),
-        paths.logs.join(a2m_telemetry::LOG_FILE_NAME)
+        paths.logs.join(a2m_logs::LOG_FILE_NAME)
     );
     let lines = result["lines"].as_array().unwrap();
 

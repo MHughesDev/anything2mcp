@@ -12,7 +12,7 @@ Anything2MCP supplies the evidence and the guardrails. Whoever builds the tools,
 | 2 | Attach | The probe looks at each surface and says what kind it is, which pack serves it, and how sign-in works | Surfaces, each with a pack and a sign-in method |
 | 3 | Observe | Discoverers explore the system at rest and read what it publishes about itself, and a person's own use of it may be captured. Discovery writes nothing | Findings, `discovered` or `inferred` ([section 218](../2-kernel/218-discovery-and-findings.md)) |
 | 4 | Model | The target's files are written from the findings: screens, endpoints, commands, schemas. The drafter writes what follows by rule; an agent or a person writes the rest | Drafts at `reconstructed` |
-| 5 | Bind | Each business action is defined once as an operation, with an identity strategy and a read-back rule, and bound to the surfaces that can carry it out | Operations with bindings |
+| 5 | Bind | Each business action is defined once as an operation, with a record matching and a read-back rule, and bound to the surfaces that can carry it out | Operations with bindings |
 | 6 | Verify | Fixtures, the sandbox, test records, and the publish gates ([section 403](403-testing-and-publish-gates.md)) | A version at `behavior_verified` |
 | 7 | Publish | A person reads the review summary, ordered by risk, and publishes | Tools at `approved` |
 | 8 | Watch | Canaries, the target's identity, and drift detection. A change sends the affected bindings back to step 6 | Tools that stay true, or stop |
@@ -29,12 +29,12 @@ Every step is done through authoring actions. Each action is defined once in the
 | --- | --- | --- |
 | Register | `target.add` | A target in the project folder, with its declared surfaces |
 | Attach | `target.probe` | For each surface: its kind, the pack that serves it, its platform where the pack knows platforms, and surfaces the target did not declare and plainly offers |
-| Attach | `auth.detect` | The sign-in method, with evidence, and a recommended identity mode |
+| Attach | `auth.detect` | The sign-in method, with evidence, and a recommended identity kind |
 | Observe | `discover.run`, `finding.list` | Every suitable discoverer run within its bounds, and the findings it returned |
 | Observe | `screen.snapshot` | A compact snapshot of the current screen of an interface, with element references |
 | Observe | `capture.start`, `capture.stop` | A recording of a person using the system: actions, exchanges, and responses, as shapes, with secrets already removed |
 | Observe | `endpoints.infer` | Endpoint templates, schemas, the tokens and identifiers a request depends on, and a map from typed values to request fields |
-| Observe | `spec.import` | Findings from a description the system publishes, such as an OpenAPI, GraphQL, or OData description, or an upstream MCP server's tool list. As built, it is a scout handed one file of the project's `sources` folder under the name `description`, which only the HTTP pack's reader of an OpenAPI description reads ([decision 0263](../../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)); GraphQL, OData, and a tool list are not built |
+| Observe | `spec.import` | Findings from a description the system publishes, such as an OpenAPI, GraphQL, or OData description, or an upstream MCP server's tool list. As built, it is a scout handed one file of the project's `inputs` folder under the name `description`, which only the HTTP pack's reader of an OpenAPI description reads ([decision 0263](../../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)); GraphQL, OData, and a tool list are not built |
 | Model | `draft.write`, `draft.read`, `draft.lint` | Target files written after schema validation and linting; the drafts as they stand |
 | Model | `unknown.list`, `unknown.settle` | The open questions, and closing one with evidence |
 | Verify | `draft.try` | A draft binding run in the sandbox, below |
@@ -62,15 +62,15 @@ The scout never captures. A capture is never started on a person's behalf, by an
 
 The kernel's half is the intent token. Discovery and drafts run in the engine's sandbox. The sandbox asks for an intent only when a record's key is one of the target's declared test records, and a driver's handle refuses every step that commits without the token. A discovery job declares no test records, so through it a write is impossible. A discoverer is given only what the sandbox offers: no driver, no ledger token, and no way to act ([`a2m-engine`](../../architecture/crates/a2m-engine.md)).
 
-The other half is what a step that commits nothing may still do to a system of its kind. That is stated per archetype by each pack, and proven by the pack's conformance test against its test stand.
+The other half is what a step that commits nothing may still do to a system of its kind. That is stated per access kind by each pack, and proven by the pack's conformance test against its test stand.
 
-| Archetype | What the pack guarantees while exploring and in the sandbox |
+| Access kind | What the pack guarantees while exploring and in the sandbox |
 | --- | --- |
 | Interface | Only plain navigation within the declared surfaces; no control whose role or name means committing, such as save, submit, delete, approve, send, or pay, is ever activated; requests other than reads are blocked before they leave, unless a person marked one safe, and each blocked request is logged |
 | Request | Only methods the service's own description marks safe, or read endpoints a person marked safe |
 | Request, for a data store | A statement runs in a read-only transaction, so the store itself refuses a write |
 | Command | A program is started only in the help and version forms its target declares |
-| Artifact | A file is opened for reading only, and never replaced |
+| File | A file is opened for reading only, and never replaced |
 | Stream | A queue is never consumed and nothing is published; a sample is read without acknowledging |
 | Device | Only what the device lists as reads, and the requests that ask it to identify and list itself |
 

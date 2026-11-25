@@ -1462,16 +1462,16 @@ fn the_act_page_shows_sign_ins_before_tools_and_escapes_and_hides_every_secret_v
     use crate::surface::review_shown::review_html;
     use a2m_files::{
         BindingReview, BindingStates, CredentialShown, EnvironmentVariable, LAUNCHER_NOTICE,
-        PROBE_PENDING, ProbeReview, ProgramRun, REACH_NOT_STATED, Reach, ReachGroup, ReviewItem,
-        ReviewSummary, RunReview, SCRIPT_NOTICE, SentAddress, SentGroup, SentTo, SentToReview,
-        SignInReview, VariableValue,
+        ProgramRun, REACH_NOT_STATED, Reach, ReachGroup, ReviewItem, ReviewSummary, RunReview,
+        SCRIPT_NOTICE, SESSION_CHECK_PENDING, SentAddress, SentGroup, SentTo, SentToReview,
+        SessionCheckReview, SignInReview, VariableValue,
     };
     let surface = || a2m_core::SurfaceName::new("api").unwrap();
-    let sign_in = |entry: usize, probe: ProbeReview| SignInReview {
+    let sign_in = |entry: usize, probe: SessionCheckReview| SignInReview {
         entry,
         surfaces: vec![surface()],
         provider: "bearer_static".parse().unwrap(),
-        mode: a2m_core::SignInMode::Custom,
+        mode: a2m_core::SignInKind::Custom,
         credentials: vec![CredentialShown {
             role: "token".to_owned(),
             reference: "vault://example/api/token".parse().unwrap(),
@@ -1553,14 +1553,14 @@ fn the_act_page_shows_sign_ins_before_tools_and_escapes_and_hides_every_secret_v
         sign_ins: vec![
             sign_in(
                 1,
-                ProbeReview::Pending {
+                SessionCheckReview::Pending {
                     name: "example_session_check".to_owned(),
-                    says: PROBE_PENDING,
+                    says: SESSION_CHECK_PENDING,
                 },
             ),
             sign_in(
                 0,
-                ProbeReview::Declared {
+                SessionCheckReview::Declared {
                     name: "example_report_get".to_owned(),
                 },
             ),
@@ -1614,7 +1614,10 @@ fn the_act_page_shows_sign_ins_before_tools_and_escapes_and_hides_every_secret_v
         "{page}"
     );
     assert!(at("Not confirmed") < at("example_report_run"), "{page}");
-    assert!(page.contains(&escape_like_page(PROBE_PENDING)), "{page}");
+    assert!(
+        page.contains(&escape_like_page(SESSION_CHECK_PENDING)),
+        "{page}"
+    );
     // Where the credential goes, off this machine, in bold, escaped.
     assert!(
         page.contains(

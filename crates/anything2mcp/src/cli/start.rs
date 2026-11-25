@@ -139,7 +139,7 @@ pub(crate) fn plan(
     )
 }
 
-/// The same, from the program and the environment alone: what the bridge
+/// The same, from the program and the environment alone: what the stdio proxy
 /// keeps for as long as it runs.
 /// The flag of `serve` that says a command started the engine on demand:
 /// such an engine that cannot open its vault ends at once, saying why

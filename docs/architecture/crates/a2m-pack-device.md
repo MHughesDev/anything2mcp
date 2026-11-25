@@ -9,9 +9,9 @@ The device pack: the `device` driver over a device's link. It sends one frame at
 | Side | Pack: device |
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
-| Depends on | `a2m-core` (`CompiledTarget`, `Step`, `Value`, `Decimal`, `Finding`, `Hazard`), `a2m-files` (file kind, lowering, lint, and drafting registration), `a2m-auth` (the lease type in the driver's signature), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`), `a2m-telemetry` (the clock a finding is dated with). Outside: `serde`, `serde_json`, and `tokio` with its `io-util` feature. No protocol library ([decision 0106](../../decisions/0106-the-device-pack-speaks-its-first-protocol-itself-and-checks-a-range-before-a-frame-is-built.md)) |
+| Depends on | `a2m-core` (`CompiledTarget`, `Step`, `Value`, `Decimal`, `Finding`, `Hazard`), `a2m-files` (file kind, lowering, lint, and drafting registration), `a2m-auth` (the lease type in the driver's signature), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`), `a2m-logs` (the clock a finding is dated with). Outside: `serde`, `serde_json`, and `tokio` with its `io-util` feature. No protocol library ([decision 0106](../../decisions/0106-the-device-pack-speaks-its-first-protocol-itself-and-checks-a-range-before-a-frame-is-built.md)) |
 | Roadmap packages | Packages K2, K3, K4 of the [roadmap](../../plan/roadmap.md) |
-| Carries out | Spec section [310](../../spec/3-packs/310-the-device-pack.md); [201](../../spec/2-kernel/201-archetypes-and-modes.md) (the device archetype); [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (hazards); the entry bar of section [202](../../spec/2-kernel/202-kernel-and-packs.md) |
+| Carries out | Spec section [310](../../spec/3-packs/310-the-device-pack.md); [201](../../spec/2-kernel/201-access-kinds-and-modes.md) (the device access kind); [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (hazards); the entry bar of section [202](../../spec/2-kernel/202-kernel-and-packs.md) |
 
 ## Owns
 
@@ -20,7 +20,7 @@ The device pack: the `device` driver over a device's link. It sends one frame at
 - The lowering of `read`, `update`, and `submit` into `open`, `build_frame`, `write_frame`, `read_frame`, and `expect` steps, with the pack's own step payload.
 - The protocol interface inside the crate, `Link`, and its first implementation: a subset of the Modbus application protocol over TCP, written here.
 - Turning a register's raw bits into a typed value and back, with both range checks.
-- The `device_identity` finding kind, the discoverer `device_identity`, its describer, and the drafting rule from an identity finding, which drafts no map and says why: a device that lists no register gives a map with no register, nothing to try, beside the map its documentation gives (field test 8, finding 52; [decision 0441](../../decisions/0441-a-device-draft-states-its-places-drafts-no-empty-map-and-its-update-fixture-is-documented.md)).
+- The `device_identity` finding kind, the discoverer `device_identity`, its describer, and the drafting rule from an identity finding, which drafts no map and says why: a device that lists no register gives a map with no register, nothing to try, beside the map its documentation gives (copy test 8, finding 52; [decision 0441](../../decisions/0441-a-device-draft-states-its-places-drafts-no-empty-map-and-its-update-fixture-is-documented.md)).
 - The firmware update: the map's `firmware_update` section (the mechanism `register_blocks`), the `firmware` binding field, and the steps `BuildFirmware`, `Install`, `AfterUpdate`, `Precondition`, and `Checksum` of the step payload ([decision 0316](../../decisions/0316-firmware-is-inspected-by-an-optional-provider-and-updated-by-one-operation-through-the-devices-own-sequence.md)). One step commits and carries the device's whole sequence; the commit command's reply is read by the confirm steps; the read-back waits for the device within the map's window and compares its checksum with the image's.
 - The optional provider `device_firmware`, with a manifest of its own (`anything2mcp-firmware-provider.toml`): the discoverer `firmware_image`, its describer, and the finding kind of the same name, at most `inferred`, from the source `artifact`. `add_to` does not register it; `add_firmware_inspection_to` does, and the product crate does not call it yet.
 - The `device_register_map` finding kind, the discoverer `device_register_map`, its describer, and the two drafting rules from a published map to a map of readable registers and one read of each.
@@ -32,7 +32,7 @@ It must never: send a frame to an address its map does not name; build a frame f
 | Registration | Content |
 | --- | --- |
 | Provider | `device` |
-| Mode | `device`, archetype device, rank 60. One read and one write at a time on a session, an intent window of one, and exclusive use of the link |
+| Mode | `device`, access kind device, rank 60. One read and one write at a time on a session, an intent window of one, and exclusive use of the link |
 | Surface kind | `device_link`, with a session. Fields: `address` (a socket address, such as `192.0.2.7:502`; a host name is refused, because a lookup is a request the compiled target did not state), `protocol` (one of the crate's `PROTOCOLS`: today `modbus_tcp` alone), `unit` (0 to 255), and `serials` (optional: the serial of the device that answers in each environment, as text, by the environment's name) |
 | Step kinds | `open`, `build_frame`, `write_frame`, `read_frame`, `expect` |
 | Verbs | `read`, `update`, `submit` |

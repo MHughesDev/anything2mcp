@@ -124,3 +124,69 @@ handler!(
         })))
     }
 );
+
+handler!(
+    /// `component.list`: every outside program an installed provider needs,
+    /// looked for at the places its manifest names, in order of provider
+    /// and then as the manifest lists them. Each is `known` (found, with a
+    /// digest the manifest lists), `unverified` (found, with a digest it
+    /// does not list, or a manifest that lists none), or `missing`. Nothing
+    /// is started: the files found are read for their digests, off the async
+    /// threads.
+    component_list,
+    |kernel, _call| {
+        let listing = kernel.providers().listing();
+        let components = super::build::off_thread(move || {
+            let mut components = Vec::new();
+            for provider in &listing {
+                for needed in &provider.manifest.requirements {
+                    let state = a2m_provider::component_state(needed);
+                    let word = match (&state.found, state.known) {
+                        (None, _) => "missing",
+                        (Some(_), true) => "known",
+                        (Some(_), false) => "unverified",
+                    };
+                    let mut shown = json!({
+                        "provider": provider.name.as_str(),
+                        "name": needed.name,
+                        "state": word,
+                        "known_digests": needed.known_digests.len(),
+                    });
+                    if let Some(map) = shown.as_object_mut() {
+                        if let Some(found) = &state.found {
+                            map.insert("path".to_owned(), json!(found.display().to_string()));
+                        }
+                        if let Some(digest) = state.digest {
+                            map.insert("digest".to_owned(), json!(format!("sha256:{digest}")));
+                        }
+                        if let Some(versions) = &needed.versions {
+                            map.insert("versions".to_owned(), json!(versions));
+                        }
+                        match word {
+                            "missing" => {
+                                map.insert("fix".to_owned(), json!(needed.missing));
+                            }
+                            "unverified" => {
+                                map.insert(
+                                    "fix".to_owned(),
+                                    json!("Review the program, then allow it in the settings."),
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                    components.push(shown);
+                }
+            }
+            Ok(components)
+        })
+        .await?;
+        Ok(
+            Output::ok(json!({"components": components})).then(Next::new(
+                "provider.list",
+                json!({}),
+                "to see which providers are ready and what each lacks",
+            )),
+        )
+    }
+);

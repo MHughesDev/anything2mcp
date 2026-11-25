@@ -31,7 +31,7 @@ use a2m_core::{
     Coverage, Digest, EvidenceLevel, Failure, Finding, FindingKind, LimitationCode, ProducedBy,
     Redact, Source, Subject, Values,
 };
-use a2m_telemetry::Clock;
+use a2m_logs::Clock;
 
 use crate::codes;
 use crate::discover::{
@@ -52,7 +52,7 @@ use crate::{BoxFuture, EntryKind};
 pub const FILE_ARGUMENT: &str = "{file}";
 
 /// The name a file is handed to the discoverer under, in the project's
-/// `sources` folder.
+/// `inputs` folder.
 pub const FILE_NAME: &str = "decompile";
 
 /// The name of the discoverer.
@@ -237,7 +237,7 @@ impl Decompiler {
             return Err(codes::failure(
                 &codes::row::FILE_UNAVAILABLE,
                 "A decompiler is handed a regular file and nothing else.",
-                "Hand the file itself, from the project's `sources` folder.",
+                "Hand the file itself, from the project's `inputs` folder.",
             ));
         }
         let (path, digest) = match self.identify().await {

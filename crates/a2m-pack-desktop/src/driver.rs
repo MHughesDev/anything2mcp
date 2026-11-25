@@ -685,10 +685,10 @@ impl Held {
         }
         Ok(Observed {
             captures: vec![acting(vec![
-                a2m_telemetry::Detail::new("step", "set"),
-                a2m_telemetry::Detail::new("screen", name),
-                a2m_telemetry::Detail::new("field", payload.field),
-                a2m_telemetry::Detail::new("strategy", STRATEGY),
+                a2m_logs::Detail::new("step", "set"),
+                a2m_logs::Detail::new("screen", name),
+                a2m_logs::Detail::new("field", payload.field),
+                a2m_logs::Detail::new("strategy", STRATEGY),
             ])],
             ..Observed::default()
         })
@@ -740,6 +740,12 @@ impl Held {
             shown(&payload.action),
             shown(name)
         );
+        // An action by a key is done through the element's own action bound
+        // to it, which only AT-SPI lists for a field (decision 0467).
+        #[cfg(not(target_os = "linux"))]
+        if let Some(key) = &action.key {
+            return Err(codes::keys_not_built(&what, key));
+        }
         let tree = self.walk(deadline).await?;
         let at = tree
             .one(&action.locate)
@@ -783,16 +789,33 @@ impl Held {
         // Last before the act, on the walk it acts on: the record, and no
         // window the screens do not name.
         self.before_act(step, screen, &tree, input).await?;
-        match hands.perform(&node, &action.perform).await {
+        #[cfg(target_os = "linux")]
+        let done = match &action.key {
+            Some(key) => hands.press_key(&node, key).await,
+            None => hands.perform(&node, &action.perform).await,
+        };
+        #[cfg(not(target_os = "linux"))]
+        let done = hands.perform(&node, &action.perform).await;
+        match done {
             Ok(Some(true)) => {}
             Ok(None) => {
+                let (offers, fix) = match &action.key {
+                    Some(key) => (
+                        format!("binds no action, or more than one, to the key `{key}`"),
+                        "Take a snapshot of the window and correct the action's `key`, or name the element's action with `perform`.",
+                    ),
+                    None => (
+                        format!(
+                            "offers no action named `{}` exactly once",
+                            shown(&action.perform)
+                        ),
+                        "Take a snapshot of the window and correct the action's `perform`.",
+                    ),
+                };
                 return Err(StepFailure::not_sent(codes::failure(
                     &codes::row::UNEXPECTED_CONTROL,
-                    format!(
-                        "{what} offers no action named `{}` exactly once. Nothing was sent.",
-                        shown(&action.perform)
-                    ),
-                    "Take a snapshot of the window and correct the action's `perform`.",
+                    format!("{what} {offers}. Nothing was sent."),
+                    fix,
                 )));
             }
             Ok(Some(false)) => {
@@ -843,9 +866,9 @@ impl Held {
                 (true, None) => {
                     return Ok(Observed {
                         captures: vec![acting(vec![
-                            a2m_telemetry::Detail::new("step", "invoke"),
-                            a2m_telemetry::Detail::new("screen", name),
-                            a2m_telemetry::Detail::new("action", payload.action.as_str()),
+                            a2m_logs::Detail::new("step", "invoke"),
+                            a2m_logs::Detail::new("screen", name),
+                            a2m_logs::Detail::new("action", payload.action.as_str()),
                         ])],
                         ..Observed::default()
                     });
@@ -1099,11 +1122,53 @@ impl Held {
         let shape = json!({
             "format": SNAPSHOT_FORMAT,
             "windows": shapes,
+            // The digest of the program's file at the path the surface
+            // declares, which the process was proven to run, for the
+            // probe (decision 0467).
+            "program_digest": file_digest(&self.program).await,
         });
         Ok(Observed {
             values: Values::new().with("shape", shape.to_string()),
             ..Observed::default()
         })
+    }
+}
+
+/// The digest of the file at `path`, as `sha256:` and its hexadecimal
+/// form, read off the async threads; `None` when it cannot be read.
+async fn file_digest(path: &str) -> Option<String> {
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
+    {
+        use sha2::Digest as _;
+        use std::io::Read as _;
+        let path = path.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let mut file = std::fs::File::open(path).ok()?;
+            let mut hasher = sha2::Sha256::new();
+            let mut buffer = vec![0_u8; 64 * 1024];
+            loop {
+                match file.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(read) => hasher.update(&buffer[..read]),
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => return None,
+                }
+            }
+            let hex: String = hasher
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            Some(format!("sha256:{hex}"))
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+    #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
+    {
+        let _ = path;
+        None
     }
 }
 
@@ -1141,8 +1206,8 @@ fn value_text(value: Option<&Value>) -> Option<String> {
 
 /// How a step was done, for its trace.
 #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
-fn acting(means: Vec<a2m_telemetry::Detail>) -> a2m_provider::Capture {
-    a2m_provider::Capture::acting(&a2m_telemetry::Acting {
+fn acting(means: Vec<a2m_logs::Detail>) -> a2m_provider::Capture {
+    a2m_provider::Capture::acting(&a2m_logs::Acting {
         means,
         measured: Vec::new(),
     })
@@ -1174,6 +1239,133 @@ fn sections_of(cx: &PrepareContext<'_>) -> Result<BTreeMap<usize, ScreenSection>
     Ok(sections)
 }
 
+impl DesktopDriver {
+    /// Starts the surface's program, which allows it, and waits for its
+    /// application to publish itself, by the accessibility bus's signals,
+    /// until the prepare's deadline (decision 0467). Only in a run, only
+    /// when no process runs the program, and only a program the provider's
+    /// check passes; the supervisor checks the digest the surface states.
+    /// One that publishes nothing by the deadline is stopped.
+    #[cfg(target_os = "linux")]
+    async fn start(
+        &self,
+        cx: &PrepareContext<'_>,
+        look: &Look,
+        program: &str,
+        fields: &SurfaceFields,
+    ) -> Result<App, StepFailure> {
+        use a2m_provider::{
+            EnvAllowlist, LaunchSpec, ProgramRef, ProgramRole, ProgramTrust, SubsystemKind,
+            check_program,
+        };
+
+        if cx.posture != Posture::Live {
+            return Err(codes::not_started_outside_a_run(program));
+        }
+        if look.program_runs(program) {
+            return Err(unsent(&AxError::NotRunning, program));
+        }
+        let checked = std::path::PathBuf::from(program);
+        let verdict = tokio::task::spawn_blocking(move || {
+            check_program(&checked, &ProgramTrust::default(), ProgramRole::Program)
+        })
+        .await
+        .unwrap_or(Err(a2m_provider::ProgramRefused::Missing));
+        if let Err(why) = verdict {
+            return Err(codes::program_refused(program, &why));
+        }
+        let declared = cx
+            .surface
+            .surface
+            .programs
+            .iter()
+            .find(|declared| declared.path == program)
+            .map(ProgramRef::from)
+            .ok_or_else(|| codes::not_usable("its surface declares no program to start"))?;
+        let env = match &self.session {
+            // A session of a test's own: its bus, and nothing of the
+            // engine's environment.
+            Some(address) => EnvAllowlist {
+                pass: Vec::new(),
+                set: vec![(
+                    "DBUS_SESSION_BUS_ADDRESS".to_owned(),
+                    address.as_ref().into(),
+                )],
+            },
+            None => EnvAllowlist {
+                pass: crate::start::PASSED
+                    .iter()
+                    .map(|name| (*name).to_owned())
+                    .collect(),
+                set: Vec::new(),
+            },
+        };
+        let spec = LaunchSpec {
+            program: declared,
+            args: Vec::new(),
+            env,
+            cwd: None,
+            kind: SubsystemKind::new(crate::start::KIND).map_err(StepFailure::not_sent)?,
+            place: None,
+        };
+        // Listening begins before the start, so that no signal is missed.
+        let mut arrivals = look
+            .arrivals()
+            .await
+            .map_err(|error| unsent(&error, program))?;
+        let link = cx
+            .supervisor
+            .start_on_standard_streams(spec)
+            .await
+            .map_err(StepFailure::not_sent)?;
+        let id = link.id;
+        // Nothing is written to it; what it writes is read and dropped, so
+        // that it never stops on a full pipe.
+        let (to_child, mut from_child) = (link.to_child, link.from_child);
+        drop(to_child);
+        tokio::spawn(async move {
+            let _ = tokio::io::copy(&mut from_child, &mut tokio::io::sink()).await;
+        });
+        loop {
+            match look
+                .application(program, &fields.application, fields.digest.as_deref())
+                .await
+            {
+                Ok(app) => return Ok(app),
+                Err(AxError::NotRunning | AxError::AccessibilityOff) => {}
+                Err(error) => {
+                    let _ = cx.supervisor.stop(id).await;
+                    return Err(unsent(&error, program));
+                }
+            }
+            match arrivals.next(cx.deadline).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    let _ = cx.supervisor.stop(id).await;
+                    return Err(codes::application_not_started(program));
+                }
+                Err(error) => {
+                    let _ = cx.supervisor.stop(id).await;
+                    return Err(unsent(&error, program));
+                }
+            }
+        }
+    }
+
+    /// On Windows and macOS nothing is started in this version: neither
+    /// back end has an event that says a new application appeared.
+    #[cfg(not(target_os = "linux"))]
+    async fn start(
+        &self,
+        _cx: &PrepareContext<'_>,
+        _look: &Look,
+        program: &str,
+        _fields: &SurfaceFields,
+    ) -> Result<App, StepFailure> {
+        Err(codes::start_not_built(program))
+    }
+}
+
 impl Driver for DesktopDriver {
     fn prepare<'a>(
         &'a self,
@@ -1198,14 +1390,20 @@ impl Driver for DesktopDriver {
             let look = Look::connect(self.session.as_deref())
                 .await
                 .map_err(|error| unsent(&error, &program))?;
-            let app = match look
+            let found = look
                 .application(&program, &fields.application, fields.digest.as_deref())
-                .await
-            {
+                .await;
+            let found = match found {
+                Err(AxError::NotRunning) if fields.start => {
+                    self.start(cx, &look, &program, &fields).await
+                }
+                found => found.map_err(|error| unsent(&error, &program)),
+            };
+            let app = match found {
                 Ok(app) => app,
-                Err(error) => {
+                Err(failure) => {
                     look.close().await;
-                    return Err(unsent(&error, &program));
+                    return Err(failure);
                 }
             };
             #[cfg(any(target_os = "linux", windows, target_os = "macos"))]

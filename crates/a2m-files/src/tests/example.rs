@@ -15,10 +15,10 @@ use crate::{
     compile, lint_one, load, load_files,
 };
 use a2m_core::{
-    ApproveWrites, CaptureLevel, CompiledProbe, CompiledTarget, DecimalMark, DeclaredProgram,
-    Digest, DriftRisk, EffectClass, FailsAs, FailureClass, FailureCode, FieldFormat, FileKindName,
-    IdentityStrategy, Mode, PackPayload, RecordKey, SignInMode, Stands, Step, StepArg, StepKind,
-    SurfaceIndex, SurfaceKind, SurfaceName, Value, Verb, Version,
+    ApproveWrites, CaptureLevel, CompiledSessionCheck, CompiledTarget, DecimalMark,
+    DeclaredProgram, Digest, DriftRisk, EffectClass, FailsAs, FailureClass, FailureCode,
+    FieldFormat, FileKindName, Mode, PackPayload, RecordKey, RecordMatching, SignInKind, Stands,
+    Step, StepArg, StepKind, SurfaceIndex, SurfaceKind, SurfaceName, Value, Verb, Version,
 };
 
 const VERSION: Version = Version::new(1, 0, 0);
@@ -302,6 +302,15 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
+            // The record key of a read names an output that is no list.
+            "kernel.records_invalid",
+            Case::Edit(
+                ORDER_GET,
+                "examples:",
+                "records: {key: [status]}\nexamples:",
+            ),
+        ),
+        (
             // A part of the key is what the record is, never a
             // precondition of writing it.
             "kernel.precondition_invalid",
@@ -369,7 +378,7 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
-            "kernel.probe_invalid",
+            "kernel.session_check_invalid",
             Case::Edit(
                 "auth.yaml",
                 "probe: example_order_get",
@@ -377,7 +386,7 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
-            "kernel.probe_pending",
+            "kernel.session_check_pending",
             Case::Elsewhere(
                 "a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only",
             ),
@@ -584,7 +593,7 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
     let desk = SurfaceIndex::new(0);
     let auth = compiled_target.auth_of(desk).unwrap();
     assert_eq!(auth.surfaces, [desk]);
-    assert_eq!(auth.mode, SignInMode::Custom);
+    assert_eq!(auth.mode, SignInKind::Custom);
     assert_eq!(auth.provider.as_str(), "http_basic");
     assert_eq!((auth.idle_ms, auth.absolute_ms), (Some(1_800_000), None));
     assert_eq!((auth.attempt_limit, auth.movable), (1, true));
@@ -601,7 +610,7 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
         auth.credentials[0].reference.as_str(),
         "vault://example/service/password"
     );
-    let CompiledProbe::Operation { operation, inputs } = &auth.probe else {
+    let CompiledSessionCheck::Operation { operation, inputs } = &auth.probe else {
         panic!("the probe is an operation");
     };
     assert_eq!(
@@ -617,7 +626,7 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
         get.examples[0].get("order_id"),
         Some(&Value::from("SO-1001"))
     );
-    assert!(get.decision_points.is_empty());
+    assert!(get.run_questions.is_empty());
 
     let upsert = compiled_target
         .operations
@@ -625,7 +634,7 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
         .find(|op| op.name.as_str() == "example_line_item_upsert")
         .unwrap();
     assert_eq!(upsert.effect, EffectClass::Write);
-    assert_eq!(upsert.identity.strategy, IdentityStrategy::Composite);
+    assert_eq!(upsert.identity.strategy, RecordMatching::Composite);
     assert_eq!(upsert.identity.key.len(), 2);
     assert_eq!(upsert.commit_points, 1);
     assert_eq!(upsert.bindings[0].read_back.len(), 1);
@@ -948,7 +957,7 @@ fn test_rules_are_warnings_for_a_draft_and_errors_for_a_publish() {
     assert!(publish.has_errors());
 }
 
-/// Field test 7, finding 47: an operation whose bindings state no status
+/// Copy test 7, finding 47: an operation whose bindings state no status
 /// is all `draft`, and an operation of which no binding may act once
 /// published is warned of in every compile: by `lint`, and on the compile
 /// a publish and its offline tests run on, which must still run a draft
@@ -1267,7 +1276,7 @@ impl Lowering for Faulty {
     fn binding_schema(&self) -> &JsonSchema {
         &self.schema
     }
-    fn identity(&self, _: &ResolvedBinding<'_>, _: IdentityStrategy) -> Possible {
+    fn identity(&self, _: &ResolvedBinding<'_>, _: RecordMatching) -> Possible {
         Possible::Yes
     }
     fn lower(
@@ -1630,9 +1639,9 @@ fn the_compiled_target_carries_what_the_run_time_needs_from_every_target_file() 
         get.examples[0].get("order_id"),
         Some(&Value::from("SO-1001"))
     );
-    assert_eq!(get.decision_points[0].name, "which_order");
+    assert_eq!(get.run_questions[0].name, "which_order");
     assert_eq!(
-        get.decision_points[0].question,
+        get.run_questions[0].question,
         "Two orders match. Which one?"
     );
 
@@ -1642,14 +1651,14 @@ fn the_compiled_target_carries_what_the_run_time_needs_from_every_target_file() 
 }
 
 #[test]
-fn a_probe_is_a_read_operation_with_its_inputs_or_an_entry_of_a_pack() {
+fn a_session_check_is_a_read_operation_with_its_inputs_or_an_entry_of_a_pack() {
     // A call the stand pack defines on the entry's surface.
     let compiled = compiled_target_with(&[Case::Edit(
         "auth.yaml",
         "    probe: example_order_get\n    probe_inputs: {order_id: \"SO-1001\"}\n",
         "    probe: line_item_get\n",
     )]);
-    let CompiledProbe::Entry(reference) = &compiled.compiled_target.auth[0].probe else {
+    let CompiledSessionCheck::Entry(reference) = &compiled.compiled_target.auth[0].probe else {
         panic!("the probe is a pack's entry");
     };
     assert_eq!(reference.entry, "line_item_get");
@@ -1674,7 +1683,7 @@ fn a_probe_is_a_read_operation_with_its_inputs_or_an_entry_of_a_pack() {
     refused(
         "    probe_inputs: {order_id: \"SO-1001\"}\n",
         "",
-        "kernel.probe_invalid",
+        "kernel.session_check_invalid",
         "order_id",
     );
     refused(
@@ -1699,7 +1708,7 @@ fn a_probe_is_a_read_operation_with_its_inputs_or_an_entry_of_a_pack() {
     refused(
         "surfaces: [desk]",
         "surfaces: [desk, desk]",
-        "kernel.probe_invalid",
+        "kernel.session_check_invalid",
         "twice",
     );
 }
@@ -2826,7 +2835,7 @@ impl Lowering for Unmarked {
     fn binding_schema(&self) -> &JsonSchema {
         unreachable!("the tests never register it")
     }
-    fn identity(&self, _: &ResolvedBinding<'_>, _: IdentityStrategy) -> Possible {
+    fn identity(&self, _: &ResolvedBinding<'_>, _: RecordMatching) -> Possible {
         Possible::Yes
     }
     fn lower(&self, _: &ResolvedBinding<'_>, _: &LowerContext<'_>) -> Result<Lowered, Diagnostics> {
@@ -3411,4 +3420,80 @@ fn a_tools_digest_follows_its_definition_and_the_systems_words_are_marked() {
             "{schema}"
         );
     }
+}
+
+/// A read declares its records over its list outputs (decision 0472): the
+/// key names list outputs, each once, and only a read declares records.
+/// What it declares is in the compiled target; an operation that declares
+/// none keeps `None`, and so the bytes it had.
+#[test]
+fn a_read_declares_its_records_by_the_list_outputs_that_make_their_key() {
+    let set = stand_set().unwrap();
+    let listed = |records: &str| {
+        let mut files = changed(&Case::Edit(
+            ORDER_GET,
+            "  status: {type: order_status}\n  total: {type: amount}\n",
+            "  status: {type: order_status, list: true}\n  total: {type: amount, list: true}\n",
+        ));
+        let file = files
+            .iter_mut()
+            .find(|(path, _)| path.as_str() == ORDER_GET)
+            .unwrap();
+        let text = String::from_utf8(file.1.clone()).unwrap().replacen(
+            "examples:",
+            &format!("{records}examples:"),
+            1,
+        );
+        file.1 = text.into_bytes();
+        // The sheet's pipeline reads the status as one value.
+        files.retain(|(path, _)| !path.as_str().contains("order_sheet_enter"));
+        files
+    };
+    let root = TargetRoot::new("example");
+    let sources = load_files(&root, &listed("records: {key: [total, status]}\n"), &set)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    let declaring = compile(&sources, &set, CompileMode::Publish, VERSION)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    let operation = declaring
+        .compiled_target
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_order_get")
+        .unwrap();
+    assert_eq!(
+        operation
+            .records
+            .as_ref()
+            .map(|records| records.key.clone()),
+        Some(vec!["total".to_owned(), "status".to_owned()])
+    );
+    assert_eq!(operation.list_outputs(), ["status", "total"]);
+    // The example declares no records: nothing is added to its bytes.
+    assert!(
+        compiled()
+            .compiled_target
+            .operations
+            .iter()
+            .all(|operation| operation.records.is_none())
+    );
+    for (records, said) in [
+        ("records: {key: [status, status]}\n", "twice"),
+        ("records: {key: [carrier]}\n", "not an output"),
+        ("records: {key: [note]}\n", "not a list output"),
+    ] {
+        let problems = problems_with(&listed(records), &set, CompileMode::Publish);
+        let problem = problems
+            .find("kernel.records_invalid")
+            .unwrap_or_else(|| panic!("{records}: {problems}"));
+        assert!(problem.message.contains(said), "{problem}");
+    }
+    let write = problems_of(&Case::Edit(
+        UPSERT,
+        "description: >",
+        "records: {key: [quantity]}\ndescription: >",
+    ));
+    let problem = write
+        .find("kernel.records_invalid")
+        .unwrap_or_else(|| panic!("{write}"));
+    assert!(problem.message.contains("only a read"), "{problem}");
 }

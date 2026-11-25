@@ -1,6 +1,6 @@
 # 605. Packaging and release
 
-What is in the repository, in which languages, under which names, how it is packaged for each install route, how a release is produced and updated, and what the product never does unasked. Every install route delivers the same Rust binary. The pip and npm packages add a thin client on top; none of them contains engine logic. [RELEASING.md](../../../RELEASING.md) has the steps of a release, and [publishing setup](../../plan/publishing-setup.md) records where each package name stands today. Built today: the wheel and the npm packages are built and checked in CI; nothing is published.
+What is in the repository, in which languages, under which names, how it is packaged for each install route, how a release is produced and updated, and what the product never does unasked. Every install route delivers the same Rust binary. The pip and npm packages add a thin client on top; none of them contains engine logic. [RELEASING.md](../../../RELEASING.md) has the steps of a release, and [publishing setup](../../plan/publishing-setup.md) records where each package name stands today. Built today: the wheel, the npm packages, the standalone archives, and the release page's set of files are built and checked in CI; nothing is published.
 
 ## The repository
 
@@ -15,7 +15,7 @@ anything2mcp/
     a2m-files/            # schemas, loader, linter, compiled target compiler
     a2m-expr/             # CEL evaluation; host functions for units, numbers, dates
     a2m-vault/            # envelope encryption, key-store back ends, redactor
-    a2m-telemetry/        # traces, metrics, OpenTelemetry export
+    a2m-logs/        # traces, metrics, OpenTelemetry export
     a2m-netstate/         # this machine's own network state, read from the system; sends nothing
     a2m-ledger/           # run store, ledger, reconcile, audit chain (SQLite, Postgres)
     a2m-policy/           # grants, effect classes, approvals, limits
@@ -53,7 +53,7 @@ anything2mcp/
   bench/                  # performance suite and budgets
   docs/                   # the design, the architecture, the decisions, the research, the plan
   tools/                  # the documentation audit and its self-test
-    a2m-field-harness/    # at tools/field-harness/: the product's own `serve` with the field prompt; test equipment, never packaged (decision 0310)
+    a2m-copy-test-harness/    # at tools/copy-test-harness/: the product's own `serve` with the copy test prompt; test equipment, never packaged (decision 0310)
   xtask/                  # build, release, and code-generation tasks
 ```
 
@@ -74,7 +74,7 @@ The folders that are not crates (`targets/`, `bindings/`, `web/console/`, `plugi
 | Spreadsheets, decimals | A pure-Rust xlsx reader; a decimal arithmetic crate | Exact comparison needs decimals, never floats |
 | Key store | A cross-platform keyring crate over DPAPI, Keychain, and Secret Service | Outside secret managers on servers |
 | OAuth and OpenID Connect | Standards-based crates; no official MSAL for Rust exists | Broker sign-in handled on user devices |
-| Telemetry | OpenTelemetry | Traces and metrics in one format |
+| Logs and traces | OpenTelemetry | Traces and metrics in one format |
 
 ## Languages: Rust first, others where they fit
 
@@ -95,7 +95,7 @@ A language not listed here may be added when it clearly fits better than Rust fo
 
 **Plug-ins.** New drivers, auth providers, source readers, and discoverers can come from separate processes that speak a small documented protocol over standard input and output, so they can be written in any language. Each declares its capabilities in its manifest, is started and stopped by the supervisor, and never receives raw vault access. Unsigned plug-ins are off by default ([section 203](../2-kernel/203-the-provider-contract.md), [section 204](../2-kernel/204-supervising-subsystems.md)).
 
-**Licence.** MIT, for the code, the documents, and every package built from it ([decision 0057](../../decisions/0057-the-licence-is-mit.md)). Releases built for people to install carry the licence texts of what they contain.
+**Licence.** MIT, for the code, the documents, and every package built from it ([decision 0057](../../decisions/0057-the-licence-is-mit.md)). Releases built for people to install carry the licence texts of what they contain: `THIRD-PARTY-NOTICES.txt`, written from `Cargo.lock` by `tools/notices.py` and held to it in CI, is in every wheel, npm platform package, and archive ([decision 0464](../../decisions/0464-the-release-carries-archives-a-notices-file-and-attested-provenance-and-a-check-holds-the-workflow-to-every-piece.md)).
 
 ## Names
 
@@ -129,7 +129,7 @@ Four layers, from what every install has to what is never bundled.
 | The base | One Rust binary with every first-party pack compiled in and switched off until enabled; a thin client | Any install route below |
 | What a pack needs from outside | A browser for the web pack; a database client library where one is not built in | Used where already installed. Fetched only by an explicit install action, such as `browser.install`, never during a run |
 | Provider packages | Plug-ins published by this project or anyone else | A pip package of their own, found through a Python entry point; or an extra, `anything2mcp[name]`, that names one |
-| Managed components | Outside programs a provider drives, such as an analysis engine or its runtime | Never bundled. Detected, identified by digest, and reported when missing or unknown (`component.list`) |
+| Required programs | Outside programs a provider drives, such as an analysis engine or its runtime | Never bundled. Detected, identified by digest, and reported when missing or unknown (`component.list`) |
 
 **Why first-party packs are compiled in.**
 
@@ -192,9 +192,9 @@ print(run.status, run.summary)
 remote = anything2mcp.connect("https://mcp.example.com", toolset="orders")   # a company server
 ```
 
-- **Two transports.** Local: the client speaks HTTP over the local channel itself, after checking that the channel belongs to the user ([section 222](../2-kernel/222-front-doors-and-the-local-engine.md), [decision 0135](../../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)); the Python client does so on macOS and Linux, and on Windows by the named pipe, checking that the pipe's server runs as the user; the Node client does so on macOS and Linux, and on Windows only when the caller supplies that check, because Node's standard library cannot make it ([decision 0156](../../decisions/0156-the-clients-are-generated-from-the-served-document-and-reach-windows-by-the-pipe.md)). Remote: HTTPS to a server's REST interface, with OAuth or an API key.
+- **Two transports.** Local: the client speaks HTTP over the local channel itself, after checking that the channel belongs to the user ([section 222](../2-kernel/222-front-doors-and-the-local-engine.md), [decision 0135](../../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)); the Python client does so on macOS and Linux, and on Windows by the named pipe, checking that the pipe's server runs as the user; the Node client does so on macOS and Linux, and on Windows, where Node's standard library cannot make that check, through the program's `anything2mcp channel` command, which opens the pipe after the same check every command makes and carries the client's bytes without reading them ([decision 0156](../../decisions/0156-the-clients-are-generated-from-the-served-document-and-reach-windows-by-the-pipe.md), [decision 0466](../../decisions/0466-the-node-client-on-windows-reaches-the-engine-through-the-channel-command.md)). Remote: HTTPS to a server's REST interface, with OAuth or an API key.
 - **The same calls either way.** Code written against a laptop's engine runs unchanged against a company server.
-- **Generated.** Models and methods come from the action registry, through a recorded catalog, and from the OpenAPI document, so a client cannot drift from the engine. CI fails when a generated file differs from what the generator produces.
+- **Generated.** Models and methods come from the action registry, through a action catalog, and from the OpenAPI document, so a client cannot drift from the engine. CI fails when a generated file differs from what the generator produces.
 - **Synchronous and asynchronous clients,** with few or no third-party dependencies.
 - **Compatibility.** A client states the engine interface version it needs and gives a clear error on a mismatch.
 
@@ -220,7 +220,7 @@ remote = anything2mcp.connect("https://mcp.example.com", toolset="orders")   # a
 - A container image for servers.
 - An offline bundle for networks with no internet access: the binary, the wheels, and a pinned browser.
 
-Every route delivers one self-contained binary per platform: Windows, macOS, and Linux, on x64 and ARM. The `dist` tool, formerly cargo-dist, generates most of these from a tagged release ([dist](https://docs.rs/crate/cargo-dist/latest)); whether to adopt it or keep hand-written workflows is decided with package 5.5. On Linux this build has no operating-system key store, and the vault's root key comes from the passphrase route ([decision 0123](../../decisions/0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md)), which is the default there, so a first run needs no settings file ([decision 0220](../../decisions/0220-a-first-run-on-linux-needs-no-administrators-file.md)).
+Every route delivers one self-contained binary per platform: Windows, macOS, and Linux, on x64 and ARM. The `dist` tool, formerly cargo-dist, generates most of these from a tagged release ([dist](https://docs.rs/crate/cargo-dist/latest)); it is not adopted, because it builds its own binaries beside the wheels' ([decision 0464](../../decisions/0464-the-release-carries-archives-a-notices-file-and-attested-provenance-and-a-check-holds-the-workflow-to-every-piece.md)). **Today** the release page carries a standalone archive per target, a `.tar.gz` for Linux and macOS and a `.zip` for Windows, holding the binary taken from that target's wheel, `a2m`, `LICENSE`, and the notices file; the installers, Homebrew, winget, the container image, and the offline bundle are not built. On Linux this build has no operating-system key store, and the vault's root key comes from the passphrase route ([decision 0123](../../decisions/0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md)), which is the default there, so a first run needs no settings file ([decision 0220](../../decisions/0220-a-first-run-on-linux-needs-no-administrators-file.md)).
 
 ## Versions
 
@@ -244,7 +244,7 @@ Publishing cannot be undone. A published version can be yanked, and never replac
 
 A bad release is yanked from each registry, the changelog says why, and a fixed version with a higher number supersedes it. Published versions are never overwritten and never deleted.
 
-**Today.** The workflow builds eight platform wheels and a source distribution with maturin on every pull request that touches the pip package, checks them together with `twine check` (it expects eight wheels and one source distribution), and publishes them only from a tag or a manual start, through one gated job and PyPI's trusted publishing in a GitHub environment named `pypi` ([decision 0135](../../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)). The package is the real pre-alpha software and no longer a placeholder. All eight wheels and the source distribution have been built and checked by the workflow on pull requests; it has never published. It also packs the eight npm platform packages, each with the binary taken from its wheel, and the launcher, checks the nine together, writes a list of the Rust dependencies in the binary for each target, and publishes to npm through a second gated job in a GitHub environment named `npm`, with npm's trusted publishing ([decision 0186](../../decisions/0186-the-release-workflow-builds-checks-and-publishes-the-npm-packages.md)). The npm jobs have not run yet. The eight platform packages and the launcher must each be published once by the owner, in an npm organization named `anything2mcp`, before trusted publishing can take over. The product is not published to crates.io ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)) ([research note 21](../../research/21-wheel-and-npm-packaging.md)). npm offers trusted publishing only to a name that already exists, so it needs one first publish by the owner before the workflow can take over. Signing, a bill of materials in a standard format with licence texts, the other registries, and the standalone installers are package 5.5.
+**Today.** The workflow builds eight platform wheels and a source distribution with maturin on every pull request that touches the pip package, checks them together with `twine check` (it expects eight wheels and one source distribution), and publishes them only from a tag or a manual start, through one gated job and PyPI's trusted publishing in a GitHub environment named `pypi` ([decision 0135](../../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)). The package is the real pre-alpha software and no longer a placeholder. All eight wheels and the source distribution have been built and checked by the workflow on pull requests; it has never published. It also packs the eight npm platform packages, each with the binary taken from its wheel, and the launcher, checks the nine together, writes a list of the Rust dependencies in the binary for each target, and publishes to npm through a second gated job in a GitHub environment named `npm`, with npm's trusted publishing ([decision 0186](../../decisions/0186-the-release-workflow-builds-checks-and-publishes-the-npm-packages.md)). The eight platform packages and the launcher must each be published once by the owner, in an npm organization named `anything2mcp`, before trusted publishing can take over. The product is not published to crates.io ([decision 0242](../../decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)) ([research note 21](../../research/21-wheel-and-npm-packaging.md)). It also packs a standalone archive per target from the wheel's binary, gathers every file of the release with a CycloneDX bill of materials per target (the one maturin writes into each wheel), the notices file, and `SHA256SUMS`, and checks the set, on pull requests as well. When it publishes, a job in a GitHub environment named `release` attests the build provenance of every file, signed with the run's short-lived credential, and makes the release page, before PyPI and npm ([decision 0464](../../decisions/0464-the-release-carries-archives-a-notices-file-and-attested-provenance-and-a-check-holds-the-workflow-to-every-piece.md)); that job has never run. Not built: a signature checked by `self.update`, reproducible builds proven, the container image, Homebrew, winget, and the installers.
 
 ## Updates
 

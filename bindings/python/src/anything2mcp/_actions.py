@@ -2,7 +2,7 @@
 
 Written by ``tools/generate_actions.py`` from ``tools/openapi.json``, the
 OpenAPI document the engine serves at ``/api/v1/openapi.json`` (engine
-version 0.0.1). A test fails when this file differs from what the
+version 0.1.0). A test fails when this file differs from what the
 generator writes from that document. To change a method, change the action
 in the engine, save the new document, and run the generator.
 
@@ -24,12 +24,14 @@ ACTIONS = (
     "action.describe",
     "action.run",
     "action.search",
+    "assertion.confirm",
     "audit.query",
     "auth.detect",
     "binding.promote",
     "capture.start",
     "capture.stop",
     "client.connect",
+    "component.list",
     "config.show",
     "discover.run",
     "docs.get",
@@ -75,6 +77,7 @@ ACTIONS = (
     "run.get",
     "run.list",
     "run.resume",
+    "run.trace",
     "scout.report",
     "scout.run",
     "secret.set",
@@ -99,10 +102,12 @@ ACTIONS = (
     "toolset.list",
     "toolset.remove",
     "toolset.update",
+    "trace.export",
     "trace.show",
     "unknown.list",
     "version.diff",
     "version.publish",
+    "version.rollback",
     "watch.changes",
     "watch.confirm",
     "watch.create",
@@ -179,6 +184,28 @@ class Actions:
         """
         return self._action("action.search", {"query": query}, idempotency_key)
 
+    def assertion_confirm(
+        self,
+        *,
+        target: str,
+        assertions: Optional[List[str]] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Confirm the reads a target's drafts assert, as the person, so that a try
+        of the drafts in an environment of kind `test` may let a page send them.
+        A person's act, carried out on the engine's page, never an agent's.
+
+        The engine action is ``assertion.confirm``.
+        """
+        return self._action(
+            "assertion.confirm",
+            {
+                "target": target,
+                "assertions": assertions,
+            },
+            idempotency_key,
+        )
+
     def audit_query(
         self,
         *,
@@ -208,7 +235,7 @@ class Actions:
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """The sign-in method of a surface, with evidence, and a recommended
-        identity mode. Read only.
+        identity kind. Read only.
 
         The engine action is ``auth.detect``.
         """
@@ -310,9 +337,9 @@ class Actions:
         yes: Optional[bool] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Give the configuration an MCP client needs to start the bridge for this
-        project: printed for the `generic` profile, or set in the file a client
-        profile names, shown first and written by a local person.
+        """Give the configuration an MCP client needs to start the stdio proxy for
+        this project: printed for the `generic` client profile, or set in the
+        file a client profile names, shown first and written by a local person.
 
         The engine action is ``client.connect``.
         """
@@ -327,6 +354,14 @@ class Actions:
             },
             idempotency_key,
         )
+
+    def component_list(self, *, idempotency_key: Optional[str] = None) -> "Response":
+        """The outside programs providers need: found or not, with path and digest,
+        known or unverified. Starts nothing.
+
+        The engine action is ``component.list``.
+        """
+        return self._action("component.list", {}, idempotency_key)
 
     def config_show(
         self,
@@ -1059,6 +1094,20 @@ class Actions:
             idempotency_key,
         )
 
+    def run_trace(
+        self,
+        *,
+        run_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """A summary of one of the caller's own runs' trace: each step's kind,
+        outcome, and time, with references to its kept captures, and never a
+        value.
+
+        The engine action is ``run.trace``.
+        """
+        return self._action("run.trace", {"run_id": run_id}, idempotency_key)
+
     def scout_report(
         self,
         *,
@@ -1254,7 +1303,7 @@ class Actions:
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """A new scout of a target, handed a description the system publishes about
-        itself as a file of the project's `sources` folder: exactly `scout.run`
+        itself as a file of the project's `inputs` folder: exactly `scout.run`
         with `files` naming it `description`. Drafts by rule; never writes to
         the system.
 
@@ -1470,7 +1519,7 @@ class Actions:
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """Create a toolset: who may connect, which tools it selects, the highest
-        effect class and the identity mode of its runs. A toolset only narrows
+        effect class and the identity kind of its runs. A toolset only narrows
         what grants allow. A person's act, published as a new version of the
         policy set.
 
@@ -1564,13 +1613,28 @@ class Actions:
             idempotency_key,
         )
 
+    def trace_export(
+        self,
+        *,
+        run_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Export one run's evidence to one file in the project's working folder,
+        `.anything2mcp/exports/<run>.json`: its events, its step trace, and its
+        text captures, with a manifest that names each piece and what was left
+        out and why.
+
+        The engine action is ``trace.export``.
+        """
+        return self._action("trace.export", {"run_id": run_id}, idempotency_key)
+
     def trace_show(
         self,
         *,
         run_id: str,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """View one run's evidence: its trace lines and artifact references.
+        """View one run's evidence: its trace lines and capture references.
 
         The engine action is ``trace.show``.
         """
@@ -1630,6 +1694,28 @@ class Actions:
                 "target": target,
                 "compiled_target_hash": compiled_target_hash,
                 "tools": tools,
+                "version": version,
+            },
+            idempotency_key,
+        )
+
+    def version_rollback(
+        self,
+        *,
+        target: str,
+        version: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Make another published version of a target the one that runs now: an
+        earlier one, or a later one again after a rollback. A person's act,
+        never an agent's.
+
+        The engine action is ``version.rollback``.
+        """
+        return self._action(
+            "version.rollback",
+            {
+                "target": target,
                 "version": version,
             },
             idempotency_key,

@@ -262,11 +262,7 @@ impl Blobs<'_> {
             item: ItemId::new(name.to_string())?,
         };
         let sealed = attached.vault.seal(&context, &new.plain).await?;
-        let key_ref = format!(
-            "{}:{}",
-            sealed.owner_key().id,
-            sealed.owner_key().generation
-        );
+        let key_ref = format!("{}:{}", sealed.owner_key().id, sealed.owner_key().rotation);
         let bytes = sealed.to_bytes();
         let size = i64::try_from(new.plain.len())
             .map_err(|_| failure::invalid("a blob too large to record"))?;

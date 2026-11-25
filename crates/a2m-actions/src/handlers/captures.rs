@@ -288,7 +288,7 @@ fn planned(
         let address = address_in(compiled_target, environment, at);
         let description = SurfaceDescription {
             kind: surface.kind.clone(),
-            archetype: entry.archetype,
+            access_kind: entry.access_kind,
             address: address.clone(),
             facts: Values::new(),
         };
@@ -457,7 +457,7 @@ impl Kernel {
                 capture.bound_seconds
             ),
             "The engine sends nothing while it records: every request is yours.".to_owned(),
-            "What is kept: the structure of what you use, such as the paths, methods, and field names of the requests and the screens you visit, never a value you type or are shown. Anything that holds a secret the engine knows is not kept at all.".to_owned(),
+            "What is kept: the structure of what you use, such as the paths, methods, and field names of the requests and the screens you visit, with the names a page gives its headings, links, and buttons, which can show a record's words; never a value you type, a value a field holds, or a value a request carries. Anything that holds a secret the engine knows is not kept at all.".to_owned(),
         ])
     }
 

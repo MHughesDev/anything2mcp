@@ -26,8 +26,8 @@ use std::time::Duration;
 
 use a2m_actions::PresenceProof;
 use a2m_core::{Decimal, RunId, Timestamp};
+use a2m_logs::{Clock, ManualClock, SystemClock};
 use a2m_policy::{Channel, PresenceCheck};
-use a2m_telemetry::{Clock, ManualClock, SystemClock};
 use common::{Folder, Machine, World};
 use example_db::harness::TestDb;
 use example_db::schema::Table;

@@ -22,13 +22,13 @@ use a2m_ledger::{
     Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
     RetentionClass, Store, StoreConfig, ToolKind,
 };
+use a2m_logs::{LogSettings, ManualClock};
 use a2m_pack_mcp::{ToolDefinition, definition_digest};
 use a2m_provider::{
     CheckedPaths, Deadline, Destinations, DriverHandle, HostServices, Posture, PrepareContext,
     Prepared, ProgramRef, ProviderSettings, Registry, RegistryBuilder, Roots, StepFailure,
     StepInput, Supervisor, SupervisorLimits, SurfaceRef,
 };
-use a2m_telemetry::{ManualClock, TelemetrySettings};
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
 
 /// A folder under the system's temporary folder, removed when dropped.
@@ -72,7 +72,7 @@ pub fn registry_set(folder: &Folder, redact: Arc<dyn Redact>, settings: Values) 
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots: Roots::none(),
         redact: Arc::clone(&redact),
-        telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
+        logs_and_traces: a2m_logs::start(&LogSettings::default(), redact, &logs).unwrap(),
     };
     let mut provider_settings = ProviderSettings::default();
     provider_settings.packs.insert(
@@ -340,6 +340,7 @@ pub async fn prepare_within(
         destinations,
         paths: &CheckedPaths::none(),
         supervisor: &supervisor,
+        confirmed: a2m_provider::ConfirmedReads::none(),
     };
     let prepared = handle.prepare(&cx, lease).await?;
     Ok((handle, prepared))
@@ -501,8 +502,9 @@ pub async fn token(store: &Store, fence: Fence, record_seq: u32, name: &str) -> 
 
 use a2m_auth::{
     AskPerson, AuthEntry, AuthProvider, CredentialRef, InProcessWork, Keeper, KeeperWorker,
-    LeaseRequest, PersonAnswer, PersonAsk, ProbeOutcome, ProviderSet, Purpose, RunProbe,
-    SessionKey, SessionLease, SessionRef, SessionStore, StoredCredentials, Wait,
+    LeaseRequest, PersonAnswer, PersonAsk, ProviderSet, Purpose, RunSessionCheck,
+    SessionCheckOutcome, SessionKey, SessionLease, SessionRef, SessionStore, StoredCredentials,
+    Wait,
 };
 use a2m_core::{AccountName, DecisionId, Identity, Secret};
 
@@ -520,9 +522,12 @@ impl AskPerson for NoPerson {
 
 struct AlwaysSignedIn;
 
-impl RunProbe for AlwaysSignedIn {
-    fn probe<'a>(&'a self, _session: &'a SessionRef) -> a2m_auth::BoxFuture<'a, ProbeOutcome> {
-        Box::pin(async { ProbeOutcome::SignedIn })
+impl RunSessionCheck for AlwaysSignedIn {
+    fn check_session<'a>(
+        &'a self,
+        _session: &'a SessionRef,
+    ) -> a2m_auth::BoxFuture<'a, SessionCheckOutcome> {
+        Box::pin(async { SessionCheckOutcome::SignedIn })
     }
 }
 

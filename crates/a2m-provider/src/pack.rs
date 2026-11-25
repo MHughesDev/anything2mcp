@@ -8,8 +8,8 @@ use std::sync::Arc;
 use a2m_auth::AuthProvider;
 use a2m_core::{ControlName, Failure, Mode, Redact, Values};
 use a2m_files::{DraftingRule, FileKind, LintRule, Lowering, SurfaceKindSpec};
+use a2m_logs::LogsAndTraces;
 use a2m_sources::SourceReader;
-use a2m_telemetry::Telemetry;
 
 use crate::action::ProviderAction;
 use crate::capture::CaptureSource;
@@ -46,7 +46,7 @@ pub struct PackContext {
     pub(crate) supervisor: ScopedSupervisor,
     pub(crate) roots: Roots,
     pub(crate) redact: Arc<dyn Redact>,
-    pub(crate) telemetry: Telemetry,
+    pub(crate) logs_and_traces: LogsAndTraces,
     pub(crate) settings: Values,
 }
 
@@ -95,10 +95,10 @@ impl PackContext {
         &self.redact
     }
 
-    /// Telemetry: spans, metrics, and logs.
+    /// LogsAndTraces: spans, metrics, and logs.
     #[must_use]
-    pub fn telemetry(&self) -> &Telemetry {
-        &self.telemetry
+    pub fn logs_and_traces(&self) -> &LogsAndTraces {
+        &self.logs_and_traces
     }
 
     /// The pack's own settings group, `packs.<pack>`, checked against the

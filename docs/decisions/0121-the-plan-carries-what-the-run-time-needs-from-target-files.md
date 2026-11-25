@@ -30,7 +30,7 @@ The compiler validated and then dropped all of `auth.yaml` and a dozen fields of
 - **A viewport** is not a field of `environment`. It belongs to one kind of surface, so it is a field of that surface, in the schema its pack registers, and travels in the surface's payload. The kernel's `environment` holds `locale` and `timezone` and nothing else.
 - **Whether a provider knows a setting's name** is not the compiler's to check: it holds no list of providers. The provider's own check refuses it when the version is published.
 
-**New words in `a2m-core`.** Closed vocabularies `SignInMode`, `DriftRisk`, `CaptureLevel`, `ApproveWrites`, `WhitespaceRule`, `DecimalMark`, each held to its document by the documents test. The checked name `AuthProviderName` and the reference `CredentialRef`, which `a2m-auth` now uses in place of its own. One lint code, `kernel.probe_invalid`.
+**New words in `a2m-core`.** Closed vocabularies `SignInMode`, `DriftRisk`, `CaptureLevel`, `ApproveWrites`, `WhitespaceRule`, `DecimalMark`, each held to its document by the documents test. The checked name `AuthProviderName` and the reference `CredentialRef`, which `a2m-auth` now uses in place of its own. One lint code, `kernel.session_check_invalid`.
 
 **The plan format stays 1.** A plan written this morning does not decode now. No release has carried a plan, so there is no stored plan to read. From the first release on, a change like this raises the number.
 

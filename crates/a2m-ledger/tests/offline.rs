@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use a2m_core::{RunState, Timestamp};
 use a2m_ledger::{Durability, Store, StoreConfig, WriteClearance, codes};
-use a2m_telemetry::ManualClock;
+use a2m_logs::ManualClock;
 use a2m_vault::Vault;
 use common::*;
 

@@ -8,7 +8,7 @@ Two moments need a person in front of a screen: approving a write, and signing i
 | --- | --- | --- |
 | Approve a write | To read the diff properly: every changed record, current beside proposed | Proof that a person, not the calling agent, said yes to this exact diff |
 | Sign in | Where the system's sign-in is a web page, a real browser window, so the system's own sign-in and MFA work unchanged | To know when sign-in finished, without seeing the credentials |
-| Answer a decision point | The question and its options | The answer, recorded with who gave it |
+| Answer a run question | The question and its options | The answer, recorded with who gave it |
 | Carry out a person's act an agent asked for, such as a publish | To read exactly what will be done: the action and every value of its input, and for a publish what each tool may do | Proof that a person, not the agent, said yes to this act, given for it alone ([decision 0163](../../decisions/0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md)) |
 
 ## On one machine
@@ -34,12 +34,12 @@ Signing in through a page is the web pack's: its auth providers drive a browser 
 
 - The engine opens a visible window of its own browser, in the profile for that identity, at the system's sign-in page.
 - The person signs in as they always do. Password managers, MFA prompts, and passkeys work as in any browser window.
-- The session keeper watches for the target's signed-in probe to succeed, then closes the window or leaves it for the first run.
+- The session keeper watches for the target's signed-in session check to succeed, then closes the window or leaves it for the first run.
 - The window shows which system and which Anything2MCP identity it is for. The engine never asks for the password of such a sign-in in its own interface.
 - The engine never answers a passkey, presence, or second-factor prompt in that window; the person does. The browser's virtual authenticator is used only in tests against the test application. A passkey the person makes there belongs to that engine-owned profile and its provider, not to their everyday browser, and the window's notice says so ([decision 0321](../../decisions/0321-a-sign-in-method-is-found-from-addresses-and-a-passkey-or-a-mailed-link-is-the-persons.md)).
 - A sign-in by a link sent by mail is not supported: the link opens in the person's everyday browser, which the engine does not drive, and the link is a credential. A way for the person to bring the link into the window is an open point of [section 215](../2-kernel/215-sessions-and-the-session-keeper.md).
 
-The window is built for the web pack's `window_login`, `sso_oidc`, and `sso_saml`: the engine waits for the target's declared sign of success rather than the probe, and closes the window ([decision 0254](../../decisions/0254-a-person-signs-in-in-a-window-of-the-engines-own-browser-and-the-web-pack-stops-on-every-declared-sign-of-expiry.md)). Also built is `form_login`: the person stores the username and password on the engine's own page, the provider fills the application's sign-in page in the engine's browser, and a one-time code the page asks for is asked of the person on the same page, each time ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)).
+The window is built for the web pack's `window_login`, `sso_oidc`, and `sso_saml`: the engine waits for the target's declared sign of success rather than the session check, and closes the window ([decision 0254](../../decisions/0254-a-person-signs-in-in-a-window-of-the-engines-own-browser-and-the-web-pack-stops-on-every-declared-sign-of-expiry.md)). Also built is `form_login`: the person stores the username and password on the engine's own page, the provider fills the application's sign-in page in the engine's browser, and a one-time code the page asks for is asked of the person on the same page, each time ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)).
 
 A sign-in through a provider that holds or exchanges a credential is a person's act an agent asks for with `session.login`, shown on a page of its own as a publish is: the page names the target, the environment, the provider, the vault reference of each credential, whether the sign-in is declared by a published version or only by the drafts, and every address a credential or a token of it is sent to, with an empty field for each credential not stored; its declaration is pinned, so drafts that change before the press sign in nowhere ([decision 0248](../../decisions/0248-a-sign-in-goes-only-where-a-published-version-says-and-a-credential-belongs-to-its-target.md)); the press raises the presence prompt and carries what was typed to the engine alone, which seals it for the person. Where the provider then asks for a one-time code, the press's answer is a page that takes it, for that one sign-in ([decision 0205](../../decisions/0205-a-sign-in-an-agent-asks-for-is-carried-out-by-its-person-on-the-engines-page.md)).
 
@@ -69,7 +69,7 @@ On a server the identity provider's sign-in is the proof of a person, so no oper
 
 | Piece | Language | Phase |
 | --- | --- | --- |
-| The diff page, sign-in status page, and decision-point form | TypeScript, in `web/console` | 3 |
+| The diff page, sign-in status page, and run-question form | TypeScript, in `web/console` | 3 |
 | The short-lived loopback listener | Rust, in `a2m-local` | 3 |
 | System notifications | Rust, through a cross-platform crate to be chosen | 3 |
 | Operating-system user-presence prompts | Rust, per operating system: Linux first, then macOS and Windows ([research note 20](../../research/20-operating-system-user-presence-checks.md)) | 3 |

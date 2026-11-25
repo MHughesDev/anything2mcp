@@ -32,10 +32,10 @@ pub use scheduler::{
     ADMITTED_COUNT, DueWatch, LEASED_COUNT, LOST_COUNT, QUEUE_WAIT, REFUSED_COUNT, Scheduler,
 };
 pub use types::{
-    Admitted, BudgetKey, CancelOutcome, Directive, Enqueue, HealthState, HoldScope, JobEnd,
-    JobKind, JobLease, JobRequirements, JobRow, JobState, LeaseRef, OsName, PROTOCOL_VERSION,
-    Priority, RateGrant, RateLimit, Reconciling, Renewal, ResourceKey, Resumed, RunnerOffer,
-    RunnerTerms, SchedSettings, SessionLimits, SessionNeed, Slots, Submission, SweepReport,
+    Admitted, BudgetKey, CancelOutcome, Directive, Enqueue, HealthState, JobEnd, JobKind, JobLease,
+    JobRequirements, JobRow, JobState, LeaseRef, OsName, PROTOCOL_VERSION, PauseScope, Priority,
+    RateGrant, RateLimit, Reconciling, Renewal, ResourceKey, Resumed, RunnerOffer, RunnerTerms,
+    SchedSettings, SessionLimits, SessionNeed, Slots, Submission, SweepReport,
 };
 pub use waits::LockTicket;
 pub use watch::{

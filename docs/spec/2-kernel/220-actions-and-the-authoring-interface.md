@@ -42,12 +42,12 @@ Every action is defined once, in Rust, in `a2m-actions` ([crate design](../../ar
 | Command | `anything2mcp <noun> <verb>` | `anything2mcp target probe https://app.example.com` | The product crate, from the registry, when the program starts |
 | MCP tool | `a2m_<noun>_<verb>` | `a2m_target_probe` | `a2m-mcp`, when a tool list is asked for |
 | REST route | `POST /api/v1/actions/<noun>.<verb>` | `POST /api/v1/actions/target.probe` | `a2m-api`, when its router is built, with any resource-shaped alias the definition declares |
-| SDK method | `client.<noun>.<verb>()` | `client.target.probe(url=...)` | A code-generation task, from the recorded catalog, written to `bindings/` |
-| Reference page | `anything2mcp docs <name>` | `anything2mcp docs target.probe` | The same task, from the recorded catalog and the documents |
+| SDK method | `client.<noun>.<verb>()` | `client.target.probe(url=...)` | A code-generation task, from the action catalog, written to `bindings/` |
+| Reference page | `anything2mcp docs <name>` | `anything2mcp docs target.probe` | The same task, from the action catalog and the documents |
 
 - **No hand-written face.** A parity check enumerates the live command tree, MCP tool list, router, and SDK method list, and compares each with the registry. It fails on anything extra or missing. Process commands and shortcuts are the only words allowed beside the nouns.
 - **Same behavior everywhere.** All faces call the same dispatcher, so a result is identical whichever way it was asked for. A parity test calls each action through each face with the same input and compares the results.
-- **A recorded catalog.** The build writes the catalog of actions and tools with a digest. The engine checks the digest at start; CI fails when the checked-in SDKs were generated from another digest; and a test compares the recorded catalog with a live listing through a real client library.
+- **A action catalog.** The build writes the catalog of actions and tools with a digest. The engine checks the digest at start; CI fails when the checked-in SDKs were generated from another digest; and a test compares the action catalog with a live listing through a real client library.
 
 ### The dispatcher
 
@@ -65,7 +65,7 @@ The response has the same structure for every face: `ok`, `action`, `result` or 
 
 ### Shortcuts and process commands
 
-Single-word commands remain for people: `init`, `add`, `learn`, `lint`, `try`, `test`, `ready`, `publish`, `status`, `call`, `run`, `diff`, `connect`, `doctor`, and `docs`. Each is a fixed sequence of registry actions, held as data, and adds no behavior of its own. Three process commands, `serve`, `runner`, and `bridge`, start a long-lived role and are not actions. Beside them, `completion` prints a script that completes commands and flags in a named shell, made from the same command tree; the program answers it itself, with no engine, and it is not an action ([decision 0266](../../decisions/0266-the-engines-log-says-each-start-and-stop-and-what-asked-and-engine-logs-reads-it-where-the-engine-runs.md)). The catalog lists what each shortcut does. A shortcut is offered only when every one of its steps is built: the command tree, its help, and its completions hold no other, and a word that is not offered is no command. Three more are defined, `bundle`, `rollback`, and `migrate`, each the `version` action of its name; none of those actions is built, so none of the three is offered, and each is offered by itself once its action has a handler. `learn` is `capture.start` alone: it asks for a capture of the person's own use and gives the page where the person begins and ends it; `capture.stop` afterwards says how it ended and scouts what it found ([decision 0456](../../decisions/0456-the-first-release-leaves-out-what-its-first-hour-never-meets-and-a-shortcut-is-offered-only-when-built.md)).
+Single-word commands remain for people: `init`, `add`, `learn`, `lint`, `try`, `test`, `ready`, `publish`, `status`, `call`, `run`, `diff`, `rollback`, `connect`, `doctor`, and `docs`. Each is a fixed sequence of registry actions, held as data, and adds no behavior of its own. Three process commands, `serve`, `runner`, and `stdio`, start a long-lived role and are not actions. Beside them, `completion` prints a script that completes commands and flags in a named shell, made from the same command tree; the program answers it itself, with no engine, and it is not an action ([decision 0266](../../decisions/0266-the-engines-log-says-each-start-and-stop-and-what-asked-and-engine-logs-reads-it-where-the-engine-runs.md)). The catalog lists what each shortcut does. A shortcut is offered only when every one of its steps is built: the command tree, its help, and its completions hold no other, and a word that is not offered is no command. Two more are defined, `bundle` and `migrate`, each the `version` action of its name; neither action is built, so neither is offered, and each is offered by itself once its action has a handler. `rollback`, the third, is offered since `version.rollback` was built ([decision 0470](../../decisions/0470-a-rollback-is-a-persons-act-and-moves-to-any-version-a-person-published.md)). `learn` is `capture.start` alone: it asks for a capture of the person's own use and gives the page where the person begins and ends it; `capture.stop` afterwards says how it ended and scouts what it found ([decision 0456](../../decisions/0456-the-first-release-leaves-out-what-its-first-hour-never-meets-and-a-shortcut-is-offered-only-when-built.md)).
 
 ## The command face, as an agent uses it
 
@@ -117,7 +117,7 @@ All three are generated from the same sources as the guidance file and the `docs
 
 ## The project folder
 
-Target files live in a project folder: any directory holding an `anything2mcp.toml`. It should be its own private Git repository. A file handed to a pipeline as its source is put in the project's `sources` folder and named from the project folder, as in `sources/items.csv`.
+Target files live in a project folder: any directory holding an `anything2mcp.toml`. It should be its own private Git repository. A file handed to a pipeline as its source is put in the project's `inputs` folder and named from the project folder, as in `inputs/items.csv`.
 
 ```text
 my-targets/

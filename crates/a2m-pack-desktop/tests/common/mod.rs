@@ -26,17 +26,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, CompiledBinding, CompiledTarget, Environment, Epoch, Finding, Mode, NoSecrets,
+    AccessKind, CompiledBinding, CompiledTarget, Environment, Epoch, Finding, Mode, NoSecrets,
     RunId, Step, SurfaceKind, Values,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, DraftReport, Drafter, TargetRoot};
+use a2m_logs::LogSettings;
 use a2m_provider::{
     Authority, CheckedPaths, Deadline, Destinations, DiscoveryScope, DriverHandle, FindingSink,
     HostServices, PrepareContext, Prepared, ProviderSettings, ReadOnlyPort, Registry,
     RegistryBuilder, Roots, StepFailure, StepInput, StepOutcome, Supervisor, SupervisorLimits,
     SurfaceDescription, SurfaceRef,
 };
-use a2m_telemetry::TelemetrySettings;
 use example_desk::{Desk, Order, Session};
 
 pub mod typelib;
@@ -77,14 +77,20 @@ pub fn mode() -> Mode {
 /// A registry that holds only the desktop pack, reading the session at
 /// `bus`, with its logs in `folder`.
 pub fn registry(folder: &Path, bus: Option<&str>) -> Registry {
+    registry_with(folder, bus, Supervisor::new(SupervisorLimits::default()))
+}
+
+/// The same, over `supervisor`, which a test that starts an application
+/// keeps to see what it started and to stop it.
+pub fn registry_with(folder: &Path, bus: Option<&str>, supervisor: Supervisor) -> Registry {
     let logs = folder.join("logs");
     std::fs::create_dir_all(&logs).unwrap();
     let redact: Arc<dyn a2m_core::Redact> = Arc::new(NoSecrets);
     let host = HostServices {
-        supervisor: Supervisor::new(SupervisorLimits::default()),
+        supervisor,
         roots: Roots::none(),
         redact: Arc::clone(&redact),
-        telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
+        logs_and_traces: a2m_logs::start(&LogSettings::default(), redact, &logs).unwrap(),
     };
     let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
     match bus {
@@ -204,6 +210,11 @@ impl Scene {
         Self::build(name, true, copy.path()).await
     }
 
+    /// The same, with the target at `target` in place of the fixture.
+    pub async fn at(name: &str, target: &Path) -> Option<Self> {
+        Self::build(name, true, target).await
+    }
+
     async fn with(name: &str, application: bool) -> Option<Self> {
         Self::build(name, application, &fixture()).await
     }
@@ -265,6 +276,7 @@ impl Scene {
             destinations: &destinations,
             paths: &CheckedPaths::none(),
             supervisor: &supervisor,
+            confirmed: a2m_provider::ConfirmedReads::none(),
         };
         let prepared = handle.prepare(&cx, None).await?;
         Ok((handle, prepared))
@@ -348,20 +360,23 @@ impl Scene {
     }
 
     async fn discovered(&self) -> Result<Vec<Finding>, String> {
+        self.discover_with("desktop_snapshot").await
+    }
+
+    /// The pack's discoverer `name`, run against the session.
+    pub async fn discover_with(&self, name: &str) -> Result<Vec<Finding>, String> {
         let description = SurfaceDescription {
             kind: SurfaceKind::new("desktop").unwrap(),
-            archetype: Archetype::Interface,
+            access_kind: AccessKind::Interface,
             address: self.surface.surface.address.clone(),
             facts: Values::new(),
         };
-        // The window's: the pack has another, of services, which a test of
-        // its own runs.
         let discoverer = self
             .registry
             .discoverers_for(&description)
             .into_iter()
-            .find(|found| found.declared().name.as_str() == "desktop_snapshot")
-            .expect("the pack registers a discoverer of windows");
+            .find(|found| found.declared().name.as_str() == name)
+            .expect("the pack registers the discoverer");
         let (handle, prepared) = self
             .prepare(a2m_provider::Posture::Discovery)
             .await
@@ -401,7 +416,7 @@ impl Scene {
 
 /// A path as it stands inside the fixture's double-quoted string: a
 /// Windows path's backslashes doubled.
-fn yaml_text(path: &str) -> String {
+pub fn yaml_text(path: &str) -> String {
     path.replace('\\', "\\\\")
 }
 
@@ -557,6 +572,7 @@ impl Scene {
             destinations: &destinations,
             paths: &CheckedPaths::none(),
             supervisor: &supervisor,
+            confirmed: a2m_provider::ConfirmedReads::none(),
         };
         let prepared = handle.prepare(&cx, None).await?;
         Ok((handle, prepared))
@@ -606,7 +622,7 @@ fn counted() -> Arc<Counted> {
 }
 
 async fn store() -> a2m_ledger::Store {
-    let clock = Arc::new(a2m_telemetry::ManualClock::starting_at(
+    let clock = Arc::new(a2m_logs::ManualClock::starting_at(
         a2m_core::Timestamp::from_unix_millis(1_800_000_000_000),
     ));
     let config = a2m_ledger::StoreConfig::in_memory()

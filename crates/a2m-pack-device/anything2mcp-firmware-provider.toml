@@ -14,7 +14,7 @@ kind = "pack"
 [points]
 discoverer = ["firmware_image"]
 
-# Reads an image given as a file of the project's `sources` folder under the
+# Reads an image given as a file of the project's `inputs` folder under the
 # name `firmware_image`. It sends no frame and writes nothing: what an image
 # says is a claim about a device, not an observation of one, so at most
 # `inferred`. It decrypts nothing and recovers no keys.

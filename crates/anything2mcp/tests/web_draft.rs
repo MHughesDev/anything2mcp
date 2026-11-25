@@ -27,7 +27,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, CompiledSurface, CompiledTarget, Environment, Epoch, Failure, Finding, Mode,
+    AccessKind, CompiledSurface, CompiledTarget, Environment, Epoch, Failure, Finding, Mode,
     NoSecrets, PackPayload, RunId, SurfaceKind, SurfaceName, TargetName, Value, Values,
 };
 use a2m_files::{CompileMode, DraftReport, Drafter, RelPath, TargetRoot};
@@ -134,7 +134,7 @@ async fn discover_with(
 ) -> Vec<Finding> {
     let description = SurfaceDescription {
         kind: SurfaceKind::new("web").unwrap(),
-        archetype: Archetype::Interface,
+        access_kind: AccessKind::Interface,
         address: origin.to_owned(),
         facts: Values::new(),
     };
@@ -327,6 +327,7 @@ async fn read_through(
         destinations: &destinations,
         paths: &CheckedPaths::none(),
         supervisor: &supervisor,
+        confirmed: a2m_provider::ConfirmedReads::none(),
     };
     let mut prepared = handle
         .prepare(&cx, None)

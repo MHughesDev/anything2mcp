@@ -68,7 +68,7 @@ VOCABULARIES = {
     "SessionState": ("session_state", False),
     "EffectClass": ("effect_class", True),
     "Hazard": ("hazard", False),
-    "Archetype": ("archetype", False),
+    "AccessKind": ("access_kind", False),
     "EvidenceLevel": ("evidence_level", True),
     "WriteEvidence": ("write_evidence", False),
     "Coverage": ("coverage", False),

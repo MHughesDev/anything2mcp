@@ -1,4 +1,4 @@
-//! `Control`: everything the engine needs from the control plane while it
+//! `ControlPort`: everything the engine needs from the control plane while it
 //! runs one job, and nothing more.
 //!
 //! In one process the action registry implements it by calling the
@@ -13,15 +13,15 @@ use std::time::Duration;
 
 use a2m_auth::{ExpirySign, SessionLease};
 use a2m_core::{
-    CompiledTarget, Digest, EffectClass, Environment, Failure, FailureClass, FailureCode, Finding,
-    Hazard, Mode, OperationName, RunState, SurfaceName, Values, Version,
+    CompiledTarget, Coverage, Digest, EffectClass, Environment, Failure, FailureClass, FailureCode,
+    Finding, Hazard, Mode, OperationName, RunState, SurfaceName, Values, Version,
 };
 use a2m_ledger::{
     Acted, ActedToken, BlobKind, BlobRef, IntentToken, LockHeld, PlannedRecord, ReadBack,
     Reconciled, RecordIntent, RecordRef, RetentionClass, Settled, ShadowOutcome,
 };
+use a2m_logs::{ChoiceReason, FinishedTrace, Phase};
 use a2m_provider::{BoxFuture, DiscoveryReport};
-use a2m_telemetry::{ChoiceReason, FinishedTrace, Phase};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -199,7 +199,14 @@ pub enum EngineEvent {
         outputs: BlobRef,
     },
     /// What the tool returns: the outputs of a read, or of the last step.
-    Result(Values),
+    Result {
+        /// The outputs.
+        values: Values,
+        /// Whether they hold every record the system has that matches the
+        /// input (decision 0472): what the steps of a tool that is one read,
+        /// called once, stated; `unknown` for any other tool.
+        coverage: Coverage,
+    },
     /// A binding failed in a way that says something about the binding
     /// itself, or worked after it was thought unhealthy.
     BindingHealth {
@@ -250,7 +257,10 @@ impl EngineEvent {
     pub const fn must_be_acknowledged(&self) -> bool {
         matches!(
             self,
-            Self::Moved(_) | Self::BeforeCommit { .. } | Self::Result(_) | Self::Discovered { .. }
+            Self::Moved(_)
+                | Self::BeforeCommit { .. }
+                | Self::Result { .. }
+                | Self::Discovered { .. }
         )
     }
 }
@@ -272,7 +282,7 @@ impl EngineEvent {
 ///   dropped, so what the call had begun must stand or fall as one
 ///   transaction.
 /// - A failure it returns has passed the redactor.
-pub trait Control: Send + Sync {
+pub trait ControlPort: Send + Sync {
     /// The compiled target by its hash. The engine checks the hash again
     /// before it uses the compiled target.
     fn compiled_target<'a>(
@@ -418,9 +428,20 @@ pub trait Control: Send + Sync {
         None
     }
 
-    /// The files of the project's `sources` folder that the call which
+    /// The asserted reads of the compiled target `hash` names that its
+    /// person confirmed on the engine's page, for a try of the drafts
+    /// (decision 0475). The engine hands them to the driver unchanged, in
+    /// `PrepareContext::confirmed`. A control plane answers them only for
+    /// the drafts it keeps for a trial; none for a published compiled
+    /// target, and none by default.
+    fn confirmed_reads(&self, hash: &Digest) -> a2m_provider::ConfirmedReads {
+        let _ = hash;
+        a2m_provider::ConfirmedReads::none()
+    }
+
+    /// The files of the project's `inputs` folder that the call which
     /// started a discovery hands its discoverers: each name a discoverer
-    /// declares it reads, to the path the call gave, `sources/` and the
+    /// declares it reads, to the path the call gave, `inputs/` and the
     /// file below it, with forward slashes (decision 0263). The engine
     /// checks each path again under a read-only root of that folder before
     /// any discoverer runs, and hands nothing else. Asked only by a

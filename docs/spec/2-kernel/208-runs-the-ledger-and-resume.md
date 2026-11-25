@@ -44,7 +44,7 @@ The store also holds published versions and their compiled targets, findings, an
 | `needs_approval` | Diff ready; waiting for a person | Approval, expiry, or cancel |
 | `expired` | Approval declined or timed out | Final |
 | `running` | Steps executing | Engine |
-| `needs_input` | A declared decision point is waiting for a person | Input or cancel |
+| `needs_input` | A declared run question is waiting for a person | Input or cancel |
 | `needs_login` | The session expired and could not renew itself | Sign-in |
 | `stopped` | Halted with a failure class; can be resumed | Resume or cancel |
 | `completed` | Every record verified, unchanged, or acknowledged | Final |
@@ -88,7 +88,7 @@ These are written as tests, and a change that breaks one cannot merge. Each is e
 
 When an intent is durably stored, the ledger returns an **intent token**: proof, as a type, that this record's intent is on disk under the current lease. It carries the run, the record key, the lease number, the digest of the intended values, and the record's idempotency token. Only `a2m-ledger` can make one. It cannot be copied, serialized, or kept: marking the record `acted` consumes it.
 
-The token is the write gate. The engine receives it through `Control`, and the driver's handle in `a2m-provider` refuses a step that commits without one, so no driver can be called for a write whose intent is not stored. In one process the type is the guard. Across the runner link the ledger is: a runner rebuilds the token from the control plane's acknowledgement, and the ledger refuses to mark `acted` a record whose row is not in `intent` under the same lease number and intent event, so a forged or replayed acknowledgement changes nothing.
+The token is the write gate. The engine receives it through `ControlPort`, and the driver's handle in `a2m-provider` refuses a step that commits without one, so no driver can be called for a write whose intent is not stored. In one process the type is the guard. Across the runner link the ledger is: a runner rebuilds the token from the control plane's acknowledgement, and the ledger refuses to mark `acted` a record whose row is not in `intent` under the same lease number and intent event, so a forged or replayed acknowledgement changes nothing.
 
 ## The preview, step by step
 
@@ -97,7 +97,7 @@ A write run builds its diff while it is `validating`, before anyone is asked to 
 1. Validate the inputs and read the whole source ([section 210](210-sources-and-value-normalization.md)). A file is read once and stored as a blob ([section 502](../5-security/502-defending-against-a-manipulated-agent.md)).
 2. Apply the record limit and quotas ([section 212](212-policy-and-approvals.md)).
 3. Run the read steps that come before the first write step, checking each `expect`. A failure here ends the run before anyone is asked to approve. Read steps after the first write step run only in the write phase.
-4. For each record the write steps would touch: evaluate its inputs, look the record up by its identity strategy, and class it `create`, `update`, or `unchanged` ([section 209](209-record-identity-and-dependent-records.md)). For `natural` and `composite` identity the lookup is the read-back rule of the binding that will write the record, used on its own. The values found are kept as the values seen before the write.
+4. For each record the write steps would touch: evaluate its inputs, look the record up by its record matching, and class it `create`, `update`, or `unchanged` ([section 209](209-record-identity-and-dependent-records.md)). For `natural` and `composite` identity the lookup is the read-back rule of the binding that will write the record, used on its own. The values found are kept as the values seen before the write.
 5. Build the diff, hash it by the canonical form in the reference, and store both on the run. The engine computes the hash and nothing else does, so an approval and a run can never disagree about it.
 6. If the diff holds nothing to create or update and the tool has no other effect, such as an upload, no approval is needed: the run writes nothing, runs its remaining read steps, and ends `completed`. This is what makes a second run of the same sheet change nothing. Otherwise the policy engine is asked whether the write may proceed without a person, and the run waits at `needs_approval` if not.
 
@@ -118,7 +118,7 @@ Then, for each record in a write run:
 
 The ledger releases the record's lock itself, in the same transaction that marks it `verified` or `unchanged`. There is no separate unlock.
 
-**Intent window.** Waiting for an acknowledgement per record costs a round trip. A runner may therefore store intents for several upcoming records at once. The default is set per mode, by `intent_window` in its provider's manifest ([section 201](201-archetypes-and-modes.md)); in the first packs, for example, one for driving an interface and eight for direct requests. If a runner stops, at most that many records are in `intent` and need a read on resume. Nothing is lost, because an intent is only a claim that a write may have been sent.
+**Intent window.** Waiting for an acknowledgement per record costs a round trip. A runner may therefore store intents for several upcoming records at once. The default is set per mode, by `intent_window` in its provider's manifest ([section 201](201-access-kinds-and-modes.md)); in the first packs, for example, one for driving an interface and eight for direct requests. If a runner stops, at most that many records are in `intent` and need a read on resume. Nothing is lost, because an intent is only a claim that a write may have been sent.
 
 **Idempotency tokens where the system takes them.** Each record carries a stable token derived from the run and the record key, held in its intent token. When a surface documents an idempotency key, the binding sends the token, so the system itself refuses a duplicate. The same token is the stamp for `stamped` identity ([section 209](209-record-identity-and-dependent-records.md)).
 
@@ -142,14 +142,14 @@ When a run is resumed, for each record in `intent`, `acted`, or a retryable `fai
 
 How the record is read depends on how it is found again:
 
-| Identity strategy | How the record is read |
+| Record matching | How the record is read |
 | --- | --- |
 | `natural`, `composite` | The binding's read-back steps alone, from the identity inputs |
 | `stamped` | The lookup by the record's token |
 | `find` | The declared lookup. More than one match stops with `possible_commit`, `ambiguous_match`; zero matches waits the settle time out once and looks again |
 | Any, once a key was assigned | By the assigned key |
 | Any, with outputs recorded before the commit point | By what was recorded: a key assigned inside an open transaction, or the digest a file would have |
-| `none` | There is no key, so "absent" is never proof by itself ([decision 0185](../../decisions/0185-a-record-with-no-key-is-never-proved-absent-by-one-look.md)). The binding's read-back, given the values the record's own attempt recorded before its save, may find it; what it finds is compared with the intended values like every read-back: equal is `verified`, different is `mismatch` and stays in doubt. The record returns to `planned` only when the binding's lookup is one its provider states authoritative for absence (`absence_steps`, [section 201](201-archetypes-and-modes.md)), asked once the settle time has passed since the send was recorded, and it answers "absent" twice, the second after another settle time. A record whose recorded values were masked is not read. In every other case the run stops with `possible_commit`, `cannot_reconcile`, showing what was recorded, rests for a person, and nothing is sent |
+| `none` | There is no key, so "absent" is never proof by itself ([decision 0185](../../decisions/0185-a-record-with-no-key-is-never-proved-absent-by-one-look.md)). The binding's read-back, given the values the record's own attempt recorded before its save, may find it; what it finds is compared with the intended values like every read-back: equal is `verified`, different is `mismatch` and stays in doubt. The record returns to `planned` only when the binding's lookup is one its provider states authoritative for absence (`absence_steps`, [section 201](201-access-kinds-and-modes.md)), asked once the settle time has passed since the send was recorded, and it answers "absent" twice, the second after another settle time. A record whose recorded values were masked is not read. In every other case the run stops with `possible_commit`, `cannot_reconcile`, showing what was recorded, rests for a person, and nothing is sent |
 
 What was recorded before a commit point belongs to that attempt: a reconcile is given the values recorded after the record's current intent, and never an earlier attempt's. Only after every doubtful record is settled does any write run. Records in `planned` then continue through the normal write path; records in `verified` or `unchanged`, and records that ended `acted` on an acknowledgement, are skipped. A record in doubt is read through the mode its intent was stored for, and never through another. A dependent record takes its parent's assigned key from the ledger and never runs the parent again.
 

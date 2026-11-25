@@ -4,17 +4,11 @@ The entry before this is [the exit tests of the finished phases](2026-11-24-the-
 
 ## State at the end of this entry
 
-- **On main:** pull requests 23, 24 and 25 are merged. Every check was green on Windows, macOS and Linux each time.
-- **Pull request 26:** open, in CI. It carries:
-  - the sharded CI;
-  - the one test program of the product;
-  - the lighter debug builds;
-  - E5, YL5, field test 9, and findings 54 to 56.
-- **On the staging branch, after pull request 26:**
-  - the Windows and macOS lints in the gate, and the nightly run under load (0452);
-  - the generated plan counts (0453);
-  - the second measurement of the first hour, and row 5.6c.
-- **Progress:** 168 of 203 packages. Of the 35 left, 9 wait on the owner and 18 on the first release. The other 8 are an agent's: FT5, FT6, N0b, 8.3, 5.1, 5.6c, YL1 and YL2. The counts are now written by `python3 tools/progress.py --write`.
+- **On main:** pull requests 23 to 26 are merged. Every check was green on Windows, macOS and Linux each time.
+- **Pull request 27:** open, in CI. It carries:
+  - N0b, the renames of decision 0330 (0463): logs, copy test, access kind, `inputs/`, `stdio`, and the rest, with stored words kept;
+  - 5.1, every action with no handler named, and marked not built in the catalog.
+- **Progress:** 176 of 206 packages, counted by `python3 tools/progress.py --write`. The one package ready for an agent is FT6, and it waits on the owner's answer about H-50.
 
 ## What the owner directed
 
@@ -64,6 +58,13 @@ The entry before this is [the exit tests of the finished phases](2026-11-24-the-
 - The plan's counts are generated (0453).
 - Five flaky tests were fixed at their cause: the web-ui commit tests, the `a2m-local` lock tests, `approval_surface`, the `serve` prompt test and the capture race.
 
+**After pull request 26.**
+- 5.6c: the second measurement's faults fixed; a write waiting for its person stays `ok: false` (0458).
+- YL1 and YL2: a breaking change is named at publish, after where it leads (0454), and `version.diff` classifies it.
+- FT5 and the review by lens 7, "Less" (0456).
+- N0b: the renames of decision 0330 (0463).
+- 5.1: every action with no handler is named, and marked not built in the catalog.
+
 ## Learned
 
 - **Agents in one session share one shell directory and one scratch folder.** The first three H-18 runs crossed into each other and were thrown away. Each run's program is now fixed to its own home and folder.
@@ -72,6 +73,7 @@ The entry before this is [the exit tests of the finished phases](2026-11-24-the-
 - **On Windows, a killed browser's processes and its pipe end in no set order.** Recovery now listens to the tab's own sight of its page, not to the pipe alone.
 - **A home-folder cargo setting outside the repository can hide what a profile change does here.** Measure on CI as well.
 - **Hand-written counts conflict on nearly every merge.** They are generated now.
+- **A rename sweep that changes a path in code must move the folder too.** N0b changed the command pack's test to read `inputs/` and left its fixtures in `sources/`; only the test run showed it.
 
 ## Found, and routed
 
@@ -81,7 +83,5 @@ The entry before this is [the exit tests of the finished phases](2026-11-24-the-
 
 ## Next
 
-- YL1 is being built, and a review by lens 7, "Less", is running.
-- After YL1: 5.6c, then YL2 and 5.1, one at a time, since each holds `a2m-actions`.
-- Then N0b alone.
-- FT6 waits on the owner's answer about H-50.
+- Merge pull request 27 when every check is green, and bring main back into the staging branch.
+- FT6 waits on the owner's answer about H-50. The other packages left wait on the owner or on the first release.

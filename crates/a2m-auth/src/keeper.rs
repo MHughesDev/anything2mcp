@@ -17,7 +17,7 @@ use a2m_core::{
     Digest, Environment, Failure, FailureClass, Identity, PrincipalId, SessionId, SessionState,
     TargetName, Timestamp, WorkspaceId,
 };
-use a2m_telemetry::{Clock, Telemetry};
+use a2m_logs::{Clock, LogsAndTraces};
 use a2m_vault::{OsRandom, RandomSource};
 use tokio::sync::watch;
 
@@ -31,7 +31,7 @@ use crate::provider::{
 };
 use crate::state::{CallRule, call_rule, legal_move};
 use crate::store::{EventKind, Saved, SessionEvent, SessionRow, SessionStore};
-use crate::work::{KeeperJob, KeeperWork, KeeperWorker, ProbeOutcome, Work, WorkOutcome};
+use crate::work::{KeeperJob, KeeperWork, KeeperWorker, SessionCheckOutcome, Work, WorkOutcome};
 
 pub use crate::codes::SESSION_MOVE_ILLEGAL;
 
@@ -79,9 +79,9 @@ const RENEWAL: &str = "renewal";
 pub struct KeeperSettings {
     /// How long after its last use a session is still checked: 8 hours.
     pub keep_alive: Duration,
-    /// How often a session is probed when its auth file declares no idle
+    /// How often a session is checked when its auth file declares no idle
     /// timeout: 15 minutes. With a declared one, half of it.
-    pub probe_every: Duration,
+    pub check_every: Duration,
     /// How long a check, a renewal, or a stored-credential sign-in may take
     /// before a tick calls it interrupted, and how long a call that does not
     /// wait for a person waits for one: 10 minutes.
@@ -100,7 +100,7 @@ impl Default for KeeperSettings {
     fn default() -> Self {
         Self {
             keep_alive: Duration::from_secs(8 * 60 * 60),
-            probe_every: Duration::from_secs(15 * 60),
+            check_every: Duration::from_secs(15 * 60),
             work_limit: Duration::from_secs(10 * 60),
             renew_ahead: Duration::from_secs(30),
             automatic_sign_ins: AUTOMATIC_SIGN_INS,
@@ -227,8 +227,8 @@ fn may_have_sent(failure: &Failure) -> bool {
 /// Who ended a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndedBy {
-    /// The person whose session it is: `session.revoke`.
-    Owner,
+    /// The session owner, the person whose session it is: `session.revoke`.
+    SessionOwner,
     /// An administrator, who ends it without using it: `session.end`.
     Administrator,
 }
@@ -280,7 +280,7 @@ pub struct Keeper {
 }
 
 /// A way back to a keeper that does not keep it: for what the keeper
-/// itself holds, a probe above all, which leases through the keeper and is
+/// itself holds, a session check above all, which leases through the keeper and is
 /// held by the keeper's work. A strong [`Keeper`] there would make a cycle
 /// that keeps a closed engine's keeper, its store, and its worker forever.
 #[derive(Clone)]
@@ -322,7 +322,7 @@ struct Inner {
     random: Arc<dyn RandomSource>,
     local: Option<Arc<KeeperWorker>>,
     settings: KeeperSettings,
-    telemetry: Option<Telemetry>,
+    logs_and_traces: Option<LogsAndTraces>,
     /// Moves on every change of any session and on every tick, so that a
     /// waiting call looks again.
     changed: watch::Sender<u64>,
@@ -338,7 +338,7 @@ struct Inner {
     allowed: Mutex<BTreeMap<SessionId, BTreeSet<String>>>,
     /// Sessions with work in flight in this process.
     busy: Mutex<BTreeMap<SessionId, usize>>,
-    /// When each valid session was last probed with no answer: a probe that
+    /// When each valid session was last checked with no answer: a session check that
     /// could not be made changes no state, and the next is due a whole
     /// interval later, as after a pass. In memory only.
     unanswered: Mutex<BTreeMap<SessionId, Timestamp>>,
@@ -392,7 +392,7 @@ impl Drop for Waiting<'_> {
 }
 
 /// Builds a [`Keeper`]. What is not set takes its default: the operating
-/// system's random source, the settings of spec section 215, no telemetry,
+/// system's random source, the settings of spec section 215, no logs and traces,
 /// and no worker in this process.
 pub struct KeeperBuilder {
     inner: Inner,
@@ -415,10 +415,10 @@ impl KeeperBuilder {
         self
     }
 
-    /// A telemetry handle, for the keeper's metrics.
+    /// A logs-and-traces handle, for the keeper's metrics.
     #[must_use]
-    pub fn telemetry(mut self, telemetry: Telemetry) -> Self {
-        self.inner.telemetry = Some(telemetry);
+    pub fn logs_and_traces(mut self, logs_and_traces: LogsAndTraces) -> Self {
+        self.inner.logs_and_traces = Some(logs_and_traces);
         self
     }
 
@@ -463,7 +463,7 @@ impl Keeper {
                 random: Arc::new(OsRandom),
                 local: None,
                 settings: KeeperSettings::default(),
-                telemetry: None,
+                logs_and_traces: None,
                 changed: watch::Sender::new(0),
                 entries: Mutex::new(BTreeMap::new()),
                 allowed: Mutex::new(BTreeMap::new()),
@@ -794,7 +794,8 @@ impl Keeper {
     pub async fn revoke(&self, key: &SessionKey, by: EndedBy) -> Result<(), Failure> {
         let inner = &self.inner;
         let cause = match by {
-            EndedBy::Owner => "revoked_by_owner",
+            // The stored cause keeps the old word (decision 0402).
+            EndedBy::SessionOwner => "revoked_by_owner",
             EndedBy::Administrator => "ended_by_administrator",
         };
         loop {
@@ -833,7 +834,7 @@ impl Keeper {
         }
     }
 
-    /// A way back to this keeper that does not keep it alive: what a probe
+    /// A way back to this keeper that does not keep it alive: what a session check
     /// the keeper's work holds should hold of the keeper.
     #[must_use]
     pub fn downgrade(&self) -> WeakKeeper {
@@ -865,7 +866,7 @@ impl Keeper {
     }
 
     /// The keeper's timers. Call it at a steady pace, a few times a minute.
-    /// It ends sessions that reached their declared maximum age, probes the
+    /// It ends sessions that reached their declared maximum age, session checks the
     /// sessions that are still wanted and due a check, ends work that was
     /// interrupted, and wakes every waiting call so that it looks at its
     /// wait. It returns when its checks are done.
@@ -932,8 +933,8 @@ impl Inner {
     }
 
     fn counted_metric(&self, name: &'static str) {
-        if let Some(telemetry) = &self.telemetry {
-            telemetry.count(name, &[], 1);
+        if let Some(logs_and_traces) = &self.logs_and_traces {
+            logs_and_traces.count(name, &[], 1);
         }
     }
 
@@ -1515,13 +1516,13 @@ impl Inner {
         });
     }
 
-    /// The one re-check of a suspect session: the target's probe. A pass
+    /// The one re-check of a suspect session: the target's session check. A pass
     /// makes it valid again; anything else starts the one renewal.
     async fn recheck(&self, row: &SessionRow) {
         let entry = self.entry_of(row.id);
-        let outcome = self.work.probe(&session_ref(row)).await;
+        let outcome = self.work.check_session(&session_ref(row)).await;
         let now = self.now();
-        let result = if outcome == ProbeOutcome::SignedIn {
+        let result = if outcome == SessionCheckOutcome::SignedIn {
             self.advance(
                 row,
                 SessionState::Valid,
@@ -1756,9 +1757,9 @@ impl Inner {
         let made = if fresh { Made::Again } else { Made::Kept };
         self.held(row, held, EventKind::Renewed, cause, automatic, made)
             .await?;
-        if let Some(telemetry) = &self.telemetry {
-            telemetry.count(RENEWALS, &[], 1);
-            telemetry.observe(
+        if let Some(logs_and_traces) = &self.logs_and_traces {
+            logs_and_traces.count(RENEWALS, &[], 1);
+            logs_and_traces.observe(
                 RENEWAL_DURATION,
                 &[],
                 self.clock.elapsed().saturating_sub(started),
@@ -1838,12 +1839,12 @@ impl Inner {
                     None => continue,
                 }
             }
-            // A probe checks a sign-in that exists. It never starts one,
+            // A session check checks a sign-in that exists. It never starts one,
             // and never waits for one: the keeper that asked for it would
             // wait for itself.
             if req.purpose == Purpose::Probe && row.state != SessionState::Valid {
                 return Err(failure::needs_login(
-                    "a probe checks a session that is signed in, and this one is not",
+                    "a session check reads a session that is signed in, and this one is not",
                 ));
             }
             match call_rule(row.state) {
@@ -2146,7 +2147,7 @@ impl Inner {
             .is_some_and(|used| between(used, now) < self.settings.keep_alive);
         let every = entry
             .idle
-            .map_or(self.settings.probe_every, |idle| idle / 2);
+            .map_or(self.settings.check_every, |idle| idle / 2);
         let tried = locked(&self.unanswered).get(&row.id).copied();
         let last = match (row.checked_at, tried) {
             (Some(checked), Some(tried)) => Some(checked.max(tried)),
@@ -2157,16 +2158,16 @@ impl Inner {
             return Ok(());
         }
         let _busy = self.mark_busy(row.id);
-        let outcome = self.work.probe(&session_ref(row)).await;
-        if outcome == ProbeOutcome::Unknown {
-            // The probe could not be made, so nothing is known: the session
+        let outcome = self.work.check_session(&session_ref(row)).await;
+        if outcome == SessionCheckOutcome::Unknown {
+            // The session check could not be made, so nothing is known: the session
             // stays as it is, and signs of expiry its driver reports still
             // count against it.
             locked(&self.unanswered).insert(row.id, now);
             return Ok(());
         }
         locked(&self.unanswered).remove(&row.id);
-        if outcome == ProbeOutcome::SignedIn {
+        if outcome == SessionCheckOutcome::SignedIn {
             let event = SessionEvent {
                 session: row.id,
                 at: now,
@@ -2178,7 +2179,7 @@ impl Inner {
                 decided: None,
             };
             // Nothing is noted when the session was renewed or ended while
-            // the probe ran: the pass was about credentials that are gone.
+            // the session check ran: the pass was about credentials that are gone.
             return self
                 .store
                 .note(None, Some(now), true, event)

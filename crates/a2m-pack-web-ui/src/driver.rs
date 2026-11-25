@@ -21,17 +21,17 @@ use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
 use a2m_core::{AccountName, Digest, EffectClass, Failure, Identity, Secret, Step, Value, Values};
+use a2m_logs::{Acting, Detail};
 use a2m_pack_web_browser::{
-    ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, DialogAnswer, Dispatch,
-    Element, Input, Key, Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey,
-    Query, RawValue, ReadWhat, Reason, RequestShape, SafeRequests, Snapshot, SnapshotLimits,
-    Visibility, looks_like_an_action, path_by_structure, plain_segment,
+    ActTab, Address, BrowserError, BrowserProfileKey, BrowserState, Browsers, Deadline,
+    DialogAnswer, Dispatch, Element, Input, Key, Loaded, Look, ObserveTab, Origins,
+    PageEnvironment, Primitive, Query, RawValue, ReadWhat, Reason, RequestShape, SafeRequests,
+    Snapshot, SnapshotLimits, Visibility, looks_like_an_action, path_by_structure, plain_segment,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
-use a2m_telemetry::{Acting, Detail};
 
 use crate::codes::{self, shown};
 use crate::lower::{CALL_TOOL, GOTO, INVOKE, REACH_ARG, READ, ROW_ARG, SET, VALUE_ARG, WAIT};
@@ -237,7 +237,7 @@ const REDRAWN_WITHIN: Duration = Duration::from_secs(10);
 /// asks for it.
 struct ToAct {
     browsers: Browsers,
-    profile: ProfileKey,
+    profile: BrowserProfileKey,
     environment: PageEnvironment,
     origins: Origins,
 }
@@ -296,6 +296,9 @@ struct Session {
     /// browser: the browser is asked for a word before the next step there
     /// uses it, since a browser can be dead before the tab sees it.
     unsure: bool,
+    /// What the observing tab refused when its page made it, kept as a
+    /// limitation of the run (decision 0477).
+    limits: Limits,
 }
 
 /// What opens the observing tab again, in a new browser started from the
@@ -655,9 +658,17 @@ fn parse_rows(text: &str, rows: &Rows) -> Option<Vec<Vec<String>>> {
     let mut lines = text
         .split('\n')
         .map(|line| line.strip_suffix('\r').unwrap_or(line));
+    // A heading is compared as a person reads it: a table library's sort
+    // words are not its own (decision 0474, point 2).
+    let heading = |line: &str| -> Option<Vec<String>> {
+        cells(line)
+            .iter()
+            .map(|cell| crate::heading::words(cell))
+            .collect()
+    };
     loop {
         let line = lines.next()?;
-        if cells(line) == rows.header {
+        if heading(line).as_ref() == Some(&rows.header) {
             break;
         }
         if line.contains('\t') {
@@ -726,7 +737,7 @@ impl Session {
     /// or a download, which was denied, is a state no screen declares.
     /// `None` when it refused nothing.
     fn refused(&self, what: &str) -> Option<Failure> {
-        let mut refused = self.looking.blocked();
+        let mut refused = self.limits.keep(self.looking.blocked());
         if let Some(acting) = &self.acting {
             refused.extend(acting.blocked());
         }
@@ -872,6 +883,206 @@ fn tab_for(step: &Step, gotos: &[(Step, bool)]) -> Result<TabKind, StepFailure> 
 /// denied, under.
 const LEFT_THE_PAGE: &[&str] = &["POPUP", "DOWNLOAD"];
 
+/// What the browser engine reports a socket, a shared worker, or a service
+/// worker under, which the page's lock refused when the page made it, before
+/// anything was sent; with the words a person reads for each.
+const WHEN_MADE_WORDS: &[(&str, &str)] = &[
+    ("WEBSOCKET", "a WebSocket"),
+    ("WEBTRANSPORT", "a WebTransport session"),
+    ("PEERCONNECTION", "a peer connection"),
+    ("SHAREDWORKER", "a shared worker"),
+    ("SERVICEWORKER", "a service worker"),
+];
+
+/// The words a person reads for what a page's lock refused when the page
+/// made it; the base's word when it has none here.
+fn made_words(refused: &RequestShape) -> &str {
+    WHEN_MADE_WORDS
+        .iter()
+        .find(|(method, _)| *method == refused.method)
+        .map_or(refused.method.as_str(), |(_, made)| made)
+}
+
+/// Where a refusal led, as a person may be shown it: the origin, and the
+/// path by structure, so that a segment that may be a token is not shown. A
+/// socket's address, `ws:` or `wss:`, is not a page address, so it is cut
+/// at its first `/` after the host by hand; one with no `://` shows nothing.
+fn refused_place(refused: &RequestShape) -> String {
+    let (place, sent) = match Address::new(&refused.address) {
+        Ok(address) => {
+            let origin = address.origin();
+            let sent = address
+                .as_str()
+                .strip_prefix(&origin)
+                .unwrap_or_default()
+                .to_owned();
+            (origin, sent)
+        }
+        Err(_) => match refused.address.split_once("://") {
+            Some((scheme, rest)) => {
+                let (host, path) = rest.find('/').map_or((rest, ""), |at| rest.split_at(at));
+                (format!("{scheme}://{host}"), path.to_owned())
+            }
+            None => (String::new(), String::new()),
+        },
+    };
+    shown(&format!("{place}{}", path_by_structure(&sent)))
+}
+
+/// The stops that say a page did not show what its screen declares, which
+/// may be because it went on without what the observing tab refused when
+/// the page made it.
+const NOT_SHOWN: [&a2m_core::CodeEntry; 3] = [
+    &codes::row::UNEXPECTED_PAGE,
+    &codes::row::LOCATOR_NOT_FOUND,
+    &a2m_provider::codes::row::TIMEOUT,
+];
+
+/// What an observing tab's lock refused when the page made it, kept as a
+/// limitation of the run rather than a stop (decision 0477): a socket, a
+/// shared worker, or a service worker, through which nothing was sent. A
+/// read goes on past it where the page goes on without it, and the run says
+/// what was refused: each one, once, as a `refused` detail of what the step
+/// measured, of the step during or before which the tab heard of it. What
+/// the acting tab refused is never kept here: it stops the run.
+#[derive(Debug, Default)]
+pub(crate) struct Limits(std::sync::Mutex<Kept>);
+
+#[derive(Debug, Default)]
+struct Kept {
+    /// Each refusal kept, once, oldest first.
+    refused: Vec<RequestShape>,
+    /// How many of them a step's outcome already says.
+    told: usize,
+}
+
+impl Limits {
+    fn kept(&self) -> std::sync::MutexGuard<'_, Kept> {
+        // Only this type writes what it holds, and every write leaves it
+        // whole, so a lock poisoned elsewhere still holds a true list.
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Keeps what the observing tab refused when its page made it, and
+    /// hands back everything else it refused, in its order, for
+    /// [`refusal`].
+    pub(crate) fn keep(&self, refused: Vec<RequestShape>) -> Vec<RequestShape> {
+        let (made, rest): (Vec<_>, Vec<_>) = refused
+            .into_iter()
+            .partition(RequestShape::refused_when_made);
+        let mut kept = self.kept();
+        for one in made {
+            if !kept.refused.contains(&one) {
+                kept.refused.push(one);
+            }
+        }
+        rest
+    }
+
+    /// The first refusal kept, if any.
+    pub(crate) fn first(&self) -> Option<RequestShape> {
+        self.kept().refused.first().cloned()
+    }
+
+    /// Adds to the step's capture of how it was done each refusal kept that
+    /// no step's outcome says yet, as a `refused` detail of what was
+    /// measured: the base's word and where it led. Two runs of the same
+    /// page may hear it at different steps, so it is not in the signature.
+    pub(crate) fn tell(&self, observed: &mut Observed) {
+        let mut kept = self.kept();
+        if kept.told == kept.refused.len() {
+            return;
+        }
+        let details: Vec<Detail> = kept.refused[kept.told..]
+            .iter()
+            .map(|one| Detail::new("refused", format!("{} {}", one.method, refused_place(one))))
+            .collect();
+        kept.told = kept.refused.len();
+        let at = observed.captures.iter().position(Capture::is_acting);
+        let mut acting_now = at
+            .and_then(|at| serde_json::from_slice::<Acting>(&observed.captures[at].bytes).ok())
+            .unwrap_or(Acting {
+                means: Vec::new(),
+                measured: Vec::new(),
+            });
+        acting_now.measured.extend(details);
+        let capture = Capture::acting(&acting_now);
+        match at {
+            Some(at) => observed.captures[at] = capture,
+            None => observed.captures.insert(0, capture),
+        }
+    }
+
+    /// A step's outcome, given what was kept. In a driver whose read is
+    /// what the page shows (`shown_by_page`), a page that shows the record
+    /// absent after a refusal kept is a state no rule covers, and stops:
+    /// the page may say so only because it went without what it made. And a
+    /// step there that did not find what its screen declares, or waited for
+    /// it in vain, says what was refused before it, since the page may need
+    /// it to show its record. Every other outcome is the step's own, with
+    /// what was kept told.
+    pub(crate) fn after(
+        &self,
+        done: Result<StepOutcome, StepFailure>,
+        what: &str,
+        shown_by_page: bool,
+    ) -> Result<StepOutcome, StepFailure> {
+        let first = self.first();
+        match (done, first) {
+            (Ok(StepOutcome::Absent(_)), Some(first)) if shown_by_page => {
+                Err(StepFailure::not_sent(fail(
+                    &codes::row::UNEXPECTED_PAGE,
+                    format!(
+                        "The page shows that the record is absent, at {what}, after the tab, which may only read, refused {} (`{}`) when the page made it. Whether the record is absent is not known: the page may say so only because it went on without it.",
+                        made_words(&first),
+                        refused_place(&first)
+                    ),
+                    &format!(
+                        "Look at what the page does when it loads. A page that needs {} to show its record cannot be read by the web pack; read the record from a page that does not.",
+                        made_words(&first)
+                    ),
+                )))
+            }
+            (Err(failed), Some(first))
+                if shown_by_page && failed.sent == a2m_provider::Sent::NotSent =>
+            {
+                // Only a stop that says the page did not show what its
+                // screen declares is said again, from its own row.
+                let Some(row) = NOT_SHOWN
+                    .iter()
+                    .find(|row| row.failure_code() == *failed.failure.code())
+                else {
+                    return Err(failed);
+                };
+                let made = made_words(&first);
+                Err(StepFailure::not_sent(fail(
+                    row,
+                    format!(
+                        "{} Before it, the tab, which may only read, refused {made} (`{}`) when the page made it, and the page may need it to show the screen.",
+                        failed.failure.message(),
+                        refused_place(&first)
+                    ),
+                    &format!(
+                        "{} A page that needs {made} to show its record cannot be read by the web pack; read the record from a page that does not.",
+                        failed.failure.next_step()
+                    ),
+                )))
+            }
+            (Ok(StepOutcome::Done(mut observed)), _) => {
+                self.tell(&mut observed);
+                Ok(StepOutcome::Done(observed))
+            }
+            (Ok(StepOutcome::Absent(mut observed)), _) => {
+                self.tell(&mut observed);
+                Ok(StepOutcome::Absent(observed))
+            }
+            (failed, _) => failed,
+        }
+    }
+}
+
 /// What a tab refused since it was last asked, as a failure: a move of the
 /// page, which the browser ended, is `policy`, `surface_not_declared`; a
 /// window the page opened, which was closed, and a download, which was
@@ -881,7 +1092,10 @@ const LEFT_THE_PAGE: &[&str] = &["POPUP", "DOWNLOAD"];
 /// write, and a read that needs such a request cannot be made (decision
 /// 0195). When an asserted read of the surface names the request's method
 /// and path, the next step names that page request (decision 0394, point
-/// 4). `None` when it refused nothing.
+/// 4). A socket, a shared worker, or a service worker the acting tab
+/// refused when the page made it is `page_write_refused` too; one the
+/// observing tab refused is kept by [`Limits::keep`] before this is asked,
+/// and is no stop (decision 0477). `None` when it refused nothing.
 pub(crate) fn refusal(
     refused: &[RequestShape],
     what: &str,
@@ -905,6 +1119,23 @@ pub(crate) fn refusal(
                 "The page tried to move to `{place}`, at {what}. The browser stopped it there, and the run stops: nothing is set, clicked, or read on a page that would leave."
             ),
             "Look at why the page moves. Declare the surface in the target's files if the system really lives there.",
+        )
+    } else if first.refused_when_made() {
+        // Nothing was sent: the lock refused it when the page made it. It
+        // is not a request an asserted read could name, so the next step
+        // does not send the person to one (field test 11, finding 63). Only
+        // the acting tab's refusals come here: a write is not made on a
+        // page that goes on without what it made.
+        let made = made_words(first);
+        fail(
+            &codes::row::PAGE_WRITE_REFUSED,
+            format!(
+                "The page opened {made} (`{}`), at {what}, in the tab a write is made in. The tab refused it when the page made it, so nothing was sent through it, and the run stops: a write is not made on a page that goes on without what it made, since what the page then does is not known.",
+                refused_place(first),
+            ),
+            &format!(
+                "Look at what the page does when it loads. A write through a page that opens {made} as it loads cannot be made by the web pack yet; a read of such a page goes on without it."
+            ),
         )
     } else if LEFT_THE_PAGE.contains(&first.method.as_str()) {
         fail(
@@ -1098,7 +1329,23 @@ impl Session {
                 ));
             }
             let frame = fingerprint.and_then(|print| print.frame.as_ref());
-            let element = match self.tab().locate(&locator.query_in(frame), deadline).await {
+            // An element the page gives no name, or a heading found by its
+            // level, is looked for only inside its section, where it must
+            // be the one; and an element that is its section is that one
+            // element of the page (decision 0473, point 3).
+            let own_section = fingerprint.is_some_and(|print| print.section == *locator);
+            let nameless = fingerprint.is_some()
+                && !own_section
+                && match &locator.by {
+                    crate::model::LocateBy::Role { name, .. } => name.is_empty(),
+                    crate::model::LocateBy::Heading(_) => true,
+                    _ => false,
+                };
+            let query = match fingerprint {
+                Some(print) if nameless => locator.query_inside(&print.section),
+                _ => locator.query_in(frame),
+            };
+            let element = match self.tab().locate(&query, deadline).await {
                 Ok(element) => element,
                 Err(BrowserError::NotFound) => continue,
                 Err(error) => return Err(browser_failure(&error, what)),
@@ -1113,16 +1360,18 @@ impl Session {
                 };
                 // The locator matched exactly one element of the page, so a
                 // match inside the section is that element.
-                match self
-                    .tab()
-                    .locate(&locator.query_inside(&fingerprint.section), deadline)
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(BrowserError::NotFound | BrowserError::Ambiguous { .. }) => {
-                        return Err(mismatch("it is not inside its section"));
+                if !nameless && !own_section {
+                    match self
+                        .tab()
+                        .locate(&locator.query_inside(&fingerprint.section), deadline)
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(BrowserError::NotFound | BrowserError::Ambiguous { .. }) => {
+                            return Err(mismatch("it is not inside its section"));
+                        }
+                        Err(error) => return Err(browser_failure(&error, what)),
                     }
-                    Err(error) => return Err(browser_failure(&error, what)),
                 }
                 if let Some(text) = &fingerprint.near_text {
                     let near = Locator {
@@ -1493,7 +1742,11 @@ impl Session {
             let (element, locator) = self
                 .find(&what, &rows.locate, rows.fingerprint.as_ref(), deadline)
                 .await?;
-            let text = match self.tab().read(&element, &ReadWhat::Text, deadline).await {
+            let reading = match &rows.items {
+                Some(role) => ReadWhat::Items { role: role.clone() },
+                None => ReadWhat::Text,
+            };
+            let text = match self.tab().read(&element, &reading, deadline).await {
                 Ok(RawValue::Text(text)) => text,
                 Ok(_) => {
                     return Err(browser_failure(
@@ -1503,7 +1756,18 @@ impl Session {
                 }
                 Err(error) => return Err(browser_failure(&error, &what)),
             };
-            let table = parse_rows(&text, rows).ok_or_else(|| {
+            let table = if rows.items.is_some() {
+                // Each item is one line, its text, and one row of one cell.
+                Some(
+                    text.split('\n')
+                        .filter(|line| !line.trim().is_empty())
+                        .map(|line| vec![line.trim().to_owned()])
+                        .collect(),
+                )
+            } else {
+                parse_rows(&text, rows)
+            };
+            let table = table.ok_or_else(|| {
                 StepFailure::answered(fail(
                     &codes::row::FINGERPRINT_MISMATCH,
                     format!(
@@ -2265,7 +2529,7 @@ fn known_control(control: &str) -> Result<Rule, StepFailure> {
 pub(crate) struct TabSetup {
     /// `scheme://host`, with a port when the surface has one.
     pub origin: String,
-    pub profile: ProfileKey,
+    pub profile: BrowserProfileKey,
     pub environment: PageEnvironment,
     pub origins: Origins,
     /// The session's browser state, with the mark of its session and
@@ -2443,7 +2707,7 @@ pub(crate) fn tab_setup(
             }
         }
     };
-    let profile = ProfileKey {
+    let profile = BrowserProfileKey {
         target: cx.surface.target.clone(),
         environment: cx.surface.environment.clone(),
         identity: Identity::Account(AccountName::new(&account).map_err(|_| {
@@ -2601,6 +2865,7 @@ impl UiDriver {
             reopen: Reopen::new(self.browsers.clone(), setup),
             since_goto: Vec::new(),
             unsure: false,
+            limits: Limits::default(),
             gotos,
             origin,
             sections,
@@ -2675,6 +2940,9 @@ impl Driver for UiDriver {
             // a save it followed is in doubt.
             let what = format!("the end of a `{}` step", step.kind);
             let Some(failure) = session.refused(&what) else {
+                // What the observing tab refused when its page made it is a
+                // limitation: the step's outcome says it (decision 0477).
+                let done = session.limits.after(done, &what, true);
                 if let Ok(StepOutcome::Done(_)) = &done {
                     session.remember(step, input);
                 }
@@ -2725,6 +2993,140 @@ impl Driver for UiDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shape(method: &str, address: &str) -> RequestShape {
+        RequestShape {
+            method: method.to_owned(),
+            address: address.to_owned(),
+        }
+    }
+
+    fn measured(observed: &Observed) -> Vec<Detail> {
+        observed
+            .acting()
+            .map(|acting| acting.measured)
+            .unwrap_or_default()
+    }
+
+    fn done() -> Result<StepOutcome, StepFailure> {
+        Ok(StepOutcome::Done(Observed {
+            captures: vec![acting(vec![Detail::new("step", "wait")], Vec::new())],
+            ..Observed::default()
+        }))
+    }
+
+    /// What an observing tab refused when its page made it is kept, once,
+    /// and told once, on the step's measured details and not in how it was
+    /// done; everything else it refused is handed back for a stop, in its
+    /// order (decision 0477).
+    #[test]
+    fn a_refusal_made_when_the_page_made_it_is_kept_and_told_once() {
+        let limits = Limits::default();
+        let worker = shape(
+            "SHAREDWORKER",
+            "http://127.0.0.1:9/escapes/shared-worker.js",
+        );
+        let rest = limits.keep(vec![
+            worker.clone(),
+            shape("POST", "http://127.0.0.1:9/traps/write"),
+            worker.clone(),
+            shape("WORKER", "http://127.0.0.1:9/w.js"),
+            shape("REFUSED", "http://127.0.0.1:9/x"),
+        ]);
+        let methods: Vec<_> = rest.iter().map(|one| one.method.as_str()).collect();
+        assert_eq!(methods, ["POST", "WORKER", "REFUSED"]);
+        let Ok(StepOutcome::Done(first)) = limits.after(done(), "a step", true) else {
+            panic!("a step that was done stays done");
+        };
+        let told = measured(&first);
+        assert_eq!(told.len(), 1, "{told:?}");
+        assert_eq!(told[0].name, "refused");
+        assert_eq!(
+            told[0].value,
+            "SHAREDWORKER http://127.0.0.1:9/escapes/shared-worker.js"
+        );
+        assert_eq!(first.acting().unwrap().means.len(), 1);
+        // The same refusal heard again is not told again.
+        assert!(limits.keep(vec![worker]).is_empty());
+        let Ok(StepOutcome::Done(second)) = limits.after(done(), "a step", true) else {
+            panic!("a step that was done stays done");
+        };
+        assert!(measured(&second).is_empty());
+    }
+
+    /// After a refusal kept: a page that shows the record absent stops, in
+    /// the `ui` driver; a step that did not find its screen says what was
+    /// refused before it; any other failure is the step's own. In the
+    /// `page_http` driver, whose read is its own request, the outcome is
+    /// the step's own.
+    #[test]
+    fn after_a_refusal_kept_an_absent_record_stops_and_a_screen_not_found_names_it() {
+        let limits = Limits::default();
+        limits.keep(vec![shape("WEBSOCKET", "ws://127.0.0.1:9/events")]);
+        let absent = || Ok(StepOutcome::Absent(Observed::default()));
+        let stopped = limits.after(absent(), "a step", true).unwrap_err();
+        assert_eq!(stopped.failure.code().as_str(), "unexpected_page");
+        assert_eq!(stopped.sent, a2m_provider::Sent::NotSent);
+        assert!(
+            stopped.failure.message().contains("a WebSocket"),
+            "{stopped:?}"
+        );
+        assert!(
+            matches!(
+                limits.after(absent(), "a step", false),
+                Ok(StepOutcome::Absent(_))
+            ),
+            "a page request's answer is its own"
+        );
+
+        let not_shown = || {
+            Err(StepFailure::not_sent(fail(
+                &codes::row::UNEXPECTED_PAGE,
+                "The page did not become the screen.".to_owned(),
+                "Look at the page.",
+            )))
+        };
+        let named = limits.after(not_shown(), "a step", true).unwrap_err();
+        assert_eq!(named.failure.code().as_str(), "unexpected_page");
+        assert!(
+            named
+                .failure
+                .message()
+                .starts_with("The page did not become the screen.")
+        );
+        assert!(
+            named
+                .failure
+                .message()
+                .contains("`ws://127.0.0.1:9/events`"),
+            "{named:?}"
+        );
+        assert!(named.failure.next_step().starts_with("Look at the page."));
+        let own = limits.after(not_shown(), "a step", false).unwrap_err();
+        assert_eq!(own.failure.message(), "The page did not become the screen.");
+
+        let ended = || {
+            Err(StepFailure::not_sent(fail(
+                &codes::row::APP_VALIDATION_ERROR,
+                "The page refused.".to_owned(),
+                "Correct the values.",
+            )))
+        };
+        let kept_own = limits.after(ended(), "a step", true).unwrap_err();
+        assert_eq!(kept_own.failure.message(), "The page refused.");
+
+        // With nothing kept, every outcome is the step's own.
+        let none = Limits::default();
+        assert!(matches!(
+            none.after(absent(), "a step", true),
+            Ok(StepOutcome::Absent(_))
+        ));
+        let plain = none.after(not_shown(), "a step", true).unwrap_err();
+        assert_eq!(
+            plain.failure.message(),
+            "The page did not become the screen."
+        );
+    }
 
     /// Every control the pack registers has a rule, and a control it did
     /// not register is a stop with its own code, never a guess at a text
@@ -2863,6 +3265,7 @@ mod tests {
             fingerprint: None,
             header: vec!["Order".to_owned(), "Customer".to_owned()],
             columns: BTreeMap::new(),
+            items: None,
         };
         let cell = |text: &str| text.to_owned();
         assert_eq!(
@@ -2881,5 +3284,18 @@ mod tests {
         assert_eq!(parse_rows("Order\tClient\nA-100\tAcme\n", &rows), None);
         assert_eq!(parse_rows("Order\tCustomer\nA-100\n", &rows), None);
         assert_eq!(parse_rows("All orders\n", &rows), None);
+        // A table library's sort words on a heading are not the heading's
+        // (decision 0474, point 2); a heading with no words left is none.
+        assert_eq!(
+            parse_rows(
+                "Order Order: Activate to sort\tCustomer: activate to sort column ascending\nA-100\tAcme\n",
+                &rows
+            ),
+            Some(vec![vec![cell("A-100"), cell("Acme")]])
+        );
+        assert_eq!(
+            parse_rows("Order\tActivate to sort\nA-100\tAcme\n", &rows),
+            None
+        );
     }
 }

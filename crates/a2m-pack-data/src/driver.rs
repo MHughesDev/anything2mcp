@@ -24,13 +24,13 @@ use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use a2m_auth::SessionLease;
-use a2m_core::{CodeEntry, Failure, RecordKey, Redact, Step, Value, Values};
+use a2m_core::{CodeEntry, Coverage, Failure, RecordKey, Redact, Step, Value, Values};
+use a2m_logs::{Acting, Detail};
 use a2m_provider::{
     BoxFuture, Capture, CheckedPath, Cleanup, Deadline, Driver, DriverHealth, FileIdentity,
     Observed, Posture, PrepareContext, Prepared, RootName, Roots, StepFailure, StepInput,
     StepOutcome, SurfaceRef,
 };
-use a2m_telemetry::{Acting, Detail};
 
 use crate::model::{
     Access, Column, Does, FOUND, Returns, Section, Statement, StepDetail, Stored, SurfaceFields,
@@ -1137,6 +1137,14 @@ impl Session {
                 .collect::<Result<Vec<Value>, Failure>>()
                 .map(|records| {
                     let lists = Self::columns_as_lists(&statement, &ran.columns, &records);
+                    // The store was asked for one row more than the limit,
+                    // so whether it holds more is a fact the driver saw
+                    // (decision 0472).
+                    let coverage = if ran.more {
+                        Coverage::Partial
+                    } else {
+                        Coverage::Complete
+                    };
                     let mut values = Values::new()
                         .with("rows", Value::List(records))
                         .with("more", ran.more);
@@ -1147,6 +1155,7 @@ impl Session {
                     }
                     StepOutcome::Done(Observed {
                         values: redact.redact_values(&values),
+                        coverage,
                         ..Observed::default()
                     })
                 }),
@@ -1169,7 +1178,7 @@ impl Session {
                             values: values.clone(),
                             assigned_key: Some(key),
                             for_reconcile: values,
-                            captures: Vec::new(),
+                            ..Observed::default()
                         }))
                     })
                 }

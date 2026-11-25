@@ -11,9 +11,9 @@ use a2m_actions::{
 };
 use a2m_auth::PersonAnswer;
 use a2m_core::{Failure, FailureClass, Timestamp};
+use a2m_logs::{Clock, ManualClock};
 use a2m_policy::{PresenceCheck, ToolsetName};
 use a2m_provider::{RegistryBuilder, Roots, Supervisor, SupervisorLimits};
-use a2m_telemetry::{Clock, ManualClock};
 use a2m_vault::MemoryKeyStore;
 use example_app::harness::TestApp;
 use serde_json::Value as Json;

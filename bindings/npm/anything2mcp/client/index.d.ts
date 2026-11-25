@@ -65,20 +65,16 @@ export interface ConnectOptions {
   /** Overrides `process.platform`, for tests. */
   platform?: NodeJS.Platform;
   /**
-   * Windows only. Resolves to true only when the process that serves the pipe runs as this
-   * user. Node's standard library cannot tell, so without it the client refuses to connect
-   * (`client_not_built`).
-   */
-  verifyPipeServer?: (socket: import("node:net").Socket) => Promise<boolean> | boolean;
-  /** Windows only: the text of the user's security identifier, which the pipe's name carries. */
-  sid?: string;
-  /**
    * When no engine answers, run the program's `anything2mcp engine start`, which starts one as
    * any command does, and connect to it. True by default; false starts nothing and rejects with
    * `engine_unreachable`.
    */
   start?: boolean;
-  /** The program that starts the engine; the one the platform package installed by default. */
+  /**
+   * The program that starts the engine and, on Windows, whose `anything2mcp channel` command
+   * opens the engine's pipe after checking that it is served as this user; the one the platform
+   * package installed by default.
+   */
   binary?: string;
 }
 
@@ -108,11 +104,16 @@ export declare function connectTo(
   },
 ): Promise<Client>;
 
+/**
+ * Says hello on a connection whose far end is checked already, such as the stream of the
+ * program's `anything2mcp channel` command, and resolves to the client that holds it.
+ */
+export declare function greet(
+  stream: import("node:stream").Duplex,
+  options?: { name?: string; project?: string; timeout?: number },
+): Promise<Client>;
+
 /** The version of this package. */
 export declare function packageVersion(): string;
 /** Where the engine's socket is on macOS and Linux. */
 export declare function socketPath(env?: Record<string, string | undefined>, platform?: NodeJS.Platform): string;
-/** The engine's runtime directory on Windows, as the pipe's tag is made from it. */
-export declare function windowsRuntimeDir(env?: Record<string, string | undefined>): string;
-/** The name of the engine's pipe on Windows. */
-export declare function pipeName(runtimeDirText: string, sid: string): string;

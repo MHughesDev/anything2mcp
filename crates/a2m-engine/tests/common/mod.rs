@@ -1,7 +1,7 @@
 //! What the tests share: a test pack whose driver talks to the built-in test
 //! application over its JSON interface, registered through the provider
 //! contract as a real pack is; a hand-built compiled target for the imaginary
-//! `example` target; a `Control` over a real store, so that intent tokens
+//! `example` target; a `ControlPort` over a real store, so that intent tokens
 //! are the ledger's own; and the part of the engine's caller: it claims the
 //! job, applies the outcome, and resumes.
 
@@ -20,18 +20,18 @@ use a2m_core::{
     Address, ApprovalId, AuthProviderName, BindingStatus, COMPILED_TARGET_FORMAT, CanonicalJson,
     CompiledAuth, CompiledBinding, CompiledEnvironment, CompiledExpr, CompiledFieldType,
     CompiledIdentity, CompiledInput, CompiledOperation, CompiledOutput, CompiledPipeline,
-    CompiledProbe, CompiledSource, CompiledSurface, CompiledTarget, CompiledTargetHeader,
+    CompiledSessionCheck, CompiledSource, CompiledSurface, CompiledTarget, CompiledTargetHeader,
     CompiledTool, Digest, EffectClass, Environment, EnvironmentIndex, EnvironmentKind, Epoch,
     EvidenceLevel, ExprIndex, FailsAs, Failure, FailureClass, FailureCode, FieldFormat,
-    FieldTypeIndex, Finding, FindingKind, Hazard, IdentityStrategy, InputIndex, Mode,
-    OperationIndex, OperationName, PackPayload, PermissionManifest, PipelineIndex, PipelineLimits,
-    PipelineStep, PrincipalId, ProducedBy, RecordKey, RecordState, Rounding, RunId, RunState,
-    Sensitivity, SignInMode, Source, Step, StepArg, StepKind, Subject, SurfaceIndex, SurfaceKind,
-    SurfaceName, TargetName, TargetSection, Timestamp, ToolAnnotations, ToolRuns, Value, ValueType,
-    Values, Verb, Version, WhitespaceRule, WorkspaceId,
+    FieldTypeIndex, Finding, FindingKind, Hazard, InputIndex, Mode, OperationIndex, OperationName,
+    PackPayload, PermissionManifest, PipelineIndex, PipelineLimits, PipelineStep, PrincipalId,
+    ProducedBy, RecordKey, RecordMatching, RecordState, Rounding, RunId, RunState, Sensitivity,
+    SignInKind, Source, Step, StepArg, StepKind, Subject, SurfaceIndex, SurfaceKind, SurfaceName,
+    TargetName, TargetSection, Timestamp, ToolAnnotations, ToolRuns, Value, ValueType, Values,
+    Verb, Version, WhitespaceRule, WorkspaceId,
 };
 use a2m_engine::{
-    BoxFuture, Clearance, Conditions, Control, Engine, EngineDeps, EngineEvent, EngineSettings,
+    BoxFuture, Clearance, Conditions, ControlPort, Engine, EngineDeps, EngineEvent, EngineSettings,
     Evidence, GuardQuestion, JobKind, JobOutcome, JobSpec, KeptCapture, LeaseClock, Parallelism,
     Preview, RecordSnapshot, RunSnapshot, SessionWant, ToolRef, decode_values,
 };
@@ -41,6 +41,7 @@ use a2m_ledger::{
     NewBlob, NewRun, Opened, ReadBack, Reconciled, RecordIntent, RecordRef, RecordRow,
     RetentionClass, RunRow, Settled, Store, StoreConfig, ToolKind, WriteClearance,
 };
+use a2m_logs::{CaptureLevel, FinishedTrace, LogSettings, ManualClock};
 use a2m_provider::{
     Cleanup, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
     DiscoveryScope, Driver, DriverHealth, FindingSink, HostServices, Observed, Pack, PackContext,
@@ -51,7 +52,6 @@ use a2m_provider::{
 use a2m_sources::{
     HiddenRule, Locate, ReaderOptions, RowField, SourceInput, SourceSpec, Sources, TemplateVersion,
 };
-use a2m_telemetry::{CaptureLevel, FinishedTrace, ManualClock, TelemetrySettings};
 use a2m_vault::{MemoryKeyStore, OwnerRef, RandomSource, Vault};
 use example_app::harness::TestApp;
 
@@ -706,15 +706,12 @@ impl AppDriver {
                     let read = hooks.reads.fetch_add(1, Ordering::SeqCst);
                     let captures = if hooks.tells_acting.load(Ordering::SeqCst) {
                         vec![
-                            a2m_provider::Capture::acting(&a2m_telemetry::Acting {
+                            a2m_provider::Capture::acting(&a2m_logs::Acting {
                                 means: vec![
-                                    a2m_telemetry::Detail::new("step", "get_order"),
-                                    a2m_telemetry::Detail::new("path", "/api/orders/{order}"),
+                                    a2m_logs::Detail::new("step", "get_order"),
+                                    a2m_logs::Detail::new("path", "/api/orders/{order}"),
                                 ],
-                                measured: vec![a2m_telemetry::Detail::new(
-                                    "read",
-                                    read.to_string(),
-                                )],
+                                measured: vec![a2m_logs::Detail::new("read", read.to_string())],
                             }),
                             a2m_provider::Capture {
                                 name: "response".to_owned(),
@@ -970,6 +967,7 @@ impl AppDriver {
                             Values::new().with("item_code", code.as_str())
                         },
                         captures: Vec::new(),
+                        coverage: a2m_core::Coverage::Unknown,
                     }))
                 }
                 // A create whose code the system assigns. With no
@@ -1297,7 +1295,7 @@ impl Discoverer for WritingDiscoverer {
             if self.hangs.load(Ordering::SeqCst) {
                 // Ended by the time its manifest declares, which is long
                 // enough for any honest look on a slow machine: the clock
-                // stops while it hangs, as for a call to `Control` that
+                // stops while it hangs, as for a call to `ControlPort` that
                 // hangs (see `StoreControl::hang`).
                 tokio::time::pause();
                 let _runs_again = ClockRunsAgain;
@@ -1676,9 +1674,9 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
     // The second surface needs a sign-in; the first needs none.
     compiled_target.auth.push(CompiledAuth {
         surfaces: vec![SurfaceIndex::new(1)],
-        mode: SignInMode::ManagedSession,
+        mode: SignInKind::ManagedSession,
         provider: AuthProviderName::new("example_login").unwrap(),
-        probe: CompiledProbe::Operation {
+        probe: CompiledSessionCheck::Operation {
             operation: OperationIndex::new(0),
             inputs: Values::new().with("order_id", "A-100"),
         },
@@ -1819,14 +1817,15 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
         inputs: vec![input("order_id", identifier, ValueType::Text, true)],
         outputs: order_outputs(),
         identity: CompiledIdentity {
-            strategy: IdentityStrategy::Natural,
+            strategy: RecordMatching::Natural,
             key: vec![InputIndex::new(0)],
         },
         commit_points: 0,
         bindings,
         manifest: no_manifest(),
         examples: Vec::new(),
-        decision_points: Vec::new(),
+        run_questions: Vec::new(),
+        records: None,
     };
 
     // 0: read an order, through two bindings in order.
@@ -1851,7 +1850,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
             may_be_absent: false,
         }],
         identity: CompiledIdentity {
-            strategy: IdentityStrategy::Natural,
+            strategy: RecordMatching::Natural,
             key: vec![InputIndex::new(0)],
         },
         commit_points: 0,
@@ -1863,7 +1862,8 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
         )],
         manifest: no_manifest(),
         examples: Vec::new(),
-        decision_points: Vec::new(),
+        run_questions: Vec::new(),
+        records: None,
     });
     // 2 and 3: create or update a line item. In the second the description
     // is compared as written, and the application trims what it stores.
@@ -1887,7 +1887,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
                 may_be_absent: false,
             }],
             identity: CompiledIdentity {
-                strategy: IdentityStrategy::Composite,
+                strategy: RecordMatching::Composite,
                 key: vec![InputIndex::new(0), InputIndex::new(1)],
             },
             commit_points: 1,
@@ -1911,7 +1911,8 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
             )],
             manifest: no_manifest(),
             examples: Vec::new(),
-            decision_points: Vec::new(),
+            run_questions: Vec::new(),
+            records: None,
         });
     }
     // 4: a read on the surface that needs a sign-in.
@@ -1948,7 +1949,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
         )]
     };
     let create = |text: &str,
-                  strategy: IdentityStrategy,
+                  strategy: RecordMatching,
                   inputs: Vec<CompiledInput>,
                   key: Vec<InputIndex>,
                   act: Vec<Step>,
@@ -1966,13 +1967,14 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
             bindings: vec![binding],
             manifest: no_manifest(),
             examples: Vec::new(),
-            decision_points: Vec::new(),
+            run_questions: Vec::new(),
+            records: None,
         }
     };
     // 5: `find`: the lookup searches on the description the write sets.
     compiled_target.operations.push(create(
         NOTE_ADD,
-        IdentityStrategy::Find,
+        RecordMatching::Find,
         vec![
             input("order_id", identifier, ValueType::Text, true),
             input("description", free_text, ValueType::Text, true),
@@ -2010,7 +2012,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
     let by_stamp = || vec![step("find_item", &[("order_id", order_id)], false, true)];
     compiled_target.operations.push(create(
         REF_ADD,
-        IdentityStrategy::Stamped,
+        RecordMatching::Stamped,
         stamped_inputs(),
         vec![InputIndex::new(0)],
         vec![step(
@@ -2029,7 +2031,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
     // and the read-back use it.
     compiled_target.operations.push(create(
         SLOT_ADD,
-        IdentityStrategy::Stamped,
+        RecordMatching::Stamped,
         stamped_inputs(),
         vec![InputIndex::new(0)],
         vec![
@@ -2303,7 +2305,7 @@ pub fn keyless_slot_add(compiled_target: &mut CompiledTarget) {
             // irreversible operation.
             operation.effect = EffectClass::Irreversible;
             operation.identity = CompiledIdentity {
-                strategy: IdentityStrategy::None,
+                strategy: RecordMatching::None,
                 key: Vec::new(),
             };
             for binding in &mut operation.bindings {
@@ -2353,7 +2355,7 @@ pub fn acknowledged_upsert(compiled_target: &mut CompiledTarget) {
     }
 }
 
-// ---- the control plane: a real store behind `Control` ----
+// ---- the control plane: a real store behind `ControlPort` ----
 
 /// What a test can make the control plane do.
 #[derive(Default)]
@@ -2382,14 +2384,14 @@ pub struct Faults {
     pub outputs_refused: AtomicBool,
     /// The call of this name never answers.
     pub hangs_on: Mutex<Option<&'static str>>,
-    /// When `abort_armed` is set, the calls to `Control` answered before
+    /// When `abort_armed` is set, the calls to `ControlPort` answered before
     /// the next one never answers, and [`Faults::aborted`] is notified: the
     /// test then drops the job's future, as a process killed at that point
     /// would leave it.
     pub abort_after: AtomicU32,
     /// Whether `abort_after` applies.
     pub abort_armed: AtomicBool,
-    /// The calls to `Control` made since the count was last reset.
+    /// The calls to `ControlPort` made since the count was last reset.
     pub calls: AtomicU32,
     /// Notified when the call after `abort_after` is held.
     pub aborted: tokio::sync::Notify,
@@ -2427,7 +2429,7 @@ pub struct StoreControl {
     pub acknowledged: Mutex<Vec<RecordRef>>,
     /// The project folder of the request that started the run.
     pub project: Mutex<Option<PathBuf>>,
-    /// The files of the project's `sources` folder the call that started a
+    /// The files of the project's `inputs` folder the call that started a
     /// discovery hands it, by name.
     pub discovery_files: Mutex<std::collections::BTreeMap<String, String>>,
     /// The answerer `other_records` hands out, and every operation and
@@ -2466,7 +2468,7 @@ impl StoreControl {
 
     /// Never answers, when the test asked for that of this call.
     ///
-    /// The engine's own limit on a call to `Control` is what must end it,
+    /// The engine's own limit on a call to `ControlPort` is what must end it,
     /// and that limit must never end an honest call however slow the
     /// machine is. So every call is made in real time under the engine's
     /// limit, and only this one is made in the test's time: the clock of
@@ -2474,7 +2476,7 @@ impl StoreControl {
     /// else to do, the runtime moves it straight on to the engine's limit.
     /// The clock runs again when the engine gives the call up. A test's
     /// runtime runs on one thread, which is what lets a test stop its clock.
-    /// Counts one call to `Control`. Once `abort_after` calls have been
+    /// Counts one call to `ControlPort`. Once `abort_after` calls have been
     /// answered, with the abort armed, this one never answers.
     async fn called(&self) {
         let made = self.faults.calls.fetch_add(1, Ordering::SeqCst);
@@ -2535,7 +2537,7 @@ impl StoreControl {
     }
 }
 
-impl Control for StoreControl {
+impl ControlPort for StoreControl {
     fn compiled_target<'a>(
         &'a self,
         _hash: &'a Digest,
@@ -2826,7 +2828,7 @@ impl Control for StoreControl {
                         })
                         .await?;
                 }
-                EngineEvent::Result(values) => {
+                EngineEvent::Result { values, .. } => {
                     self.results.lock().unwrap().push(values.clone());
                 }
                 EngineEvent::Trace(trace) => {
@@ -3073,8 +3075,8 @@ pub struct Scene {
     pub environment: Mutex<Option<Environment>>,
     /// The vault whose redactor the engine and the registry were given.
     pub vault: Arc<Vault>,
-    /// The engine's telemetry, as the registry was given it.
-    pub telemetry: a2m_telemetry::Telemetry,
+    /// The engine's logs and traces, as the registry was given it.
+    pub logs_and_traces: a2m_logs::LogsAndTraces,
     logs: PathBuf,
     runs: AtomicU64,
     _folder: Folder,
@@ -3127,14 +3129,13 @@ impl Scene {
         std::fs::create_dir_all(&logs).unwrap();
         let (store, vault) = open_store(&folder).await;
         let redact: Arc<dyn a2m_core::Redact> = vault.redactor();
-        let telemetry =
-            a2m_telemetry::start(&TelemetrySettings::default(), Arc::clone(&redact), &logs)
-                .unwrap();
+        let logs_and_traces =
+            a2m_logs::start(&LogSettings::default(), Arc::clone(&redact), &logs).unwrap();
         let host = HostServices {
             supervisor: Supervisor::new(SupervisorLimits::default()),
             roots: Roots::none(),
             redact: Arc::clone(&redact),
-            telemetry: telemetry.clone(),
+            logs_and_traces: logs_and_traces.clone(),
         };
         let pack = AppPack {
             hooks: Arc::clone(&hooks),
@@ -3249,7 +3250,7 @@ impl Scene {
             source: Mutex::new(None),
             environment: Mutex::new(None),
             vault,
-            telemetry,
+            logs_and_traces,
             logs,
             runs: AtomicU64::new(0),
             _folder: folder,
@@ -3527,7 +3528,7 @@ impl Scene {
     /// Every line the engine logged to file, and every line it holds in
     /// memory, as one text.
     pub fn logged(&self) -> String {
-        let mut text = self.telemetry.log_lines().join("\n");
+        let mut text = self.logs_and_traces.log_lines().join("\n");
         for entry in std::fs::read_dir(&self.logs).unwrap().flatten() {
             text.push('\n');
             text.push_str(&String::from_utf8_lossy(

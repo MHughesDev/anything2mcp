@@ -59,10 +59,10 @@ pub use register::{
 };
 pub use review::{
     ASSERTED_NOTICE, AssertedReview, BindingReview, BindingStatement, BindingStates,
-    CredentialShown, EnvironmentVariable, LAUNCHER_NOTICE, NOT_STATED, PROBE_PENDING,
-    PROVIDER_NOT_HELD, PlaceReview, ProbeReview, ProgramRun, REACH_NOT_STATED, Reach, ReachGroup,
-    ReviewItem, ReviewSummary, RunReview, SCRIPT_NOTICE, SENT_TO_NOT_STATED, Sends, SentAddress,
-    SentGroup, SentTo, SentToReview, SignInReview, Statement, VariableValue,
+    CredentialShown, EnvironmentVariable, LAUNCHER_NOTICE, NOT_STATED, PROVIDER_NOT_HELD,
+    PlaceReview, ProgramRun, REACH_NOT_STATED, Reach, ReachGroup, ReviewItem, ReviewSummary,
+    RunReview, SCRIPT_NOTICE, SENT_TO_NOT_STATED, SESSION_CHECK_PENDING, Sends, SentAddress,
+    SentGroup, SentTo, SentToReview, SessionCheckReview, SignInReview, Statement, VariableValue,
 };
 pub use schema::{Checked, JsonSchema, Misfit, Misfits, OPEN_QUESTION, Reference};
 pub use source::{

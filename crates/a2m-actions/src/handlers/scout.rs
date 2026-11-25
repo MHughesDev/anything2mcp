@@ -83,7 +83,7 @@ fn untrusted(value: Json) -> Json {
 struct Look {
     name: SurfaceName,
     kind: String,
-    archetype: Option<&'static str>,
+    access_kind: Option<&'static str>,
     provider: Option<String>,
     keeps_a_session: bool,
     discoverers: Vec<Json>,
@@ -129,7 +129,7 @@ impl Look {
                 Self {
                     name: surface.name.clone(),
                     kind: surface.kind.to_string(),
-                    archetype: entry.map(|entry| entry.archetype.as_str()),
+                    access_kind: entry.map(|entry| entry.access_kind.as_str()),
                     provider: entry.map(|entry| entry.provider.to_string()),
                     keeps_a_session: entry.is_some_and(|entry| entry.session),
                     discoverers,
@@ -208,7 +208,7 @@ struct Identified {
     sign_in_findings: BTreeMap<String, Vec<Finding>>,
 }
 
-/// The files of the project's `sources` folder a scout hands its
+/// The files of the project's `inputs` folder a scout hands its
 /// discoveries (decision 0263), and whether they are an unfinished scout's,
 /// stored when it began, rather than the call's.
 #[derive(Debug, Default)]
@@ -305,7 +305,7 @@ async fn identify(
         let mut entry = json!({
             "surface": look.name.as_str(),
             "kind": look.kind,
-            "archetype": look.archetype,
+            "access_kind": look.access_kind,
             "provider": look.provider,
             "keeps_a_session": look.keeps_a_session,
             "discoverers": look.discoverers,
@@ -460,7 +460,7 @@ handler!(
 );
 
 /// The sign-in entries the target's files declare for each surface, as
-/// `auth.yaml` writes them: the identity mode and the provider. `None` when
+/// `auth.yaml` writes them: the identity kind and the provider. `None` when
 /// the call is made outside a project that holds the target.
 async fn declared_sign_ins(
     kernel: &Kernel,
@@ -1526,7 +1526,14 @@ async fn try_reads(
         }
     };
     let compiled_target = Arc::new(compiled.compiled_target);
-    kernel.keep_draft(target, compiled.encoded.hash, Arc::clone(&compiled_target));
+    // A scout's trial lets no asserted read through: it is not a try a
+    // person asked for (decision 0475).
+    kernel.keep_draft(
+        target,
+        compiled.encoded.hash,
+        Arc::clone(&compiled_target),
+        a2m_provider::ConfirmedReads::none(),
+    );
     let environment = compiled_target
         .default_environment()
         .map(|environment| environment.name.clone());
@@ -2253,7 +2260,7 @@ async fn go_on(
     Ok(finished(&report))
 }
 
-/// A finished scout's report as `scout.run` answers it (field test 9,
+/// A finished scout's report as `scout.run` answers it (copy test 9,
 /// finding 56). A scout whose discovery of every surface it observed
 /// failed saw nothing, and answers with that failure beside the report:
 /// the class and code the first such surface stopped with, and the fix its
@@ -2457,7 +2464,7 @@ pub(crate) async fn scout_capture(
             let mut entry = json!({
                 "surface": captured.surface.as_str(),
                 "kind": look.as_ref().map(|look| look.kind.clone()),
-                "archetype": look.as_ref().and_then(|look| look.archetype),
+                "access_kind": look.as_ref().and_then(|look| look.access_kind),
                 "provider": look.as_ref().and_then(|look| look.provider.clone()),
                 "keeps_a_session": look.as_ref().is_some_and(|look| look.keeps_a_session),
                 "observed_by": "person",
@@ -2581,7 +2588,7 @@ handler!(
 
 #[cfg(test)]
 mod tests {
-    /// Field test 9, finding 56: a scout that observed surfaces and whose
+    /// Copy test 9, finding 56: a scout that observed surfaces and whose
     /// discovery of every one failed answers with the first one's failure,
     /// beside the report; one where another surface found something
     /// answers `ok`, with a warning that names the surface that failed. A
