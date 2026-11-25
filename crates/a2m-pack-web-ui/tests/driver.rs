@@ -949,14 +949,29 @@ async fn a_page_that_loads_from_an_origin_the_tool_does_not_declare_stops_and_se
     scene.stand.end().await;
 }
 
+/// What every step of a run measured, as `name=value` text a test can
+/// search.
+fn measured_text(ran: &common::Ran) -> String {
+    ran.captures("acting")
+        .iter()
+        .flat_map(|acting| {
+            serde_json::from_str::<a2m_logs::Acting>(acting)
+                .unwrap()
+                .measured
+        })
+        .map(|detail| format!("{}={}", detail.name, detail.value))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 #[tokio::test(flavor = "multi_thread")]
-async fn a_page_that_opens_a_shared_worker_as_it_loads_stops_naming_the_worker_and_where_it_leads()
-{
+async fn a_page_that_opens_a_shared_worker_as_it_loads_is_read_and_the_run_says_what_was_refused() {
     // The line item's form, on a page whose script opens a shared worker by
     // a relative address as it loads, and goes on without it when it is
     // refused, as a signed-in page of a forge did in field test 11
-    // (finding 63). The stop says what was refused and where it led, and
-    // does not send the person to a page request, which cannot name it.
+    // (finding 63). The observing tab refuses it when the page makes it,
+    // so nothing is sent through it; the read goes on, since the screen's
+    // `ready` holds, and the run says what was refused (decision 0477).
     let (app, mut scene) = scene("shared").await;
     let compiled_target = changed(&scene, "screens/line_item.yaml", |text| {
         text.replace(
@@ -964,16 +979,66 @@ async fn a_page_that_opens_a_shared_worker_as_it_loads_stops_naming_the_worker_a
             "reach: {url: \"/leaving/shared/orders/",
         )
     });
+    let read = read_with(&mut scene, compiled_target).await.unwrap();
+    let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
+    assert_eq!(
+        read.values.get("description"),
+        Some(&Value::from(stored.description.as_str()))
+    );
+    assert_eq!(
+        read.values.get("quantity"),
+        Some(&Value::from(stored.quantity.to_string().as_str()))
+    );
+    // The run says what was refused, once, with where it led.
+    let origin = app.url("");
+    let origin = origin.trim_end_matches('/');
+    let measured = measured_text(&read);
+    assert_eq!(measured.matches("refused=").count(), 1, "{measured}");
+    assert!(
+        measured.contains(&format!(
+            "refused=SHAREDWORKER {origin}/escapes/shared-worker.js"
+        )),
+        "{measured}"
+    );
+    // It is not part of how the step was done, so a run that heard it at
+    // another step has the same signature.
+    assert!(
+        !read.means_text().contains("refused"),
+        "{}",
+        read.means_text()
+    );
+    // The worker never ran: nothing it would send arrived.
+    tabs_closed(&scene).await;
+    let arrived = app.trap_writes().await.unwrap();
+    assert!(arrived.is_empty(), "{arrived:?}");
+    assert!(app.writes().await.unwrap().is_empty());
+    scene.stand.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_that_needs_the_shared_worker_it_opened_to_show_its_record_still_stops() {
+    // The same page, which says the record is not found when its worker is
+    // refused, as a page whose data arrives through its worker would. That
+    // the record is absent is not taken from it: the run stops, naming
+    // what was refused, and nothing is sent.
+    let (app, mut scene) = scene("needs-shared").await;
+    let compiled_target = changed(&scene, "screens/line_item.yaml", |text| {
+        text.replace(
+            "reach: {url: \"/orders/",
+            "reach: {url: \"/leaving/needs-shared/orders/",
+        )
+    });
     let failure = read_with(&mut scene, compiled_target).await.unwrap_err();
     assert_eq!(
         class_and_code(&failure),
-        (FailureClass::Policy, "page_write_refused"),
+        (FailureClass::UnknownVariant, "unexpected_page"),
         "{failure}"
     );
     let message = failure.failure.message();
     let origin = app.url("");
     let origin = origin.trim_end_matches('/');
     assert!(message.contains("a shared worker"), "{failure}");
+    assert!(message.contains("absent"), "{failure}");
     assert!(
         message.contains(&format!("`{origin}/escapes/")),
         "{failure}"
@@ -983,10 +1048,11 @@ async fn a_page_that_opens_a_shared_worker_as_it_loads_stops_naming_the_worker_a
         "{failure}"
     );
     assert_eq!(failure.sent, Sent::NotSent);
-    // The worker never ran: nothing it would send arrived.
     tabs_closed(&scene).await;
     let arrived = app.trap_writes().await.unwrap();
     assert!(arrived.is_empty(), "{arrived:?}");
+    // The record is there all the same.
+    assert!(app.stored_item("A-100", "L-101").await.unwrap().is_some());
     scene.stand.end().await;
 }
 

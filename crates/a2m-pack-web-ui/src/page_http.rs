@@ -60,8 +60,8 @@ use serde_json::Value as Json;
 
 use crate::codes::{self, shown};
 use crate::driver::{
-    Reopen, acting, browser_failure, edge_refusal, fail, lost_page, refusal, segment, tab_setup,
-    until, within_pattern,
+    Limits, Reopen, acting, browser_failure, edge_refusal, fail, lost_page, refusal, segment,
+    tab_setup, until, within_pattern,
 };
 use crate::lower::{GOTO, REACH_ARG};
 use crate::model::{GotoStep, PAYLOAD_FORMAT, ReadItem, ScreenSection, TabKind};
@@ -837,6 +837,10 @@ struct Session {
     /// browser: the browser is asked for a word before the next step there
     /// uses it, since a browser can be dead before the tab sees it.
     unsure: bool,
+    /// What the observing tab refused when its page made it, kept as a
+    /// limitation of the run (decision 0477). A page request is the
+    /// driver's own, so what the page made does not change what it reads.
+    limits: Limits,
 }
 
 /// The tab a `goto` asks for. A compiled target compiled before a `goto`
@@ -881,7 +885,7 @@ impl Session {
 
     /// What every tab refused since it was last asked.
     fn refused(&self, what: &str) -> Option<a2m_core::Failure> {
-        let mut refused = self.looking.blocked();
+        let mut refused = self.limits.keep(self.looking.blocked());
         if let Some(acting) = &self.acting {
             refused.extend(acting.blocked());
         }
@@ -1686,6 +1690,7 @@ impl PageHttpDriver {
             reopen: Reopen::new(self.browsers.clone(), setup),
             last_look: None,
             unsure: false,
+            limits: Limits::default(),
         })
     }
 }
@@ -1749,6 +1754,7 @@ impl Driver for PageHttpDriver {
                 }
                 Some(failure) => Err(StepFailure::not_sent(failure)),
                 None => {
+                    let done = session.limits.after(done, &what, false);
                     if let Ok(StepOutcome::Done(_)) = &done {
                         session.remember(step, input);
                     }

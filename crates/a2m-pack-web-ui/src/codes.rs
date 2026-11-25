@@ -61,7 +61,7 @@ a2m_core::failure_codes! {
         meaning "A page address outside the surfaces the run may reach.",
         next "Declare the surface in the target's files if the system really lives there; otherwise look at why the page moved.";
     PAGE_WRITE_REFUSED = Policy, "page_write_refused",
-        meaning "The page sent a request that could change the system while a read ran, and the tab, which cannot write, failed it (decision 0195).",
+        meaning "The page sent a request that could change the system while a read ran, and the tab, which cannot write, failed it (decision 0195); or, in the tab a write is made in, the page made a socket or a worker the tab refuses.",
         next "Look at what the page does when it loads. When a page request asserts the request with `read_asserted: true`, run the tool from a published version, live or in an environment of kind `test` (decision 0394); a page that writes by itself is not read by the web pack, so read the record another way.";
     ORIGIN_NOT_DECLARED = Policy, "origin_not_declared",
         meaning "The page, a frame of it, or a worker sent a request to an origin that is neither the surface's nor one the operation declares. The browser failed it before it left (decision 0292).",

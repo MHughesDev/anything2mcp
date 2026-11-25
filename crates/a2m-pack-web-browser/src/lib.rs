@@ -76,7 +76,10 @@ pub use browsers::{
     STAGING_FOLDER, SharedBrowsers, StateCookie, Visibility,
 };
 pub use capture::captured;
-pub use error::{BrowserError, Dispatch, LaunchReason, MemoryShort, Reason, RequestShape, codes};
+pub use error::{
+    BrowserError, Dispatch, LaunchReason, MemoryShort, REFUSED_WHEN_MADE, Reason, RequestShape,
+    codes,
+};
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
 pub use origin::Origins;
 pub use page_read::{MAX_SEGMENT_BYTES, PageAnswer, PagePath, plain_segment};

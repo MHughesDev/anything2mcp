@@ -172,6 +172,31 @@ pub struct RequestShape {
     pub address: String,
 }
 
+/// The words a tab reports for what its page's lock refused when the page
+/// made it, before anything was sent through it: a WebSocket, a
+/// WebTransport session, a peer connection, a shared worker, and a service
+/// worker (decision 0111). Any other word the page's lock hands back is
+/// reported as `REFUSED`, which is none of these.
+pub const REFUSED_WHEN_MADE: [&str; 5] = [
+    "WEBSOCKET",
+    "WEBTRANSPORT",
+    "PEERCONNECTION",
+    "SHAREDWORKER",
+    "SERVICEWORKER",
+];
+
+impl RequestShape {
+    /// Whether this is something the page's lock refused when the page made
+    /// it, by one of the words of [`REFUSED_WHEN_MADE`]: nothing was sent
+    /// through it, and nothing it would have sent was let leave. A request
+    /// the interception failed, a move, a window, a download, and a worker
+    /// that was not let run are not.
+    #[must_use]
+    pub fn refused_when_made(&self) -> bool {
+        REFUSED_WHEN_MADE.contains(&self.method.as_str())
+    }
+}
+
 /// What the base reports. The crates above map it, knowing what the step
 /// was.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -442,4 +467,40 @@ impl std::error::Error for BrowserError {}
 
 pub(crate) fn input(code: FailureCode, message: impl Into<String>, next: &str) -> Failure {
     Failure::new(FailureClass::Input, code, message, next)
+}
+
+#[cfg(test)]
+mod refused_when_made {
+    use super::{REFUSED_WHEN_MADE, RequestShape};
+
+    fn shape(method: &str) -> RequestShape {
+        RequestShape {
+            method: method.to_owned(),
+            address: "http://127.0.0.1:9/x".to_owned(),
+        }
+    }
+
+    #[test]
+    fn only_what_the_lock_refused_when_made_is_refused_when_made() {
+        for word in REFUSED_WHEN_MADE {
+            assert!(shape(word).refused_when_made(), "{word}");
+        }
+        // A request the interception failed, a move, a window, a download,
+        // a worker not let run, a request outside the reach, and a word the
+        // page's lock handed back that no rule knows are not.
+        for word in [
+            "POST",
+            "GET",
+            "NAVIGATION",
+            "POPUP",
+            "DOWNLOAD",
+            "WORKER",
+            "OUTSIDE",
+            "REFUSED",
+            "websocket",
+            "",
+        ] {
+            assert!(!shape(word).refused_when_made(), "{word}");
+        }
+    }
 }
