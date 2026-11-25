@@ -1,4 +1,4 @@
-# 0999. The release carries archives, a notices file, and attested provenance, and a check holds the workflow to every piece
+# 0464. The release carries archives, a notices file, and attested provenance, and a check holds the workflow to every piece
 
 **Status:** Accepted. Design decision. The owner had not read this record when it was merged. It adds to [decision 0186](0186-the-release-workflow-builds-checks-and-publishes-the-npm-packages.md) and answers what that record left open; it changes nothing in the product's code.
 
