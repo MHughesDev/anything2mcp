@@ -26,6 +26,21 @@
 //!       label "Problem"       -> entry, showing only while the application refuses a value
 //! ```
 //!
+//! A window of one record, opened by the control interface as many times
+//! as a test asks, each titled as the test says, as a GTK 3 dialog program
+//! shows one:
+//!
+//! ```text
+//!   frame "Order 1001"
+//!     panel ""
+//!       label "Customer" -> entry
+//!       label "City"     -> entry
+//!       label "Lines"    -> spin button, offering its value as text
+//!       table "" (states its column count through the Table interface, or not)
+//!         column headers "Line", "Item", "Count"
+//!         cells, three for each row, with no row element between
+//! ```
+//!
 //! What is typed into `New customer` and `New status` is stored only when
 //! Save is pressed and the values pass the application's own rule; the
 //! entries labelled `Customer` and `Status` show what is stored, so they
@@ -42,8 +57,8 @@ use std::time::Duration;
 use zbus::{Connection, OwnedObjectPath, Variant, interface};
 
 use crate::{
-    CUSTOMER_MOST, CUSTOMER_REFUSED, Fault, FieldSet, LATE, Order, SAVED, SECRET, STATUS_REFUSED,
-    STATUSES, StandError, Truth,
+    CUSTOMER_MOST, CUSTOMER_REFUSED, Fault, FieldSet, LATE, Order, RECORD_HEADINGS, RecordWindow,
+    SAVED, SECRET, STATUS_REFUSED, STATUSES, StandError, Truth,
 };
 
 /// AT-SPI role numbers, as the interface's enumeration gives them.
@@ -54,6 +69,7 @@ mod role {
     pub const PANEL: u32 = 39;
     pub const PASSWORD_TEXT: u32 = 40;
     pub const PUSH_BUTTON: u32 = 43;
+    pub const SPIN_BUTTON: u32 = 52;
     pub const TABLE: u32 = 55;
     pub const TABLE_CELL: u32 = 56;
     pub const TABLE_COLUMN_HEADER: u32 = 57;
@@ -110,6 +126,11 @@ struct Node {
     /// The most characters it holds; longer text is cut, as some fields do.
     most: Option<usize>,
     secret: bool,
+    /// For a table that answers the Table interface: how many columns it
+    /// states it has.
+    columns: Option<i32>,
+    /// For such a table: how many rows it states it has.
+    rows: i32,
 }
 
 /// The faults a test has switched on, each for the next press of Save.
@@ -746,7 +767,32 @@ impl Accessible {
         if node.action {
             out.push("org.a11y.atspi.Action".to_owned());
         }
+        if node.columns.is_some() {
+            out.push("org.a11y.atspi.Table".to_owned());
+        }
         out
+    }
+}
+
+/// `org.a11y.atspi.Table`, for a table that states its size, as a toolkit
+/// whose table holds its cells with no row between states it.
+struct Table {
+    id: usize,
+    model: Shared,
+}
+
+#[interface(name = "org.a11y.atspi.Table")]
+impl Table {
+    #[zbus(property)]
+    fn n_columns(&self) -> i32 {
+        asked(&self.model, "Table.NColumns");
+        lock(&self.model).nodes[self.id].columns.unwrap_or(0)
+    }
+
+    #[zbus(property)]
+    fn n_rows(&self) -> i32 {
+        asked(&self.model, "Table.NRows");
+        lock(&self.model).nodes[self.id].rows
     }
 }
 
@@ -1045,11 +1091,28 @@ impl App {
             )
             .await
             .map_err(failed("publishing a node"))?;
-        let (text, editable, action) = {
+        let (text, editable, action, table) = {
             let model = lock(&self.model);
             let node = &model.nodes[id];
-            (node.text.is_some(), node.editable, node.action)
+            (
+                node.text.is_some(),
+                node.editable,
+                node.action,
+                node.columns.is_some(),
+            )
         };
+        if table {
+            server
+                .at(
+                    path.as_str(),
+                    Table {
+                        id,
+                        model: Arc::clone(&self.model),
+                    },
+                )
+                .await
+                .map_err(failed("publishing a node's table"))?;
+        }
         if text {
             server
                 .at(
@@ -1175,6 +1238,97 @@ impl App {
                 },
             );
             model.labelled(panel, "New customer", "", Kind::Edit);
+            (first, model.nodes.len())
+        };
+        for id in first..last {
+            self.publish_node(id).await?;
+        }
+        let properties: HashMap<String, Variant> = HashMap::new();
+        let _ = self
+            .conn
+            .emit_signal(
+                None::<&str>,
+                ROOT_PATH,
+                EVENT_OBJECT,
+                "ChildrenChanged",
+                &(
+                    "add",
+                    i32::try_from(first).unwrap_or(i32::MAX),
+                    0_i32,
+                    Variant::from(address(&self.bus, first)),
+                    properties,
+                ),
+            )
+            .await;
+        Ok(())
+    }
+
+    /// A window of one record, as a GTK 3 dialog program shows one: two
+    /// labelled values, a labelled spin button, and a table with no name
+    /// whose column headers and cells are its own children, with no row
+    /// between, which states its column count only when `states_columns`.
+    pub(crate) async fn open_record_window(&self, window: &RecordWindow) -> Result<(), StandError> {
+        let shown = state::ENABLED | state::SENSITIVE | state::SHOWING | state::VISIBLE;
+        let (first, last) = {
+            let mut model = lock(&self.model);
+            let first = model.nodes.len();
+            let frame = model.add(
+                Some(0),
+                Node {
+                    role: role::FRAME,
+                    name: window.title.clone(),
+                    states: shown,
+                    ..Node::default()
+                },
+            );
+            let panel = model.add(
+                Some(frame),
+                Node {
+                    role: role::PANEL,
+                    states: shown,
+                    ..Node::default()
+                },
+            );
+            model.labelled(panel, "Customer", &window.customer, Kind::Shown);
+            model.labelled(panel, "City", &window.city, Kind::Shown);
+            let lines = model.labelled(panel, "Lines", &window.lines, Kind::Shown);
+            model.nodes[lines].role = role::SPIN_BUTTON;
+            let table = model.add(
+                Some(panel),
+                Node {
+                    role: role::TABLE,
+                    states: shown,
+                    columns: window
+                        .states_columns
+                        .then(|| i32::try_from(RECORD_HEADINGS.len()).unwrap_or(i32::MAX)),
+                    rows: i32::try_from(window.rows.len()).unwrap_or(i32::MAX),
+                    ..Node::default()
+                },
+            );
+            for heading in RECORD_HEADINGS {
+                model.add(
+                    Some(table),
+                    Node {
+                        role: role::TABLE_COLUMN_HEADER,
+                        name: heading.to_owned(),
+                        states: shown,
+                        ..Node::default()
+                    },
+                );
+            }
+            for row in &window.rows {
+                for cell in row {
+                    model.add(
+                        Some(table),
+                        Node {
+                            role: role::TABLE_CELL,
+                            name: cell.clone(),
+                            states: shown,
+                            ..Node::default()
+                        },
+                    );
+                }
+            }
             (first, model.nodes.len())
         };
         for id in first..last {

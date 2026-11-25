@@ -182,6 +182,52 @@ impl Order {
     }
 }
 
+/// The headings of the table of a [`RecordWindow`], in order.
+pub const RECORD_HEADINGS: [&str; 3] = ["Line", "Item", "Count"];
+
+/// A window of one record, as a GTK 3 dialog program shows one (field test
+/// 10): its title, two labelled values, a labelled spin button, and a
+/// table with no name whose column headers and cells are its own
+/// children, with no row element between them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordWindow {
+    /// The window's title, such as `Order 1001`.
+    pub title: String,
+    /// The value labelled `Customer`.
+    pub customer: String,
+    /// The value labelled `City`.
+    pub city: String,
+    /// The value of the spin button labelled `Lines`, as its text.
+    pub lines: String,
+    /// The table's rows, one cell under each of [`RECORD_HEADINGS`].
+    pub rows: Vec<[String; 3]>,
+    /// Whether the table states its column count, through AT-SPI's Table
+    /// interface, as GTK 3 does. Without it nothing tells where a row ends.
+    pub states_columns: bool,
+}
+
+impl RecordWindow {
+    /// A window of the order `number`, titled `Order {number}`, whose
+    /// table states its column count.
+    #[must_use]
+    pub fn order(number: &str, customer: &str, city: &str) -> Self {
+        let row = |line: &str, item: &str, count: &str| {
+            [line.to_owned(), item.to_owned(), count.to_owned()]
+        };
+        Self {
+            title: format!("Order {number}"),
+            customer: customer.to_owned(),
+            city: city.to_owned(),
+            lines: "2".to_owned(),
+            rows: vec![
+                row("1", &format!("{number}-A"), "4"),
+                row("2", &format!("{number}-B"), "1"),
+            ],
+            states_columns: true,
+        }
+    }
+}
+
 /// What the stand holds and what it was asked, from its control interface.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Truth {
@@ -483,6 +529,27 @@ impl Desk {
             let _ = title;
             Err(StandError(
                 "the stand's second window is built for Linux only".to_owned(),
+            ))
+        }
+    }
+
+    /// The control interface: opens a window of one record (field test 10's
+    /// shape), as many as a test asks.
+    ///
+    /// # Errors
+    ///
+    /// When its nodes cannot be published; on any system but Linux,
+    /// always.
+    pub async fn open_record_window(&self, window: &RecordWindow) -> Result<(), StandError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.inner.open_record_window(window).await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = window;
+            Err(StandError(
+                "the stand's window of one record is built for Linux only".to_owned(),
             ))
         }
     }
