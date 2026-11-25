@@ -302,6 +302,15 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
+            // The record key of a read names an output that is no list.
+            "kernel.records_invalid",
+            Case::Edit(
+                ORDER_GET,
+                "examples:",
+                "records: {key: [status]}\nexamples:",
+            ),
+        ),
+        (
             // A part of the key is what the record is, never a
             // precondition of writing it.
             "kernel.precondition_invalid",
@@ -3411,4 +3420,80 @@ fn a_tools_digest_follows_its_definition_and_the_systems_words_are_marked() {
             "{schema}"
         );
     }
+}
+
+/// A read declares its records over its list outputs (decision 0999): the
+/// key names list outputs, each once, and only a read declares records.
+/// What it declares is in the compiled target; an operation that declares
+/// none keeps `None`, and so the bytes it had.
+#[test]
+fn a_read_declares_its_records_by_the_list_outputs_that_make_their_key() {
+    let set = stand_set().unwrap();
+    let listed = |records: &str| {
+        let mut files = changed(&Case::Edit(
+            ORDER_GET,
+            "  status: {type: order_status}\n  total: {type: amount}\n",
+            "  status: {type: order_status, list: true}\n  total: {type: amount, list: true}\n",
+        ));
+        let file = files
+            .iter_mut()
+            .find(|(path, _)| path.as_str() == ORDER_GET)
+            .unwrap();
+        let text = String::from_utf8(file.1.clone()).unwrap().replacen(
+            "examples:",
+            &format!("{records}examples:"),
+            1,
+        );
+        file.1 = text.into_bytes();
+        // The sheet's pipeline reads the status as one value.
+        files.retain(|(path, _)| !path.as_str().contains("order_sheet_enter"));
+        files
+    };
+    let root = TargetRoot::new("example");
+    let sources = load_files(&root, &listed("records: {key: [total, status]}\n"), &set)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    let declaring = compile(&sources, &set, CompileMode::Publish, VERSION)
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    let operation = declaring
+        .compiled_target
+        .operations
+        .iter()
+        .find(|operation| operation.name.as_str() == "example_order_get")
+        .unwrap();
+    assert_eq!(
+        operation
+            .records
+            .as_ref()
+            .map(|records| records.key.clone()),
+        Some(vec!["total".to_owned(), "status".to_owned()])
+    );
+    assert_eq!(operation.list_outputs(), ["status", "total"]);
+    // The example declares no records: nothing is added to its bytes.
+    assert!(
+        compiled()
+            .compiled_target
+            .operations
+            .iter()
+            .all(|operation| operation.records.is_none())
+    );
+    for (records, said) in [
+        ("records: {key: [status, status]}\n", "twice"),
+        ("records: {key: [carrier]}\n", "not an output"),
+        ("records: {key: [note]}\n", "not a list output"),
+    ] {
+        let problems = problems_with(&listed(records), &set, CompileMode::Publish);
+        let problem = problems
+            .find("kernel.records_invalid")
+            .unwrap_or_else(|| panic!("{records}: {problems}"));
+        assert!(problem.message.contains(said), "{problem}");
+    }
+    let write = problems_of(&Case::Edit(
+        UPSERT,
+        "description: >",
+        "records: {key: [quantity]}\ndescription: >",
+    ));
+    let problem = write
+        .find("kernel.records_invalid")
+        .unwrap_or_else(|| panic!("{write}"));
+    assert!(problem.message.contains("only a read"), "{problem}");
 }

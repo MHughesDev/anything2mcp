@@ -1824,6 +1824,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
         manifest: no_manifest(),
         examples: Vec::new(),
         run_questions: Vec::new(),
+        records: None,
     };
 
     // 0: read an order, through two bindings in order.
@@ -1861,6 +1862,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
         manifest: no_manifest(),
         examples: Vec::new(),
         run_questions: Vec::new(),
+        records: None,
     });
     // 2 and 3: create or update a line item. In the second the description
     // is compared as written, and the application trims what it stores.
@@ -1909,6 +1911,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
             manifest: no_manifest(),
             examples: Vec::new(),
             run_questions: Vec::new(),
+            records: None,
         });
     }
     // 4: a read on the surface that needs a sign-in.
@@ -1964,6 +1967,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
             manifest: no_manifest(),
             examples: Vec::new(),
             run_questions: Vec::new(),
+            records: None,
         }
     };
     // 5: `find`: the lookup searches on the description the write sets.

@@ -865,6 +865,41 @@ pub struct CompiledOperation {
     /// target keeps its bytes and its hash (decision 0402).
     #[serde(rename = "decision_points")]
     pub run_questions: Vec<RunQuestion>,
+    /// The records of a read's list outputs, where its file declares them
+    /// (decision 0999): each list output is one column, the record `i` is
+    /// the `i`th item of each, and the key names the columns that make a
+    /// record's key. `None` for an operation that declares none, which a
+    /// watch compares whole. Left out of the encoded compiled target when
+    /// `None`, so a compiled target that declares none is the bytes it was
+    /// before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub records: Option<CompiledRecords>,
+}
+
+/// The records a read returns as its list outputs (decision 0999). Every
+/// list output of the operation is a column; the record `i` is the `i`th
+/// item of each column, so a result whose columns differ in length is not
+/// of this shape. An output that is not a list is a fact of the whole
+/// result, such as whether there were more, and is no part of any record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompiledRecords {
+    /// The list outputs whose items make a record's key, in order, parent
+    /// first. At least one, each a list output, none twice.
+    pub key: Vec<String>,
+}
+
+impl CompiledOperation {
+    /// The operation's list outputs, by name, in declared order: the
+    /// columns of its records, where it declares records.
+    #[must_use]
+    pub fn list_outputs(&self) -> Vec<&str> {
+        self.outputs
+            .iter()
+            .filter(|output| matches!(output.ty, ValueType::List(_)))
+            .map(|output| output.name.as_str())
+            .collect()
+    }
 }
 
 /// One way of carrying out an operation, through one mode.
@@ -1800,6 +1835,7 @@ mod tests {
                 name: "which_order".to_owned(),
                 question: "Two orders match. Which one?".to_owned(),
             }],
+            records: None,
         };
         CompiledTarget {
             header: CompiledTargetHeader {

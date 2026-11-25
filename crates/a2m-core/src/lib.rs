@@ -58,14 +58,14 @@ pub use compiled_target::{
     AddressOverride, ApproveWrites, AuthSetting, COMPILED_TARGET_FORMAT, CaptureLevel, Checkpoint,
     CodeLabel, CompiledAuth, CompiledBinding, CompiledEnvironment, CompiledExpr, CompiledFieldType,
     CompiledIdentity, CompiledInput, CompiledOperation, CompiledOutput, CompiledPipeline,
-    CompiledRate, CompiledSessionCheck, CompiledSource, CompiledSurface, CompiledTarget,
-    CompiledTargetHeader, CompiledTest, CompiledTool, CredentialUse, DecimalMark, DeclaredProgram,
-    DescriptionBy, DriftRisk, EncodedCompiledTarget, EnvironmentIndex, EnvironmentKind, ExprIndex,
-    FailsAs, FieldBase, FieldFormat, FieldTypeIndex, InputIndex, OperationIndex, PackRef,
-    PackSection, PermissionManifest, PipelineIndex, PipelineLimits, PipelineStep, RecordMatching,
-    RunQuestion, SectionIndex, Sensitivity, SignInKind, Stands, Step, StepArg, SurfaceIndex,
-    TargetSection, TestKind, ToolAnnotations, ToolIndex, ToolRuns, WhitespaceRule, ZoneRule,
-    acknowledgement_may_stand,
+    CompiledRate, CompiledRecords, CompiledSessionCheck, CompiledSource, CompiledSurface,
+    CompiledTarget, CompiledTargetHeader, CompiledTest, CompiledTool, CredentialUse, DecimalMark,
+    DeclaredProgram, DescriptionBy, DriftRisk, EncodedCompiledTarget, EnvironmentIndex,
+    EnvironmentKind, ExprIndex, FailsAs, FieldBase, FieldFormat, FieldTypeIndex, InputIndex,
+    OperationIndex, PackRef, PackSection, PermissionManifest, PipelineIndex, PipelineLimits,
+    PipelineStep, RecordMatching, RunQuestion, SectionIndex, Sensitivity, SignInKind, Stands, Step,
+    StepArg, SurfaceIndex, TargetSection, TestKind, ToolAnnotations, ToolIndex, ToolRuns,
+    WhitespaceRule, ZoneRule, acknowledgement_may_stand,
 };
 pub use decimal::{Decimal, Rounding};
 pub use digest::{Digest, FieldHasher, InvalidDigest};

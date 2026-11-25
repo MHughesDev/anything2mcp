@@ -8,15 +8,16 @@ use a2m_core::{
     AddressOverride, ApproveWrites, AuthProviderName, AuthSetting, BindingStatus,
     COMPILED_TARGET_FORMAT, CanonicalJson, CaptureLevel, Checkpoint, CompiledAuth, CompiledBinding,
     CompiledEnvironment, CompiledIdentity, CompiledInput, CompiledOperation, CompiledOutput,
-    CompiledPipeline, CompiledRate, CompiledSessionCheck, CompiledSource, CompiledSurface,
-    CompiledTarget, CompiledTargetHeader, CompiledTest, CompiledTool, CredentialRef, CredentialUse,
-    Date, Decimal, DeclaredProgram, DescriptionBy, Digest, DriftRisk, EffectClass,
-    EncodedCompiledTarget, Environment, EnvironmentIndex, EnvironmentKind, FieldOf, FieldTypeIndex,
-    FileKindName, Hazard, InputIndex, LintCode, Millis, Mode, OperationIndex, OperationName,
-    PackPayload, PackRef, PackSection, PermissionManifest, PipelineIndex, PipelineLimits,
-    PipelineStep, RecordKey, RecordMatching, RunQuestion, SectionIndex, SignInKind, Stands, Step,
-    StepArg, StepKind, SurfaceIndex, SurfaceKind, SurfaceName, TargetName, TargetSection, TestKind,
-    ToolAnnotations, ToolIndex, ToolRuns, Value, ValueType, Values, Verb, Version, WriteEvidence,
+    CompiledPipeline, CompiledRate, CompiledRecords, CompiledSessionCheck, CompiledSource,
+    CompiledSurface, CompiledTarget, CompiledTargetHeader, CompiledTest, CompiledTool,
+    CredentialRef, CredentialUse, Date, Decimal, DeclaredProgram, DescriptionBy, Digest, DriftRisk,
+    EffectClass, EncodedCompiledTarget, Environment, EnvironmentIndex, EnvironmentKind, FieldOf,
+    FieldTypeIndex, FileKindName, Hazard, InputIndex, LintCode, Millis, Mode, OperationIndex,
+    OperationName, PackPayload, PackRef, PackSection, PermissionManifest, PipelineIndex,
+    PipelineLimits, PipelineStep, RecordKey, RecordMatching, RunQuestion, SectionIndex, SignInKind,
+    Stands, Step, StepArg, StepKind, SurfaceIndex, SurfaceKind, SurfaceName, TargetName,
+    TargetSection, TestKind, ToolAnnotations, ToolIndex, ToolRuns, Value, ValueType, Values, Verb,
+    Version, WriteEvidence,
 };
 use a2m_expr::{TypeEnv, names};
 
@@ -1947,6 +1948,73 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// The records a read declares over its list outputs (decision 0999):
+    /// `records: {key: [...]}`, each name a list output, none twice, and only
+    /// on an operation that reads. Every list output is a column of the
+    /// records; an output that is not a list is a fact of the whole result.
+    fn records(
+        &mut self,
+        doc: &Located<Doc>,
+        effect: EffectClass,
+        outputs: &[CompiledOutput],
+    ) -> Option<CompiledRecords> {
+        let declared = doc.get("records")?;
+        let at = declared.at.clone();
+        if effect != EffectClass::Read {
+            self.error(
+                codes::RECORDS_INVALID,
+                Stage::Validate,
+                &at,
+                "The operation declares `records`, and only a read returns records to compare."
+                    .to_owned(),
+                "Remove `records`, or declare it on the read that lists the records.".to_owned(),
+            );
+            return None;
+        }
+        let names: Vec<Located<String>> = declared
+            .get("key")
+            .map(Located::items)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|item| {
+                item.as_text()
+                    .map(|text| Located::new(text.to_owned(), item.at.clone()))
+            })
+            .collect();
+        let mut key: Vec<String> = Vec::new();
+        let mut fine = !names.is_empty();
+        for name in &names {
+            let list = outputs
+                .iter()
+                .any(|output| output.name == name.value && matches!(output.ty, ValueType::List(_)));
+            let why = if key.contains(&name.value) {
+                format!("The record key names `{}` twice.", shown(&name.value))
+            } else if list {
+                key.push(name.value.clone());
+                continue;
+            } else if outputs.iter().any(|output| output.name == name.value) {
+                format!(
+                    "The record key names `{}`, which is not a list output: only a list output is a column of the records.",
+                    shown(&name.value)
+                )
+            } else {
+                format!(
+                    "The record key names `{}`, which is not an output of the operation.",
+                    shown(&name.value)
+                )
+            };
+            fine = false;
+            self.error(
+                codes::RECORDS_INVALID,
+                Stage::Validate,
+                &name.at,
+                why,
+                "Name in `records.key` the list outputs whose items make a record's key, parent first, each once.".to_owned(),
+            );
+        }
+        fine.then_some(CompiledRecords { key })
+    }
+
     fn identity(
         &mut self,
         doc: &Located<Doc>,
@@ -2230,6 +2298,7 @@ impl<'a> Compiler<'a> {
             {
                 compiled.examples = examples;
                 compiled.run_questions = run_questions;
+                compiled.records = self.records(doc, effect, &info.outputs);
                 let title = doc.text("title").unwrap_or(info.name.as_str()).to_owned();
                 let description = doc.text("description").unwrap_or_default().to_owned();
                 self.note_description_by(doc, info.name.as_str());
@@ -2741,6 +2810,7 @@ impl<'a> Compiler<'a> {
             },
             examples: Vec::new(),
             run_questions: Vec::new(),
+            records: None,
         })
     }
 
