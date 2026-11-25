@@ -65,6 +65,45 @@ export interface BindingPromoteInput {
 }
 
 /**
+ * The input of `canary.confirm`.
+ */
+export interface CanaryConfirmInput {
+  canary_id: string;
+}
+
+/**
+ * The input of `canary.create`.
+ */
+export interface CanaryCreateInput {
+  ends_at: number;
+  interval_seconds: number;
+  tool: string;
+  environment?: string;
+  input?: Record<string, unknown>;
+}
+
+/**
+ * The input of `canary.end`.
+ */
+export interface CanaryEndInput {
+  canary_id: string;
+}
+
+/**
+ * The input of `canary.get`.
+ */
+export interface CanaryGetInput {
+  canary_id: string;
+}
+
+/**
+ * The input of `canary.list`.
+ */
+export interface CanaryListInput {
+  open_only?: boolean;
+}
+
+/**
  * The input of `capture.start`.
  */
 export interface CaptureStartInput {
@@ -819,6 +858,41 @@ export declare abstract class Actions {
    * The engine action is `binding.promote`.
    */
   bindingPromote(input: BindingPromoteInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Confirm a canary the caller's person was asked for, so that its checks begin. A
+   * person's act, carried out on the engine's page, never an agent's. The engine action
+   * is `canary.confirm`.
+   */
+  canaryConfirm(input: CanaryConfirmInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Ask for a canary: one published read, called with one fixed input at a fixed
+   * interval until an end, to find whether what it goes through still fits the system.
+   * Its drift stops every tool that relies on the same knowledge before anything is
+   * sent, and its pass lifts that. It sends nothing until the caller's person confirms
+   * it on the engine's page. The engine action is `canary.create`.
+   */
+  canaryCreate(input: CanaryCreateInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * End a canary, by its person or by the caller that asked for it. A check under way
+   * is let go. The engine action is `canary.end`.
+   */
+  canaryEnd(input: CanaryEndInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * One canary of the caller's person: its read, interval, end, state, how many checks
+   * it made, and what the last one found. Never a value the read returned. The engine
+   * action is `canary.get`.
+   */
+  canaryGet(input: CanaryGetInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The canaries of the caller's person, oldest first. The engine action is
+   * `canary.list`.
+   */
+  canaryList(input?: CanaryListInput, options?: CallOptions): Promise<Response>;
 
   /**
    * Ask for a capture of your person's own use of a surface. Nothing records until the
