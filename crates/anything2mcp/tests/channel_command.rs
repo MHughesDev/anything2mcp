@@ -1,4 +1,4 @@
-//! `anything2mcp channel`, through the real program (decision 0999): with
+//! `anything2mcp channel`, through the real program (decision 0466): with
 //! the engine's owner checked as every command checks it, it carries a
 //! client's own bytes, its hello first, to the engine and back, and reads
 //! none of them; with no engine it says so as one JSON object on standard

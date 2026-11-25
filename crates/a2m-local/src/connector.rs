@@ -201,7 +201,7 @@ impl Connector {
     /// no hello is said and no request is made on it. What is written on
     /// it, the hello first, is the caller's. The channel command uses it
     /// to carry another client's own bytes after this check (decision
-    /// 0999). Nothing is started.
+    /// 0466). Nothing is started.
     ///
     /// # Errors
     ///

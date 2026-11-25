@@ -21,7 +21,7 @@ The product: the one program, and the only code that names a pack. It reads the 
 - Reading settings once at start, through the loader in `a2m-actions`, and handing each pack its own group.
 - Filling the provider registry: one call per enabled first-party pack, then the plug-ins found on the machine; where a pack has several crates, joining them, as with the web pack's shared browser handle.
 - Choosing and starting a role, and joining the role crates to each other: the routers of `a2m-api` and `a2m-mcp` onto the local channel of `a2m-local` or the server listener; the stdio proxy onto a `Link`; the runner link's service onto the server listener.
-- The command line: the command tree built from the action registry, the shortcuts, and the process commands `serve`, `runner`, `stdio`, and `channel`, which carries a client's own bytes to the engine after the check of its owner every command makes, for the Node client on Windows ([decision 0999](../../decisions/0999-the-node-client-on-windows-reaches-the-engine-through-the-channel-command.md)).
+- The command line: the command tree built from the action registry, the shortcuts, and the process commands `serve`, `runner`, `stdio`, and `channel`, which carries a client's own bytes to the engine after the check of its owner every command makes, for the Node client on Windows ([decision 0466](../../decisions/0466-the-node-client-on-windows-reaches-the-engine-through-the-channel-command.md)).
 - The output contract and the exit codes, applied to every `Response`.
 - The library facade for a host that embeds the engine.
 

@@ -457,4 +457,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0463 | [The names of decision 0330, as the sweep settled them](0463-the-names-of-decision-0330-as-the-sweep-settled-them.md) | Accepted (design decision) |
 | 0464 | [The release carries archives, a notices file, and attested provenance, and a check holds the workflow to every piece](0464-the-release-carries-archives-a-notices-file-and-attested-provenance-and-a-check-holds-the-workflow-to-every-piece.md) | Accepted (design decision) |
 | 0465 | [While the first release waits on the owner, agents build the one-machine packages moved after it](0465-while-the-first-release-waits-on-the-owner-agents-build-the-one-machine-packages-moved-after-it.md) | Accepted (design decision) |
-| 0999 | [The Node client on Windows reaches the engine through the channel command](0999-the-node-client-on-windows-reaches-the-engine-through-the-channel-command.md) | Accepted (design decision) |
+| 0466 | [The Node client on Windows reaches the engine through the channel command](0466-the-node-client-on-windows-reaches-the-engine-through-the-channel-command.md) | Accepted (design decision) |

@@ -7,7 +7,7 @@
 //! bytes both ways and reads none of them: no hello, no request, no
 //! answer is made or looked at here. The Node client uses it on Windows,
 //! where Node's own modules cannot ask who serves a named pipe (decision
-//! 0999). It holds no engine logic, is not an action, and starts no
+//! 0466). It holds no engine logic, is not an action, and starts no
 //! engine.
 //!
 //! What it says is on standard error, one line: [`CHANNEL_OPEN_LINE`] once

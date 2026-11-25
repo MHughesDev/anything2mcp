@@ -508,7 +508,7 @@ jobs:
       # The step above skips, and does not fail, a test that needs the built
       # program when the variable is empty. On Windows the Node client reaches
       # the engine by its pipe through the program's `channel` command, which
-      # checks who serves the pipe as every command does (decision 0999); this
+      # checks who serves the pipe as every command does (decision 0466); this
       # runs that real-engine call alone and fails if it was skipped
       # (package 5.4b).
       - name: Prove the Node client calls the real engine by its pipe on Windows

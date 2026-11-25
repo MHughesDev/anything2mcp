@@ -92,7 +92,7 @@ function startEngine({ binary, env, project }) {
 
 // Opens the channel to the engine for this operating system. On Windows the
 // pipe is opened by the program's `anything2mcp channel` command, which
-// checks who serves it as every command does (decision 0999).
+// checks who serves it as every command does (decision 0466).
 async function open(options) {
   const { env = process.env, platform = process.platform, project, name, timeout, binary } = options;
   if (platform === "win32") {

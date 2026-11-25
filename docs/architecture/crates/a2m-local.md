@@ -100,7 +100,7 @@ impl Connector {
     pub async fn connect(&self) -> Result<Link, Failure>;
     /// The same connect and the same check of the engine's owner, with no hello: the
     /// connection as bytes, for `anything2mcp channel` to carry another client's own
-    /// hello and requests (decision 0999). The failures of `connect` before the hello.
+    /// hello and requests (decision 0466). The failures of `connect` before the hello.
     pub async fn open_checked(&self) -> Result<CheckedStream, Failure>;
 }
 /// A checked connection to the engine: AsyncRead + AsyncWrite, a Unix socket or the pipe.

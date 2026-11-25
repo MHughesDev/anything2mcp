@@ -254,7 +254,7 @@ async fn another_users_connection_is_closed_unread_and_another_users_engine_is_n
 /// The checked stream is the connect's own check with no hello: another
 /// client's bytes, its hello first, reach the service over it; a stream
 /// to an engine that is not this user's is never handed out, and no
-/// engine is told by name (decision 0999).
+/// engine is told by name (decision 0466).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_checked_stream_carries_the_callers_own_hello_and_is_refused_by_the_same_rule() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

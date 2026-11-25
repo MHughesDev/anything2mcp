@@ -5,7 +5,7 @@
 // client does not open the pipe itself: the program opens it with the connect
 // every command makes, which checks that the process serving the pipe runs as
 // this user before anything is sent, and then copies bytes between the pipe
-// and its standard input and output, reading none of them (decision 0999).
+// and its standard input and output, reading none of them (decision 0466).
 // The client speaks HTTP over those bytes exactly as it does over a socket:
 // its own hello first, then its requests.
 //

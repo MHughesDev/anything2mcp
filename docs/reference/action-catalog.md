@@ -168,5 +168,5 @@ These start a long-lived role and are not actions.
 | `serve` | A server in the configured deployment shape |
 | `runner` | A runner that dials a control plane |
 | `stdio` | The link an SDK or a stdio MCP client uses to reach the local engine |
-| `channel` | The local channel as bytes on standard input and output, after the engine's owner is checked, for a client that cannot make the check itself: the Node client on Windows ([decision 0999](../decisions/0999-the-node-client-on-windows-reaches-the-engine-through-the-channel-command.md)) |
+| `channel` | The local channel as bytes on standard input and output, after the engine's owner is checked, for a client that cannot make the check itself: the Node client on Windows ([decision 0466](../decisions/0466-the-node-client-on-windows-reaches-the-engine-through-the-channel-command.md)) |
 | `completion` | Nothing: prints a completion script for a shell, answered by the program itself |
