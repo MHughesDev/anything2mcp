@@ -81,6 +81,16 @@ const SHORT_HASH: usize = 12;
 /// How many answered changes are remembered. An older one that is asked
 /// about again gets a new page, which the desk then refuses to act on.
 const ANSWERED_KEPT: usize = 256;
+/// How each field of a sign-in's secret is served (decision 0999): a text
+/// field, so that no browser takes it for a password to keep; masked by the
+/// act page's style; with no completion, spelling check, or change of case,
+/// so that what is typed is neither remembered as form history nor sent to
+/// a spelling service.
+const SECRET_INPUT: &str = "type=\"text\" class=\"secret\" autocomplete=\"off\" autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"";
+
+/// The sentence beside each field of a sign-in's secret.
+const SECRET_KEEP: &str = "If your browser offers to save or remember what you typed here, decline: it belongs in the engine's vault only.";
+
 /// What the pages may load: their own inline style, and nothing else. No
 /// script runs, nothing is fetched, and no other page may frame them.
 const CONTENT_POLICY: &str = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
@@ -1825,18 +1835,24 @@ fn act_html(ask: &PersonActAsk) -> (String, String) {
 /// The fields of the secrets a sign-in's page asks for, inside the form
 /// of Carry out. Each is empty when served and is never filled in again:
 /// what the person types goes with their press and is shown nowhere.
+///
+/// A field is never of type `password` (decision 0999): a browser offers
+/// to keep what is typed in a password field whatever the page asks, in
+/// its own store and its sync, outside the vault. Each is a text field the
+/// page's style masks, that asks for no completion, spelling check, or
+/// change of case, and says beside it not to let the browser keep it.
 fn secrets_html(ask: &PersonActAsk) -> String {
     use std::fmt::Write as _;
     if ask.secrets.is_empty() {
         return String::new();
     }
     let mut out = String::from(
-        "<fieldset><legend>Sign-in</legend><p>Type what the system's sign-in needs. It goes with your press to this machine's engine only, is sealed in its vault for you alone, and is never shown to the program that asked.</p>",
+        "<fieldset><legend>Sign-in</legend><p>Type what the system's sign-in needs. It goes with your press to this machine's engine only, is sealed in its vault for you alone, and is never shown to the program that asked. Your browser may show what you type in the clear: type it where nobody can read your screen.</p>",
     );
     for (at, secret) in ask.secrets.iter().enumerate() {
         let _ = write!(
             out,
-            "<p><label for=\"secret-{at}\">{}</label> <input id=\"secret-{at}\" name=\"{SECRET_FIELD}{}\" type=\"password\" autocomplete=\"off\"{}>{}</p>",
+            "<p><label for=\"secret-{at}\">{}</label> <input id=\"secret-{at}\" name=\"{SECRET_FIELD}{}\" {SECRET_INPUT}{}> {SECRET_KEEP}{}</p>",
             escape(&secret.role),
             escape(&secret.role),
             if secret.stored { "" } else { " required" },
