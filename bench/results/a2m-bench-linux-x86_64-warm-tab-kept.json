@@ -1,0 +1,26 @@
+{
+  "schema": "a2m-bench-result",
+  "version": 1,
+  "commit": null,
+  "os": "linux",
+  "arch": "x86_64",
+  "plan": {
+    "warmup_iterations": 5,
+    "iterations": 40
+  },
+  "scenarios": [
+    {
+      "name": "warm_tab",
+      "operation": {
+        "count": 40,
+        "min_ns": 30648000,
+        "median_ns": 42527000,
+        "p95_ns": 54653000,
+        "p99_ns": 65529000,
+        "max_ns": 65529000
+      },
+      "baseline": null,
+      "overhead": null
+    }
+  ]
+}

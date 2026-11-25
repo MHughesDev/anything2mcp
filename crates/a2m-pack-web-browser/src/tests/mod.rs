@@ -41,6 +41,7 @@ mod memory;
 mod observing;
 mod quiet;
 mod state;
+mod warm;
 mod watching;
 mod window;
 

@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
@@ -369,6 +369,12 @@ pub(crate) struct BrowserInner {
     state_mark: Mutex<Option<String>>,
     /// Whether the browser shows a window.
     window: bool,
+    /// Whether every handle of a window's browser is gone: its notice is
+    /// closed with the last of them, and the browser, with no window left,
+    /// ends by itself. Until its link closes it is still listed, and an
+    /// open of another profile that cannot measure it does not count it
+    /// (decision 0487).
+    pub(crate) going: AtomicBool,
 }
 
 /// A window a page opened. It is kept locked, and closed once the first
@@ -557,6 +563,23 @@ pub(crate) struct Shared {
     /// [`BrowserSettings::memory_ceiling`], which this crate's own tests
     /// move while a browser runs.
     memory_ceiling: AtomicU64,
+    /// The observing tabs kept warm between reads, oldest first, each with
+    /// the session it was kept for (decision 0488). None of them counts as
+    /// a tab held.
+    warm: Mutex<Vec<(String, Arc<Page>)>>,
+}
+
+/// How many observing tabs are kept warm, in all the browsers together, at
+/// the most (decision 0488). Past it the oldest is closed.
+pub(crate) const WARM_TABS_KEPT: usize = 4;
+
+/// Closes a tab that was kept warm: it is counted as held again for the
+/// moment its release takes, as every tab's release counts it.
+fn discard(page: &Arc<Page>) {
+    if page.parked.swap(false, Ordering::SeqCst) {
+        page.browser.tabs.fetch_add(1, Ordering::SeqCst);
+    }
+    page.release();
 }
 
 /// What each running browser holds, by profile.
@@ -567,6 +590,28 @@ impl Shared {
         self.open
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn warm(&self) -> MutexGuard<'_, Vec<(String, Arc<Page>)>> {
+        self.warm
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Closes the tabs kept warm that `stale` names, as a tab that was
+    /// held is closed.
+    fn discard_warm(&self, stale: impl Fn(&Page) -> bool) {
+        let gone: Vec<Arc<Page>> = {
+            let mut warm = self.warm();
+            let (gone, kept) = std::mem::take(&mut *warm)
+                .into_iter()
+                .partition(|(_, page)| stale(page));
+            *warm = kept;
+            gone.into_iter().map(|(_, page)| page).collect()
+        };
+        for page in gone {
+            discard(&page);
+        }
     }
 
     /// Ends a browser that is no longer recorded among the open ones: asks
@@ -596,7 +641,11 @@ impl Shared {
 
     /// What each open browser that still runs holds. One that has ended
     /// holds nothing and is not asked; it is started afresh at its next
-    /// open.
+    /// open. One that could not be measured because it ended meanwhile, or
+    /// because it is a window whose handles are all gone and that is ending
+    /// by itself, holds nothing either: the memory it held is being given
+    /// back, and its failure to answer is no other run's stop. Every other
+    /// browser that cannot be measured stays an error (decision 0425).
     async fn measure(&self) -> Measured {
         let running: Vec<Arc<BrowserInner>> = self
             .open()
@@ -607,6 +656,11 @@ impl Shared {
         let mut measured = Vec::with_capacity(running.len());
         for browser in running {
             let held = browser.memory(self.settings.hang_probe).await;
+            if held.is_err()
+                && (browser.client.closed().is_some() || browser.going.load(Ordering::SeqCst))
+            {
+                continue;
+            }
             measured.push((browser.profile.clone(), held));
         }
         measured
@@ -994,6 +1048,7 @@ impl Browsers {
                 abandoned: Mutex::new(Vec::new()),
                 next_tab: AtomicU64::new(1),
                 memory_ceiling: AtomicU64::new(settings.memory_ceiling),
+                warm: Mutex::new(Vec::new()),
                 settings,
             }),
         })
@@ -1121,9 +1176,10 @@ impl Browsers {
                     _notice: None,
                 });
             }
-            // What it holds goes with it.
+            // What it holds goes with it, its warm tabs among it.
             measured.retain(|(measured, _)| measured != profile);
             shared.open().remove(profile);
+            shared.discard_warm(|page| Arc::ptr_eq(&page.browser, &existing));
             if exited {
                 existing.client.close();
                 shared.supervisor.stop(existing.subsystem).await;
@@ -1361,6 +1417,7 @@ impl Browsers {
             context,
             state_mark: Mutex::new(None),
             window,
+            going: AtomicBool::new(false),
         });
         // The locks that hold for the whole browser go on before any tab
         // exists. A browser that does not take them is not one the engine
@@ -1373,7 +1430,7 @@ impl Browsers {
         let notice = match notice {
             None => None,
             Some(text) => match show_notice(shared, &inner, &text, purpose).await {
-                Ok(tab) => Some(Arc::new(tab)),
+                Ok(tab) => Some(Arc::new(Notice(tab))),
                 Err(error) => {
                     inner.client.close();
                     unrecorded.stop().await;
@@ -1437,6 +1494,7 @@ impl Browsers {
         let Some(browser) = shared.open().remove(profile) else {
             return Cleanup::complete();
         };
+        shared.discard_warm(|page| Arc::ptr_eq(&page.browser, &browser));
         shared.end(&browser).await
     }
 
@@ -1461,7 +1519,18 @@ pub struct Browser {
     shared: Arc<Shared>,
     /// A window's first tab, which says what the window is for. Held, not
     /// used: it is closed when the last clone of this handle goes.
-    _notice: Option<Arc<ActTab>>,
+    _notice: Option<Arc<Notice>>,
+}
+
+/// A window's first tab. When it goes, with the last handle of its
+/// browser, the browser has no window left and ends by itself: it is
+/// marked going before the tab is closed.
+struct Notice(ActTab);
+
+impl Drop for Notice {
+    fn drop(&mut self) {
+        self.0.page.browser.going.store(true, Ordering::SeqCst);
+    }
 }
 
 impl fmt::Debug for Browser {
@@ -1788,6 +1857,112 @@ impl Observer {
         )
         .await?;
         Ok(ObserveTab::new(page))
+    }
+
+    /// As [`Self::observing_tab`], for a read of `session`: an observing
+    /// tab kept warm by [`Self::keep_warm`] for the same profile's running
+    /// browser, environment, asserted reads, origins, and session is handed
+    /// out again, made fresh; with none, a new one is opened (decision
+    /// 0488). A warm tab that is no longer what a new tab would be is
+    /// closed, and a new one opened. [`ObserveTab::reused`] says which.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::observing_tab`].
+    pub async fn warm_observing_tab(
+        &self,
+        profile: &BrowserProfileKey,
+        env: &PageEnvironment,
+        allow: &SafeRequests,
+        origins: &Origins,
+        session: &str,
+    ) -> Result<ObserveTab, BrowserError> {
+        let browser = self.browsers.open(profile, Visibility::Background).await?;
+        let shared = &browser.shared;
+        // A warm tab of a browser that is no longer its profile's, or that
+        // has stopped being what a new tab is, is closed.
+        let running: Vec<Arc<BrowserInner>> = shared.open().values().cloned().collect();
+        shared.discard_warm(|page| {
+            !running
+                .iter()
+                .any(|inner| Arc::ptr_eq(&page.browser, inner))
+                || page.as_new().is_err()
+        });
+        let taken = {
+            let mut warm = shared.warm();
+            warm.iter()
+                .position(|(kept_for, page)| {
+                    kept_for == session
+                        && Arc::ptr_eq(&page.browser, &browser.inner)
+                        && page.environment == *env
+                        && page.safe.as_ref() == Some(allow)
+                        && page.origins == *origins
+                })
+                .map(|at| warm.remove(at).1)
+        };
+        if let Some(page) = taken {
+            page.browser.tabs.fetch_add(1, Ordering::SeqCst);
+            page.uses.fetch_add(1, Ordering::SeqCst);
+            page.parked.store(false, Ordering::SeqCst);
+            return Ok(ObserveTab::new(page));
+        }
+        let page = open_page(
+            shared,
+            &browser.inner,
+            env,
+            Posture::Observe(allow.clone()),
+            origins,
+            None,
+        )
+        .await?;
+        Ok(ObserveTab::new(page))
+    }
+
+    /// Keeps a read's observing tab warm for the next read of `session`
+    /// with the same setup, once it is made what a new tab is (decision
+    /// 0488): or closes it, as dropping it does, and says why. A tab is kept
+    /// only when nothing unexpected happened in it; the crate above keeps
+    /// only the tab of a read that went as written.
+    ///
+    /// # Errors
+    ///
+    /// Why the tab was closed instead, in plain words.
+    pub async fn keep_warm(
+        &self,
+        tab: ObserveTab,
+        session: &str,
+        deadline: Deadline,
+    ) -> Result<(), &'static str> {
+        let shared = &self.browsers.shared;
+        let page = Arc::clone(&tab.page);
+        let its_own = shared
+            .open()
+            .get(&page.browser.profile)
+            .is_some_and(|inner| Arc::ptr_eq(inner, &page.browser));
+        if !its_own {
+            return Err("the tab's browser is no longer its profile's");
+        }
+        page.made_fresh(deadline).await?;
+        // From here the set of browsers holds it, not a run.
+        page.parked.store(true, Ordering::SeqCst);
+        drop(tab);
+        page.browser.tabs.fetch_sub(1, Ordering::SeqCst);
+        let evicted: Vec<Arc<Page>> = {
+            let mut warm = shared.warm();
+            warm.push((session.to_owned(), page));
+            let over = warm.len().saturating_sub(WARM_TABS_KEPT);
+            warm.drain(..over).map(|(_, page)| page).collect()
+        };
+        for page in evicted {
+            discard(&page);
+        }
+        Ok(())
+    }
+
+    /// How many observing tabs are kept warm, in all the browsers.
+    #[must_use]
+    pub fn warm_tabs(&self) -> usize {
+        self.browsers.shared.warm().len()
     }
 
     /// A tab a person uses while the engine watches (decision 0392, point

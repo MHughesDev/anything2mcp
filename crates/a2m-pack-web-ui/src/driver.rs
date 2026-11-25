@@ -229,6 +229,10 @@ struct Found<'a> {
     element: &'a Element,
 }
 
+/// How long a read's observing tab is given to be made fresh before it is
+/// kept warm; past it, it is closed (decision 0488).
+const KEEP_WARM_WITHIN: Duration = Duration::from_secs(5);
+
 /// How long a page whose platform posts a change back is given to draw
 /// the form again, at most.
 const REDRAWN_WITHIN: Duration = Duration::from_secs(10);
@@ -299,6 +303,11 @@ struct Session {
     /// What the observing tab refused when its page made it, kept as a
     /// limitation of the run (decision 0477).
     limits: Limits,
+    /// Whose reads the observing tab may be kept warm for.
+    warm_for: String,
+    /// Whether every step went as written: none failed, and the tabs
+    /// refused nothing. Only then is the observing tab kept warm.
+    as_written: bool,
 }
 
 /// What opens the observing tab again, in a new browser started from the
@@ -2538,6 +2547,9 @@ pub(crate) struct TabSetup {
     /// How a text control is committed, as the surface's platform profile
     /// states it; `None` for a surface that names no profile, or `auto`.
     pub commit: Option<InputCommit>,
+    /// Whose reads an observing tab kept warm may be handed to: the
+    /// session and its epoch, or no session (decision 0488).
+    pub warm_for: String,
 }
 
 impl TabSetup {
@@ -2752,6 +2764,10 @@ pub(crate) fn tab_setup(
                 .input_commit,
         ),
     };
+    let warm_for = lease.map_or_else(
+        || "no session".to_owned(),
+        |lease| format!("session {}:{}", lease.session(), lease.epoch()),
+    );
     Ok(TabSetup {
         origin,
         profile,
@@ -2759,6 +2775,7 @@ pub(crate) fn tab_setup(
         origins,
         state,
         commit,
+        warm_for,
     })
 }
 
@@ -2801,15 +2818,18 @@ impl UiDriver {
         // the system, but the asserted reads of a published version, live or
         // in an environment of kind `test` (decision 0394, point 4). A read
         // never runs anywhere else, in any posture (decision 0195).
+        // A tab a read of the same surface and session left is handed out
+        // again, made fresh, when one was kept (decision 0488).
         let asserted = AssertedReads::of(cx)?;
         let looking = self
             .browsers
             .observer()
-            .observing_tab(
+            .warm_observing_tab(
                 &setup.profile,
                 &setup.environment,
                 &asserted.safe_requests(&origin),
                 &setup.origins,
+                &setup.warm_for,
             )
             .await
             .map_err(|error| browser_failure(&error, "the opening of a tab"))?;
@@ -2862,6 +2882,8 @@ impl UiDriver {
                 environment: setup.environment.clone(),
                 origins: setup.origins.clone(),
             }),
+            warm_for: setup.warm_for.clone(),
+            as_written: true,
             reopen: Reopen::new(self.browsers.clone(), setup),
             since_goto: Vec::new(),
             unsure: false,
@@ -2904,12 +2926,14 @@ impl Driver for UiDriver {
             // no screen declares.
             let what = format!("the start of a `{}` step", step.kind);
             if let Some(failure) = session.refused(&what) {
+                session.as_written = false;
                 return Err(StepFailure::not_sent(failure));
             }
             // A read goes on in a new browser of the same profile when the
             // observing tab's browser was lost (decision 0424).
             if let Err(failed) = session.recover(step, input).await {
                 session.unsure |= lost_page(&failed);
+                session.as_written = false;
                 return Err(failed);
             }
             let done = if step.kind == GOTO {
@@ -2946,8 +2970,11 @@ impl Driver for UiDriver {
                 if let Ok(StepOutcome::Done(_)) = &done {
                     session.remember(step, input);
                 }
+                // A record found absent is an answer the screen declares.
+                session.as_written &= done.is_ok();
                 return done;
             };
+            session.as_written = false;
             Err(if step.commits {
                 StepFailure::unknown(fail(
                     &a2m_provider::codes::row::NO_CONFIRMATION,
@@ -2980,11 +3007,36 @@ impl Driver for UiDriver {
         }
     }
 
-    fn release<'a>(&'a self, prepared: Prepared, _poisoned: bool) -> BoxFuture<'a, Cleanup> {
+    fn release<'a>(&'a self, mut prepared: Prepared, poisoned: bool) -> BoxFuture<'a, Cleanup> {
         Box::pin(async move {
-            // The tab is the run's own and closes when dropped; nothing of a
-            // run is kept for the next, poisoned or not.
-            drop(prepared);
+            // The tabs are the run's own and close when dropped. The one
+            // exception is the observing tab of a run that only read and in
+            // which every step went as written: it is made fresh and kept
+            // warm for the next read of the same surface and session
+            // (decision 0488). Nothing else of a run is kept for the next.
+            let kept = prepared.state::<Session>().and_then(|session| {
+                let only_read = session.acting.is_none();
+                let clean = !poisoned
+                    && only_read
+                    && session.as_written
+                    && !session.unsure
+                    && session.limits.first().is_none();
+                clean.then(|| session.warm_for.clone())
+            });
+            let Some(warm_for) = kept else {
+                drop(prepared);
+                return Cleanup::complete();
+            };
+            let Ok(session) = prepared.into_state::<Session>() else {
+                return Cleanup::complete();
+            };
+            let Session { looking, .. } = *session;
+            // A tab that cannot be made fresh is closed, as any other is.
+            let _ = self
+                .browsers
+                .observer()
+                .keep_warm(looking, &warm_for, Deadline::after(KEEP_WARM_WITHIN))
+                .await;
             Cleanup::complete()
         })
     }

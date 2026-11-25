@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use serde_json::Value as Json;
 use std::fmt;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
@@ -1032,7 +1032,7 @@ pub(crate) struct Page {
     /// What the request of the page's own document held, for telling the
     /// browser's headers from the page's.
     document: Mutex<Option<DocumentHeaders>>,
-    safe: Option<SafeRequests>,
+    pub(crate) safe: Option<SafeRequests>,
     /// Whether the tab hears no network event (a sign-in tab).
     quiet: bool,
     /// Whether the tab is a watching tab: it records every request of its
@@ -1044,7 +1044,7 @@ pub(crate) struct Page {
     /// missed, or past the bound.
     looked: watch::Sender<usize>,
     /// The origins the tab was opened for.
-    origins: Origins,
+    pub(crate) origins: Origins,
     /// The helper's source, with those origins written in.
     helper: String,
     /// The script that holds what interception cannot see: every socket
@@ -1066,11 +1066,21 @@ pub(crate) struct Page {
     /// Whether the task that hears the tab's events has ended: the browser
     /// detached the tab, or the link closed.
     ended: watch::Sender<bool>,
-    browser: Arc<BrowserInner>,
+    pub(crate) browser: Arc<BrowserInner>,
+    /// The fixed environment the tab was opened with.
+    pub(crate) environment: PageEnvironment,
+    /// Whether the tab is kept warm, between two reads: no handle holds it,
+    /// and dropping the last handle that held it did not release it
+    /// (decision 0488).
+    pub(crate) parked: AtomicBool,
+    /// How many times the tab was handed out: once when it was opened, and
+    /// once more each time it was taken warm.
+    pub(crate) uses: AtomicU64,
 }
 
 mod downloads;
 mod site_tools;
+mod warm;
 mod watching;
 use downloads::DownloadState;
 pub use downloads::{Download, DownloadError};
@@ -3333,7 +3343,7 @@ impl Page {
     /// with an empty one the engine writes, with no request: that erases
     /// every handler the page set on its window and its document, so its
     /// leaving runs nothing of the page's.
-    fn release(&self) {
+    pub(crate) fn release(&self) {
         self.status.send_replace(Status::Gone);
         if self.released.swap(true, Ordering::SeqCst) {
             return;
@@ -3752,6 +3762,9 @@ pub(crate) async fn open_page(
         hang_closed: watch::Sender::new(false),
         ended: watch::Sender::new(false),
         browser: Arc::clone(browser),
+        environment: env.clone(),
+        parked: AtomicBool::new(false),
+        uses: AtomicU64::new(1),
     });
     browser.tabs.fetch_add(1, Ordering::SeqCst);
     browser
@@ -4134,7 +4147,11 @@ macro_rules! looks {
 
         impl Drop for $tab {
             fn drop(&mut self) {
-                self.page.release();
+                // A tab kept warm is held by the set of browsers, not
+                // released (decision 0488).
+                if !self.page.parked.load(Ordering::SeqCst) {
+                    self.page.release();
+                }
             }
         }
 
@@ -4425,6 +4442,13 @@ impl ActTab {
 impl ObserveTab {
     pub(crate) fn new(page: Arc<Page>) -> Self {
         Self { page }
+    }
+
+    /// Whether this tab was kept warm after an earlier read and handed out
+    /// again, made fresh, rather than opened for this one (decision 0488).
+    #[must_use]
+    pub fn reused(&self) -> bool {
+        self.page.uses.load(Ordering::SeqCst) > 1
     }
 
     /// Whether the browser this tab is in is lost: its link is closed,

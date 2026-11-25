@@ -393,3 +393,10 @@ impl ActTab {
         page.download_behavior("deny", None, deadline).await
     }
 }
+
+impl DownloadState {
+    /// Whether nothing was ever set here: as in a new tab.
+    pub(super) fn untouched(&self) -> bool {
+        self.allowed.is_none() && self.into.is_none() && self.guid.is_none()
+    }
+}
