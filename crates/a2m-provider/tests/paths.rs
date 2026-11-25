@@ -1219,8 +1219,12 @@ fn a_dataless_file_is_neither_read_nor_replaced_where_one_can_be_made() {
     let text = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
     // SAFETY: `text` is a path ending in a nul, alive for the call.
     let set = unsafe { libc::chflags(text.as_ptr(), before | SF_DATALESS) };
-    if set != 0 {
+    // The kernel may answer the call and still keep the flag off, so the
+    // flags read back decide the case, not the call's answer.
+    let after = std::fs::symlink_metadata(&path).unwrap().st_flags();
+    if set != 0 || after & SF_DATALESS == 0 {
         // Refused, as the kernel refuses it: the file is as it was.
+        assert_eq!(one.entry_kind().unwrap(), EntryKind::File);
         assert_eq!(std::fs::read(&path).unwrap(), b"one");
         assert_eq!(one.read(1024).unwrap(), b"one");
         return;
