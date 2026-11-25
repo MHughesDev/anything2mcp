@@ -2,7 +2,7 @@
 
 Every field of every target file. [Spec section 205](../spec/2-kernel/205-target-files.md) shows worked examples; this is the field-by-field reference the schemas in the code were written from: the kernel's file kinds in `a2m-files` (package B4), and each pack's own kinds in its crate. Where this page and the schemas in the code differ, the code is what loads, and one of the two is to be corrected.
 
-This is a design draft. Field names can still change while the schemas are written; after the first release, a change is a new schema version with a migration.
+Field names can still change until the first release. After it, `schema_version` is one number for every file kind the program carries, the kernel's and every pack's: removing or renaming a field or a word, or changing a field's meaning, type, or default, raises it, and the compiler reads its own number and the one before; a new optional field, file kind, or word does not raise it ([decision 0996](../decisions/0996-one-schema-number-covers-every-file-kind-the-program-carries-and-says-what-raises-it.md)).
 
 **Who owns each kind of file.** The kernel owns `target.yaml`, `auth.yaml`, `types.yaml`, `operations/`, `pipelines/`, `sources/`, `tests/`, and `fixtures/`. Every other kind is brought by a pack, which registers its schema: `screens/` by the web pack and, for desktop surfaces, the desktop pack; `endpoints/` by the HTTP pack; `mappings/` by the MCP pack. The other packs bring their own, each given field by field in its spec section and listed [below](#kinds-the-other-packs-bring): `commands/` (command pack), `statements/` (data pack), `documents/`, `folders/`, and `logs/` (file pack), `channels/` and `schemas/` (stream pack), and `registers/` (device pack). A pack may read a kind it does not own; the compiler hands it the validated entries as data. An entry of a kind nobody registered does not compile.
 
@@ -14,7 +14,7 @@ Conventions: names are lowercase with underscores, start with a letter, and are 
 
 | Field | Meaning |
 | --- | --- |
-| `schema_version` (required) | Version of these formats the files are written in |
+| `schema_version` (required) | Version of these formats the files are written in, for every file kind of the target. The compiler reads `1` and refuses another number as `kernel.schema_version_unsupported` |
 | `target` (required) | The target's name; the prefix of every tool name |
 | `title` | Name shown to people |
 | `surfaces` (required) | Map of surface name to a surface (below) |
