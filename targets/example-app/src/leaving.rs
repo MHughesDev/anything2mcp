@@ -23,6 +23,9 @@
 //!   another origin does (decision 0292), and sends one more, kept alive,
 //!   as it is left or closed (`loads-leave`). `/leaving/loads/orders/{order}`
 //!   is the order's page, with its table, that does the same.
+//! - `/leaving/shared/...`: as it loads, the form's script opens a shared worker
+//!   by a relative address, `/escapes/shared-worker.js`, and goes on without it
+//!   when that is refused, as a signed-in page of a forge did in field test 11.
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -90,6 +93,9 @@ fn added(how: &str) -> Option<String> {
             trap("loads-fetch"),
             trap("loads-leave")
         ),
+        "shared" => "try { new SharedWorker(\"/escapes/shared-worker.js\", {name: \"events\"}); } \
+                     catch (_) { document.body.dataset.events = \"polled\"; }"
+            .to_owned(),
         _ => return None,
     })
 }

@@ -950,6 +950,47 @@ async fn a_page_that_loads_from_an_origin_the_tool_does_not_declare_stops_and_se
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_page_that_opens_a_shared_worker_as_it_loads_stops_naming_the_worker_and_where_it_leads()
+{
+    // The line item's form, on a page whose script opens a shared worker by
+    // a relative address as it loads, and goes on without it when it is
+    // refused, as a signed-in page of a forge did in field test 11
+    // (finding 63). The stop says what was refused and where it led, and
+    // does not send the person to a page request, which cannot name it.
+    let (app, mut scene) = scene("shared").await;
+    let compiled_target = changed(&scene, "screens/line_item.yaml", |text| {
+        text.replace(
+            "reach: {url: \"/orders/",
+            "reach: {url: \"/leaving/shared/orders/",
+        )
+    });
+    let failure = read_with(&mut scene, compiled_target).await.unwrap_err();
+    assert_eq!(
+        class_and_code(&failure),
+        (FailureClass::Policy, "page_write_refused"),
+        "{failure}"
+    );
+    let message = failure.failure.message();
+    let origin = app.url("");
+    let origin = origin.trim_end_matches('/');
+    assert!(message.contains("a shared worker"), "{failure}");
+    assert!(
+        message.contains(&format!("`{origin}/escapes/")),
+        "{failure}"
+    );
+    assert!(
+        !failure.failure.next_step().contains("read_asserted"),
+        "{failure}"
+    );
+    assert_eq!(failure.sent, Sent::NotSent);
+    // The worker never ran: nothing it would send arrived.
+    tabs_closed(&scene).await;
+    let arrived = app.trap_writes().await.unwrap();
+    assert!(arrived.is_empty(), "{arrived:?}");
+    scene.stand.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_origin_the_surface_refuses_quietly_is_refused_and_the_read_goes_on() {
     // The same page that loads an image and sends a `fetch` to the
     // application's other name while it loads.

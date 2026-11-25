@@ -93,8 +93,12 @@ const REFUSED_BINDING: &str = "__anything2mcpRefused";
 /// (decision 0292). A name already refused by it is passed over, so the
 /// script can be placed again in a worker an earlier tab locked.
 const REFUSE_SOCKETS: &str = r#"(() => {
+  // The address as the page would have reached it: a relative one is
+  // resolved against the page's own, so the refusal names where it led.
   const report = (what, address) => {
-    try { globalThis.__anything2mcpRefused(what + " " + String(address)); } catch (_) {}
+    let whole = String(address);
+    try { whole = new URL(whole, globalThis.location ? globalThis.location.href : undefined).href; } catch (_) {}
+    try { globalThis.__anything2mcpRefused(what + " " + whole); } catch (_) {}
   };
   const mark = Symbol.for("anything2mcp.refused");
   const refusal = () => new DOMException("Refused while the page is only observed.", "SecurityError");
@@ -135,8 +139,12 @@ const SOCKET_REACH: &str = "/*a2m:reach*/[]";
 /// observing tab's, this lock is a script in the page.
 const HOLD_SOCKETS: &str = r#"(() => {
   const reach = /*a2m:reach*/[];
+  // The address as the page would have reached it: a relative one is
+  // resolved against the page's own, so the refusal names where it led.
   const report = (what, address) => {
-    try { globalThis.__anything2mcpRefused(what + " " + String(address)); } catch (_) {}
+    let whole = String(address);
+    try { whole = new URL(whole, globalThis.location ? globalThis.location.href : undefined).href; } catch (_) {}
+    try { globalThis.__anything2mcpRefused(what + " " + whole); } catch (_) {}
   };
   const refusal = () => new DOMException("Refused: outside what this tab may reach.", "SecurityError");
   const inside = (address) => {
