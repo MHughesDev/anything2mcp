@@ -45,7 +45,7 @@ anything2mcp add example --address http://127.0.0.1:4010/ --kind http   # the ta
 anything2mcp try example --tool example_api_orders_get --input '{"order_id": "A-100"}'
 ```
 
-At a terminal, an answer is printed as text; piped or redirected, or with `--json`, it is one JSON object, the form an agent reads. `add` prints the scout's report, which ends in the step to take next. Shortened:
+At a terminal, an answer is printed as text, and every step it names is written as the command that takes it; piped or redirected, or with `--json`, it is one JSON object, the form an agent reads, which names each step as its action. `add` prints the scout's report, which ends in the step to take next. Shortened:
 
 ```text
 Drafted reads: 8: 7 proven, 0 waiting for a sign-in, 1 failed, 0 not tried, 0 held.
@@ -71,21 +71,18 @@ To make the proven reads published tools, one command does the rest (`ready` is 
 
 ```sh
 anything2mcp ready example
-# Seven reads are ready; `example_api_stock_get` is left alone, with its reason.
-# The answer ends with the error `publish_gates_not_passed` and exit code 1:
-# that is expected here. Above it, `next` names the removal of the draft left
-# alone. Run that removal as given:
+# Seven reads are ready; `example_api_stock_get` is left alone, with its reason,
+# so no publish is asked for yet (exit code 1). `next` names its removal:
 anything2mcp draft delete example --files operations/api_stock_get.yaml
-# Its `next` names `test run`, and that one's names `publish request`; either
-# way leads to the same page. Or, in one command:
+# Its `next` is `ready` again, which now asks for the publish:
 anything2mcp ready example --version 1.0.0   # needs_person (exit code 3), and a link: only the person's press is left
 ```
 
 The answer tells an agent to give the person the link and stop. At a terminal, you are that person: open the link in a browser on the same machine. It is good for 15 minutes; `ready example --version 1.0.0` again gives a fresh one.
 
-**This is where a run by hand stops on most machines.** The link opens a page that shows exactly what will be published and which gates ran. Pressing Carry out raises the operating system's presence prompt, and only a person passing it publishes. On a Linux desktop the prompt is polkit's, once an administrator has installed the project's polkit policy file, `crates/a2m-local/polkit/io.github.mhughesdev.anything2mcp.presence.policy`, into `/usr/share/polkit-1/actions`: where it is missing, `anything2mcp doctor` and the page both give the one `sudo` command that installs the engine's own copy after checking its digest. In a container or with no desktop, the page and `anything2mcp doctor` (its `presence` check, `component_missing`) say that nothing on the machine can approve, and nothing is published: that is the design, not a fault. Until a publish, `call` answers `not_found`: no published tool has that name yet. The macOS and Windows prompts are written and not yet run by a person, so a publish by hand there is untried. After the press, `anything2mcp ready example --version 1.0.0` again says the version is published, and `anything2mcp call example_api_orders_get --input '{"order_id": "A-100"}'` reads the order. The whole flow is the test `crates/anything2mcp/tests/ready.rs`, which stands in for the prompt and runs on all three systems in CI; each step `ready` takes is also an action of its own (`fixture record`, `test`, `binding promote`, `publish`), which the guidance file the project holds describes.
+**This is where a run by hand stops on most machines.** The link opens a page that shows exactly what will be published and which gates ran. Pressing Carry out raises the operating system's presence prompt, and only a person passing it publishes. On a Linux desktop the prompt is polkit's, once an administrator has installed the project's polkit policy file, `crates/a2m-local/polkit/io.github.mhughesdev.anything2mcp.presence.policy`, into `/usr/share/polkit-1/actions`: where it is missing, `anything2mcp doctor` and the page both give the one `sudo` command that installs the engine's own copy after checking its digest. In a container or with no desktop, the page and `anything2mcp doctor` (its `presence` check, `component_missing`) say that nothing on the machine can approve, and `doctor` answers `component_missing` overall; nothing is published: that is the design, not a fault. Until a publish, `call` answers `not_found`, and says that a publish of the target waits for its person and where; `anything2mcp status example` names that publish too. The macOS and Windows prompts are written and not yet run by a person, so a publish by hand there is untried. After the press, `anything2mcp ready example --version 1.0.0` again says the version is published, and `anything2mcp call example_api_orders_get --input '{"order_id": "A-100"}'` reads the order. The whole flow is the test `crates/anything2mcp/tests/ready.rs`, which stands in for the prompt and runs on all three systems in CI; each step `ready` takes is also an action of its own (`fixture record`, `test`, `binding promote`, `publish`), which the guidance file the project holds describes.
 
-`anything2mcp engine stop` stops the engine, `kill %1` stops the test application started with `&`, and deleting `~/a2m-try` removes everything the run made. `anything2mcp doctor` says what this machine lacks and how to fix it, and `anything2mcp config show` lists every setting and the layer that set it. If you forget the passphrase, the first command answers `vault_passphrase_missing` with the fix; a home on a path too long for a socket answers `socket_path_too_long`, with the longest that works.
+`anything2mcp engine stop` stops the engine (with none running it says so, and `engine status` says none runs and starts none), `kill %1` stops the test application started with `&`, and deleting `~/a2m-try` removes everything the run made. `anything2mcp doctor` says what this machine lacks and how to fix it, and `anything2mcp config show` lists every setting and the layer that set it. If you forget the passphrase, the first command answers `vault_passphrase_missing` with the fix; a home on a path too long for a socket answers `socket_path_too_long`, with the longest that works.
 
 ## Connect an agent
 
