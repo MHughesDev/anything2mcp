@@ -145,7 +145,7 @@ Tried in order; the first that matches exactly one element and passes the finger
 
 Position alone, and XPath, are not accepted.
 
-A desktop screen uses `{role, name}` alone, both exact, with a role from the desktop pack's closed list of role words; its `control` is `desktop_text` ([decision 0202](../decisions/0202-the-desktop-packs-control-has-a-name-of-its-own.md)). An element with no accessible name cannot be located.
+A desktop screen uses `{role, name}` alone, both exact, with a role from the desktop pack's closed list of role words; its `control` is `desktop_text` ([decision 0202](../decisions/0202-the-desktop-packs-control-has-a-name-of-its-own.md)). An element with no accessible name cannot be located by a locator, with one exception: a desktop screen's `rows` may leave out `locate`, and its table is then the one of the window whose headings are its `header` exactly. A desktop screen is reached by `reach: {window: {role, title}}`, the title exact; it may hold one placeholder, `{name}`, filled by the operation's required input of that name, with words beside it, and a screen whose title has one is read only, never written through ([decision 0999](../decisions/0999-a-desktop-table-of-cells-is-read-by-the-column-count-it-states-and-a-title-two-windows-show-to-differ-becomes-a-pattern.md)).
 
 ### Conditions
 

@@ -132,7 +132,12 @@ Both read the tree and never invoke, expand, or focus anything. What is hidden b
 
 `desktop_management` asks for the definition of one class and never for an instance; on any other system it stops with `system_not_built`. `desktop_com` reads a type library as bytes with a library taken whole and fuzzed, and never loads it through the system; only the MSFT form is read, and any other is the named stop `type_library_format_unknown`. From a singleton class's property the definition does not mark writable, and from a dispatch interface's property get, the pack drafts a `read`, binding `management: {surface, class, name}` or `com: {surface, interface, name}`. The drafts compile and are not run: this version carries out no `management_get` or `com_get` step, and says so by the named stop `step_not_built` ([decision 0333](../../decisions/0333-the-desktop-pack-reads-a-management-classs-definition-and-a-com-type-library-and-drafts-reads-that-it-does-not-yet-run.md)).
 
-The drafting rules are as for the web: from a window's snapshot, a screen model with fields, roles, names, and locators; field types and every action left as open questions.
+The drafting rules are as for the web: from a window's snapshot, a screen model with fields, roles, names, and locators; field types and every action left as open questions. As built ([decision 0999](../../decisions/0999-a-desktop-table-of-cells-is-read-by-the-column-count-it-states-and-a-title-two-windows-show-to-differ-becomes-a-pattern.md), from field test 10's findings 57 to 60):
+
+- **Values.** A labelled `entry`, `text`, or `spin_button` the window names once is a field of one `get` read; a spin button only when the snapshot says it gives its value as text, and one that does not is named in the read's description.
+- **Tables.** Each table the window names once, and the one it gives no name, is a screen and a `list` read. A table of rows is read as before. A table whose column headers and cells are its own children, as GTK 3 publishes one, is read only by the column count its system states (on Linux, AT-SPI's `Table` interface): that many headings first, then that many cells to a row. One that states no count is never read, by a draft or a screen written by hand: the read stops as `fingerprint_mismatch` and says why. A table with no name is located by its headings alone: its screen's `rows` has no `locate`.
+- **Titles.** A window is reached by its role and its exact title. Within one snapshot, windows of one role and one shape whose titles differ in exactly one plain word are one finding, the title a pattern, `Order {order_id}`, named as the web probe names a path's placeholder; its reads take the placeholder as their required input and key, and the `goto` finds the window of exactly that title. One title is never a pattern; a read over a whole title with a digit in it says how to get one. A screen whose title has a placeholder is read only (`desktop.title_write`).
+- **Reasons.** Each finding the rules draft nothing from is listed with the reason.
 
 A column or a control whose name the compiler takes for a secret's is never drafted as an output, as for the web, and the last sentence of the drafted description tells the names left out ([decision 0302](../../decisions/0302-a-field-named-as-a-secret-is-never-drafted-as-an-input-or-an-output.md)).
 
@@ -143,7 +148,7 @@ A column or a control whose name the compiler takes for a secret's is never draf
 | `desktop.css` | Error | A `css` locator. As built, the schema of `screens/` has no `css` key, so none compiles |
 | `desktop.unnamed` | Error | A role locator with an empty name. As built, a refusal of the file kind |
 | `desktop.condition_unsupported` | Error | A condition this operating system cannot signal. Not built: on Linux every condition offered is signalled |
-| `desktop.title_only` | Warning | A window reached by title alone. Not built: a window has no other match yet |
+| `desktop.title_only` | Warning | A window reached by title alone. Not built: a window has no other match yet. A title that names a record becomes a pattern only from two windows (decision 0999) |
 
 ## Effects and hazards
 
@@ -192,6 +197,7 @@ Test-application case 28: a small native program with the same data as the test 
 | A committing action lost to a crash is `possible_commit` | Case 28 with the program killed after `invoke` |
 | Discovery changes nothing in the program | The control interface counts no write and no change of state during `desktop_snapshot` |
 | Each widget driver sets and reads back its control | The conformance group "Acting", on case 28, on three operating systems |
+| A table, a value, and a title as a GTK 3 dialog program publishes them are read, and a table that states no column count is not | On Linux, windows of one record each, opened by the control interface: a table with no name whose headers and cells are its own children, stating its column count or not; a labelled spin button; titles that differ in the record's number (decision 0999) |
 
 ## The entry bar
 
