@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
-# Stand-in C compiler for lint-only cross builds: nothing is linked, so each
-# object asked for is written empty by the host compiler.
-import subprocess, sys
+"""Stand-in C compiler for lint-only cross builds (decision 0999): nothing is
+linked, so each object asked for is written empty by the host compiler. It
+refuses to run outside a `cargo check`; see lintonly.py."""
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lintonly import refuse_unless_lint_only  # noqa: E402
+
+refuse_unless_lint_only()
 a = sys.argv[1:]
 out = None
 for i, x in enumerate(a):
