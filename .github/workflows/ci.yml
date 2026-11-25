@@ -481,7 +481,12 @@ jobs:
       - name: Test with the server store on
         run: cargo test -p a2m-pack-data --locked --no-fail-fast --features postgres
       - name: Test the writes through the product with the server store on
-        run: cargo test -p anything2mcp --locked --no-fail-fast --features a2m-pack-data/postgres --test data_write
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p anything2mcp --locked --no-fail-fast --features a2m-pack-data/postgres --test product -- data_write:: 2>&1 | tee data-write.log
+          # The filter names a module of the product's one test program; a name that matches nothing is not a pass.
+          grep -q "test result: ok. 10 passed" data-write.log
 
   nats:
     name: The stream pack against a real NATS server
@@ -526,7 +531,7 @@ jobs:
         run: |
           set -o pipefail
           cargo build -p anything2mcp --locked
-          cargo test -p anything2mcp --locked --test stream_write -- --nocapture 2>&1 | tee stream-write.log
+          cargo test -p anything2mcp --locked --test product -- stream_write:: --nocapture 2>&1 | tee stream-write.log
           if grep -q "skipped:" stream-write.log; then
             echo "a test skipped itself"
             exit 1
@@ -599,7 +604,12 @@ jobs:
       - name: Test the browser base and the web pack, the window tests among them
         run: cargo test --locked --no-fail-fast -p a2m-pack-web-browser -p a2m-pack-web-ui
       - name: Test the sign-in and the capture of a person's use in a window through the product
-        run: cargo test --locked --no-fail-fast -p anything2mcp --test signed_in_web_read --test capture_use
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked --no-fail-fast -p anything2mcp --test product -- signed_in_web_read:: capture_use:: 2>&1 | tee window-tests.log
+          # The filters name two modules of the product's one test program; a name that matches nothing is not a pass.
+          grep -q "test result: ok. 3 passed; 0 failed; 2 ignored" window-tests.log
 
   desktop-windows:
     name: The desktop pack on Windows, against its stand

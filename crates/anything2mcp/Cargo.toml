@@ -9,6 +9,10 @@ publish.workspace = true
 # Two small binary targets are built from one module; `cargo run` starts
 # the one with the product's name.
 default-run = "anything2mcp"
+# The end-to-end tests are one test program, `tests/main.rs`, with each
+# file beside it a module of it, so that the product is linked once for
+# them all (decision 0999).
+autotests = false
 
 [features]
 # HTTPS for the session keeper, the HTTP pack, and the MCP pack, and the
@@ -74,6 +78,10 @@ example-mcp = { path = "../../targets/example-mcp" }
 # Tests only.
 a2m-ledger = { path = "../a2m-ledger" }
 rusqlite.workspace = true
+
+[[test]]
+name = "product"
+path = "tests/main.rs"
 
 [lints]
 workspace = true
