@@ -28,6 +28,8 @@ async fn scene(name: &str, app: &TestApp) -> Scene {
 /// What the application was told, once it has been told at least `count`
 /// things: a page's tell is a request of its own and may land a moment after
 /// the page shows its result.
+/// Ask it before the run's tab is released: releasing closes the tab, and
+/// a tell still on its way is lost with it.
 async fn told(app: &TestApp, count: usize) -> Vec<String> {
     let started = std::time::Instant::now();
     loop {
@@ -90,8 +92,8 @@ async fn a_button_is_found_again_by_role_and_name_after_the_page_draws_its_list_
     )
     .await
     .unwrap();
-    assert!(handle.release(prepared, false).await.complete);
     assert_eq!(told(&app, 2).await, ["archived: Pallet", "archived: Crate"]);
+    assert!(handle.release(prepared, false).await.complete);
     scene.stand.end().await;
 }
 
@@ -113,7 +115,6 @@ async fn a_value_that_only_key_presses_make_is_set_by_typing_and_saved_once() {
     )
     .await
     .unwrap();
-    assert!(handle.release(prepared, false).await.complete);
     let means = ran.means_text();
     assert!(
         means.contains("strategy") && means.contains("type"),
@@ -124,6 +125,7 @@ async fn a_value_that_only_key_presses_make_is_set_by_typing_and_saved_once() {
         told(&app, 2).await,
         ["ignored: not typed", "reference: R-100"]
     );
+    assert!(handle.release(prepared, false).await.complete);
     scene.stand.end().await;
 }
 
@@ -139,11 +141,11 @@ async fn an_action_that_moves_the_page_without_loading_is_done_when_the_page_sho
     run(&scene, &handle, &mut prepared, &write, steps, &NOTHING())
         .await
         .unwrap();
-    assert!(handle.release(prepared, false).await.complete);
     assert_eq!(
         told(&app, 2).await,
         ["loaded: /cases/in-page", "moved: /cases/in-page/customers"]
     );
+    assert!(handle.release(prepared, false).await.complete);
     scene.stand.end().await;
 }
 
@@ -183,8 +185,8 @@ async fn a_declared_question_is_answered_when_asked_and_an_undeclared_one_stops_
         FailureClass::PossibleCommit,
         "{stopped}"
     );
-    handle.release(prepared, true).await;
     let events = told(&app, 6).await;
+    handle.release(prepared, true).await;
     assert_eq!(
         events[..6],
         [
@@ -211,13 +213,13 @@ async fn a_notice_that_covers_the_form_is_closed_by_the_action_the_screen_names(
     let ran = run(&scene, &handle, &mut prepared, &write, steps, &NOTHING())
         .await
         .unwrap();
-    assert!(handle.release(prepared, false).await.complete);
     assert!(
         ran.means_text().contains("dismissed"),
         "{}",
         ran.means_text()
     );
     assert_eq!(told(&app, 2).await, ["closed: notice", "sent: report"]);
+    assert!(handle.release(prepared, false).await.complete);
     scene.stand.end().await;
 }
 
@@ -239,8 +241,8 @@ async fn a_form_inside_a_frame_is_set_and_sent_through_the_frame_the_screen_decl
     )
     .await
     .unwrap();
-    assert!(handle.release(prepared, false).await.complete);
     assert_eq!(told(&app, 1).await, ["frame-code: D-4471"]);
+    assert!(handle.release(prepared, false).await.complete);
     scene.stand.end().await;
 }
 
