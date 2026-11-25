@@ -201,6 +201,10 @@ code = "link_not_encrypted"
 
 [[failure_codes]]
 class = "policy"
+code = "body_not_asserted"
+
+[[failure_codes]]
+class = "policy"
 code = "product_header_refused"
 
 [[failure_codes]]

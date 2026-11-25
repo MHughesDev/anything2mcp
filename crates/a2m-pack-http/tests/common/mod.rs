@@ -306,11 +306,20 @@ impl Scene {
     }
 
     /// The arguments of a step, as the engine would evaluate them. Every
-    /// expression of the fixtures is `input.<name>`.
+    /// expression of the fixtures is `input.<name>` or a quoted text.
     pub fn args(&self, step: &Step, inputs: &Values) -> Values {
         let mut args = Values::new();
         for arg in &step.args {
             let source = &self.compiled_target.expression(arg.value).unwrap().source;
+            let quoted = |mark: char| {
+                source
+                    .strip_prefix(mark)
+                    .and_then(|rest| rest.strip_suffix(mark))
+            };
+            if let Some(text) = quoted('\'').or_else(|| quoted('"')) {
+                args.insert(arg.name.clone(), a2m_core::Value::Text(text.to_owned()));
+                continue;
+            }
             let name = source
                 .strip_prefix("input.")
                 .unwrap_or_else(|| panic!("the test helper cannot evaluate `{source}`"));
