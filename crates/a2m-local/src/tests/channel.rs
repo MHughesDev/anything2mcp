@@ -99,6 +99,10 @@ fn assert_failure(failure: &Failure, class: FailureClass, code: &a2m_core::Failu
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(
+    clippy::await_holding_lock,
+    reason = "the gate on starting children is held across the engine's stop and the lock's question, and no step under it starts a child"
+)]
 async fn two_clients_share_one_engine_and_their_requests_reach_the_service() {
     let (_folder, paths) = home("two");
     let engine = Engine::start(
@@ -132,6 +136,8 @@ async fn two_clients_share_one_engine_and_their_requests_reach_the_service() {
     // nothing that answers and no lock.
     assert!(EngineLock::held(&paths).unwrap());
     drop((first, second));
+    // No child of this process shares the lock while it is let go.
+    let _none_starting = crate::os::children::none_starting();
     assert_eq!(engine.stop().await, StopReason::Asked);
     let gone = connect(&command).await.unwrap_err();
     assert_failure(&gone, FailureClass::Busy, &codes::ENGINE_UNREACHABLE);
@@ -139,6 +145,10 @@ async fn two_clients_share_one_engine_and_their_requests_reach_the_service() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(
+    clippy::await_holding_lock,
+    reason = "the gate on starting children is held across the engine's stop and the lock's question, and no step under it starts a child"
+)]
 async fn a_second_engine_on_the_same_data_directory_is_refused() {
     let (folder, paths) = home("lock");
     let first = Channel::bind(&paths, VERSION).await.unwrap();
@@ -155,7 +165,9 @@ async fn a_second_engine_on_the_same_data_directory_is_refused() {
     assert_failure(&third, FailureClass::Busy, &codes::ENGINE_RUNNING);
     assert!(EngineLock::held(&paths).unwrap());
 
-    // The lock goes with its holder, and the next engine binds.
+    // The lock goes with its holder, and the next engine binds. No child
+    // of this process shares the lock while it is let go.
+    let none_starting = crate::os::children::none_starting();
     drop(first);
     assert!(!EngineLock::held(&paths).unwrap());
     let next = Engine::start(
@@ -163,6 +175,7 @@ async fn a_second_engine_on_the_same_data_directory_is_refused() {
         1,
         IdlePolicy::never(),
     );
+    drop(none_starting);
     assert_eq!(next.stop().await, StopReason::Asked);
 }
 
@@ -170,11 +183,17 @@ async fn a_second_engine_on_the_same_data_directory_is_refused() {
 /// finds nothing running, and the next engine binds over it.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(
+    clippy::await_holding_lock,
+    reason = "the gate on starting children is held across the engine's stop and the lock's question, and no step under it starts a child"
+)]
 async fn a_stale_socket_is_not_an_engine_and_does_not_block_the_next() {
     let (_folder, paths) = home("stale");
-    // An engine binds, and is gone without removing its socket.
+    // An engine binds, and is gone without removing its socket. No child
+    // of this process shares the lock between that engine and the next.
     let me = OsUser::current().unwrap();
     let place = crate::channel::place(&paths, &me);
+    let none_starting = crate::os::children::none_starting();
     drop(Channel::bind(&paths, VERSION).await.unwrap());
     drop(std::os::unix::net::UnixListener::bind(&place.socket).unwrap());
     assert!(place.socket.exists());
@@ -188,6 +207,7 @@ async fn a_stale_socket_is_not_an_engine_and_does_not_block_the_next() {
         2,
         IdlePolicy::never(),
     );
+    drop(none_starting);
     let link = connect(&connector).await.unwrap();
     let (_, said) = json_of(&link, get_request("/who")).await;
     assert_eq!(said["instance"], 2);
@@ -332,17 +352,11 @@ async fn an_engine_with_no_connection_and_nothing_held_stops_and_a_hold_keeps_it
     assert!(EngineLock::held(&paths).unwrap());
     let second = Channel::bind(&paths, VERSION).await.unwrap_err();
     assert_eq!(*second.code(), codes::ENGINE_RUNNING);
-    // Dropped, the lock is let go. The test waits for the lock to be free,
-    // not for a moment: a process another test starts at that instant
-    // shares the lock file's open description until it runs its program,
-    // and holds the lock that long.
+    // Dropped, the lock is let go at once. No child of this process
+    // shares it while it is.
+    let _none_starting = crate::os::children::none_starting();
     drop(lock);
-    within("the lock let go", async {
-        while EngineLock::held(&paths).unwrap() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
+    assert!(!EngineLock::held(&paths).unwrap());
 }
 
 /// A stand-in for the REST face, which the product crate composes: the
@@ -731,6 +745,10 @@ async fn an_engine_that_binds_and_stalls_is_waited_for_no_longer_than_the_patien
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(
+    clippy::await_holding_lock,
+    reason = "the gate on starting children is held across the next bind, which starts no child"
+)]
 async fn an_engine_that_stops_while_starting_is_told_as_one_and_points_at_its_log() {
     let (_folder, paths) = home("f");
     let stalled = Channel::bind(&paths, VERSION).await.unwrap();
@@ -744,6 +762,9 @@ async fn an_engine_that_stops_while_starting_is_told_as_one_and_points_at_its_lo
     // while the hello waits: half a second leaves the client in its hello
     // whatever the machine, and an earlier stop is answered the same way.
     tokio::time::sleep(Duration::from_millis(500)).await;
+    // No child of this process shares the lock between this engine and
+    // the next.
+    let none_starting = crate::os::children::none_starting();
     drop(stalled);
     let failure = within("the hello", asked).await.unwrap().unwrap_err();
     assert!(
@@ -763,6 +784,7 @@ async fn an_engine_that_stops_while_starting_is_told_as_one_and_points_at_its_lo
     // command again: it looks on, and the engine it starts ends too, so it
     // is told that the engine ended before it answered, with the log.
     let stalled = Channel::bind(&paths, VERSION).await.unwrap();
+    drop(none_starting);
     let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
     let start = ends_at_once(&paths);
     let asked = tokio::spawn({

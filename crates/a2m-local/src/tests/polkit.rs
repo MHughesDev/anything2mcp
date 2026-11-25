@@ -564,6 +564,7 @@ fn the_install_command_installs_the_copy_only_when_it_is_the_file_this_build_car
     let into_text = into.to_str().unwrap();
     let script = install_script(&copy, into_text).unwrap();
     let run = || {
+        let _starting = crate::os::children::starting();
         Command::new("sh")
             .args(["-c", &script])
             .stdout(Stdio::null())
@@ -701,6 +702,7 @@ struct Agent {
 impl Agent {
     fn start() -> Self {
         let agent = format!("pkttyagent --process {}", std::process::id());
+        let starting = crate::os::children::starting();
         let mut child = Command::new("script")
             .args(["-qfec", &agent, "/dev/null"])
             .stdin(Stdio::piped())
@@ -710,6 +712,7 @@ impl Agent {
             .process_group(0)
             .spawn()
             .expect("`script` and `pkttyagent` are installed on a prepared machine");
+        drop(starting);
         let stdout = child.stdout.take().unwrap();
         let (send, said) = mpsc::channel();
         std::thread::spawn(move || {

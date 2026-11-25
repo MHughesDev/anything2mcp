@@ -357,6 +357,9 @@ mod tests {
     /// refused as before, and is not.
     #[test]
     fn a_lock_held_from_another_runtime_directory_is_refused_with_that_directory_named() {
+        // The lock is let go and taken again below: no child of this
+        // process shares it meanwhile.
+        let _none_starting = crate::os::children::none_starting();
         let root = root("elsewhere");
         let (first, second) = two_runtimes(&root);
         let held = EngineLock::take(&first).unwrap();
