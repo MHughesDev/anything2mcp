@@ -22,6 +22,7 @@ mod asserted_publish;
 mod breaking_publish;
 mod capture;
 mod capture_use;
+mod channel_command;
 mod command;
 mod command_write;
 mod completion;

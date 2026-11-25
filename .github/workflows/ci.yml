@@ -505,6 +505,24 @@ jobs:
         run: |
           node --test test/platform.test.js test/client.test.js
           node test/install.js --binary "$GITHUB_WORKSPACE/target/release/anything2mcp$EXE"
+      # The step above skips, and does not fail, a test that needs the built
+      # program when the variable is empty. On Windows the Node client reaches
+      # the engine by its pipe through the program's `channel` command, which
+      # checks who serves the pipe as every command does (decision 0999); this
+      # runs that real-engine call alone and fails if it was skipped
+      # (package 5.4b).
+      - name: Prove the Node client calls the real engine by its pipe on Windows
+        if: runner.os == 'Windows'
+        working-directory: bindings/npm
+        env:
+          A2M_TEST_BINARY: ${{ github.workspace }}/target/release/anything2mcp.exe
+        run: |
+          test -f "$A2M_TEST_BINARY"
+          node --test --test-name-pattern="the client reaches a real engine through the program's channel command" test/client.test.js 2>&1 | tee "$RUNNER_TEMP/nodepipe.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          grep -q "^ok 1 - the client reaches a real engine through the program's channel command$" "$RUNNER_TEMP/nodepipe.log"
+          grep -q "^# pass 1$" "$RUNNER_TEMP/nodepipe.log"
+          if grep -q -e "# SKIP" -e "^# skipped [1-9]" "$RUNNER_TEMP/nodepipe.log"; then echo "the Node client's pipe test was skipped"; exit 1; fi
 
   presence:
     name: The Linux presence prompt against a real polkit

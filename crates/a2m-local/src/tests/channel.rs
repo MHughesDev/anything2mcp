@@ -251,6 +251,55 @@ async fn another_users_connection_is_closed_unread_and_another_users_engine_is_n
     engine.stop().await;
 }
 
+/// The checked stream is the connect's own check with no hello: another
+/// client's bytes, its hello first, reach the service over it; a stream
+/// to an engine that is not this user's is never handed out, and no
+/// engine is told by name (decision 0999).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_checked_stream_carries_the_callers_own_hello_and_is_refused_by_the_same_rule() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let (_folder, paths) = home("checked");
+    let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
+    let none = within("the checked open", connector.open_checked())
+        .await
+        .unwrap_err();
+    assert_failure(&none, FailureClass::Busy, &codes::ENGINE_UNREACHABLE);
+
+    let engine = Engine::start(
+        Channel::bind(&paths, VERSION).await.unwrap(),
+        1,
+        IdlePolicy::never(),
+    );
+    let wary = connector.clone().expecting(OsUser::named("someone-else"));
+    let refused = within("the checked open", wary.open_checked())
+        .await
+        .unwrap_err();
+    assert_failure(&refused, FailureClass::Policy, &codes::PEER_NOT_ALLOWED);
+    assert_eq!(engine.hits.load(Ordering::SeqCst), 0);
+
+    let mut stream = within("the checked open", connector.open_checked())
+        .await
+        .unwrap();
+    let request = format!(
+        "GET {HELLO_PATH} HTTP/1.1\r\nhost: localhost\r\n{CLIENT_VERSION_HEADER}: {VERSION}\r\n\
+         {LOCAL_API_HEADER}: {}\r\n{CLIENT_LABEL_HEADER}: sdk:node\r\n\r\n\
+         GET /who HTTP/1.1\r\nhost: localhost\r\nconnection: close\r\n\r\n",
+        crate::LOCAL_API
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut answer = Vec::new();
+    within("the answers", stream.read_to_end(&mut answer))
+        .await
+        .unwrap();
+    let answer = String::from_utf8(answer).unwrap();
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    assert!(answer.contains("\"engine_version\""), "{answer}");
+    assert!(answer.contains("\"label\":\"sdk:node\""), "{answer}");
+    assert_eq!(engine.hits.load(Ordering::SeqCst), 1);
+    engine.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn what_is_not_a_well_formed_hello_is_refused_by_name_and_reaches_no_service() {
     let (_folder, paths) = home("hello");

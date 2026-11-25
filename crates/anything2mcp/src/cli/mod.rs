@@ -16,6 +16,7 @@
 //! and closes. `--in-process` asks for that form by name, and is refused
 //! while an engine runs.
 
+mod channel;
 mod client;
 mod complete;
 mod parse;
@@ -37,6 +38,7 @@ use a2m_vault::KeyStore;
 
 use crate::engine::{Engine, EngineOptions, action_registry};
 use crate::person::{ProcessTerminal, TerminalSurface};
+pub use channel::CHANNEL_OPEN_LINE;
 pub use parse::COMPLETION_COMMAND;
 pub(crate) use parse::Tree;
 use parse::{Globals, Parsed, Step};
