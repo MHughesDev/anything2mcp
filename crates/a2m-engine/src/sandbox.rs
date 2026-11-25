@@ -5,7 +5,7 @@
 //! method takes no authority, so there is nowhere to pass an intent token.
 //! The driver was prepared in the `Discovery` posture, in which the handle
 //! refuses every step that commits. And the port itself refuses such a step
-//! before the handle sees it. A discovery job asks `Control` for no lock
+//! before the handle sees it. A discovery job asks `ControlPort` for no lock
 //! and no intent, so no token exists to misuse.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,7 +23,7 @@ use a2m_provider::{
 };
 
 use crate::codes;
-use crate::control::{Control, EngineEvent, GuardQuestion};
+use crate::control::{ControlPort, EngineEvent, GuardQuestion};
 use crate::engine::Engine;
 use crate::guard::{Timed, caught};
 use crate::job::{JobOutcome, JobSpec, ToolRef};
@@ -126,8 +126,8 @@ impl FindingSink for Collected<'_> {
 impl Engine {
     /// Carries out a discovery job: every registered discoverer that suits
     /// the job's surface is handed the sandbox as its port, and what each
-    /// finds is sent through `Control`.
-    pub async fn discover(&self, job: &JobSpec, control: &dyn Control) -> JobOutcome {
+    /// finds is sent through `ControlPort`.
+    pub async fn discover(&self, job: &JobSpec, control: &dyn ControlPort) -> JobOutcome {
         match self.discovery(job, control).await {
             Ok(()) => JobOutcome::Finished {
                 state: RunState::Completed,
@@ -137,14 +137,14 @@ impl Engine {
         }
     }
 
-    async fn discovery(&self, job: &JobSpec, control: &dyn Control) -> Result<(), Failure> {
+    async fn discovery(&self, job: &JobSpec, control: &dyn ControlPort) -> Result<(), Failure> {
         let ToolRef::Surface(name) = &job.tool else {
             return Err(codes::job_invalid(
                 "A discovery job names a surface, and this one names a tool.",
             ));
         };
         let timed = Timed::new(control, self.deps.settings.control_timeout);
-        let control: &dyn Control = &timed;
+        let control: &dyn ControlPort = &timed;
         let loaded = self.compiled_target(&job.compiled_target, control).await?;
         let position = Self::environment(&loaded, job)?;
         let compiled_target = &loaded.compiled_target;

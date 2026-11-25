@@ -1,5 +1,5 @@
 //! Build-order step 9: the rows of spec section 224 that are the engine's,
-//! each with its fault injected through the test `Control` or the test
+//! each with its fault injected through the test `ControlPort` or the test
 //! pack's driver, and the invariants of the design that had no test.
 //!
 //! Three rules hold throughout: no ledger, no write; nothing unverified
@@ -36,7 +36,7 @@ fn order() -> a2m_core::Values {
     a2m_core::Values::new().with("order_id", "A-100")
 }
 
-/// Carries out a job in which one call to `Control` never answers, and
+/// Carries out a job in which one call to `ControlPort` never answers, and
 /// shows that the engine's own limit is what ended it: the call hangs in
 /// the test's time (see `hang` in the shared helpers), every honest call is
 /// answered in real time under the engine's default limit, and the job ends
@@ -365,7 +365,7 @@ async fn a_record_that_failed_with_the_code_of_a_blocked_child_is_read_when_it_h
         "blocked_by_parent",
         "The record waits for a record that failed earlier in the run.",
     );
-    a2m_engine::Control::failed(scene.control.as_ref(), record, &named, None)
+    a2m_engine::ControlPort::failed(scene.control.as_ref(), record, &named, None)
         .await
         .unwrap();
     assert_eq!(scene.record_states().await, [RecordState::Failed]);

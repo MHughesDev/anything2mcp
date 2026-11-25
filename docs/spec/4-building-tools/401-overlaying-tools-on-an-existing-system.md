@@ -29,7 +29,7 @@ Every step is done through authoring actions. Each action is defined once in the
 | --- | --- | --- |
 | Register | `target.add` | A target in the project folder, with its declared surfaces |
 | Attach | `target.probe` | For each surface: its kind, the pack that serves it, its platform where the pack knows platforms, and surfaces the target did not declare and plainly offers |
-| Attach | `auth.detect` | The sign-in method, with evidence, and a recommended identity mode |
+| Attach | `auth.detect` | The sign-in method, with evidence, and a recommended identity kind |
 | Observe | `discover.run`, `finding.list` | Every suitable discoverer run within its bounds, and the findings it returned |
 | Observe | `screen.snapshot` | A compact snapshot of the current screen of an interface, with element references |
 | Observe | `capture.start`, `capture.stop` | A recording of a person using the system: actions, exchanges, and responses, as shapes, with secrets already removed |

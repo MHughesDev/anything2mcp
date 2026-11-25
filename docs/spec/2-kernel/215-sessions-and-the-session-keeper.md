@@ -20,7 +20,7 @@ Nobody else can use the session: not another user, not another user's agent, not
 
 On a shared server this is enforced in three places. The policy engine refuses any run whose resolved identity is not the caller's own; this is a built-in forbid that cannot be configured away ([section 212](212-policy-and-approvals.md)). The scheduler hands a session only to runs carrying its session owner. The session's saved state is sealed under a key for that owner, so a lease for the wrong owner could not open it anyway ([section 216](216-the-vault-and-its-keys.md)).
 
-**The keeper is told the identity; it does not choose it.** Policy picks the identity, never the caller: a call cannot name the account it runs as. The request for a lease carries the decision `a2m-policy` made about whom the run acts as. The keeper records that decision with the lease, and also refuses a lease whose identity is not the session's. The four identity modes a server offers, and how to choose between them, are in [section 602](../6-running-it/602-identity-on-a-shared-server.md).
+**The keeper is told the identity; it does not choose it.** Policy picks the identity, never the caller: a call cannot name the account it runs as. The request for a lease carries the decision `a2m-policy` made about whom the run acts as. The keeper records that decision with the lease, and also refuses a lease whose identity is not the session's. The four identity kinds a server offers, and how to choose between them, are in [section 602](../6-running-it/602-identity-on-a-shared-server.md).
 
 ## What a session is
 
@@ -39,7 +39,7 @@ A session is the signed-in state of one identity on one target in one environmen
 
 **Every session has a home:** the local engine, or one runner. The home runner holds the live state; the control plane knows its status.
 
-**A lease is how a run reaches a session.** The engine asks for a `SessionLease` through `Control` before prepare, and its driver receives it. A lease carries no secret and cannot print one. It names the session, the session's epoch, the state at grant, and, for a session held in a browser, the engine-owned profile. Credentials reach a driver only through the lease's `apply`, which calls the provider's `inject` to place them into the driver's client: a header, a cookie, a TLS identity, or a credential for a challenge-and-response scheme that the driver then carries out on its connection. Every secret the keeper opens is registered with the redactor before `inject` places it.
+**A lease is how a run reaches a session.** The engine asks for a `SessionLease` through `ControlPort` before prepare, and its driver receives it. A lease carries no secret and cannot print one. It names the session, the session's epoch, the state at grant, and, for a session held in a browser, the engine-owned profile. Credentials reach a driver only through the lease's `apply`, which calls the provider's `inject` to place them into the driver's client: a header, a cookie, a TLS identity, or a credential for a challenge-and-response scheme that the driver then carries out on its connection. Every secret the keeper opens is registered with the redactor before `inject` places it.
 
 **A lease is a snapshot, not a promise.** It is valid while the session's epoch is unchanged and the session has not been ended. The home runner remembers an end by the epoch it named, so credentials that reach it afterwards for an earlier epoch, by a restore that was slow, are neither held nor placed ([decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md)). A driver that sees a sign of expiry reports it and stops the step with `session_expired`. The engine relays the report and waits for the one renewal.
 
@@ -51,7 +51,7 @@ Where there is no identity, nothing proves who is at the other end, and the weig
 
 ## Ways of signing in
 
-Each entry of a target's `auth.yaml` covers a group of surfaces that share a sign-in, and names a sign-in mode, an auth provider, and a probe ([file formats](../../reference/file-formats.md)).
+Each entry of a target's `auth.yaml` covers a group of surfaces that share a sign-in, and names a sign-in kind, an auth provider, and a probe ([file formats](../../reference/file-formats.md)).
 
 | Mode | What it uses | Typical case |
 | --- | --- | --- |

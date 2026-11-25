@@ -55,7 +55,7 @@ The crate `a2m-core` holds the words every other crate shares. A word with a fix
 | `DoctorState` | Seven; the default is `unknown` | [Spec section 204](../spec/2-kernel/204-supervising-subsystems.md) |
 | `RecordMatching` | Five | [Spec section 209](../spec/2-kernel/209-record-identity-and-dependent-records.md) |
 | `FieldBase`, `Sensitivity`, `EnvironmentKind`, `TestKind`, `Checkpoint` | Ten, three in order, two, two, two | [File formats](file-formats.md) |
-| `SignInMode`, `DriftRisk`, `WhitespaceRule`, `DecimalMark` | Three, three in order, three, two | [File formats](file-formats.md) |
+| `SignInKind`, `DriftRisk`, `WhitespaceRule`, `DecimalMark` | Three, three in order, three, two | [File formats](file-formats.md) |
 | `CaptureLevel` | Three, each including the one before | [Spec section 217](../spec/2-kernel/217-traces-evidence-and-repair.md) |
 | `ApproveWrites` | Three, ordered from least to most strict | [Spec section 226](../spec/2-kernel/226-configuration.md) |
 | `Rounding` | Seven: `half_up`, `half_even`, `half_down`, `up`, `down`, `ceiling`, `floor` | [Decision 0068](../decisions/0068-values-names-and-identifiers-as-the-core-crate-settles-them.md) |
@@ -334,15 +334,15 @@ The design of [`a2m-engine`](../architecture/crates/a2m-engine.md) gives the int
 
 - **`Engine`**, made from **`EngineDeps`**, carries out a job through `run_job`, and a discovery through `discover`, for the runner that holds the job's lease.
 - **`JobSpec`** names the compiled target, the tool, the input, and the job's **`JobKind`**: a preview, an execute, a try, a reconcile, a check after a loss, a canary, or a discovery. The job ends as a **`JobOutcome`**.
-- **`Control`** is everything the engine asks of the kernel around it: the compiled target, the guard's decision, a session lease, the preview, the approval, locks, intents, and the signed trace. In one process it is the action registry's `InProcessControl`. Two of its calls have defaults: `other_records` answers what other records of an operation recorded, as a value that may have landed, and `step_observed` tells the registry what a reading step observed, which `fixture.record` holds in memory for its trial alone ([decision 0196](../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)).
+- **`ControlPort`** is everything the engine asks of the kernel around it: the compiled target, the guard's decision, a session lease, the preview, the approval, locks, intents, and the signed trace. In one process it is the action registry's `InProcessControl`. Two of its calls have defaults: `other_records` answers what other records of an operation recorded, as a value that may have landed, and `step_observed` tells the registry what a reading step observed, which `fixture.record` holds in memory for its trial alone ([decision 0196](../decisions/0196-the-engine-and-the-registry-after-the-acknowledgement-and-the-first-hour.md)).
 
 What [decision 0263](../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md) added to the engine:
 
-- **`Control::discovery_files`** gives a discovery job the files the call that started it handed its discoverers: each declared name, to the path the call gave under the project's `inputs` folder. The engine checks each path again under a read-only root of that folder before any discoverer runs, and adds only the checked files to `DiscoveryScope::paths`. By default it gives none.
+- **`ControlPort::discovery_files`** gives a discovery job the files the call that started it handed its discoverers: each declared name, to the path the call gave under the project's `inputs` folder. The engine checks each path again under a read-only root of that folder before any discoverer runs, and adds only the checked files to `DiscoveryScope::paths`. By default it gives none.
 
 What [decision 0251](../decisions/0251-the-evidence-for-promoting-a-shadow-binding-says-what-it-covers-and-a-shadow-costs-what-it-says.md) added to the engine:
 
-- **`Control::shadow_rate`** asks the control plane for a rate budget for a binding in shadow, all at once or nothing, without waiting, and leaving the share a caller's reads need; by default it grants nothing.
+- **`ControlPort::shadow_rate`** asks the control plane for a rate budget for a binding in shadow, all at once or nothing, without waiting, and leaving the share a caller's reads need; by default it grants nothing.
 - **`shadow_evidence_environments`** gives the environments a compiled target's shadow evidence must come from, and **`verified_binding`** the verified binding of an operation that acts beside one in shadow.
 - **`Engine::shadow_comparisons_lost`** counts the comparisons that were not kept within the shadow budget.
 
@@ -380,7 +380,7 @@ This is the data model as designed. The tables that exist are those the migratio
 | `targets`, `target_versions` | Targets and their immutable published versions | target, version, hash, signature, compiled target, status |
 | `bindings_health` | Health of each binding | operation, mode, status, last check |
 | `shadow_comparisons`, `shadow_promotions` | How a binding in shadow compared, and its promotion by a person ([decision 0207](../decisions/0207-a-shadow-binding-reads-beside-the-verified-one-and-a-person-promotes-it-on-a-run-of-exact-matches.md)) | operation, binding digest, outcome, differing outputs by name; who promoted it, on how many matches |
-| `toolsets`, `toolset_items` | Named tool selections | toolset, version, operation or pipeline, identity mode, approval policy |
+| `toolsets`, `toolset_items` | Named tool selections | toolset, version, operation or pipeline, identity kind, approval policy |
 | `principals`, `grants` | Callers and what they may do | principal, scope pattern, max effect, role |
 | `policy_versions`, `decisions` | Published policy sets; every decision with the rules that made it | version, hash, tests passed; request, answer, determining rules |
 | `sessions` | Signed-in states | identity, target, runner affinity, expiry, vault reference |

@@ -25,7 +25,7 @@ use a2m_logs::ManualClock;
 use a2m_policy::{
     APPROVAL_MISSING, APPROVAL_REFUSED, APPROVAL_STALE, ActionName, ActionRef, Answer,
     ApprovalSurface, ApproveWrites, Approved, BuiltIn, Channel, Context, Decision, Declined, Grant,
-    IdentityMode, KILL_SWITCH_ON, KillScope, KillSwitch, LIMIT_EXCEEDED, LayerChange, LimitCheck,
+    IdentityKind, KILL_SWITCH_ON, KillScope, KillSwitch, LIMIT_EXCEEDED, LayerChange, LimitCheck,
     ModuleName, Outcome, POLICY_EVALUATION_FAILED, POLICY_TESTS_FAILED, PRESENCE_REQUIRED, Policy,
     PolicyHealth, PolicyLayers, PolicyTest, PreApproval, PresenceCheck, PrincipalKind,
     PrincipalRef, PublishProof, PublishReview, Question, Quota, Request, Resource, Role,
@@ -647,7 +647,7 @@ fn server_layers() -> PolicyLayers {
             who: Subject::Principal(person(1)),
             scope: Scope::Target(TargetName::new("example").unwrap()),
             max_effect: EffectClass::Write,
-            identity_mode: IdentityMode::PerUserSession,
+            identity_mode: IdentityKind::PerUserSession,
         }],
         ..PolicyLayers::default()
     };
@@ -1469,7 +1469,7 @@ fn write_grant(who: u8) -> Grant {
         who: Subject::Principal(person(who)),
         scope: example_scope(),
         max_effect: EffectClass::Write,
-        identity_mode: IdentityMode::PerUserSession,
+        identity_mode: IdentityKind::PerUserSession,
     }
 }
 
@@ -1487,7 +1487,7 @@ fn reporting_layers() -> PolicyLayers {
             who: vec![Subject::Principal(person(1)), Subject::Principal(person(3))],
             tools: vec![Scope::Pattern("example_order_get*".to_owned())],
             max_effect: EffectClass::Read,
-            identity_mode: IdentityMode::PerUserSession,
+            identity_mode: IdentityKind::PerUserSession,
             allow_pre_approval: false,
         },
         Toolset {
@@ -1495,7 +1495,7 @@ fn reporting_layers() -> PolicyLayers {
             who: vec![Subject::Anyone],
             tools: vec![Scope::Pattern("*".to_owned())],
             max_effect: EffectClass::Write,
-            identity_mode: IdentityMode::PerUserSession,
+            identity_mode: IdentityKind::PerUserSession,
             allow_pre_approval: true,
         },
     ];
@@ -1570,7 +1570,7 @@ async fn a_toolset_only_narrows_what_the_grants_allow() {
         explained(&stand, ungranted.id).await.rules[0].id,
         "default.deny"
     );
-    // The identity mode of the toolset.
+    // The identity kind of the toolset.
     let mut act = through(
         "reporting",
         ask(
@@ -1580,9 +1580,9 @@ async fn a_toolset_only_narrows_what_the_grants_allow() {
             EffectClass::Read,
         ),
     );
-    act.context.identity_mode = Some(IdentityMode::PerUserToken);
+    act.context.identity_mode = Some(IdentityKind::PerUserToken);
     assert_eq!(decide(&stand, act.clone()).await.answer, Answer::Deny);
-    act.context.identity_mode = Some(IdentityMode::PerUserSession);
+    act.context.identity_mode = Some(IdentityKind::PerUserSession);
     assert_eq!(decide(&stand, act).await.answer, Answer::Allow);
     // Once a set defines toolsets, one it does not define is unknown.
     let unknown = decide(
@@ -1663,13 +1663,13 @@ async fn a_role_is_a_bundle_of_grants() {
             role: Role::Operator,
             scope: example_scope(),
             max_effect: EffectClass::Write,
-            identity_mode: IdentityMode::PerUserSession,
+            identity_mode: IdentityKind::PerUserSession,
         },
         RoleGrant {
             role: Role::Viewer,
             scope: example_scope(),
             max_effect: EffectClass::Read,
-            identity_mode: IdentityMode::PerUserSession,
+            identity_mode: IdentityKind::PerUserSession,
         },
     ];
     publish(&stand, layers, PublishProof::default())

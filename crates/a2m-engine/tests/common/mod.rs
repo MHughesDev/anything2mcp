@@ -1,7 +1,7 @@
 //! What the tests share: a test pack whose driver talks to the built-in test
 //! application over its JSON interface, registered through the provider
 //! contract as a real pack is; a hand-built compiled target for the imaginary
-//! `example` target; a `Control` over a real store, so that intent tokens
+//! `example` target; a `ControlPort` over a real store, so that intent tokens
 //! are the ledger's own; and the part of the engine's caller: it claims the
 //! job, applies the outcome, and resumes.
 
@@ -26,12 +26,12 @@ use a2m_core::{
     FieldTypeIndex, Finding, FindingKind, Hazard, InputIndex, Mode, OperationIndex, OperationName,
     PackPayload, PermissionManifest, PipelineIndex, PipelineLimits, PipelineStep, PrincipalId,
     ProducedBy, RecordKey, RecordMatching, RecordState, Rounding, RunId, RunState, Sensitivity,
-    SignInMode, Source, Step, StepArg, StepKind, Subject, SurfaceIndex, SurfaceKind, SurfaceName,
+    SignInKind, Source, Step, StepArg, StepKind, Subject, SurfaceIndex, SurfaceKind, SurfaceName,
     TargetName, TargetSection, Timestamp, ToolAnnotations, ToolRuns, Value, ValueType, Values,
     Verb, Version, WhitespaceRule, WorkspaceId,
 };
 use a2m_engine::{
-    BoxFuture, Clearance, Conditions, Control, Engine, EngineDeps, EngineEvent, EngineSettings,
+    BoxFuture, Clearance, Conditions, ControlPort, Engine, EngineDeps, EngineEvent, EngineSettings,
     Evidence, GuardQuestion, JobKind, JobOutcome, JobSpec, KeptCapture, LeaseClock, Parallelism,
     Preview, RecordSnapshot, RunSnapshot, SessionWant, ToolRef, decode_values,
 };
@@ -1294,7 +1294,7 @@ impl Discoverer for WritingDiscoverer {
             if self.hangs.load(Ordering::SeqCst) {
                 // Ended by the time its manifest declares, which is long
                 // enough for any honest look on a slow machine: the clock
-                // stops while it hangs, as for a call to `Control` that
+                // stops while it hangs, as for a call to `ControlPort` that
                 // hangs (see `StoreControl::hang`).
                 tokio::time::pause();
                 let _runs_again = ClockRunsAgain;
@@ -1673,7 +1673,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
     // The second surface needs a sign-in; the first needs none.
     compiled_target.auth.push(CompiledAuth {
         surfaces: vec![SurfaceIndex::new(1)],
-        mode: SignInMode::ManagedSession,
+        mode: SignInKind::ManagedSession,
         provider: AuthProviderName::new("example_login").unwrap(),
         probe: CompiledProbe::Operation {
             operation: OperationIndex::new(0),
@@ -2350,7 +2350,7 @@ pub fn acknowledged_upsert(compiled_target: &mut CompiledTarget) {
     }
 }
 
-// ---- the control plane: a real store behind `Control` ----
+// ---- the control plane: a real store behind `ControlPort` ----
 
 /// What a test can make the control plane do.
 #[derive(Default)]
@@ -2379,14 +2379,14 @@ pub struct Faults {
     pub outputs_refused: AtomicBool,
     /// The call of this name never answers.
     pub hangs_on: Mutex<Option<&'static str>>,
-    /// When `abort_armed` is set, the calls to `Control` answered before
+    /// When `abort_armed` is set, the calls to `ControlPort` answered before
     /// the next one never answers, and [`Faults::aborted`] is notified: the
     /// test then drops the job's future, as a process killed at that point
     /// would leave it.
     pub abort_after: AtomicU32,
     /// Whether `abort_after` applies.
     pub abort_armed: AtomicBool,
-    /// The calls to `Control` made since the count was last reset.
+    /// The calls to `ControlPort` made since the count was last reset.
     pub calls: AtomicU32,
     /// Notified when the call after `abort_after` is held.
     pub aborted: tokio::sync::Notify,
@@ -2463,7 +2463,7 @@ impl StoreControl {
 
     /// Never answers, when the test asked for that of this call.
     ///
-    /// The engine's own limit on a call to `Control` is what must end it,
+    /// The engine's own limit on a call to `ControlPort` is what must end it,
     /// and that limit must never end an honest call however slow the
     /// machine is. So every call is made in real time under the engine's
     /// limit, and only this one is made in the test's time: the clock of
@@ -2471,7 +2471,7 @@ impl StoreControl {
     /// else to do, the runtime moves it straight on to the engine's limit.
     /// The clock runs again when the engine gives the call up. A test's
     /// runtime runs on one thread, which is what lets a test stop its clock.
-    /// Counts one call to `Control`. Once `abort_after` calls have been
+    /// Counts one call to `ControlPort`. Once `abort_after` calls have been
     /// answered, with the abort armed, this one never answers.
     async fn called(&self) {
         let made = self.faults.calls.fetch_add(1, Ordering::SeqCst);
@@ -2532,7 +2532,7 @@ impl StoreControl {
     }
 }
 
-impl Control for StoreControl {
+impl ControlPort for StoreControl {
     fn compiled_target<'a>(
         &'a self,
         _hash: &'a Digest,

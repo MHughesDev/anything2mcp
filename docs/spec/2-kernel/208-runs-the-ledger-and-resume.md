@@ -88,7 +88,7 @@ These are written as tests, and a change that breaks one cannot merge. Each is e
 
 When an intent is durably stored, the ledger returns an **intent token**: proof, as a type, that this record's intent is on disk under the current lease. It carries the run, the record key, the lease number, the digest of the intended values, and the record's idempotency token. Only `a2m-ledger` can make one. It cannot be copied, serialized, or kept: marking the record `acted` consumes it.
 
-The token is the write gate. The engine receives it through `Control`, and the driver's handle in `a2m-provider` refuses a step that commits without one, so no driver can be called for a write whose intent is not stored. In one process the type is the guard. Across the runner link the ledger is: a runner rebuilds the token from the control plane's acknowledgement, and the ledger refuses to mark `acted` a record whose row is not in `intent` under the same lease number and intent event, so a forged or replayed acknowledgement changes nothing.
+The token is the write gate. The engine receives it through `ControlPort`, and the driver's handle in `a2m-provider` refuses a step that commits without one, so no driver can be called for a write whose intent is not stored. In one process the type is the guard. Across the runner link the ledger is: a runner rebuilds the token from the control plane's acknowledgement, and the ledger refuses to mark `acted` a record whose row is not in `intent` under the same lease number and intent event, so a forged or replayed acknowledgement changes nothing.
 
 ## The preview, step by step
 

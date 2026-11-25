@@ -460,7 +460,7 @@ handler!(
 );
 
 /// The sign-in entries the target's files declare for each surface, as
-/// `auth.yaml` writes them: the identity mode and the provider. `None` when
+/// `auth.yaml` writes them: the identity kind and the provider. `None` when
 /// the call is made outside a project that holds the target.
 async fn declared_sign_ins(
     kernel: &Kernel,

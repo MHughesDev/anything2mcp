@@ -692,7 +692,7 @@ fn sign_in(entry: usize, pending: bool) -> crate::SignInReview {
         entry,
         surfaces: Vec::new(),
         provider: a2m_core::AuthProviderName::new("example_form").unwrap(),
-        mode: a2m_core::SignInMode::ManagedSession,
+        mode: a2m_core::SignInKind::ManagedSession,
         credentials: Vec::new(),
         probe: if pending {
             ProbeReview::Pending {

@@ -111,7 +111,7 @@ let log = stand.control().invocations()?;                   // log[0].args, in o
 | `living_children()`, `stop_children()`, `wait_until_no_children(within)` | Which starts' child processes are alive now, and ending them |
 | `hold_write_lock()` | Takes the write lock, so that every write answers busy until the returned value is dropped |
 | `signed_in()`, `expire_session()` | Whether a session is kept, and ending it |
-| `for_home(path)`, `Control::at(control_folder, home)` | The same control folder over a home folder the stand did not make |
+| `for_home(path)`, `ControlPort::at(control_folder, home)` | The same control folder over a home folder the stand did not make |
 
 **How the program finds the control folder.** As the folder `example-cli-control` beside its own executable, or else by the variable `EXAMPLE_CLI_CONTROL`. The first way needs nothing in the environment, so a start with a bare environment is still recorded and still takes its faults. With neither, the program records nothing and has no faults. The program records each start before it does anything else.
 

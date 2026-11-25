@@ -31,7 +31,7 @@ pub use failure::{
     POLICY_TESTS_FAILED, PRESENCE_REQUIRED, SECOND_ADMIN_REQUIRED,
 };
 pub use model::{
-    ActingFor, ActionName, ActionRef, Context, GroupName, IdentityMode, ModuleName, OptionName,
+    ActingFor, ActionName, ActionRef, Context, GroupName, IdentityKind, ModuleName, OptionName,
     PrincipalKind, PrincipalRef, Question, Request, Resource, Role, RuleId, RunRef, ToolRef,
     ToolsetName,
 };

@@ -1,4 +1,4 @@
-//! `Control` in one process: everything the engine asks for while it runs a
+//! `ControlPort` in one process: everything the engine asks for while it runs a
 //! job, answered by the store, the policy engine, the session keeper, and
 //! the scheduler directly.
 //!
@@ -25,7 +25,7 @@ use a2m_core::{
     SurfaceName, ToolRuns, Values,
 };
 use a2m_engine::{
-    BoxFuture, Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, Preview,
+    BoxFuture, Clearance, ControlPort, EngineEvent, Evidence, GuardQuestion, KeptCapture, Preview,
     SessionWant, ShadowCompared, encode_values,
 };
 use a2m_ledger::{
@@ -81,7 +81,7 @@ pub(crate) fn entry_of(
     entry
 }
 
-/// `Control` for one job of one run, in the process that holds the store.
+/// `ControlPort` for one job of one run, in the process that holds the store.
 pub(crate) struct InProcessControl {
     kernel: Kernel,
     fence: Fence,
@@ -232,7 +232,7 @@ impl Drop for Notice {
     }
 }
 
-impl Control for InProcessControl {
+impl ControlPort for InProcessControl {
     fn compiled_target<'a>(
         &'a self,
         hash: &'a Digest,

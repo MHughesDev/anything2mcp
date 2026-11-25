@@ -52,7 +52,7 @@ Decisions taken in this spec:
 Open questions:
 
 - [ ] For each real target: what does it send when a record is saved (JSON to an API, form posts, or neither)?
-- [ ] For each real target: do IT and the vendor's terms allow wrapping it, and with which identity mode?
+- [ ] For each real target: do IT and the vendor's terms allow wrapping it, and with which identity kind?
 - [ ] For each real target: is there a test environment or a test record that tests may write to and restore?
 - [ ] Have the package names been reserved on PyPI and npm?
 - [ ] Which user-presence checks can a background process call on each operating system?

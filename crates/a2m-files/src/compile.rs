@@ -14,7 +14,7 @@ use a2m_core::{
     Environment, EnvironmentIndex, EnvironmentKind, FieldOf, FieldTypeIndex, FileKindName, Hazard,
     InputIndex, LintCode, Millis, Mode, OperationIndex, OperationName, PackPayload, PackRef,
     PackSection, PermissionManifest, PipelineIndex, PipelineLimits, PipelineStep, RecordKey,
-    RecordMatching, RunQuestion, SectionIndex, SignInMode, Stands, Step, StepArg, StepKind,
+    RecordMatching, RunQuestion, SectionIndex, SignInKind, Stands, Step, StepArg, StepKind,
     SurfaceIndex, SurfaceKind, SurfaceName, TargetName, TargetSection, TestKind, ToolAnnotations,
     ToolIndex, ToolRuns, Value, ValueType, Values, Verb, Version, WriteEvidence,
 };
@@ -1319,7 +1319,7 @@ impl<'a> Compiler<'a> {
         }
         let mode = entry
             .text("mode")
-            .and_then(|mode| mode.parse::<SignInMode>().ok())?;
+            .and_then(|mode| mode.parse::<SignInKind>().ok())?;
         let provider_doc = entry.get("provider")?;
         let Some(provider) = provider_doc
             .as_text()

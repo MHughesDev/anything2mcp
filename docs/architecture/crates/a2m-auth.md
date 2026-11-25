@@ -278,7 +278,7 @@ A token endpoint and an authorization endpoint must be addresses the target decl
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-actions` as the in-process `Control`, and `a2m-runner` on the control-plane side of the runner link | `lease`, `report`, on the engine's behalf. The engine reaches the keeper only through `Control` and names nothing here but `SessionLease`, which its driver receives |
+| `a2m-actions` as the in-process `ControlPort`, and `a2m-runner` on the control-plane side of the runner link | `lease`, `report`, on the engine's behalf. The engine reaches the keeper only through `ControlPort` and names nothing here but `SessionLease`, which its driver receives |
 | `a2m-actions` | `Keeper::builder`, `SessionStore::new`, `sign_in` and `sign_in_by`, `status`, `timeline`, `revoke`, `tick`, `idle`; `StoredCredentials` for `secret.set`; implements `KeeperWork`, `AskPerson`, and `RunProbe`, forwarding to `PersonSurface` |
 | `a2m-provider` | `AuthProvider`, `ProviderSet`, `SessionLease`, `CredentialSink`, to register providers and to hand the lease to a driver |
 | `a2m-runner`, and the in-process runner in `a2m-actions` | `KeeperWorker::run`, `KeeperWorker::bind` |

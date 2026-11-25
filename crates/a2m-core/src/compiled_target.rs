@@ -153,7 +153,7 @@ impl DescriptionBy {
 
 vocabulary! {
     /// How a sign-in comes to exist (spec section 215).
-    pub enum SignInMode: "sign-in mode" {
+    pub enum SignInKind: "sign-in kind" {
         /// What the device already has.
         UseExisting => "use_existing",
         /// A person signs in once, in a place the engine owns.
@@ -581,7 +581,7 @@ pub struct CompiledAuth {
     /// The surfaces the entry covers. No surface is covered twice.
     pub surfaces: Vec<SurfaceIndex>,
     /// How the sign-in comes to exist.
-    pub mode: SignInMode,
+    pub mode: SignInKind,
     /// The auth provider that signs in.
     pub provider: AuthProviderName,
     /// The read that shows the sign-in still holds.
@@ -1868,7 +1868,7 @@ mod tests {
             }],
             auth: vec![CompiledAuth {
                 surfaces: vec![SurfaceIndex::new(0)],
-                mode: SignInMode::Custom,
+                mode: SignInKind::Custom,
                 provider: AuthProviderName::new("api_key").unwrap(),
                 probe: CompiledProbe::Operation {
                     operation: OperationIndex::new(0),

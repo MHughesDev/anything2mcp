@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::failure::invalid;
 use crate::model::{
-    GroupName, IdentityMode, ModuleName, OptionName, PrincipalRef, Request, Role, RuleId, ToolRef,
+    GroupName, IdentityKind, ModuleName, OptionName, PrincipalRef, Request, Role, RuleId, ToolRef,
     word,
 };
 use crate::rules::{self, Answer};
@@ -106,7 +106,7 @@ pub struct RoleBinding {
 }
 
 /// A grant: who may use which tools, up to which effect class, acting through
-/// which identity mode. Each grant is one permit.
+/// which identity kind. Each grant is one permit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Grant {
     /// Who it is given to.
@@ -115,8 +115,8 @@ pub struct Grant {
     pub scope: Scope,
     /// The highest effect class it allows.
     pub max_effect: EffectClass,
-    /// The identity mode a run under it may use.
-    pub identity_mode: IdentityMode,
+    /// The identity kind a run under it may use.
+    pub identity_mode: IdentityKind,
 }
 
 /// Who may see fields up to a sensitivity label.
@@ -390,7 +390,7 @@ impl BuiltIn {
                     role: *role,
                 })
                 .collect(),
-            grants: IdentityMode::ALL
+            grants: IdentityKind::ALL
                 .iter()
                 .map(|mode| Grant {
                     who: who.clone(),

@@ -2,7 +2,7 @@
 
 On a company server, every run must answer one question: who does the target application see? The design gives four answers, set per target and per toolset, and they can be mixed. Not built today: it is the design for a shared server, which comes after the first release.
 
-| Identity mode | The app sees | How it works | Modes it serves | Conditions |
+| Identity kind | The app sees | How it works | Modes it serves | Conditions |
 | --- | --- | --- | --- | --- |
 | `per_user_token` | The calling user | The caller's access token is exchanged through the OAuth On-Behalf-Of flow for a token to the target's API | `api`, `http` | The target API is registered in the organization's Entra tenant and grants Anything2MCP delegated permission |
 | `per_user_session` | The calling user | The user signs in once to a browser hosted by a server runner, shown to them on a secure sign-in page; the session is stored for that user alone | `ui`, `page_http`, cookie-based `http` | Fails where Conditional Access demands a managed device; device-bound methods such as Windows Hello are not expected to work in a remote browser |

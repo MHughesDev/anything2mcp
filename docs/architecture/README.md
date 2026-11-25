@@ -63,8 +63,8 @@ A dependency may only point down, so an interface is defined in the lowest crate
 | Target files: schemas, loader, linter, compiler; the drafter | `a2m-files` | `a2m-files` | `a2m-actions` to lint, compile, draft. Never the engine | Not applicable |
 | What a pack registers with the compiler: file kinds, verb lowerings, lint rules, drafting rules | `a2m-files` | Packs | `a2m-files` | `a2m-provider` gathers them into one set; `a2m-actions` passes the set to the compiler |
 | The store: runs, the ledger with its record locks, events, evidence blobs, findings, the audit chain; migrations | `a2m-ledger` | `a2m-ledger`, on SQLite and Postgres | Layers 4 to 8 | `a2m-actions` |
-| `decide`: one request in, one recorded decision out; approvals | `a2m-policy` | `a2m-policy` | `a2m-actions` at every entry; the engine at guard, through `Control` | `a2m-actions` |
-| The session keeper; `SessionLease` | `a2m-auth` | `a2m-auth` | The engine for a lease, through `Control`; `a2m-actions` for sign-in and status | `a2m-actions` |
+| `decide`: one request in, one recorded decision out; approvals | `a2m-policy` | `a2m-policy` | `a2m-actions` at every entry; the engine at guard, through `ControlPort` | `a2m-actions` |
+| The session keeper; `SessionLease` | `a2m-auth` | `a2m-auth` | The engine for a lease, through `ControlPort`; `a2m-actions` for sign-in and status | `a2m-actions` |
 | `AuthProvider`: sign in, check, renew, sign out, inject | `a2m-auth` | `a2m-auth` for those that only hold or exchange a credential; packs for those that need a surface of the system, such as a browser | The session keeper only | `a2m-provider` registers; `a2m-actions` hands them to the keeper |
 | `KeeperWork`: run a probe, a renewal, or a sign-in on a session's home runner | `a2m-auth` | `a2m-actions`, by submitting a job | The session keeper | `a2m-actions` |
 | `SourceReader`: an input turned into validated records. It takes bytes, never a path | `a2m-sources` | `a2m-sources` for the built-in formats; plug-ins | `a2m-engine` | `a2m-provider` |
@@ -76,7 +76,7 @@ A dependency may only point down, so an interface is defined in the lowest crate
 | File access for packs: a path that can only be made by the check against the allowed roots | `a2m-provider` | `a2m-provider` | Packs, which receive checked paths and never resolve one; `a2m-actions` for the kernel's own reads | `a2m-provider` |
 | An action a provider adds | `a2m-provider` | Packs; plug-ins | The dispatcher in `a2m-actions` | `a2m-provider` |
 | The engine loop: one job in, one outcome out | `a2m-engine` | `a2m-engine` | A runner, in this process or another | A role |
-| `Control`: everything the engine needs from the control plane while it runs a job: the compiled target by its hash, the policy decision at guard, a session lease, a record lock, a rate budget, the approval check, recording an intent and getting its token, sending events and evidence | `a2m-engine` | `a2m-actions` directly in one process; `a2m-runner` over the runner link | `a2m-engine` | A role |
+| `ControlPort`: everything the engine needs from the control plane while it runs a job: the compiled target by its hash, the policy decision at guard, a session lease, a record lock, a rate budget, the approval check, recording an intent and getting its token, sending events and evidence | `a2m-engine` | `a2m-actions` directly in one process; `a2m-runner` over the runner link | `a2m-engine` | A role |
 | Admission, queues, job leases, waiting for record locks and other exclusive resources, budgets | `a2m-sched` | `a2m-sched` | `a2m-actions` to submit; a runner to claim | `a2m-actions` |
 | The action registry, the dispatcher, the `Kernel` handle, and the check of a caller's credential | `a2m-actions` | `a2m-actions` | Every role | A role builds the `Kernel` |
 | `PersonSurface`: asking a person to approve, to sign in, or to confirm they are present | `a2m-actions` | `a2m-local` on one machine; `a2m-api` on a server | `a2m-actions` | The product crate hands it to `Kernel::open` |
@@ -85,7 +85,7 @@ A dependency may only point down, so an interface is defined in the lowest crate
 Nine consequences are worth stating, because each closes a question an implementer would otherwise have to guess at.
 
 - **The engine cannot name a driver, a pack, or a mode.** It asks the registry for the driver registered for a binding's mode and gets back a handle.
-- **The engine never touches the store, the policy engine, or the compiler.** Everything it needs while running a job comes through `Control`, so the same engine runs unchanged on a machine that has no store. The audit refuses a dependency from `a2m-engine` on `a2m-files` or `a2m-policy`; it may name a type from `a2m-ledger`, such as the intent token, and never opens a store.
+- **The engine never touches the store, the policy engine, or the compiler.** Everything it needs while running a job comes through `ControlPort`, so the same engine runs unchanged on a machine that has no store. The audit refuses a dependency from `a2m-engine` on `a2m-files` or `a2m-policy`; it may name a type from `a2m-ledger`, such as the intent token, and never opens a store.
 - **The engine and the scheduler do not know each other.** The scheduler hands out job leases. A runner claims one and calls the engine. In one process the runner is a loop inside `a2m-actions`; across machines it is `a2m-runner`.
 - **The session keeper never calls upward.** Its checks and renewals are work that must run on a session's home runner, so it is handed a `KeeperWork` and uses that.
 - **Every entry is an action, with one exception.** Calling a target's tool is the action `tool.call`. A front door reads the caller's credential, has `a2m-actions` check it, builds a request, and dispatches. It decides nothing and holds no engine logic. The exception is recording a person's approval or refusal: it is deliberately not an action and has no generated face, so that no command, tool, or route can approve. The approval surface is given a handle that can do those two things and nothing else.
@@ -103,11 +103,11 @@ Each step names the crate that does it. A crate design repeats its own steps in 
 1. A front door (`a2m-mcp`, `a2m-api`, or a command through `a2m-local`) authenticates the caller and dispatches `tool.call`.
 2. `a2m-actions` asks `a2m-policy` to decide. The decision is recorded whether it allows or refuses.
 3. `a2m-actions` submits the run to `a2m-sched`, which admits or refuses it against queues, per-session limits, and budgets, and writes the run row through `a2m-ledger`.
-4. A runner claims the job and calls `a2m-engine` with a `Control`.
-5. The engine fetches the published compiled target by its hash through `Control`, checks the hash, guards with the policy decision `Control` returns, and chooses a binding by its declared order and health.
-6. The engine asks for a `SessionLease` through `Control`; the keeper in `a2m-auth` supplies it or the run stops at `needs_login`.
+4. A runner claims the job and calls `a2m-engine` with a `ControlPort`.
+5. The engine fetches the published compiled target by its hash through `ControlPort`, checks the hash, guards with the policy decision `ControlPort` returns, and chooses a binding by its declared order and health.
+6. The engine asks for a `SessionLease` through `ControlPort`; the keeper in `a2m-auth` supplies it or the run stops at `needs_login`.
 7. The engine asks the `a2m-provider` registry for the driver of the binding's mode, and calls prepare and act for each step. The driver is pack code.
-8. The engine normalizes the values with the field types, sends events and the finished trace through `Control`, which in one process writes them through `a2m-ledger`, and returns the outcome.
+8. The engine normalizes the values with the field types, sends events and the finished trace through `ControlPort`, which in one process writes them through `a2m-ledger`, and returns the outcome.
 9. The front door returns the result, already redacted, with a reference to the trace.
 
 ### A write
@@ -116,7 +116,7 @@ Steps 1 to 6 as for a read, then:
 
 7. The engine reads current values and builds the diff. If policy requires approval the run rests at `needs_approval`, and the caller gets the diff's reference and nothing that could approve it.
 8. A person approves through a surface the caller cannot reach. `a2m-policy` stores a single-use approval bound to the diff's hash.
-9. On resume the engine checks the approval through `Control`. For each record it takes the record lock and records the intent, both through `Control`, and only then calls the driver. The ledger answers a recorded intent with a token, and the driver's handle refuses a step that commits without one.
+9. On resume the engine checks the approval through `ControlPort`. For each record it takes the record lock and records the intent, both through `ControlPort`, and only then calls the driver. The ledger answers a recorded intent with a token, and the driver's handle refuses a step that commits without one.
 10. The engine confirms, reads the value back, compares after normalization, and writes `verified` or stops with a failure class.
 11. On any resume, the engine reconciles before it writes: for every record in `intent` or `acted`, it reads the system first.
 
@@ -141,7 +141,7 @@ Steps 1 to 6 as for a read, then:
 
 1. `a2m-runner` opens the connection outward and says what it can serve.
 2. It claims a job and receives a lease with a deadline.
-3. It calls the same engine with a `Control` that speaks over the link: every lease, lock, budget, and approval check is a `need` answered by the control plane.
+3. It calls the same engine with a `ControlPort` that speaks over the link: every lease, lock, budget, and approval check is a `need` answered by the control plane.
 4. Events flow back as they happen. A lease that ends without a result is treated as `possible_commit` and reconciled before anyone else gets the job.
 
 ## Where state lives
@@ -154,7 +154,7 @@ Steps 1 to 6 as for a read, then:
 | Decisions, approvals, grants, consents, delegations, kill switches, quota counters | The store | `a2m-policy` |
 | Sessions' records, their events, and saved session state, sealed | The store | `a2m-auth` |
 | Jobs, leases, and budgets, in the tables `jobs`, `runners`, `resource_holds`, `caller_turns`, `scheduler_holds`, and `budgets` | The store | `a2m-sched` |
-| The health of each binding | The store | `a2m-engine`, written through `Control` |
+| The health of each binding | The store | `a2m-engine`, written through `ControlPort` |
 | Toolsets, and the scout's stage results | The store | `a2m-actions` |
 | The vault's wrapped keys | The store, through `KeyRecords`; the root key in the operating system's key store or a key service | `a2m-vault` |
 | A live session: a browser profile, tokens in memory, an open connection or link | The session's home runner | `a2m-auth` decides; the pack's driver holds the handle |

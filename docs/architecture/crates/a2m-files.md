@@ -374,7 +374,7 @@ A crate whose tests need a whole pack, with a driver beside the compiler side, r
 | `a2m-provider` | `CompilerSetBuilder`, to gather what packs and plug-ins register |
 | Packs | The four registration traits and their read-only views. They build `Step` and `PackPayload` from `a2m-core`; a driver later decodes its own payloads without this crate |
 
-The engine never uses this crate; the audit refuses the dependency. It reads compiled targets through `Control`, as `a2m-core` types.
+The engine never uses this crate; the audit refuses the dependency. It reads compiled targets through `ControlPort`, as `a2m-core` types.
 
 It calls `a2m-core`, for the compiled target types and their encoding, and `a2m-expr`, and the registered traits.
 

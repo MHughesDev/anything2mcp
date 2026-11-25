@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use a2m_core::{
     AddressScope, AuthProviderName, CompiledProbe, CompiledTarget, CredentialRef, DeclaredProgram,
-    Digest, EffectClass, Environment, Hazard, Mode, OperationName, ScopedHost, SignInMode,
+    Digest, EffectClass, Environment, Hazard, Mode, OperationName, ScopedHost, SignInKind,
     SurfaceIndex, SurfaceName,
 };
 use serde::Serialize;
@@ -325,7 +325,7 @@ pub struct SignInReview {
     /// The auth provider.
     pub provider: AuthProviderName,
     /// How the sign-in comes to exist.
-    pub mode: SignInMode,
+    pub mode: SignInKind,
     /// Each stored credential, by role and reference. Never a value.
     pub credentials: Vec<CredentialShown>,
     /// The read that checks the session.

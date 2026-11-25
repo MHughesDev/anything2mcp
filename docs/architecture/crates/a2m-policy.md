@@ -72,7 +72,7 @@ pub enum Resource {
 pub struct Context {
     pub effect: EffectClass, pub hazard: Hazard, pub records: Option<u32>,
     pub workspace: WorkspaceId, pub toolset: Option<ToolsetName>, pub environment: Environment,
-    pub identity_mode: Option<IdentityMode>, pub acting_for: Option<ActingFor>,
+    pub identity_mode: Option<IdentityKind>, pub acting_for: Option<ActingFor>,
     pub caller_is_agent: bool, // true for every caller of the local channel, MCP, and an SDK; in one
                                // process the process's view of its terminal: a claim, never proof of a
                                // person, which only the presence prompt gives (decision 0158)
@@ -121,16 +121,16 @@ pub struct PolicyLayers {
     pub settings: Settings, pub tests: Vec<PolicyTest>,
 }
 pub enum Subject { Principal(PrincipalId), Group(GroupName), Anyone }
-pub struct Grant { pub who: Subject, pub scope: Scope, pub max_effect: EffectClass, pub identity_mode: IdentityMode }
+pub struct Grant { pub who: Subject, pub scope: Scope, pub max_effect: EffectClass, pub identity_mode: IdentityKind }
 pub enum Scope { Target(TargetName), Module(TargetName, ModuleName), Pattern(String) }
 /// A role is a bundle of grants: everyone who holds `role` holds this permit.
-pub struct RoleGrant { pub role: Role, pub scope: Scope, pub max_effect: EffectClass, pub identity_mode: IdentityMode }
+pub struct RoleGrant { pub role: Role, pub scope: Scope, pub max_effect: EffectClass, pub identity_mode: IdentityKind }
 /// A lower layer that only narrows. It holds no permit; once a set defines toolsets, a call through
 /// a toolset the set does not define is refused. `PolicyLayers` also carries `role_grants`,
 /// `toolsets`, and `second_admin_publish` (all absent from the stored text when unused).
 pub struct Toolset {
     pub name: ToolsetName, pub who: Vec<Subject>, pub tools: Vec<Scope>,
-    pub max_effect: EffectClass, pub identity_mode: IdentityMode, pub allow_pre_approval: bool,
+    pub max_effect: EffectClass, pub identity_mode: IdentityKind, pub allow_pre_approval: bool,
 }
 pub struct Settings {
     pub approve_writes: ApproveWrites, pub max_records_per_run: u32, pub approval_window_minutes: u32,
@@ -194,7 +194,7 @@ Contracts that the signatures do not show:
 | Caller | Uses |
 | --- | --- |
 | `a2m-actions` | `Policy::open`; `decide` at every dispatch; `compile`, `test`, `publish`, `explain`, `set_kill_switch`, for the actions `grant.add`, `policy.publish`, `policy.test`, `policy.explain`, `killswitch.set`; passes the `ApprovalSurface` to the approval surface |
-| `a2m-actions` as the in-process `Control`, and `a2m-runner` on the control-plane side of the runner link | On the engine's behalf: `decide` at guard, before the write phase and on resume; `consume`; `check_limits`. The engine never names this crate |
+| `a2m-actions` as the in-process `ControlPort`, and `a2m-runner` on the control-plane side of the runner link | On the engine's behalf: `decide` at guard, before the write phase and on resume; `consume`; `check_limits`. The engine never names this crate |
 | `a2m-sched` | `kill_epoch`, to stop handing out work and to tell runners |
 | `a2m-local`, `a2m-api` | `ApprovalSurface::approve` and `decline`, through the handle `a2m-actions` gives the approval surface; the person is reached through `PersonSurface` |
 

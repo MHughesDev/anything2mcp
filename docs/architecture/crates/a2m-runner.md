@@ -1,6 +1,6 @@
 # `a2m-runner`
 
-The runner role, for a runner on another machine than the control plane. A runner opens the connection outward, says what it can serve, claims a job under a lease, and calls the same engine as a single process does, with a `Control` whose every answer comes over the link. It keeps a local journal so that a runner cut off mid-write can still account for what it did. This crate also holds the control plane's end of the link. Nothing of it is built yet: the crate is an empty library, and every step of its build order is open.
+The runner role, for a runner on another machine than the control plane. A runner opens the connection outward, says what it can serve, claims a job under a lease, and calls the same engine as a single process does, with a `ControlPort` whose every answer comes over the link. It keeps a local journal so that a runner cut off mid-write can still account for what it did. This crate also holds the control plane's end of the link. Nothing of it is built yet: the crate is an empty library, and every step of its build order is open.
 
 ## Facts
 
@@ -16,7 +16,7 @@ The runner role, for a runner on another machine than the control plane. A runne
 ## Owns
 
 - The runner process: enrollment, the outward connection, `hello`, `claim`, `events`, `heartbeat`, `need`, `result`, `session-state`, `bye`, and the directives `continue`, `cancel`, `drain`.
-- `LinkControl`: the engine's `Control`, implemented by sending a `need` or an event over the link.
+- `LinkControl`: the engine's `ControlPort`, implemented by sending a `need` or an event over the link.
 - The runner's lease clock, and the rule that it stops acting before its lease runs out.
 - The local journal.
 - Holding live sessions on this machine, as the home runner, through the keeper's work half and the packs' drivers.
@@ -37,7 +37,7 @@ impl Runner {
 
 /// The engine's Control over the link. One per held job.
 pub struct LinkControl { /* link, lease number, sequence, steady-clock deadline, journal */ }
-impl Control for LinkControl { /* each method below */ }
+impl ControlPort for LinkControl { /* each method below */ }
 
 /// The control plane's end. A service the product crate mounts at the runner path.
 pub struct LinkService { /* Kernel */ }
@@ -57,16 +57,16 @@ Every call is a request from the runner over mutually authenticated HTTPS, to on
 | `claim` | A long poll of up to 30 seconds while slots are free | `a2m-sched` claim with the runner's offer; the reply is a lease: job, lease number, length as a duration |
 | `events` | Batches, in order, from the journal | Stored through the `Kernel`; the reply acknowledges intents with the ledger's tokens and may carry a directive |
 | `heartbeat` | Every 10 seconds per held lease | Renews in `a2m-sched`; the reply gives the time remaining and may carry a directive |
-| `need` | See `LinkControl` below | The same functions the in-process `Control` in `a2m-actions` calls |
+| `need` | See `LinkControl` below | The same functions the in-process `ControlPort` in `a2m-actions` calls |
 | `result` | The job's outcome, after its last event is acknowledged | `a2m-sched` completes the job |
 | `session-state` | A session's sealed state, to be saved | Stored in the vault for that identity alone |
 | `bye` | Before a planned stop, after the journal is empty | Ends the runner's leases cleanly |
 
 ## `LinkControl`
 
-The engine cannot tell whether it runs here or in one process. That is the point of the `Control` trait, and the same conformance tests run against both implementations.
+The engine cannot tell whether it runs here or in one process. That is the point of the `ControlPort` trait, and the same conformance tests run against both implementations.
 
-The list is the spine's `Control`, in its order. The engine on a runner opens no store, no policy engine, and no compiler; this table is everything it receives.
+The list is the spine's `ControlPort`, in its order. The engine on a runner opens no store, no policy engine, and no compiler; this table is everything it receives.
 
 | The engine asks | Sent as | Notes |
 | --- | --- | --- |
@@ -160,7 +160,7 @@ A server runner may be given jobs for its enrolled targets as a service account 
 
 | Must always hold | Proven by |
 | --- | --- |
-| The same conformance suite passes against `LinkControl` and the in-process `Control` | One suite, two carriers, run on every build |
+| The same conformance suite passes against `LinkControl` and the in-process `ControlPort` | One suite, two carriers, run on every build |
 | A message with an older lease number is refused | A test that replays a message after a new lease |
 | No write is sent within 5 seconds of the runner's deadline | A test with a slowed clock and a write pending |
 | Every write sent is in the journal first | A test that kills the runner just after a write and reads the journal |
@@ -170,7 +170,7 @@ A server runner may be given jobs for its enrolled targets as a service account 
 
 ## Build order
 
-1. Not built: `LinkService` and `LinkControl` over an in-memory carrier, passing the same suite as the in-process `Control`. This makes hypothesis H-21 measurable from the other side.
+1. Not built: `LinkService` and `LinkControl` over an in-memory carrier, passing the same suite as the in-process `ControlPort`. This makes hypothesis H-21 measurable from the other side.
 2. Not built: `hello`, `claim`, `heartbeat`, `result` over HTTPS with a fixed test certificate; one read job. Package 7.1.
 3. Not built: `events` with intent acknowledgements, and the journal.
 4. Not built: lost leases, quarantine, late evidence, `cancel` and `drain`. Package 7.2.

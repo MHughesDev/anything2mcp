@@ -319,7 +319,7 @@ Not proven:
 - Redelivery after the acknowledgement wait on `nats` against a real server. The stand redelivers after the wait on its own clock, when a test moves it; a run that drops its connection holding a message leaves it pending until then, as the reviewer read the server to do.
 
 - The session path with a real lease. Tests run with no lease; the token reaches the wire only through `connect`, which the stand's token case exercises from the refusing side. Read, not run: `SessionLease::apply` registers every secret with the vault's redactor before the driver's sink is given it, so the token is known to the redactor before `connect`; the refusal of a credential that cannot be carried is tested on the sink alone.
-- A take, or a publish with no read-back, through the engine. Their bindings offer `acknowledged`, and the record ends `acted` only through `Control::acknowledged`, which the ledger does not yet implement; what the engine stores before the commit point, and hands back through `Prepared::recorded`, was read in its code and played by the tests through `DriverHandle::act_recorded`.
+- A take, or a publish with no read-back, through the engine. Their bindings offer `acknowledged`, and the record ends `acted` only through `ControlPort::acknowledged`, which the ledger does not yet implement; what the engine stores before the commit point, and hands back through `Prepared::recorded`, was read in its code and played by the tests through `DriverHandle::act_recorded`.
 - The engine loop over these steps. The tests call the handle directly.
 - Windows and macOS. The crate has no code that differs by system, and its tree compiles C below it, so it was linted and run on Linux only.
 

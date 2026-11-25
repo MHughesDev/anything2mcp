@@ -16,7 +16,7 @@ use serde::Serialize;
 
 use crate::failure;
 use crate::model::{
-    ActingFor, ActionName, ActionRef, Context, IdentityMode, ModuleName, PrincipalKind,
+    ActingFor, ActionName, ActionRef, Context, IdentityKind, ModuleName, PrincipalKind,
     PrincipalRef, Question, Request, Resource, Role, RunRef, ToolRef, word,
 };
 use crate::set::{ApproveWrites, Compiled, PolicyTest, Scope, Settings, Subject};
@@ -303,9 +303,9 @@ fn permits(set: &Compiled, request: &Request) -> Result<Permits, Failure> {
             }
         }
         (Question::ActAs, Resource::Identity(identity)) => {
-            let fits = |mode: IdentityMode| match identity {
-                Identity::Person(_) => mode != IdentityMode::ServiceAccount,
-                Identity::Account(_) => mode == IdentityMode::ServiceAccount,
+            let fits = |mode: IdentityKind| match identity {
+                Identity::Person(_) => mode != IdentityKind::ServiceAccount,
+                Identity::Account(_) => mode == IdentityKind::ServiceAccount,
             };
             for (index, grant) in layers.grants.iter().enumerate() {
                 if grant.who.covers(principal)
@@ -493,7 +493,7 @@ pub(crate) fn describe(set: Option<&Compiled>, rule: &str) -> String {
                 let index = rest.parse::<usize>().ok()?;
                 let grant = layers.grants.get(index)?;
                 Some(format!(
-                    "Grant {index} gives {} {}, up to the effect class `{}`, with the identity mode `{}`.",
+                    "Grant {index} gives {} {}, up to the effect class `{}`, with the identity kind `{}`.",
                     who_words(&grant.who),
                     scope_words(&grant.scope),
                     grant.max_effect,
@@ -504,7 +504,7 @@ pub(crate) fn describe(set: Option<&Compiled>, rule: &str) -> String {
                 let index = rest.parse::<usize>().ok()?;
                 let grant = layers.role_grants.get(index)?;
                 Some(format!(
-                    "Role grant {index} gives everyone who holds the role `{}` {}, up to the effect class `{}`, with the identity mode `{}`.",
+                    "Role grant {index} gives everyone who holds the role `{}` {}, up to the effect class `{}`, with the identity kind `{}`.",
                     grant.role,
                     scope_words(&grant.scope),
                     grant.max_effect,
@@ -677,7 +677,7 @@ mod tests {
         POLICY_EVALUATION_FAILED,
     };
     use crate::model::{
-        ActingFor, ActionName, ActionRef, Context, IdentityMode, ModuleName, OptionName,
+        ActingFor, ActionName, ActionRef, Context, IdentityKind, ModuleName, OptionName,
         PrincipalKind, PrincipalRef, Question, Request, Resource, Role, RunRef, ToolRef,
     };
     use crate::set::{
@@ -741,7 +741,7 @@ mod tests {
                     role: *role,
                 })
                 .collect(),
-            grants: IdentityMode::ALL
+            grants: IdentityKind::ALL
                 .iter()
                 .map(|mode| Grant {
                     who: Subject::Anyone,
@@ -816,7 +816,7 @@ mod tests {
         ];
         for (question, resource) in questions {
             let mut context = context(EffectClass::Read);
-            context.identity_mode = Some(IdentityMode::PerUserSession);
+            context.identity_mode = Some(IdentityKind::PerUserSession);
             let verdict = evaluate(
                 &empty.compiled,
                 &ask(person.clone(), question, resource, context),
@@ -881,7 +881,7 @@ mod tests {
                     ModuleName::new("orders").unwrap(),
                 ),
                 max_effect: EffectClass::Read,
-                identity_mode: IdentityMode::ServiceAccount,
+                identity_mode: IdentityKind::ServiceAccount,
             }],
             ..PolicyLayers::default()
         };
@@ -983,7 +983,7 @@ mod tests {
         let mut agent_context = context(EffectClass::Write);
         agent_context.caller_is_agent = true;
         let mut session = context(EffectClass::Read);
-        session.identity_mode = Some(IdentityMode::PerUserSession);
+        session.identity_mode = Some(IdentityKind::PerUserSession);
         let mut delegated = session.clone();
         delegated.acting_for = Some(ActingFor::Delegation(id(2)));
         let mut hazard = context(EffectClass::Write);
@@ -1127,7 +1127,7 @@ mod tests {
         let refusal = evaluate(&set.compiled, &agent).refusal.unwrap();
         assert_eq!(refusal.code(), &APPROVAL_REFUSED);
         let mut session = context(EffectClass::Read);
-        session.identity_mode = Some(IdentityMode::PerUserSession);
+        session.identity_mode = Some(IdentityKind::PerUserSession);
         let other = ask(
             PrincipalRef::person(id(1)),
             Question::ActAs,
@@ -1154,7 +1154,7 @@ mod tests {
         );
         assert_eq!(evaluate(&set.compiled, &as_session).answer, Answer::Deny);
         let mut service = context(EffectClass::Read);
-        service.identity_mode = Some(IdentityMode::ServiceAccount);
+        service.identity_mode = Some(IdentityKind::ServiceAccount);
         let as_service = ask(
             PrincipalRef::person(id(1)),
             Question::ActAs,
@@ -1230,8 +1230,8 @@ mod tests {
         context.caller_is_agent = random.next(2) == 1;
         context.identity_mode = [
             None,
-            Some(IdentityMode::PerUserSession),
-            Some(IdentityMode::ServiceAccount),
+            Some(IdentityKind::PerUserSession),
+            Some(IdentityKind::ServiceAccount),
         ][random.next(3)];
         context.acting_for = [
             None,

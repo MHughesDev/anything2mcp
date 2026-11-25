@@ -1471,7 +1471,7 @@ fn the_act_page_shows_sign_ins_before_tools_and_escapes_and_hides_every_secret_v
         entry,
         surfaces: vec![surface()],
         provider: "bearer_static".parse().unwrap(),
-        mode: a2m_core::SignInMode::Custom,
+        mode: a2m_core::SignInKind::Custom,
         credentials: vec![CredentialShown {
             role: "token".to_owned(),
             reference: "vault://example/api/token".parse().unwrap(),

@@ -54,7 +54,7 @@ impl Scheduler {
     pub async fn drain(&self, runner: RunnerId) -> Result<(), Failure>;
     pub async fn bye(&self, runner: RunnerId) -> Result<(), Failure>;
 
-    // What a running job asks for, through the engine's `Control`.
+    // What a running job asks for, through the engine's `ControlPort`.
     pub async fn acquire(&self, lease: &LeaseRef, keys: &[ResourceKey], wait: Duration) -> Result<(), Failure>;
     pub async fn release(&self, lease: &LeaseRef, keys: &[ResourceKey]) -> Result<(), Failure>;
     /// Taken before asking the ledger for a record lock, so a release in between is not missed.
@@ -255,7 +255,7 @@ Whether a hold may be set or released is the policy engine's question. `a2m-acti
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-actions` | `submit`, `enqueue`, `cancel`, `hold`, `release_hold`, `set_budget`; `hello`, `claim`, `heartbeat`, `finish` from its in-process runner loop; `acquire`, `release`, `lock_ticket`, `wait_lock`, `lock_freed`, `rate` inside its `Control`; `sweep`, `next_due`, and `due_watch` from one background task |
+| `a2m-actions` | `submit`, `enqueue`, `cancel`, `hold`, `release_hold`, `set_budget`; `hello`, `claim`, `heartbeat`, `finish` from its in-process runner loop; `acquire`, `release`, `lock_ticket`, `wait_lock`, `lock_freed`, `rate` inside its `ControlPort`; `sweep`, `next_due`, and `due_watch` from one background task |
 | The control plane's side of the runner link, in a role crate | `hello`, `claim`, `heartbeat`, `finish`, `acquire`, `release`, `wait_lock`, `rate`, `drain`, `bye`, answering a runner's calls and `need`s |
 
 It calls: `a2m-ledger` for every read and write of its tables, inside its transactions, and for the run rows (`open_run`, `new_epoch`, `set_state`, `quarantine_locks`, `run`, `in_doubt`); `a2m-logs` for the counts of admitted, refused, leased, and lost, and the time a job waited.

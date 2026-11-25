@@ -570,7 +570,7 @@ pub const SCHEMA: &[SettingDef] = &[
             L(&["per_user_session"]),
             I,
             NextStart,
-            "The identity modes a toolset may use.",
+            "The identity kinds a toolset may use.",
         ),
         "Each target's auth file says how its identity is obtained; no toolset limits it.",
         "the server, milestone 9 of the roadmap",

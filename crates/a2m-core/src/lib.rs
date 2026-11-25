@@ -63,7 +63,7 @@ pub use compiled_target::{
     DescriptionBy, DriftRisk, EncodedCompiledTarget, EnvironmentIndex, EnvironmentKind, ExprIndex,
     FailsAs, FieldBase, FieldFormat, FieldTypeIndex, InputIndex, OperationIndex, PackRef,
     PackSection, PermissionManifest, PipelineIndex, PipelineLimits, PipelineStep, RecordMatching,
-    RunQuestion, SectionIndex, Sensitivity, SignInMode, Stands, Step, StepArg, SurfaceIndex,
+    RunQuestion, SectionIndex, Sensitivity, SignInKind, Stands, Step, StepArg, SurfaceIndex,
     TargetSection, TestKind, ToolAnnotations, ToolIndex, ToolRuns, WhitespaceRule, ZoneRule,
     acknowledgement_may_stand,
 };

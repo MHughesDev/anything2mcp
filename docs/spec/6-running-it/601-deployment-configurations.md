@@ -2,7 +2,7 @@
 
 One binary covers every setup, from a single laptop to a company-wide service. Roles are switched on by configuration, and target files are identical in all of them. This section designs the setups and their roles. Built today: the `solo` profile; the workstation profile's local HTTP is not built, and the server profiles come after the first release ([section 704](../7-project/704-readiness.md)).
 
-| Profile | Shape | Who connects | Stores | Typical identity modes |
+| Profile | Shape | Who connects | Stores | Typical identity kinds |
 | --- | --- | --- | --- | --- |
 | **Solo** | One engine process per user, started on demand by the first command or MCP client and stopped when idle ([section 222](../2-kernel/222-front-doors-and-the-local-engine.md)) | That user's agents | One SQLite file, OS key store | The user's existing sign-in |
 | **Workstation service** | One background service on the machine, with local HTTP as well as stdio | Several agents and apps on that machine | SQLite, OS key store | The user's existing sign-in |

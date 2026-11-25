@@ -254,7 +254,7 @@ The packs' own packages: after each copy test, close what it found, a stand case
 | 6.2 | MCP over HTTP | An OAuth resource server | A token for another audience is refused |
 | 6.4 | The REST interface | Its description, events, webhooks | A program follows a pipeline to its end |
 | 6.5 | Approval and sign-in pages on a server; the console | | An approver approves; the caller cannot |
-| 7.1, 7.2, 7.3 | Runners | The link; enrollment and lost leases; identity modes | A runner killed mid-write leaves no duplicate |
+| 7.1, 7.2, 7.3 | Runners | The link; enrollment and lost leases; identity kinds | A runner killed mid-write leaves no duplicate |
 | 9.2, 9.4 | Audit chain, backup, upgrades; the cluster profile | | A broken chain is detected; a lost node loses no run |
 | 6.6 | The exit test of Phase 6 | | Two users share one server |
 

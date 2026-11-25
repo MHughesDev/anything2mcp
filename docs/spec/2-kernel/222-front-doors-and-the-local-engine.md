@@ -43,7 +43,7 @@ One service serves both revisions with no session for either ([decision 0071](..
 - Client registration supports Client ID Metadata Documents, which the specification prefers, and pre-registered clients. Dynamic Client Registration is deprecated in the specification but still used by some clients, so it is supported where the identity provider or a gateway offers it ([client registration](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration)).
 - **API keys** are available for clients that cannot do OAuth. A key is tied to one principal and one toolset, stored hashed, and rotatable.
 - A credential is checked in one place: `a2m-actions` verifies a bearer token against the configured issuer and audience, or an API key against its stored hash. Front doors extract the credential from their transport and never check one themselves, so the MCP and REST faces check tokens alike.
-- A caller's token is never forwarded to a target. Reaching a target as the user goes through the session keeper and the identity modes ([section 215](215-sessions-and-the-session-keeper.md), [section 602](../6-running-it/602-identity-on-a-shared-server.md)).
+- A caller's token is never forwarded to a target. Reaching a target as the user goes through the session keeper and the identity kinds ([section 215](215-sessions-and-the-session-keeper.md), [section 602](../6-running-it/602-identity-on-a-shared-server.md)).
 
 ## REST
 

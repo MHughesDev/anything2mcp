@@ -523,7 +523,7 @@ fn declare_code_sign_in(compiled_target: &mut a2m_core::CompiledTarget) {
     inputs.insert("order_id", a2m_core::Value::Text("A-100".to_owned()));
     compiled_target.auth.push(a2m_core::CompiledAuth {
         surfaces: vec![a2m_core::SurfaceIndex::new(0)],
-        mode: a2m_core::SignInMode::ManagedSession,
+        mode: a2m_core::SignInKind::ManagedSession,
         provider: a2m_auth::ProviderName::fixed(CODE_PROVIDER),
         probe: a2m_core::CompiledProbe::Operation {
             operation: a2m_core::OperationIndex::new(0),

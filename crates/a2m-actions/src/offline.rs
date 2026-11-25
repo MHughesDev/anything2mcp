@@ -32,7 +32,7 @@ use a2m_core::{
     PrincipalId, RunId, RunState, TestKind, ToolRuns, Value, Values, WorkspaceId,
 };
 use a2m_engine::{
-    BindingPin, BoxFuture, Clearance, Conditions, Control, Engine, EngineEvent, Evidence,
+    BindingPin, BoxFuture, Clearance, Conditions, ControlPort, Engine, EngineEvent, Evidence,
     GuardQuestion, JobKind, JobOutcome, JobSpec, LeaseClock, Parallelism, Preview, SessionWant,
     ToolRef,
 };
@@ -185,7 +185,7 @@ impl OfflineControl {
     }
 }
 
-impl Control for OfflineControl {
+impl ControlPort for OfflineControl {
     fn compiled_target<'a>(
         &'a self,
         _hash: &'a Digest,

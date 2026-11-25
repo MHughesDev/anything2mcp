@@ -12,7 +12,7 @@ use std::path::{Component, Path};
 
 use a2m_core::{Digest, EffectClass, Failure, OperationName, PrincipalId, TargetName};
 use a2m_policy::{
-    Answer, Context, Grant, GroupName, IdentityMode, LayerChange, ModuleName, PolicyLayers,
+    Answer, Context, Grant, GroupName, IdentityKind, LayerChange, ModuleName, PolicyLayers,
     PolicyTest, PrincipalKind, PrincipalRef, PublishProof, PublishReview, Question, Request,
     Resource, Scope, Subject, ToolRef, Toolset, ToolsetName,
 };
@@ -118,10 +118,10 @@ fn effect_of(text: &str) -> Result<EffectClass, Failure> {
     })
 }
 
-fn mode_of(text: &str) -> Result<IdentityMode, Failure> {
-    IdentityMode::from_text(text).ok_or_else(|| {
+fn mode_of(text: &str) -> Result<IdentityKind, Failure> {
+    IdentityKind::from_text(text).ok_or_else(|| {
         invalid(
-            format!("`{text}` is not an identity mode."),
+            format!("`{text}` is not an identity kind."),
             "Use `per_user_token`, `per_user_session`, `per_user_device`, or `service_account`.",
         )
     })

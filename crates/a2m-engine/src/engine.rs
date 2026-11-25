@@ -13,7 +13,7 @@ use a2m_provider::{Exclusive, Posture, Registry};
 use a2m_sources::Limits;
 
 use crate::codes;
-use crate::control::{Control, EngineEvent};
+use crate::control::{ControlPort, EngineEvent};
 use crate::guard::Timed;
 use crate::job::{JobKind, JobOutcome, JobSpec, ToolRef};
 use crate::loaded::Loaded;
@@ -34,7 +34,7 @@ pub struct EngineSettings {
     pub prepare_timeout: Duration,
     /// The time limit of a step whose compiled target states none.
     pub step_timeout: Duration,
-    /// How long the engine waits for one call to `Control` to be answered.
+    /// How long the engine waits for one call to `ControlPort` to be answered.
     /// An implementation that waits (for a lock, a lease, a rate budget)
     /// keeps its own, shorter limit; this one ends a call that never
     /// answers.
@@ -109,7 +109,7 @@ pub struct ExclusiveNeed {
 }
 
 /// The engine. It holds the compiled targets it has loaded and nothing else
-/// between jobs: the ledger, reached through `Control`, is the authority.
+/// between jobs: the ledger, reached through `ControlPort`, is the authority.
 pub struct Engine {
     pub(crate) deps: EngineDeps,
     compiled_targets: Mutex<Vec<Arc<Loaded>>>,
@@ -184,12 +184,12 @@ impl Engine {
         self.shadows_lost.load(Ordering::Relaxed)
     }
 
-    /// The compiled target by its hash, fetched through `Control` and checked
+    /// The compiled target by its hash, fetched through `ControlPort` and checked
     /// against the hash before it is used.
     pub(crate) async fn compiled_target(
         &self,
         hash: &Digest,
-        control: &dyn Control,
+        control: &dyn ControlPort,
     ) -> Result<Arc<Loaded>, Failure> {
         {
             let compiled_targets = self
@@ -300,7 +300,7 @@ impl Engine {
     /// future of a step that commits, and a caller that drops this one
     /// while such a step is in flight leaves the record in doubt, to be
     /// reconciled.
-    pub async fn run_job(&self, job: &JobSpec, control: &dyn Control) -> JobOutcome {
+    pub async fn run_job(&self, job: &JobSpec, control: &dyn ControlPort) -> JobOutcome {
         self.run_job_with(job, control, None).await
     }
 
@@ -316,7 +316,7 @@ impl Engine {
     pub async fn run_offline(
         &self,
         job: &JobSpec,
-        control: &dyn Control,
+        control: &dyn ControlPort,
         replay: Arc<a2m_provider::Replay>,
     ) -> JobOutcome {
         // Typed as the replay itself, never any driver: a pack's driver
@@ -329,7 +329,7 @@ impl Engine {
     async fn run_job_with(
         &self,
         job: &JobSpec,
-        control: &dyn Control,
+        control: &dyn ControlPort,
         replay: Option<Arc<dyn a2m_provider::Driver>>,
     ) -> JobOutcome {
         let claimed = job
@@ -347,7 +347,7 @@ impl Engine {
         };
         // A call to the control plane that never answers is given up.
         let timed = Timed::new(control, self.deps.settings.control_timeout);
-        let control: &dyn Control = &timed;
+        let control: &dyn ControlPort = &timed;
         let keeps_state = job.kind == JobKind::VerifyAfterLoss;
         let give_up = |state: RunState, failure: Failure| {
             if keeps_state {

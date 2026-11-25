@@ -34,7 +34,7 @@ In short, as of 2026-11-18: the kernel, nine packs, the local engine with its co
 | [204](../2-kernel/204-supervising-subsystems.md). Supervising subsystems | Designed as rules | Partly built; the design of `a2m-provider` says what | Build the supervisor against the rules | Promise confinement of plug-ins before the research is done |
 | [205](../2-kernel/205-target-files.md). Target files | Designed, with the [file formats](../../reference/file-formats.md) | Built for the kernel's file kinds (package B4) and for each built pack's own kinds | Add a file kind through a pack's registration | Add a field the formats do not define |
 | [206](../2-kernel/206-the-compiler-and-the-compiled-target.md). The compiler and the compiled target | Designed | Built; package 1.3's proof, the same compiled target bytes on three operating systems, is not yet shown | Extend it through the registration points | Let the engine depend on the compiler |
-| [207](../2-kernel/207-the-engine-loop.md). The engine loop | Designed | Built, for reads and verified writes | Add what a package needs, through `Control` and the driver interface | Let the engine name a mode, a driver, or a pack |
+| [207](../2-kernel/207-the-engine-loop.md). The engine loop | Designed | Built, for reads and verified writes | Add what a package needs, through `ControlPort` and the driver interface | Let the engine name a mode, a driver, or a pack |
 | [208](../2-kernel/208-runs-the-ledger-and-resume.md). Runs, the ledger, and resume | Designed, with open points | Built on SQLite, with the nine rules as tests (package 3.1); Postgres is package 6.1; the `run_steps` and `outbox` tables are not built | Add a table through a migration | Merge a change that breaks a rule |
 | [209](../2-kernel/209-record-identity-and-dependent-records.md). Record identity and dependent records | Designed | Built (package 3.8) | Add a record matching by decision record | Resume a create with no record matching |
 | [210](../2-kernel/210-sources-and-value-normalization.md). Sources and value normalization | Designed | Built (packages 3.4 and 3.9), except what package 3.9's row names | Add a source format or a field type | Compare a business value as a float |
@@ -92,7 +92,7 @@ Every bet is in the [hypothesis register](../../hypotheses/README.md). These are
 | Bet | Hypothesis | Proven or refuted by |
 | --- | --- | --- |
 | A Rust engine on the DevTools protocol is good enough | H-01 | Package 0.4 |
-| The driver interface and `Control` are drawn right | H-35, H-36 | Package 1.1 |
+| The driver interface and `ControlPort` are drawn right | H-35, H-36 | Package 1.1 |
 | Compiling target files into a compiled target is worth it | H-14 | Package 1.3 |
 | The trace signature is stable across runs and systems | H-16 | Package 1.2 |
 | The speed budgets can be met | H-20 | Package 1.7 |
@@ -123,7 +123,7 @@ These are named in the specification and left for the package that builds them. 
 | Confinement of plug-in processes on each operating system | Before any plug-in may claim more than `declared` |
 | The scheduler beyond its settings: a weighted share for a caller (round robin between callers is built) | Phase 6; one machine needs no more |
 | The admin console's screens | Package 6.5; every admin function already exists as an action |
-| The hosted sign-in page that shows a server's browser to a remote person | Package 7.3, after research brief 17; only one identity mode depends on it |
+| The hosted sign-in page that shows a server's browser to a remote person | Package 7.3, after research brief 17; only one identity kind depends on it |
 | Each widget driver and platform profile in detail | Package 8.4; a catalog exists, and each is built against the test application |
 | The plug-in software kit | With package F3; the protocol is outlined and first-party packs come first |
 | Runs started by an event. The reading half, a watch that reports a change and never acts on it, is designed ([decision 0234](../../decisions/0234-a-watch-is-a-read-repeated-on-a-schedule-a-person-confirmed-and-a-change-is-reported-never-acted-on.md)) and built in part (packages W1 and W2a); starting a run because something changed is not designed | Phase 6 or later; until then any outside scheduler can start a run through the REST interface |
@@ -142,7 +142,7 @@ Ordered by how much they could change the design.
 | 1 | The Rust browser engine proves much harder than a dozen verbs suggests | The spike of package 0.4 measured the candidates, and the engine is built on a client of our own ([decision 0070](../../decisions/0070-the-browser-engine-stands-on-its-own-client-over-the-debugging-pipe.md)); it was not compared with a sidecar |
 | 2 | The kernel boundary is drawn wrong, and every pack leaks into it | Packages D3 and D4 find out with one pack, as unlike the web as possible, before another is built |
 | 3 | "Anything" dilutes "verified": packs arrive faster than they can be proven | The entry bar of [section 202](../2-kernel/202-kernel-and-packs.md), and the evidence ladder, which stops an unproven thing from being listed |
-| 4 | An organization's sign-in rules refuse an automated browser, or bind sessions to hardware | Four identity modes; user-device runners; service accounts; research brief 30 before Phase 2 |
+| 4 | An organization's sign-in rules refuse an automated browser, or bind sessions to hardware | Four identity kinds; user-device runners; service accounts; research brief 30 before Phase 2 |
 | 5 | A system's owner, or the organization's IT, does not agree to the tool being used | An authorization record is required before publishing on a server; the design operates openly. This cannot be engineered away |
 | 6 | Scope grows past what one owner and a team of agents can finish | Milestone 3 is a complete product for one person, and nothing later is needed to ship it |
 | 7 | On one machine, an agent with a shell is inside the user's trust boundary | No approve action; operating-system presence checks; protected settings; the limit is documented in [section 222](../2-kernel/222-front-doors-and-the-local-engine.md) |

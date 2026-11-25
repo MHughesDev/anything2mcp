@@ -24,7 +24,7 @@ use a2m_provider::{
 
 use crate::codes;
 use crate::compare::Field;
-use crate::control::{Control, EngineEvent, KeptCapture, PassedOver, SessionWant};
+use crate::control::{ControlPort, EngineEvent, KeptCapture, PassedOver, SessionWant};
 use crate::engine::Engine;
 use crate::guard::caught;
 use crate::job::{Directive, JobKind, JobSpec, KernelHealth};
@@ -133,7 +133,7 @@ pub(crate) struct PassInfo {
 pub(crate) struct Run<'a> {
     pub engine: &'a Engine,
     pub job: &'a JobSpec,
-    pub control: &'a dyn Control,
+    pub control: &'a dyn ControlPort,
     pub loaded: Arc<Loaded>,
     pub environment: Environment,
     pub env_position: usize,
@@ -212,7 +212,7 @@ impl<'a> Run<'a> {
     pub fn new(
         engine: &'a Engine,
         job: &'a JobSpec,
-        control: &'a dyn Control,
+        control: &'a dyn ControlPort,
         loaded: Arc<Loaded>,
         env_position: usize,
         posture: Posture,
@@ -1114,7 +1114,7 @@ impl<'a> Run<'a> {
 
     /// Keeps what a step captured, as the run's capture level says: each
     /// capture passes the redactor and the trace's own check, is kept as
-    /// evidence through `Control`, and is named in the step's trace record.
+    /// evidence through `ControlPort`, and is named in the step's trace record.
     /// This happens before the step after it is sent, so what was captured
     /// before a committing step is kept before the save. A capture that
     /// cannot be kept is dropped and the run goes on. The capture that says

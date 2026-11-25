@@ -1,4 +1,4 @@
-//! `Control`: everything the engine needs from the control plane while it
+//! `ControlPort`: everything the engine needs from the control plane while it
 //! runs one job, and nothing more.
 //!
 //! In one process the action registry implements it by calling the
@@ -272,7 +272,7 @@ impl EngineEvent {
 ///   dropped, so what the call had begun must stand or fall as one
 ///   transaction.
 /// - A failure it returns has passed the redactor.
-pub trait Control: Send + Sync {
+pub trait ControlPort: Send + Sync {
     /// The compiled target by its hash. The engine checks the hash again
     /// before it uses the compiled target.
     fn compiled_target<'a>(

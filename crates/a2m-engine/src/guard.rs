@@ -2,7 +2,7 @@
 //! plane that never answers, and a provider's code that panics.
 //!
 //! Neither may take the engine down or hold a job for ever. A call to
-//! `Control` is given up after the time the settings allow, and the engine
+//! `ControlPort` is given up after the time the settings allow, and the engine
 //! goes on as it would after any failure of that call: a write that was
 //! not recorded is in doubt, never a success. A panic in a provider's code
 //! is caught where the engine calls it, and comes back as a failure that
@@ -25,7 +25,7 @@ use a2m_provider::BoxFuture;
 
 use crate::codes;
 use crate::control::{
-    Clearance, Control, EngineEvent, Evidence, GuardQuestion, KeptCapture, Preview, SessionWant,
+    Clearance, ControlPort, EngineEvent, Evidence, GuardQuestion, KeptCapture, Preview, SessionWant,
 };
 
 /// A future whose panic is caught: `None` when it panicked.
@@ -51,14 +51,14 @@ impl<T> Future for Caught<'_, T> {
     }
 }
 
-/// `Control`, with every call given up after a time limit.
+/// `ControlPort`, with every call given up after a time limit.
 pub(crate) struct Timed<'c> {
-    inner: &'c dyn Control,
+    inner: &'c dyn ControlPort,
     limit: Duration,
 }
 
 impl<'c> Timed<'c> {
-    pub fn new(inner: &'c dyn Control, limit: Duration) -> Self {
+    pub fn new(inner: &'c dyn ControlPort, limit: Duration) -> Self {
         Self { inner, limit }
     }
 
@@ -80,7 +80,7 @@ impl<'c> Timed<'c> {
     }
 }
 
-impl Control for Timed<'_> {
+impl ControlPort for Timed<'_> {
     fn compiled_target<'a>(
         &'a self,
         hash: &'a Digest,

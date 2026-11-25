@@ -141,7 +141,7 @@ What happens between a pipeline call with a `source` input and the first record 
 | # | Step | Done by |
 | --- | --- | --- |
 | 1 | Resolve the path or blob reference; check the allowed roots and that it is a file | `a2m-actions`, through the file access in `a2m-provider`, before this crate |
-| 2 | Read the bytes once and store them as a blob, sealed; the run's input hash covers these bytes | `a2m-actions`, through `a2m-ledger`; the engine receives the bytes through `Control` |
+| 2 | Read the bytes once and store them as a blob, sealed; the run's input hash covers these bytes | `a2m-actions`, through `a2m-ledger`; the engine receives the bytes through `ControlPort` |
 | 3 | Check the size limit and that the content is the claimed format | `Sources::parse`, with `SourceReader::check` |
 | 4 | Parse the input once | `SourceReader::parse` |
 | 5 | Take the structure's fingerprint; find the template version that matches, or reject with the differences | `Sources::validate` |

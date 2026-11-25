@@ -347,7 +347,7 @@ fn description_authors_are_the_ones_in_the_file_formats() {
 #[test]
 fn sign_in_modes_are_the_ones_in_the_file_formats() {
     let listed = format_words("## `auth.yaml`", "## `types.yaml`", "`mode` (required)");
-    assert_eq!(listed, a2m_core::SignInMode::NAMES);
+    assert_eq!(listed, a2m_core::SignInKind::NAMES);
 }
 
 #[test]
@@ -421,7 +421,7 @@ fn every_vocabulary_reads_back_what_it_writes() {
         assert!("no such value".parse::<T>().is_err());
         assert!(serde_json::from_str::<T>("\"no such value\"").is_err());
     }
-    round_trip(a2m_core::SignInMode::ALL, a2m_core::SignInMode::NAMES);
+    round_trip(a2m_core::SignInKind::ALL, a2m_core::SignInKind::NAMES);
     round_trip(a2m_core::DriftRisk::ALL, a2m_core::DriftRisk::NAMES);
     round_trip(a2m_core::DescriptionBy::ALL, a2m_core::DescriptionBy::NAMES);
     round_trip(a2m_core::CaptureLevel::ALL, a2m_core::CaptureLevel::NAMES);

@@ -94,7 +94,7 @@ Every other address is refused with exception 02. Holding registers 100 to 106 a
 
 **The simulated outputs** are the pump's speed and the valve's position. They are what the device drives, as distinct from what it was told: the setpoint is held at once, and the pump reaches it one ramp step per tick; the valve command is held at once, and the valve follows at the next tick.
 
-**Time.** The device has no clock. Its time moves in ticks: one tick after every frame it receives, and as many as a test asks for with `Control::advance`. `Control::set_process_frozen(true)` stops the ticks that frames cause, so a test can hold the process still. Nothing in the stand depends on the wall clock except the delay fault.
+**Time.** The device has no clock. Its time moves in ticks: one tick after every frame it receives, and as many as a test asks for with `ControlPort::advance`. `ControlPort::set_process_frozen(true)` stops the ticks that frames cause, so a test can hold the process still. Nothing in the stand depends on the wall clock except the delay fault.
 
 ## The update mechanism
 
@@ -135,11 +135,11 @@ In update mode, reads work and writes to process points are refused with excepti
 
 **What cannot be undone.** `update_count` rises on every commit and never falls. Entering update mode destroys the standby slot's image.
 
-**The recovery route.** A device that does not start after a commit is recovered by a person at the device, who starts it from the slot it ran before. In the stand that is `Control::recover()`. It returns `false`, and starts the device from the same slot, if the other slot held no valid image.
+**The recovery route.** A device that does not start after a commit is recovered by a person at the device, who starts it from the slot it ran before. In the stand that is `ControlPort::recover()`. It returns `false`, and starts the device from the same slot, if the other slot held no valid image.
 
 ## The control interface
 
-`TestDevice::control()` returns a `Control`: an in-process handle, cheap to clone. Nothing it does travels over the link, no fault applies to it, and looking never changes the device, not even a point that a read over the link would clear.
+`TestDevice::control()` returns a `ControlPort`: an in-process handle, cheap to clone. Nothing it does travels over the link, no fault applies to it, and looking never changes the device, not even a point that a read over the link would clear.
 
 | Call | Reports or does |
 | --- | --- |

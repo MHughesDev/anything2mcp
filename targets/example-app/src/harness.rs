@@ -497,7 +497,7 @@ impl TestApp {
         self.ask("/__control/auth").await
     }
 
-    /// Sets the sign-in modes: the one-time code step, and one session per account.
+    /// Sets the sign-in kinds: the one-time code step, and one session per account.
     ///
     /// # Errors
     ///

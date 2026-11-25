@@ -17,7 +17,7 @@ use crate::{
 use a2m_core::{
     ApproveWrites, CaptureLevel, CompiledProbe, CompiledTarget, DecimalMark, DeclaredProgram,
     Digest, DriftRisk, EffectClass, FailsAs, FailureClass, FailureCode, FieldFormat, FileKindName,
-    Mode, PackPayload, RecordKey, RecordMatching, SignInMode, Stands, Step, StepArg, StepKind,
+    Mode, PackPayload, RecordKey, RecordMatching, SignInKind, Stands, Step, StepArg, StepKind,
     SurfaceIndex, SurfaceKind, SurfaceName, Value, Verb, Version,
 };
 
@@ -584,7 +584,7 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
     let desk = SurfaceIndex::new(0);
     let auth = compiled_target.auth_of(desk).unwrap();
     assert_eq!(auth.surfaces, [desk]);
-    assert_eq!(auth.mode, SignInMode::Custom);
+    assert_eq!(auth.mode, SignInKind::Custom);
     assert_eq!(auth.provider.as_str(), "http_basic");
     assert_eq!((auth.idle_ms, auth.absolute_ms), (Some(1_800_000), None));
     assert_eq!((auth.attempt_limit, auth.movable), (1, true));
