@@ -53,10 +53,14 @@ impl Rounding {
 /// may follow the point.
 ///
 /// Two decimals are equal when they are the same number, whatever zeros were
-/// written after the point: `1.5` equals `1.50`. The text form is the number
-/// with no zeros after its last digit and no exponent, so equal numbers are
-/// written alike and hash alike. How many places a value is shown with is its
-/// field type's concern, through [`Decimal::to_places`].
+/// written after the point: `1.5` equals `1.50`, and they hash alike. Its
+/// exact text, [`Decimal::exact_text`], is the number with no zeros after its
+/// last digit and no exponent, so equal numbers are written alike there: a
+/// canonical form and a record key use it. A decimal is otherwise written
+/// with the places it holds, which are its exact places unless it was made
+/// by [`Decimal::with_places`] or read from a stored form that had more: a
+/// result's value is padded to the places its field type states, so a
+/// speed of one place reads `120.0` (decision 0999).
 #[derive(Clone, Copy)]
 pub struct Decimal(Inner);
 
@@ -254,6 +258,37 @@ impl Decimal {
         Some(Self::tidy(answer))
     }
 
+    /// The same number written with exactly `places` digits after its
+    /// point: `120` to one place is `120.0`, and `21.5` to two is `21.50`.
+    /// It is padded and never rounded: `None` when the number has more
+    /// places than `places`, when `places` is more than
+    /// [`Decimal::MAX_PLACES`], or when the padded digits do not fit. The
+    /// value is the same number, equal to the one it was made from.
+    #[must_use]
+    pub fn with_places(&self, places: u32) -> Option<Self> {
+        if places > Self::MAX_PLACES {
+            return None;
+        }
+        let exact = Self::tidy(self.0).0;
+        let have = exact.scale();
+        if have > places {
+            return None;
+        }
+        let mantissa = exact
+            .mantissa()
+            .checked_mul(10i128.checked_pow(places - have)?)?;
+        Inner::try_from_i128_with_scale(mantissa, places)
+            .ok()
+            .map(Self)
+    }
+
+    /// The number with no zeros after its last digit and no exponent,
+    /// whatever places it holds: equal numbers are written alike.
+    #[must_use]
+    pub fn exact_text(&self) -> String {
+        Self::tidy(self.0).0.to_string()
+    }
+
     /// The number rounded to `places` by `rounding`. Exact: the number is
     /// held exactly, so the rounding is decided on all of its digits.
     #[must_use]
@@ -342,9 +377,10 @@ impl Hash for Decimal {
     }
 }
 
+/// The number with the places it holds: its exact text unless it was padded.
 impl fmt::Display for Decimal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", Self::tidy(self.0).0)
+        write!(f, "{}", self.0)
     }
 }
 
@@ -370,8 +406,17 @@ impl serde::Serialize for Decimal {
 
 impl<'de> serde::Deserialize<'de> for Decimal {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // A stored form keeps the places it was written with, so a padded
+        // result reads back as it was stored.
         let text = <String as serde::Deserialize>::deserialize(deserializer)?;
-        Self::parse(&text).map_err(serde::de::Error::custom)
+        let number = Self::parse(&text).map_err(serde::de::Error::custom)?;
+        let written = text
+            .split_once('.')
+            .map_or(0, |(_, fraction)| fraction.len());
+        Ok(u32::try_from(written)
+            .ok()
+            .and_then(|places| number.with_places(places))
+            .unwrap_or(number))
     }
 }
 
@@ -561,5 +606,42 @@ mod tests {
         assert!(serde_json::from_str::<Decimal>("12.5").is_err());
         assert!(serde_json::from_str::<Decimal>("\"1e2\"").is_err());
         assert_eq!(format!("{:?}", d("1.0")), "Decimal(1)");
+    }
+
+    #[test]
+    fn a_decimal_padded_to_its_places_is_the_same_number_written_with_them() {
+        let hash = |value: &Decimal| {
+            let mut hasher = DefaultHasher::new();
+            value.hash(&mut hasher);
+            hasher.finish()
+        };
+        for (number, places, written) in [
+            ("120", 1, "120.0"),
+            ("21.5", 2, "21.50"),
+            ("21.5", 1, "21.5"),
+            ("0", 2, "0.00"),
+            ("-0.0", 1, "0.0"),
+            ("-7.1", 3, "-7.100"),
+        ] {
+            let padded = d(number).with_places(places).unwrap();
+            assert_eq!(padded.to_string(), written, "{number} to {places}");
+            assert_eq!(padded, d(number), "{number}");
+            assert_eq!(hash(&padded), hash(&d(number)), "{number}");
+            assert_eq!(padded.exact_text(), d(number).to_string(), "{number}");
+            // Its stored form keeps the places, and reads back as stored.
+            let stored = serde_json::to_string(&padded).unwrap();
+            assert_eq!(stored, format!("\"{written}\""));
+            let read: Decimal = serde_json::from_str(&stored).unwrap();
+            assert_eq!(read.to_string(), written);
+        }
+    }
+
+    #[test]
+    fn a_decimal_with_more_places_than_asked_is_never_rounded_to_them() {
+        assert_eq!(d("21.57").with_places(1), None);
+        assert_eq!(d("0.005").with_places(2), None);
+        assert_eq!(d("1").with_places(Decimal::MAX_PLACES + 1), None);
+        // Padding that needs more digits than a decimal holds is refused.
+        assert_eq!(d("79228162514264337593543950335").with_places(1), None);
     }
 }

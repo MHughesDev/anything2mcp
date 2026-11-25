@@ -40,7 +40,7 @@ pub(crate) fn built_ins() -> Vec<(&'static str, FieldRule)> {
             },
         ),
         (
-            "decimal",
+            CompiledFieldType::BUILT_IN_DECIMAL,
             FieldRule::Decimal {
                 places: 6,
                 rounding: Rounding::HalfEven,

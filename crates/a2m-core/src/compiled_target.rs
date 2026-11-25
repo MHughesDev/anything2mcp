@@ -708,6 +708,26 @@ pub struct CompiledFieldType {
     pub normalizer: Option<ExprIndex>,
 }
 
+impl CompiledFieldType {
+    /// The name of the built-in field type of an exact number, whose six
+    /// places only bound what a value may hold.
+    pub const BUILT_IN_DECIMAL: &'static str = "decimal";
+
+    /// The places a value of this type is padded to in a result: the places
+    /// a `decimal` or a `money` type states, or money's currency's own. None
+    /// for the built-in `decimal`, whose places bound a value and are not
+    /// shown, for a measurement, whose places follow its step, and for every
+    /// other base (decision 0999).
+    #[must_use]
+    pub fn result_places(&self) -> Option<u32> {
+        match self.base {
+            FieldBase::Decimal if self.name == Self::BUILT_IN_DECIMAL => None,
+            FieldBase::Decimal | FieldBase::Money => self.places,
+            _ => None,
+        }
+    }
+}
+
 /// One expression: canonical source text that the compiler has already
 /// checked, the type of its result, and the version of the host-function
 /// library it was checked against. This crate never parses one.

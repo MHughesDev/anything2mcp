@@ -702,3 +702,74 @@ async fn a_record_found_unchanged_gives_every_output_and_on_resume_is_read_again
     assert_eq!(failure.code().as_str(), "output_unexpected", "{failure:?}");
     assert!(scene.app.writes().await.unwrap().is_empty());
 }
+
+// ---- decision 0999: a result's number is padded to its type's places ----
+
+/// The line-item upsert with one more output, `length_in`, which its
+/// read-back observes as the application stores it, typed by an exact
+/// number of `places`.
+fn with_length(places: u32) -> impl FnOnce(&mut a2m_core::CompiledTarget) {
+    move |compiled_target| {
+        let field_type = common::decimal_type(compiled_target, "length_shown", places);
+        let operation = compiled_target
+            .operations
+            .iter_mut()
+            .find(|operation| operation.name.as_str() == ITEM_UPSERT)
+            .unwrap();
+        operation.outputs.push(a2m_core::CompiledOutput {
+            name: "length_in".to_owned(),
+            ty: a2m_core::ValueType::Decimal,
+            field_type: Some(a2m_core::FieldTypeIndex::new(field_type)),
+            may_be_absent: false,
+        });
+    }
+}
+
+/// The result's `length_in` after a verified write of `length`, as the
+/// engine hands it on and as its stored form reads back.
+async fn length_shown(places: u32, code: &str, length: &str) -> (String, String) {
+    let scene = Scene::new(ITEM_UPSERT, with_length(places)).await;
+    let input = item("A-102", code, "New rail", 3, length);
+    approved(&scene, ITEM_UPSERT, &input).await;
+    let outcome = scene.work(JobKind::Execute, ITEM_UPSERT, input).await;
+    assert!(completed(&outcome), "{outcome:?}");
+    assert_eq!(scene.record_states().await, [RecordState::Verified]);
+    let result = scene.last_result();
+    let shown = match result.get("length_in") {
+        Some(Value::Decimal(number)) => number.to_string(),
+        other => panic!("the result's length is {other:?}"),
+    };
+    let stored = a2m_engine::encode_values(&result).unwrap();
+    let read = a2m_engine::decode_values(&stored).unwrap();
+    assert_eq!(read, result);
+    let read = match read.get("length_in") {
+        Some(Value::Decimal(number)) => number.to_string(),
+        other => panic!("the stored length is {other:?}"),
+    };
+    (shown, read)
+}
+
+#[tokio::test]
+async fn a_results_decimal_is_padded_to_the_places_its_field_type_states() {
+    // The application stores 120 and 21.5, which it shows as `120` and
+    // `21.5`; a type of one place and one of two give them with those.
+    for (places, code, length, want) in
+        [(1, "L-300", "120", "120.0"), (2, "L-301", "21.5", "21.50")]
+    {
+        let (shown, read) = length_shown(places, code, length).await;
+        assert_eq!(shown, want, "{length} to {places}");
+        assert_eq!(read, want, "{length} to {places}, stored");
+    }
+}
+
+#[tokio::test]
+async fn a_results_decimal_with_more_places_than_its_type_is_rounded_by_the_type_alone() {
+    // The application stores 21 9/16 inches, `21.5625`. A type of two
+    // places, rounded half to even, gives `21.56` by its own rule, as it
+    // normalizes every value it compares; the padding adds and never takes
+    // away a digit. The write itself is compared by the input's own type,
+    // of four places, and is verified as before.
+    let (shown, read) = length_shown(2, "L-302", "21.5625").await;
+    assert_eq!(shown, "21.56");
+    assert_eq!(read, "21.56");
+}
