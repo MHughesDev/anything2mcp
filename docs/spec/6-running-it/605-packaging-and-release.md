@@ -235,7 +235,7 @@ Every route delivers one self-contained binary per platform: Windows, macOS, and
 
 Publishing cannot be undone. A published version can be yanked, and never replaced.
 
-1. A version tag starts the pipeline, on a commit that is on `main`. So does a manual start of the release workflow on `main` that names the version to publish; started with no version, it builds and checks everything and publishes nothing, which is how a release is rehearsed. Either way the workflow refuses a version that is not the package's own, or a commit that is not on `main`.
+1. A version tag starts the pipeline, on a commit that is on `main`. So does a manual start of the release workflow on `main` that names the version to publish; started with no version, it builds and checks everything and publishes nothing, which is how a release is rehearsed. Either way the workflow refuses a version that is not the package's own, a commit that is not on `main`, or a commit on which CI did not pass: its `decide` job asks GitHub, with `actions: read` held by that job alone, how the newest run of `CI` on `main` for that very commit ended, and publishes only after `success` (a rehearsal says what it would have refused).
 2. Build the binary for every platform; run the full test and benchmark suites on each.
 3. Build wheels, npm packages, installers, and the container image from those same binaries. Nothing is recompiled per package.
 4. Sign every artifact, and attach a software bill of materials and build provenance. Builds are reproducible, and dependencies are audited in CI.
