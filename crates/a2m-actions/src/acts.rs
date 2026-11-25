@@ -424,6 +424,43 @@ fn needs_person(ask: &PersonActAsk, link: &SurfaceLink, asked: &Map<String, Json
         ))
 }
 
+/// A publish of one target that waits for its person on a page: what an
+/// answer about the target, or about a tool of it, names so that nobody
+/// takes the wait for a failure (decision 0485, point 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WaitingPublish {
+    /// The act.
+    pub(crate) act: PersonActId,
+    /// The target it publishes.
+    pub(crate) target: String,
+    /// The version it publishes, as it was pinned when it was asked.
+    pub(crate) version: Option<String>,
+    /// The page's address, when the surface has a page for it.
+    pub(crate) link: Option<String>,
+    /// When it stops waiting.
+    pub(crate) expires_at: Timestamp,
+}
+
+impl WaitingPublish {
+    /// As an answer carries it.
+    pub(crate) fn to_json(&self) -> Json {
+        let mut input = json!({"target": self.target});
+        if let Some(version) = &self.version {
+            input["version"] = json!(version);
+        }
+        json!({
+            "act": self.act.to_string(),
+            "action": PUBLISH_ACT,
+            "input": input,
+            "link": self.link,
+            "expires_at": self.expires_at.as_unix_millis(),
+        })
+    }
+}
+
+/// The action of a person's act that publishes a version.
+const PUBLISH_ACT: &str = "version.publish";
+
 impl Kernel {
     /// The approval window, in milliseconds: how long a person's act waits.
     fn act_window_ms(&self) -> i64 {
@@ -966,6 +1003,57 @@ impl Kernel {
             }
         }
         Ok(lines)
+    }
+
+    /// The publish of `target` that waits for `person`'s press, if one
+    /// does: the newest asked. Nothing is changed but what [`sweep`] ends.
+    pub(crate) fn waiting_publish(
+        &self,
+        person: PrincipalId,
+        target: &str,
+    ) -> Option<WaitingPublish> {
+        let now = self.inner.clock.now();
+        let mut state = self.inner.acts.state();
+        sweep(&mut state, now);
+        state
+            .pending
+            .iter()
+            .filter(|(_, pending)| {
+                pending.ask.person == person
+                    && pending.ask.action.as_str() == PUBLISH_ACT
+                    && pending.input.get("target").and_then(Json::as_str) == Some(target)
+            })
+            .max_by_key(|(_, pending)| pending.ask.expires_at)
+            .map(|(act, pending)| WaitingPublish {
+                act: *act,
+                target: target.to_owned(),
+                version: pending
+                    .input
+                    .get("version")
+                    .and_then(Json::as_str)
+                    .map(str::to_owned),
+                link: pending.link.as_ref().and_then(|link| link.url.clone()),
+                expires_at: pending.ask.expires_at,
+            })
+    }
+
+    /// Every target a publish waits for `person`'s press for.
+    pub(crate) fn publishes_waiting(&self, person: PrincipalId) -> Vec<String> {
+        let now = self.inner.clock.now();
+        let mut state = self.inner.acts.state();
+        sweep(&mut state, now);
+        let mut targets: Vec<String> = state
+            .pending
+            .values()
+            .filter(|pending| {
+                pending.ask.person == person && pending.ask.action.as_str() == PUBLISH_ACT
+            })
+            .filter_map(|pending| pending.input.get("target").and_then(Json::as_str))
+            .map(str::to_owned)
+            .collect();
+        targets.sort();
+        targets.dedup();
+        targets
     }
 
     /// The act that waits under `act`, as its page shows it.
