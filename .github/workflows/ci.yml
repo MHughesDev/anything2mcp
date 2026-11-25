@@ -225,6 +225,8 @@ jobs:
         run: python3 tools/check_workflows.py
       - name: Prove the workflow check fails on a file that does not read
         run: python3 tools/test_check_workflows.py
+      - name: Prove the gate weighs a test program of many files by its whole folder
+        run: python3 tools/test_gate.py
       # Every build against every release kept in contracts/ (decision 0437).
       - name: Check the tree against every kept release's contract
         run: python3 tools/contracts.py check
