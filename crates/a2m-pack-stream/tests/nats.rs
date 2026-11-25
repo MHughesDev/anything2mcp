@@ -887,18 +887,20 @@ async fn a_server_that_refuses_the_session_or_asks_for_tls_or_is_not_on_this_mac
     );
     assert_eq!(scene.stand.connects().len(), 1);
 
-    // An address that is not this machine's own: nothing is opened.
-    let far = Scene::at(
-        TestNats::start().await.unwrap(),
-        Some("192.0.2.10:4222".to_owned()),
-    )
-    .await;
-    let elsewhere = far.try_prepare(Posture::Live, None).await.err().unwrap();
+    // A session that carries a credential goes in plain text to this
+    // machine's loopback address only: that is held where the credential
+    // meets the wire, in `nats_wire`'s own test, as the tests here run with
+    // no session. A server that asks for TLS is refused at any address.
+    let stand = TestNats::start().await.unwrap();
+    stand.set_tls_required(true);
+    let named = format!("localhost:{}", stand.address().port());
+    let near = Scene::at(stand, Some(named)).await;
+    let refused = near.try_prepare(Posture::Live, None).await.err().unwrap();
     assert_eq!(
         (
-            elsewhere.failure.class().to_string(),
-            elsewhere.failure.code().to_string(),
-            elsewhere.sent
+            refused.failure.class().to_string(),
+            refused.failure.code().to_string(),
+            refused.sent
         ),
         (
             "policy".to_owned(),
@@ -906,18 +908,34 @@ async fn a_server_that_refuses_the_session_or_asks_for_tls_or_is_not_on_this_mac
             Sent::NotSent
         )
     );
+}
 
-    // A name is not a loopback address, even one that leads to the stand
-    // (decision 0197): refused before the stand hears anything.
+/// Field test 7, finding 43: a broker that asks for no sign-in, at an
+/// address that is not this machine's loopback address written as an IP
+/// address, was refused as `transport_refused`, "would carry the session in
+/// plain text", though its session carries no credential. A connection
+/// that carries none goes to the surface's address, here a name that leads
+/// to the stand (decision 0999); one that carries a credential still goes
+/// to the loopback address only.
+#[tokio::test]
+async fn a_broker_that_asks_for_no_sign_in_is_reached_at_an_address_off_the_loopback() {
     let stand = TestNats::start().await.unwrap();
     let named = format!("localhost:{}", stand.address().port());
-    let near = Scene::at(stand, Some(named)).await;
-    let refused = near.try_prepare(Posture::Live, None).await.err().unwrap();
-    assert_eq!(
-        (refused.failure.code().to_string(), refused.sent),
-        ("transport_refused".to_owned(), Sent::NotSent)
+    let scene = Scene::at(stand, Some(named)).await;
+    let steps = scene.binding("example_order_status_get").act.clone();
+    let (handle, mut prepared) = scene.reading().await;
+    let observed = done(
+        read(&handle, &mut prepared, &steps, &key_arg("A-100"))
+            .await
+            .unwrap(),
     );
-    assert!(near.stand.connects().is_empty());
+    assert!(handle.release(prepared, false).await.complete);
+    assert_eq!(text(&observed, "status"), "submitted");
+    // The server heard one connection, which presented nothing.
+    let connects = scene.stand.connects();
+    assert_eq!(connects.len(), 1);
+    assert_eq!(connects[0].presented, "none");
+    assert!(connects[0].accepted);
 }
 
 // ---- 5. discovery ----

@@ -1094,30 +1094,21 @@ async fn a_broker_that_cannot_be_reached_or_refuses_the_session_is_named() {
     );
 }
 
-/// Plain TCP goes only to a loopback address written as an IP address
-/// (decision 0197): a surface at a documentation address, or at a name
-/// that leads to the stand itself, is refused before any connection, and
-/// the stand saw nothing.
+/// A connection that carries no credential goes to the surface's address,
+/// a name that leads to the stand included (decision 0999, which narrows
+/// decision 0197's rule to a connection that carries a credential). One
+/// that carries a credential goes to the loopback address only, which
+/// `example_wire`'s own test holds where the token meets the wire.
 #[tokio::test]
-async fn plain_tcp_to_an_address_that_is_not_a_loopback_ip_is_refused_before_any_connection() {
+async fn plain_tcp_that_carries_no_credential_goes_to_the_surfaces_address() {
     let mut scene = Scene::start().await;
-    let port = scene.broker.address().port();
-    for address in [format!("localhost:{port}"), format!("192.0.2.10:{port}")] {
-        scene.surface.surface.address = address.clone();
-        scene.destinations = a2m_provider::Destinations::new([address.clone()]);
-        let refused = scene.try_prepare(Posture::Live, None).await.unwrap_err();
-        assert_eq!(
-            (
-                refused.failure.class().to_string(),
-                refused.failure.code().as_str(),
-                refused.sent
-            ),
-            ("policy".to_owned(), "transport_refused", Sent::NotSent),
-            "{address}"
-        );
-    }
-    assert!(scene.broker.requests().is_empty());
-    assert!(scene.broker.truth().connections.is_empty());
+    let address = format!("localhost:{}", scene.broker.address().port());
+    scene.surface.surface.address = address.clone();
+    scene.destinations = a2m_provider::Destinations::new([address]);
+    let (handle, prepared) = scene.try_prepare(Posture::Live, None).await.unwrap();
+    // The stand holds the connection the driver opened, which said hello.
+    assert_eq!(scene.broker.truth().connections.len(), 1);
+    assert!(handle.release(prepared, false).await.complete);
 }
 
 #[tokio::test]

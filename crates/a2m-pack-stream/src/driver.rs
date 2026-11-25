@@ -352,7 +352,7 @@ fn wire_failure(redact: &dyn Redact, error: &WireError, what: &str) -> StepFailu
         WireErrorKind::Transport => (
             codes::TRANSPORT_REFUSED,
             format!("The connection to {what} was not opened: {}.", error.detail),
-            "Write the broker's address as this machine's loopback IP address (127.0.0.1 or [::1]), or use a build that speaks TLS to it.",
+            "A credential goes over plain TCP only to this machine's loopback IP address (127.0.0.1 or [::1]): write the broker's address as one, reach a broker that asks for no sign-in, or use a build that speaks TLS to it.",
         ),
         WireErrorKind::Unfit => (
             codes::VALUE_OUT_OF_RANGE,

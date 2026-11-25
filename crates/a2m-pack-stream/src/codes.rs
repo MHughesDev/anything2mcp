@@ -32,8 +32,8 @@ a2m_core::failure_codes! {
         meaning "A step that settles a record by what its earlier steps recorded was given nothing recorded, or nothing of the form it needs; nothing was sent.",
         next "Settle the record by hand, with what the run's ledger holds for it.";
     TRANSPORT_REFUSED = Policy, "transport_refused",
-        meaning "The connection would carry the session in plain text to an address that is not this machine's own, or to a server that asks for TLS.",
-        next "Write the broker's address as this machine's loopback IP address (127.0.0.1 or [::1]), or use a build that speaks TLS to it.";
+        meaning "The connection would carry the session's credential in plain text to an address that is not this machine's own, the broker asks for TLS, or the address is not one a connection can be made to.",
+        next "A credential goes over plain TCP only to this machine's loopback IP address (127.0.0.1 or [::1]): write the broker's address as one, reach a broker that asks for no sign-in, or use a build that speaks TLS to it.";
     ACK_NOT_OWNED = Policy, "ack_not_owned",
         meaning "An acknowledgement was asked for on a queue the runtime does not own.",
         next "Look at the queue with `list`; declare `ownership: runtime_owned` only when nothing else reads it.";
