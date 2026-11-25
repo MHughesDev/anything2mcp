@@ -98,7 +98,13 @@ impl Connector {
     /// The hello waits at most HELLO_PATIENCE (30 s); an engine that holds the channel
     /// and does not answer is busy / engine_unreachable, naming the engine's output file.
     pub async fn connect(&self) -> Result<Link, Failure>;
+    /// The same connect and the same check of the engine's owner, with no hello: the
+    /// connection as bytes, for `anything2mcp channel` to carry another client's own
+    /// hello and requests (decision 0999). The failures of `connect` before the hello.
+    pub async fn open_checked(&self) -> Result<CheckedStream, Failure>;
 }
+/// A checked connection to the engine: AsyncRead + AsyncWrite, a Unix socket or the pipe.
+pub struct CheckedStream;
 pub const HELLO_PATIENCE: Duration;
 // Start on demand (decision 0165): the client takes the start lock, looks again, starts
 // `start` detached, and waits for the channel to answer, all within `patience`.

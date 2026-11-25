@@ -12,7 +12,7 @@ use std::path::PathBuf;
 mod unix;
 #[cfg(unix)]
 pub(crate) use unix::{
-    Listener, ServerStream, connect, current_user, kept, prepare_dir, spawn_detached,
+    ClientStream, Listener, ServerStream, connect, current_user, kept, prepare_dir, spawn_detached,
 };
 
 /// The longest path of a socket this system takes, for the tests.
@@ -23,7 +23,8 @@ pub(crate) use unix::longest_socket_path as unix_longest_socket_path;
 mod windows;
 #[cfg(windows)]
 pub(crate) use windows::{
-    Listener, ServerStream, connect, current_user, open_output, prepare_dir, spawn_detached,
+    ClientStream, Listener, ServerStream, connect, current_user, open_output, prepare_dir,
+    spawn_detached,
 };
 
 /// The test build's gate on the children this process starts. A child
