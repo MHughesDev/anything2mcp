@@ -19,7 +19,7 @@ use tokio::sync::{mpsc, watch};
 
 use crate::browsers::{Address, BrowserInner, Shared};
 use crate::client::{Client, ClientError};
-use crate::error::{BrowserError, Dispatch, Reason, RequestShape};
+use crate::error::{BrowserError, Dispatch, REFUSED_WHEN_MADE, Reason, RequestShape};
 use crate::origin::{Origins, origin_of, path_of, shown_origin};
 use crate::page_read::{PageAnswer, PagePath};
 use crate::page_write::{PageWrite, TokenProblem};
@@ -2969,12 +2969,13 @@ impl Page {
                 // The payload is the page's: only a known word is taken as
                 // the method, and the rest is an address like any other.
                 let (what, address) = called.payload.split_once(' ').unwrap_or(("", ""));
+                let [socket, transport, peer, shared, service] = REFUSED_WHEN_MADE;
                 let method = match what {
-                    "WebSocket" => "WEBSOCKET",
-                    "WebTransport" => "WEBTRANSPORT",
-                    "SharedWorker" => "SHAREDWORKER",
-                    "RTCPeerConnection" => "PEERCONNECTION",
-                    "ServiceWorker" => "SERVICEWORKER",
+                    "WebSocket" => socket,
+                    "WebTransport" => transport,
+                    "SharedWorker" => shared,
+                    "RTCPeerConnection" => peer,
+                    "ServiceWorker" => service,
                     _ => "REFUSED",
                 };
                 self.block(method, address);
