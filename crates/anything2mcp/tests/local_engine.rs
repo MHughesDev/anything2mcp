@@ -855,17 +855,34 @@ async fn serve_asks_the_prompt_of_its_host_for_an_approval_with_the_operations_e
         let args = vec!["serve".to_owned()];
         async move { run_with(&args, &host).await }
     });
-    let paths = Paths::under(machine.home.path());
+    // The test waits until the engine answers on its channel. It does not
+    // ask for the engine lock: a question of the lock takes the lock for a
+    // moment, and a serve that asks for it in that moment is refused.
+    let connector = a2m_local::Connector::new(
+        &Paths::under(machine.home.path()),
+        anything2mcp::version().parse().unwrap(),
+        a2m_local::ClientLabel::CommandLine,
+    )
+    .unwrap();
     let give_up = tokio::time::Instant::now() + PATIENCE;
-    while !EngineLock::held(&paths).unwrap() {
-        // A serve that ended without the lock says why it ended.
+    loop {
+        match connector.connect().await {
+            Ok(link) => {
+                drop(link);
+                break;
+            }
+            Err(failure) if *failure.code() == a2m_local::codes::ENGINE_UNREACHABLE => {}
+            Err(failure) => panic!("the engine refused the connection: {failure:?}"),
+        }
+        // A serve that ended before it answered says why it ended.
         if serving.is_finished() {
-            panic!("serve ended before it took the lock: {:?}", serving.await);
+            panic!("serve ended before it answered: {:?}", serving.await);
         }
         assert!(
             tokio::time::Instant::now() < give_up,
-            "serve never took the lock"
+            "serve never answered"
         );
+        // A pause before asking again, not a wait for a moment.
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 
