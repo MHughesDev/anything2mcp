@@ -9,4 +9,9 @@ licence is at https://www.apache.org/licenses/LICENSE-2.0. The file is test equi
 the field-test runner and is never packaged.
 
 The runner never uses this file alone: it adds to it the rules of one named filter, which
-are written in tools/field_test.py (decision 0999).
+are written in tools/field_test.py (decision 0447).
+
+desktop-session.sh is the project's own: the desktop session the runner starts in the box
+for a desktop application (decision 0459). It names no application; a recipe gives the
+program and its arguments. It is test equipment of the field-test runner and is never
+packaged.

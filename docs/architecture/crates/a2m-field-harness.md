@@ -40,6 +40,14 @@ The runner starts the harness in the box, a container on the run's closed networ
 
 Whatever the options, a recipe that holds a flag that switches a browser's sandbox off, in its text or in a file it gives the box, is refused before anything starts, and the step `sandboxed` proves from the box's processes that each renderer runs in a user namespace of its own. The report states the box's image, user, and filter.
 
+A fourth option gives the box a desktop session, which a desktop application needs ([decision 0459](../../decisions/0459-the-field-test-box-takes-a-desktop-session-and-one-application-the-recipe-names.md)):
+
+| Option | What it allows | What the runner refuses |
+| --- | --- | --- |
+| `box_desktop` | `{"application": [argv]}`: before the harness starts, the script `tools/field-box/desktop-session.sh`, mounted read-only, starts in the box as its user a virtual display that listens on no TCP port, a session bus, and the accessibility bus, each in a folder of the box's own, then the application the recipe names; the runner waits until the accessibility registry lists it, or stops as `desktop_not_ready`. The harness and every command get the session's `DISPLAY` and `DBUS_SESSION_BUS_ADDRESS`. A system of `kind: desktop` is that application alone, with no system's container | Without a `box_image` or a `box_user`, as root, with any key but `application`, or an application whose program is not an absolute path; nothing of this machine's display or buses is ever given to the box |
+
+The step `desktop` lists the applications the box's registry holds, asked of the bus by the runner and never through the product. The report states the application and the script's hash.
+
 ## Where it runs
 
 On Linux alone. The closed network of decision 0310 is a container network made with `--internal`, and the runner (`tools/field_test.py`) reaches the system by the container's address on it, which only Linux with docker allows; on Docker Desktop the containers are in a virtual machine whose addresses the host cannot reach. The harness itself is built from the product and would compile anywhere, but the binary in the box is a Linux one.
