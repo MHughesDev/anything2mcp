@@ -283,6 +283,9 @@ pub fn command_faces(registry: &ActionRegistry) -> Vec<CommandFace>;
 pub fn mcp_tools(registry: &ActionRegistry, toolset: BuiltInToolset) -> Vec<McpToolFace>;
 pub fn mcp_tool(def: &ActionDef) -> McpToolFace;
 pub fn rest_routes(registry: &ActionRegistry) -> Vec<RestRouteFace>;
+/// An SDK face and a handler: an action with no handler has no client method,
+/// and its routes say `sdk: false` (decision 0437, point 5).
+pub fn has_sdk_method(def: &ActionDef) -> bool;
 pub fn sdk_methods(registry: &ActionRegistry) -> Vec<SdkMethodFace>;
 impl McpResultFace {
     pub fn of(response: &Response) -> McpResultFace;
@@ -453,7 +456,7 @@ Rust faces are derived at run time from the `Registry`. Code in other languages 
 | MCP tool | `a2m-mcp`, when a tool list is asked for | `Registry`: `a2m_<noun>_<verb>`, listed per toolset, annotations from the effect |
 | REST route | `a2m-api`, when its router is built | `Registry`: `POST /api/v1/actions/<noun>.<verb>`, and the `rest_alias` routes |
 | OpenAPI document | `a2m-api` | `Registry` |
-| SDK methods | A code-generation task in `xtask`, written to `bindings/` | The recorded catalog |
+| SDK methods | Today, `bindings/python/tools/generate_actions.py` and `bindings/npm/scripts/generate-actions.js`, from the saved OpenAPI document, one method for each route that says `x-sdk: true`: an action with an SDK face and a handler (`has_sdk_method`; decisions [0420](../../decisions/0420-the-api-description-says-which-actions-have-a-client-method.md) and [0437](../../decisions/0437-what-a-release-publishes-is-kept-and-every-later-build-is-checked-against-it.md)). Designed: a code-generation task in `xtask`, written to `bindings/` | The recorded catalog |
 | Reference pages for `docs.get` | The same task | The recorded catalog and the documents. The guides in `guides/*.md` are built into the binary and served first, by the name on their first line; each ends with whether every action it names is built, read from the registry as it is asked for ([decision 0159](../../decisions/0159-a-lost-answer-is-a-write-in-doubt-at-the-doors-and-in-the-clients.md)) |
 
 Two checks hold this. **Parity:** a test enumerates the live command tree, MCP tool list, router, and SDK method list, and compares each with the registry, failing on anything extra or missing; process commands and shortcuts are the only words allowed beside the nouns. **Recorded catalog:** the build writes the catalog with its digest; the engine compares the digest at start, and CI fails when the checked-in SDKs were generated from another digest.
