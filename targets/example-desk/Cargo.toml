@@ -17,10 +17,11 @@ zbus = { workspace = true, features = ["service"] }
 
 # On Windows the stand is a window of plain Win32 controls, made through the
 # workspace's `windows` crate with the features it needs and no more
-# (decision 0209). Tokio for the one blocking start, off the test's thread.
+# (decision 0209), and the process facts a test of a started copy asks for
+# (decision 0999). Tokio for the one blocking start, off the test's thread.
 [target.'cfg(windows)'.dependencies]
 tokio.workspace = true
-windows = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_System_StationsAndDesktops", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_System_StationsAndDesktops", "Win32_System_Threading", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
 
 # On macOS the stand is a window of AppKit's own controls, made through the
 # workspace's objc2 crates with the classes it needs and no more, and the

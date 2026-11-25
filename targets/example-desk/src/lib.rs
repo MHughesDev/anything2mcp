@@ -46,7 +46,7 @@ mod win;
 mod app;
 #[cfg(target_os = "linux")]
 mod bus_service;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 mod started;
 
 use std::collections::BTreeMap;
@@ -61,8 +61,8 @@ pub use bus_service::{
 pub use child::{CHILD_TEST, Session};
 #[cfg(not(any(windows, target_os = "macos")))]
 pub use session::{IdleService, Session};
-#[cfg(target_os = "linux")]
-pub use started::{MUTE, STARTED, marker};
+#[cfg(any(target_os = "linux", windows))]
+pub use started::{MUTE, STARTED, marker, program_of};
 
 /// Declares, in a test binary, what serves the stand: on Windows and macOS
 /// the stand's process is this test binary, copied and started again with
@@ -71,9 +71,12 @@ pub use started::{MUTE, STARTED, marker};
 /// main thread, which no test runs on, a start function this declares
 /// serves it on the main thread before the test harness begins; the system
 /// calls such a function as it loads the program, and it returns at once
-/// in every process that is not the stand's. In every other run, and on
-/// Linux, both return at once. Every test binary that starts a [`Desk`]
-/// declares it once.
+/// in every process that is not the stand's. On Linux and Windows a start
+/// function this declares serves the stand as a program of its own when
+/// the test binary's copy is started under one of the stand's names
+/// ([`STARTED`], [`MUTE`]; decisions 0467 and 0999). In every other run all
+/// of them return at once. Every test binary that starts a [`Desk`], or a
+/// copy of itself as the stand, declares it once.
 #[macro_export]
 macro_rules! stand_child {
     () => {
@@ -94,6 +97,23 @@ macro_rules! stand_child {
         #[allow(unsafe_code)]
         #[used]
         #[unsafe(link_section = ".init_array")]
+        static EXAMPLE_DESK_STAND_STARTED: extern "C" fn() = {
+            extern "C" fn start() {
+                $crate::serve_if_started();
+            }
+            start
+        };
+
+        /// On Windows, serves the desktop stand as a program of its own
+        /// when this process is a copy of the test binary under one of the
+        /// stand's names (decision 0999), before the test harness begins.
+        // The C runtime calls each function in this section of a program as
+        // it starts the program, on the main thread, before `main`; a
+        // function of the plain C kind that takes nothing is what it calls.
+        #[cfg(windows)]
+        #[allow(unsafe_code)]
+        #[used]
+        #[unsafe(link_section = ".CRT$XCU")]
         static EXAMPLE_DESK_STAND_STARTED: extern "C" fn() = {
             extern "C" fn start() {
                 $crate::serve_if_started();
@@ -129,10 +149,10 @@ pub fn serve_if_child() {
 
 /// Serves the stand as a program of its own and ends the process, when
 /// this process is a copy of a test binary under one of the stand's names
-/// on Linux ([`STARTED`], [`MUTE`]); otherwise returns at once. Called by
-/// what [`stand_child!`] declares.
+/// on Linux or Windows ([`STARTED`], [`MUTE`]); otherwise returns at once.
+/// Called by what [`stand_child!`] declares.
 pub fn serve_if_started() {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     started::serve_if_started();
 }
 

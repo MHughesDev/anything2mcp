@@ -30,12 +30,12 @@ futures-core.workspace = true
 sha2.workspace = true
 zbus.workspace = true
 
-# The Windows back end: UI Automation, the process checks, and the event
-# hook, through the workspace's `windows` crate with the features they need
-# and no more (decision 0209).
+# The Windows back end: UI Automation, the process checks, the process
+# table, and the event hook, through the workspace's `windows` crate with
+# the features they need and no more (decisions 0209 and 0999).
 [target.'cfg(windows)'.dependencies]
 sha2.workspace = true
-windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_Com", "Win32_System_Ole", "Win32_System_RemoteDesktop", "Win32_System_Threading", "Win32_System_Variant", "Win32_System_Wmi", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_Com", "Win32_System_Ole", "Win32_System_ProcessStatus", "Win32_System_RemoteDesktop", "Win32_System_Threading", "Win32_System_Variant", "Win32_System_Wmi", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }
 
 # The macOS back end: the system's accessibility interface (AXUIElement and
 # AXObserver) and the Core Foundation types it answers in, with only the

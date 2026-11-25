@@ -102,11 +102,11 @@ a2m_core::failure_codes! {
         next "Run the write on Linux, Windows, or macOS. On this system the pack reads only.",
         passes not_by_itself;
     START_NOT_BUILT = Busy, "start_not_built",
-        meaning "The surface lets the pack start its program, no application of it is running, and this version starts an application only on Linux. Nothing was started.",
+        meaning "The surface lets the pack start its program, no application of it is running, and this version starts an application only on Linux and Windows. Nothing was started.",
         next "Start the application as you normally do, then run the tool again.",
         passes not_by_itself;
     APPLICATION_NOT_STARTED = Busy, "application_not_started",
-        meaning "The pack started the surface's program, and no application of it published itself on the accessibility interface by the deadline. The pack stopped what it started.",
+        meaning "The pack started the surface's program, and no application of it published itself on the accessibility interface (on Windows, showed a window) by the deadline. The pack stopped what it started.",
         next "Start the application as you normally do and check that it shows its window, then run the tool again.",
         passes not_by_itself;
     PROGRAM_REFUSED = Policy, "program_refused",
@@ -160,7 +160,7 @@ pub(crate) fn writes_not_built() -> StepFailure {
 
 /// A surface that lets the pack start its program, outside a run: a
 /// discovery or a sandbox starts nothing.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 pub(crate) fn not_started_outside_a_run(program: &str) -> StepFailure {
     StepFailure::not_sent(failure(
         &row::APPLICATION_NOT_RUNNING,
@@ -173,7 +173,7 @@ pub(crate) fn not_started_outside_a_run(program: &str) -> StepFailure {
 }
 
 /// The program's file is not one the pack starts. Nothing was started.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 pub(crate) fn program_refused(program: &str, why: &a2m_provider::ProgramRefused) -> StepFailure {
     use a2m_provider::ProgramRefused as Why;
     let why = match why {
@@ -203,25 +203,31 @@ pub(crate) fn program_refused(program: &str, why: &a2m_provider::ProgramRefused)
 
 /// The started program published no application by the deadline, and was
 /// stopped.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 pub(crate) fn application_not_started(program: &str) -> StepFailure {
     StepFailure::not_sent(failure(
         &row::APPLICATION_NOT_STARTED,
         format!(
-            "The pack started the program `{}`, and no application of it with the name the surface states published itself by the deadline. The pack stopped it.",
-            shown(program)
+            "The pack started the program `{}`, and no application of it with the name the surface states {} by the deadline. The pack stopped it.",
+            shown(program),
+            if cfg!(windows) {
+                "showed a window"
+            } else {
+                "published itself"
+            }
         ),
         "Start the application as you normally do and check that it shows its window, then run the tool again.",
     ))
 }
 
-/// Starting an application is built on Linux only. Nothing was started.
-#[cfg(not(target_os = "linux"))]
+/// Starting an application is built on Linux and Windows only. Nothing was
+/// started.
+#[cfg(not(any(target_os = "linux", windows)))]
 pub(crate) fn start_not_built(program: &str) -> StepFailure {
     StepFailure::not_sent(failure(
         &row::START_NOT_BUILT,
         format!(
-            "No application in this session is the program `{}` with the name the surface states. The surface lets the pack start it, and this version starts an application only on Linux; this system is {}. Nothing was started.",
+            "No application in this session is the program `{}` with the name the surface states. The surface lets the pack start it, and this version starts an application only on Linux and Windows; this system is {}. Nothing was started.",
             shown(program),
             std::env::consts::OS
         ),

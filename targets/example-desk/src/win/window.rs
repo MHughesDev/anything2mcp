@@ -922,8 +922,20 @@ fn control_interface() {
 
 /// Runs the stand: the window, the control interface, and the message loop
 /// until the window closes. Returns the process's exit code.
-#[allow(unsafe_code)] // calls into the system, explained below
 pub(crate) fn serve() -> i32 {
+    serve_with(true)
+}
+
+/// Runs the stand as a program the desktop pack started (decision 0999):
+/// the window and the message loop, with no control interface, since the
+/// pack gives it nothing on its standard input; it runs until it is
+/// stopped. Returns the process's exit code.
+pub(crate) fn serve_started() -> i32 {
+    serve_with(false)
+}
+
+#[allow(unsafe_code)] // calls into the system, explained below
+fn serve_with(controlled: bool) -> i32 {
     // SAFETY: sets this process's error mode; touches no memory. No dialog
     // may appear on a machine with no person.
     unsafe { SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX) };
@@ -939,7 +951,9 @@ pub(crate) fn serve() -> i32 {
             return 2;
         }
     };
-    std::thread::spawn(control_interface);
+    if controlled {
+        std::thread::spawn(control_interface);
+    }
     println!(
         "{PREFIX}ready\t{}\t{}\t{}",
         std::process::id(),
