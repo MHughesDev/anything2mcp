@@ -314,3 +314,49 @@ async fn the_publish_page_lists_the_surfaces_first_and_marks_a_new_address_there
     );
     publishing.kernel.close(CloseReason::Asked).await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn what_breaks_comes_right_after_where_it_leads_and_before_the_sign_ins_and_the_tools() {
+    let publishing = Publishing::open().await;
+    let first = publishing.publish(&publishing.person, None).await;
+    assert!(first.ok, "{first:?}");
+
+    // A draft that drops an output of the order's read: a break, named
+    // after the surfaces and before the sign-ins and the tools (decisions
+    // 0418 and 0999).
+    let folder = publishing.target_file().parent().unwrap().to_path_buf();
+    let edit = |path: &Path, from: &str, to: &str| {
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains(from), "{from} in {}", path.display());
+        std::fs::write(path, text.replacen(from, to, 1)).unwrap();
+    };
+    edit(
+        &folder.join("operations").join("order_get.yaml"),
+        "  note: {type: note}\n",
+        "",
+    );
+    edit(
+        &folder.join("tests").join("order_get.yaml"),
+        ", note: \"Call before delivery\"",
+        "",
+    );
+    let text = page_of(&publishing, "2.0.0").await;
+    let leads = at(&text, "<h2>Where it leads</h2>");
+    let breaks = at(&text, "<h2>What breaks</h2>");
+    let signs_in = at(&text, "<h2>How it signs in</h2>");
+    let tools = at(&text, "<h2>What each tool may do</h2>");
+    assert!(
+        leads < breaks && breaks < signs_in && signs_in < tools,
+        "{text}"
+    );
+    let section = &text[breaks..signs_in];
+    assert!(
+        section.contains("<code>example_order_get</code>"),
+        "{section}"
+    );
+    assert!(
+        section.contains("the output <code>note</code> is gone"),
+        "{section}"
+    );
+    publishing.kernel.close(CloseReason::Asked).await;
+}

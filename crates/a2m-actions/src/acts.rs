@@ -402,7 +402,7 @@ fn needs_person(ask: &PersonActAsk, link: &SurfaceLink, asked: &Map<String, Json
         );
         if !breaking.is_empty() {
             warnings.push(format!(
-                "This publish breaks {} of version `{}`'s tools for an agent that calls them as they were: {}. Each is under `breaking`, with why; the person sees them first on the page, and may still publish.",
+                "This publish breaks {} of version `{}`'s tools for an agent that calls them as they were: {}. Each is under `breaking`, with why; the person sees them on the page, after where it leads and before the tools, and may still publish.",
                 breaking.len(),
                 changes.from,
                 breaking

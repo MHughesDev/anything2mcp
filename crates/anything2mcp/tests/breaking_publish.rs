@@ -1,8 +1,9 @@
 //! Package YL1 through the product (decision 0439): a person publishes
 //! version 1.0.0 of an `example` target; its next draft makes one break of
 //! each kind on the record's closed list, and changes one tool in a way
-//! that breaks nothing. The publish page names each breaking tool first,
-//! with why; `publish.request`'s answer names the same; the person still
+//! that breaks nothing. The publish page names each breaking tool right
+//! after where it leads, with why; `publish.request`'s answer names the
+//! same; the person still
 //! publishes it by pressing; and `diff` gives the same classification for
 //! the two published versions. A third draft that breaks nothing shows no
 //! break on the page or in the answer. Of a kind the record names two ways,
@@ -543,8 +544,8 @@ async fn each_break_is_named_first_on_the_publish_page_and_in_the_answer_and_the
         "{asked}"
     );
 
-    // The page: what breaks first, before where it leads, the sign-ins,
-    // and the tools; each break by its tool and why.
+    // The page: where it leads first, then what breaks, then the tools;
+    // each break by its tool and why.
     let at = |heading: &str| {
         text.find(heading)
             .unwrap_or_else(|| panic!("{heading}: {text}"))
@@ -552,8 +553,8 @@ async fn each_break_is_named_first_on_the_publish_page_and_in_the_answer_and_the
     let breaks = at("<h2>What breaks</h2>");
     let leads = at("<h2>Where it leads</h2>");
     let tools = at("<h2>What each tool may do</h2>");
-    assert!(breaks < leads && leads < tools, "{text}");
-    let section = &text[breaks..leads];
+    assert!(leads < breaks && breaks < tools, "{text}");
+    let section = &text[breaks..tools];
     for (tool, _) in expected_breaks() {
         assert!(
             section.contains(&format!("<code>{tool}</code>")),
