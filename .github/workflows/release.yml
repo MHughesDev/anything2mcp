@@ -84,6 +84,12 @@ jobs:
             echo "::error::This commit is not on main, so CI has not passed on it there."
             exit 1
           fi
+          # A release keeps its contract before it is tagged, and every later
+          # build is checked against it (decision 0437).
+          if ! python3 tools/contracts.py kept "$version"; then
+            echo "::error::contracts/$version/ is not kept whole; run python3 tools/contracts.py write $version and commit it before the tag."
+            exit 1
+          fi
           echo "This run publishes version $version."
           echo "publish=true" >> "$GITHUB_OUTPUT"
 
