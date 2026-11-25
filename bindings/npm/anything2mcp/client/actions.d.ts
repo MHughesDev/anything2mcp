@@ -29,6 +29,14 @@ export interface ActionSearchInput {
 }
 
 /**
+ * The input of `assertion.confirm`.
+ */
+export interface AssertionConfirmInput {
+  target: string;
+  assertions?: string[];
+}
+
+/**
  * The input of `audit.query`.
  */
 export interface AuditQueryInput {
@@ -783,6 +791,14 @@ export declare abstract class Actions {
    * is `action.search`.
    */
   actionSearch(input?: ActionSearchInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Confirm the reads a target's drafts assert, as the person, so that a try of the
+   * drafts in an environment of kind `test` may let a page send them. A person's act,
+   * carried out on the engine's page, never an agent's. The engine action is
+   * `assertion.confirm`.
+   */
+  assertionConfirm(input: AssertionConfirmInput, options?: CallOptions): Promise<Response>;
 
   /**
    * Read the audit log, oldest first, and check its chain. The engine action is

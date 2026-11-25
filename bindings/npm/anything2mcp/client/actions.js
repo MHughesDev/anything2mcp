@@ -11,6 +11,7 @@ const ACTIONS = Object.freeze([
   "action.describe",
   "action.run",
   "action.search",
+  "assertion.confirm",
   "audit.query",
   "auth.detect",
   "binding.promote",
@@ -129,6 +130,16 @@ class Actions {
    */
   actionSearch(input = {}, options = {}) {
     return this.call("action.search", input, options);
+  }
+
+  /**
+   * Confirm the reads a target's drafts assert, as the person, so that a try of the
+   * drafts in an environment of kind `test` may let a page send them. A person's act,
+   * carried out on the engine's page, never an agent's. The engine action is
+   * `assertion.confirm`.
+   */
+  assertionConfirm(input, options = {}) {
+    return this.call("assertion.confirm", input, options);
   }
 
   /**
