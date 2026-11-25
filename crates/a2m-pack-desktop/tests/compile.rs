@@ -118,6 +118,34 @@ fn each_write_the_pack_cannot_verify_is_refused_by_name() {
         ),
         // A verb the pack does not build is not one the mode serves.
         (update, "verb: update", "verb: create", "create"),
+        // A write through a window found by a title with a placeholder is
+        // not built (decision 0999).
+        (
+            "screens/order_edit.yaml",
+            "title: \"Example order\"",
+            "title: \"Example {order_number}\"",
+            "desktop.title_write",
+        ),
+        // A placeholder no required input fills.
+        (
+            "screens/order.yaml",
+            "title: \"Example order\"",
+            "title: \"Example {order_id}\"",
+            "desktop.title_unbound",
+        ),
+        // Two placeholders, or one and nothing beside it.
+        (
+            "screens/order.yaml",
+            "title: \"Example order\"",
+            "title: \"{a} {b}\"",
+            "desktop.title_invalid",
+        ),
+        (
+            "screens/order.yaml",
+            "title: \"Example order\"",
+            "title: \"{order_id}\"",
+            "desktop.title_invalid",
+        ),
     ]
     .into_iter()
     .enumerate()

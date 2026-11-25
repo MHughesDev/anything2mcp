@@ -38,6 +38,7 @@ const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
 const TEXT: &str = "org.a11y.atspi.Text";
 const EDITABLE_TEXT: &str = "org.a11y.atspi.EditableText";
 const ACTION: &str = "org.a11y.atspi.Action";
+const TABLE: &str = "org.a11y.atspi.Table";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 /// The events a wait listens for: every change an application signals
 /// about its objects.
@@ -74,7 +75,12 @@ pub(crate) const ACT_MEMBERS: &[(&str, &str)] =
     &[(EDITABLE_TEXT, "SetTextContents"), (ACTION, "DoAction")];
 
 /// The properties [`PROPERTIES`]`.Get` may ask for.
-const READ_PROPERTIES: &[(&str, &str)] = &[(ACCESSIBLE, "Name"), ("org.a11y.Status", "IsEnabled")];
+const READ_PROPERTIES: &[(&str, &str)] = &[
+    (ACCESSIBLE, "Name"),
+    ("org.a11y.Status", "IsEnabled"),
+    // How many columns a table states it has, asked of a table only.
+    (TABLE, "NColumns"),
+];
 
 /// AT-SPI's role numbers, mapped to the pack's words.
 fn role_word(role: u32) -> &'static str {
@@ -757,6 +763,19 @@ impl Look {
             }
             name = parts.join(" ");
         }
+        // A table that answers the Table interface states how many
+        // columns it has; one that does not states nothing, and nothing is
+        // guessed for it (rule 7).
+        let columns = if role_word(role) == "table" && interfaces.iter().any(|known| known == TABLE)
+        {
+            let value = property(&self.a11y, bus, path, TABLE, "NColumns").await?;
+            i32::try_from(value)
+                .ok()
+                .and_then(|count| u32::try_from(count).ok())
+                .filter(|count| *count > 0)
+        } else {
+            None
+        };
         let node = Node {
             depth,
             role: role_word(role),
@@ -767,6 +786,7 @@ impl Look {
             labels: relations
                 .iter()
                 .any(|(kind, targets)| *kind == LABEL_FOR && !targets.is_empty()),
+            columns,
             children: Vec::new(),
             el: el.clone(),
         };

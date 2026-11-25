@@ -285,6 +285,31 @@ impl Scene {
         result
     }
 
+    /// Reads through the `act` steps of a read operation that takes
+    /// inputs, each step's arguments evaluated from them.
+    pub async fn read_with(
+        &self,
+        operation: &str,
+        inputs: &Values,
+        within: Duration,
+    ) -> Result<Values, StepFailure> {
+        let (handle, mut prepared) = self.prepare(a2m_provider::Posture::Live).await?;
+        let steps = self.binding(operation).act.clone();
+        let result = run_with(
+            &self.compiled_target,
+            &handle,
+            &mut prepared,
+            &steps,
+            inputs,
+            None,
+            within,
+        )
+        .await;
+        let cleanup = handle.release(prepared, result.is_err()).await;
+        assert!(cleanup.complete);
+        result
+    }
+
     /// The same read, which on failure says what the window holds: its
     /// shape, as the pack's discoverer gives it. A failing test's message
     /// is all a reader of a remote machine's run has.

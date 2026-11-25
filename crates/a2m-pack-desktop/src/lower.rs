@@ -70,6 +70,9 @@ pub(crate) const VALUE_ARG: &str = "value";
 /// What the name of a `wait` step's argument for a part of the record's
 /// key starts with.
 pub(crate) const KEY_ARG: &str = "key.";
+/// The name of a `goto` step's argument that fills its window title's
+/// placeholder (decision 0999).
+pub(crate) const TITLE_ARG: &str = "title";
 
 /// How long a step may take when the target states no timeout under the
 /// step kind's name.
@@ -228,8 +231,42 @@ impl<'a> Lower<'a, '_> {
         FailsAs::from(&codes::row::LOCATOR_NOT_FOUND)
     }
 
-    fn goto(&self, found: &Found<'_>) -> Step {
-        self.step(GOTO, found, Self::unexpected())
+    /// The `goto` step. A window title with a placeholder takes the
+    /// operation's input of the placeholder's name, which it must have.
+    fn goto(&mut self, found: &Found<'_>) -> Step {
+        let mut step = self.step(GOTO, found, Self::unexpected());
+        if let Some(hole) = &found.screen.window.hole {
+            let named = self
+                .cx
+                .operation()
+                .inputs()
+                .iter()
+                .any(|input| input.compiled.name == hole.name && input.compiled.required);
+            if !named {
+                self.refuse(
+                    "title_unbound",
+                    Stage::Resolve,
+                    found.at,
+                    format!(
+                        "The window of the screen `{}` is found by a title whose placeholder `{}` no required input of the operation fills.",
+                        found.name, hole.name
+                    ),
+                    "Give the operation a required input of the placeholder's name.",
+                );
+                return step;
+            }
+            match self
+                .cx
+                .expr_at(&format!("input.{}", hole.name), found.at, None)
+            {
+                Ok(index) => step.args.push(StepArg {
+                    name: TITLE_ARG.to_owned(),
+                    value: index,
+                }),
+                Err(wrong) => self.problems.push(wrong),
+            }
+        }
+        step
     }
 
     /// The `wait` step, with one argument for each part of the record's
@@ -237,7 +274,18 @@ impl<'a> Lower<'a, '_> {
     /// key input's name, which the screen must have.
     fn wait(&mut self, found: &Found<'_>) -> Step {
         let mut args = Vec::new();
+        let titled = found
+            .screen
+            .window
+            .hole
+            .as_ref()
+            .map(|hole| hole.name.as_str());
         for key in self.cx.operation().key() {
+            // A part of the key the window's title holds is proven by the
+            // `goto`, which finds the window of exactly that title.
+            if titled == Some(key.as_str()) {
+                continue;
+            }
             if !found.screen.fields.contains_key(key) {
                 self.refuse(
                     "key_unshown",
@@ -947,6 +995,19 @@ impl Lowering for DesktopLowering {
             }
             lowered.act = vec![lower.goto(&found), lower.wait(&found), lower.read(&found)];
         } else {
+            if found.screen.window.hole.is_some() {
+                lower.refuse(
+                    "title_write",
+                    Stage::Analyze,
+                    found.at,
+                    format!(
+                        "The window of the screen `{}` is found by a title with a placeholder; a write through such a screen is not built in this version, since nothing proves again before each act that the window still shows that title.",
+                        found.name
+                    ),
+                    "Write through a screen whose window has a title of its own, or read only through this one.",
+                );
+                return Err(lower.problems);
+            }
             let wait = lower.wait(&found);
             // Every act carries the record's key the `wait` proves, so that
             // it proves it again on the walk it acts on, just before it
