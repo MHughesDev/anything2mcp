@@ -438,6 +438,13 @@ def main():
         licence, copy = repo / "LICENSE", pip_file.parent / "LICENSE"
         if not copy.is_file() or not licence.is_file() or copy.read_bytes() != licence.read_bytes():
             note("release", "bindings/python/LICENSE must be an exact copy of LICENSE")
+        # The notices file of third-party licence texts: written from Cargo.lock by tools/notices.py,
+        # which CI's dependencies job holds to the tree; the wheel carries the copy beside the project.
+        notices, notices_copy = repo / "THIRD-PARTY-NOTICES.txt", pip_file.parent / "THIRD-PARTY-NOTICES.txt"
+        if not notices.is_file():
+            note("release", "THIRD-PARTY-NOTICES.txt is missing; run python3 tools/notices.py write")
+        elif not notices_copy.is_file() or notices_copy.read_bytes() != notices.read_bytes():
+            note("release", "bindings/python/THIRD-PARTY-NOTICES.txt must be an exact copy of THIRD-PARTY-NOTICES.txt")
 
     # 15. The product's earlier names appear only in history (decision 0056).
     earlier = re.compile(r"Web2MCP|web2mcp|w2mcp|\bw2m[-_]|\bW2M_")
