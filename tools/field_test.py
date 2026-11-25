@@ -67,6 +67,10 @@ and `note`:
                                       one renderer, each in a user namespace that is not the
                                       box's own, and no process of the box carrying a flag
                                       that switches the sandbox off
+    "desktop": {}                     (needs `box_desktop`) the applications the box's
+                                      accessibility registry lists, one line each:
+                                      `A2M_APPLICATION <bus name> <program> <name>`, asked of
+                                      the bus by the runner and never through the product
 
 `expect` may hold `ok` (true or false), `code` (the failure code of a product
 command), `status` (of a request), `contains` and `lacks` (text in the output),
@@ -191,6 +195,28 @@ Whatever the options, a recipe that holds a flag that switches a browser's sandb
 (`SANDBOX_OFF`), in its own text or in a file it gives the box, is refused before anything
 is started. The report states the box's image, user, and filter.
 
+The box's desktop session (decision 0999), for a desktop application in the box:
+
+- `"box_desktop": {"application": ["/absolute/program", "argument", ...]}`: with the box, at
+  the first `a2m` or `desktop` step and before the field harness starts, the runner starts in
+  the box, as the box's user, the session script kept in `tools/field-box/desktop-session.sh`
+  (mounted read-only): a virtual display that listens on no TCP port, a session bus, and the
+  accessibility bus, each a socket in a folder of the box's own, and then the application,
+  which the recipe names and the script does not. The runner waits, at most `DESKTOP_WAIT`
+  seconds, until the accessibility registry lists an application whose process runs that
+  program, and stops the run as `desktop_not_ready` otherwise. The harness and every command
+  of the product get the session's `DISPLAY` and `DBUS_SESSION_BUS_ADDRESS`, as a person's
+  shell has them, and nothing else of it. It needs a `box_image`, which must hold `Xvfb`,
+  `dbus-daemon`, `dbus-send`, `/usr/libexec/at-spi-bus-launcher`, and the application, and a
+  passwd entry for the box's user, without which the session bus does not start; and a
+  `box_user` that is not root, since a desktop session is a person's. Nothing of this
+  machine's own display or buses reaches the box, and the session widens the box by nothing:
+  no device, socket, or option is added but the script's one read-only file. The report states the application and the script's hash.
+
+A recipe whose system is the box's own desktop application says `"system": {"kind": "desktop"}`
+with `box_desktop`, and names no image: no system's container is started. The steps `exec`
+and `http`, and a proxy, are refused in such a recipe, as for a folder.
+
 A recipe whose system is a folder of files, not a program, says `"system": {"kind": "folder"}`
 and names no image: no system's container is started, and the folder is made by the recipe's
 own steps (`python`, `copy`) under `{project}` or `{data}`. The steps `exec` and `http`, and a
@@ -305,6 +331,13 @@ SANDBOX_OFF = (
     "--single-process",
     "--no-zygote",
 )
+# The box's desktop session (decision 0999): the script kept here, the place it is mounted in
+# the box, what the harness and the product's commands are given of it, and how long the
+# runner waits for the application to be on the accessibility bus.
+DESKTOP_SESSION = os.path.join(REPO, "tools", "field-box", "desktop-session.sh")
+BOX_DESKTOP_SESSION = "/usr/local/lib/a2m-field/desktop-session.sh"
+DESKTOP_ENV = {"DISPLAY": ":99", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/a2m-desktop/bus"}
+DESKTOP_WAIT = 60
 NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -391,6 +424,46 @@ def box_filter(name, default_path=None):
     profile = json.loads(raw)
     profile["syscalls"] = profile["syscalls"] + BOX_FILTERS[name]
     return profile
+
+
+def desktop_options(system, box):
+    """The box's desktop session from a recipe's `system` (decision 0999), as
+    `{"application": [argv]}`, or None when the recipe asks for none. `box` is what
+    `box_options` gave. Refused, before anything is started, when it is not one the runner
+    allows."""
+    if system.get("kind") == "desktop" and "box_desktop" not in system:
+        raise CannotRun("A recipe whose system is `desktop` names its application under `box_desktop`.")
+    if "box_desktop" not in system:
+        return None
+    spec = system["box_desktop"]
+    if not isinstance(spec, dict) or set(spec) != {"application"}:
+        raise CannotRun(f"The recipe's `box_desktop` holds `application` and nothing else: {spec!r}")
+    argv = spec["application"]
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or not all(isinstance(part, str) and part and "\0" not in part for part in argv)
+        or not argv[0].startswith("/")
+        or "/../" in argv[0] + "/"
+    ):
+        raise CannotRun(
+            "The recipe's `box_desktop.application` is not an argument list whose first part is "
+            f"the program's absolute path: {argv!r}"
+        )
+    if "box_image" not in system:
+        raise CannotRun(
+            "A desktop session needs a `box_image` that holds a virtual display, the buses, and "
+            "the application; the runner's own image holds none of them."
+        )
+    if "box_user" not in system or box["user"].startswith("0:"):
+        raise CannotRun("A desktop session is a person's and never root's; name a `box_user` that is not root.")
+    return {"application": argv}
+
+
+def desktop_hash(path=None):
+    """The SHA-256 of the desktop session's script, which the report states."""
+    with open(path or DESKTOP_SESSION, "rb") as handle:
+        return hashlib.sha256(handle.read()).hexdigest()
 
 
 def sandbox_off_in(recipe, files=()):
@@ -536,6 +609,9 @@ class Run:
         # The box's image, and the flags of its system-call filter (decision 0447).
         self.box_image = BOX_IMAGE
         self.box_security = []
+        # The box's desktop session, `{"application": [argv]}`, or None (decision 0999).
+        self.desktop = None
+        self.desktop_up = False
 
     def network_argv(self):
         return ["docker", "network", "create", "--internal", "--label", self.label, self.network]
@@ -564,6 +640,8 @@ class Run:
         if harness:
             mounts += ["-v", f"{harness}:{BOX_HARNESS}:ro"]
         mounts += self.box_mounts
+        if self.desktop:
+            mounts += ["-v", f"{DESKTOP_SESSION}:{BOX_DESKTOP_SESSION}:ro"]
         # The image's own entry point is never run: a box image with a browser may start
         # programs of its own from one, and the box runs only what the runner starts in it.
         return [
@@ -594,10 +672,45 @@ class Run:
         self.box_up = True
         check_closed(self.box, execute)
 
+    def session_env(self, env):
+        """`env` with what a person's shell has of the box's desktop session, when there is one."""
+        return {**env, **DESKTOP_ENV} if self.desktop else env
+
+    def desktop_argv(self, *args, detach=False):
+        """The desktop session's script in the box, as the box's user: `start` (detached),
+        `ready`, or `list`."""
+        flags = ["-d"] if detach else []
+        return ["docker", "exec", *flags, "-w", "/", self.box, "sh", BOX_DESKTOP_SESSION, *args]
+
+    def start_desktop(self, execute=None, wait=DESKTOP_WAIT, clock=time.monotonic, pause=time.sleep):
+        """Start the box's desktop session and its application, once, and wait until the
+        accessibility registry lists an application whose process runs the program."""
+        execute = execute or run
+        if not self.desktop or self.desktop_up:
+            return
+        program = self.desktop["application"][0]
+        code, _, err = execute(self.desktop_argv("start", *self.desktop["application"], detach=True))
+        if code != 0:
+            raise CannotRun(f"desktop_not_ready: the desktop session did not start: {err.strip()[-400:]}")
+        until = clock() + wait
+        while True:
+            if execute(self.desktop_argv("ready", program))[0] == 0:
+                self.desktop_up = True
+                return
+            if clock() >= until:
+                _, said, _ = execute(
+                    ["docker", "exec", self.box, "sh", "-c", "tail -n 5 /tmp/a2m-desktop/*.log"]
+                )
+                raise CannotRun(
+                    f"desktop_not_ready: no application of the accessibility registry runs {program} "
+                    f"after {wait} seconds: {said.strip()[-800:]}"
+                )
+            pause(1)
+
     def exec_argv(self, env, cwd, argv):
         """One command of the product, inside the binary's container."""
         flags = []
-        for key, value in env.items():
+        for key, value in self.session_env(env).items():
             flags += ["-e", f"{key}={value}"]
         # A command starts with the umask a person's shell has. The engine's container may
         # start commands with none, and the engine refuses a project file others may change.
@@ -608,7 +721,7 @@ class Run:
         kept open (`-i`) for the runner alone. It is given no other argument: in particular
         not `--passphrase-from-stdin`, because its standard input carries prompt answers."""
         flags = []
-        for key, value in env.items():
+        for key, value in self.session_env(env).items():
             flags += ["-e", f"{key}={value}"]
         return ["docker", "exec", "-i", "-w", cwd, *flags, self.box, "sh", "-c", 'umask 022; exec "$0" "$@"', BOX_HARNESS, "serve"]
 
@@ -1058,6 +1171,12 @@ def do_step(step, names, env, active, proxy=None, harness=None, secrets=None):
         code, out, err = run(["docker", "exec", active.box, "sh", "-c", sandboxed_script()])
         ok, why = sandboxed_verdict(code, out + err)
         return {"ok": ok, "output": why}
+    if "desktop" in step:
+        if not active.desktop_up:
+            raise CannotRun("A `desktop` step needs the box's desktop session, which a recipe asks for with `box_desktop`.")
+        code, out, err = run(active.desktop_argv("list"))
+        listed = [line for line in out.splitlines() if line.startswith("A2M_APPLICATION ")]
+        return {"ok": code == 0 and bool(listed), "output": "\n".join(listed) or (out + err)[-2000:]}
     if "a2m" in step:
         if harness is not None and harness.alive() is False and harness.process is not None:
             raise CannotRun(
@@ -1171,10 +1290,10 @@ def main():
         print("The container engine is not running; start it, then run the field test again.")
         return 2
     system = recipe["system"]
-    a_folder = system.get("kind") == "folder"
+    a_folder = system.get("kind") in ("folder", "desktop")
     if a_folder:
         if "image" in system or system.get("proxy") or system.get("network"):
-            print("A recipe whose system is a folder names no image, no proxy, and no network.")
+            print(f"A recipe whose system is a {system['kind']} names no image, no proxy, and no network.")
             return 2
     elif "@sha256:" not in system.get("image", ""):
         print("The recipe's image is not pinned by digest.")
@@ -1187,6 +1306,7 @@ def main():
         file_mounts(system.get("mounts", {}), recipe_dir)
         box_mounts = file_mounts(system.get("box_mounts", {}), recipe_dir)
         box = box_options(system, f"{os.getuid()}:{os.getgid()}")
+        desktop = desktop_options(system, box)
         off = sandbox_off_in(recipe, mounted_files(box_mounts))
         if off:
             raise CannotRun(
@@ -1202,6 +1322,7 @@ def main():
     active = Run(recipe["name"])
     active.box_mounts = box_mounts
     active.box_image = box["image"]
+    active.desktop = desktop
     names = {
         "recipe": recipe_dir,
         "project": os.path.join(run_dir, "project"),
@@ -1241,7 +1362,7 @@ def main():
     build_dir = None
     report = {
         "field_test": recipe["name"],
-        "image": system.get("image", "none: the system is a folder"),
+        "image": system.get("image", f"none: the system is a {system.get('kind')}"),
         "harness_features": system.get("harness_features", []),
         "box": {
             "image": box["image"],
@@ -1249,6 +1370,9 @@ def main():
             "filter": box["filter"] or "the container engine's own default",
             "filter_sha256": (
                 hashlib.sha256(json.dumps(profile, indent=1).encode()).hexdigest() if profile else None
+            ),
+            "desktop": (
+                {"application": desktop["application"], "session_sha256": desktop_hash()} if desktop else None
             ),
         },
         "steps": [],
@@ -1260,6 +1384,7 @@ def main():
         active.ensure_box(
             env["A2M_BINARY"], home, names["project"], box["user"], harness=harness_binary
         )
+        active.start_desktop()
         started = Harness(active.harness_argv(product_env(env), names["project"]), os.path.join(run_dir, "harness.log"))
         started.start()
         return started
@@ -1297,7 +1422,7 @@ def main():
         for number, raw in enumerate(recipe["steps"], 1):
             straight = any(kind in raw for kind in ("http", "sqlite", "exec", "python"))
             step = fill(raw, {**names, "base": names["direct"]} if straight and "direct" in names else names)
-            if "a2m" in step and harness is None:
+            if ("a2m" in step or "desktop" in step) and harness is None:
                 harness = start_engine(harness_binary)
             shown = do_step(step, names, env, active, proxy, harness, secrets)
             if handed and any(kind in step for kind in ("copy", "replace", "python")):

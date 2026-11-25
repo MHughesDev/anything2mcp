@@ -851,5 +851,123 @@ class BoxOptions(unittest.TestCase):
             field_test.give_to([folder], user)
 
 
+DESKTOP = {"kind": "desktop", "box_image": "example/desktop-box@sha256:" + "2" * 64, "box_user": "1200:1201",
+           "box_desktop": {"application": ["/usr/bin/example-desk", "--orders", "1001"]}}
+
+
+class DesktopSession(unittest.TestCase):
+    """The box's desktop session (decision 0999)."""
+
+    def box(self, system, runner="0:0"):
+        return field_test.desktop_options(system, field_test.box_options(system, runner))
+
+    def test_without_it_the_box_has_no_session_and_its_commands_no_display(self):
+        self.assertIsNone(self.box(SYSTEM))
+        run = field_test.Run("example", token="abc")
+        self.assertNotIn(field_test.BOX_DESKTOP_SESSION, " ".join(run.box_argv("/b", "/h", "/p", "0:0")))
+        argv = run.exec_argv({"A2M_HOME": "/h"}, "/p", ["init"])
+        self.assertNotIn("DISPLAY", " ".join(argv))
+        self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", " ".join(argv))
+
+    def test_an_application_is_an_argument_list_from_an_absolute_program(self):
+        self.assertEqual(self.box(DESKTOP), {"application": DESKTOP["box_desktop"]["application"]})
+        for spec in ({"application": []}, {"application": "/usr/bin/example-desk"}, {"application": ["example-desk"]},
+                     {"application": ["/usr/bin/../bin/sh"]}, {"application": ["/usr/bin/example-desk", 7]},
+                     {"application": ["/usr/bin/example-desk", ""]}, {"application": ["/usr/bin/x"], "env": {"A": "b"}},
+                     ["/usr/bin/example-desk"], {}):
+            with self.assertRaises(field_test.CannotRun, msg=spec):
+                self.box({**DESKTOP, "box_desktop": spec})
+
+    def test_a_session_needs_an_image_of_its_own_and_a_user_that_is_not_root(self):
+        for drop in ("box_image", "box_user"):
+            with self.assertRaises(field_test.CannotRun, msg=drop):
+                self.box({key: value for key, value in DESKTOP.items() if key != drop})
+        with self.assertRaises(field_test.CannotRun):
+            self.box({**DESKTOP, "box_user": "0:0"})
+        with self.assertRaises(field_test.CannotRun):
+            self.box({"kind": "desktop", "box_image": DESKTOP["box_image"], "box_user": "1200:1201"})
+
+    def test_the_session_adds_one_read_only_file_to_the_box_and_nothing_wider(self):
+        plain, desk = field_test.Run("example", token="abc"), field_test.Run("example", token="abc")
+        for run in (plain, desk):
+            run.box_image = DESKTOP["box_image"]
+        desk.desktop = self.box(DESKTOP)
+        before = plain.box_argv("/b", "/h", "/p", "1200:1201")
+        after = desk.box_argv("/b", "/h", "/p", "1200:1201")
+        at = after.index(f"{field_test.DESKTOP_SESSION}:{field_test.BOX_DESKTOP_SESSION}:ro")
+        self.assertEqual(after[at - 1], "-v")
+        self.assertEqual(after[: at - 1] + after[at + 1:], before)
+        for wider in ("--privileged", "--cap-add", "--device", "--ipc", "--security-opt", "/tmp/.X11-unix",
+                      "/run/user", "--userns", "DISPLAY", "DBUS"):
+            self.assertNotIn(wider, " ".join(after), wider)
+
+    def test_the_harness_and_each_command_get_the_session_s_display_and_bus_only(self):
+        run = field_test.Run("example", token="abc")
+        run.desktop = self.box(DESKTOP)
+        for argv in (run.exec_argv({"A2M_HOME": "/h"}, "/p", ["init"]), run.harness_argv({"A2M_HOME": "/h"}, "/p")):
+            given = [argv[i + 1] for i, part in enumerate(argv) if part == "-e"]
+            self.assertEqual(sorted(given), sorted(["A2M_HOME=/h", "DISPLAY=:99",
+                                                    "DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/a2m-desktop/bus"]))
+
+    def test_the_session_starts_once_detached_and_waits_for_the_application_on_the_bus(self):
+        run = field_test.Run("example", token="abc")
+        run.desktop = self.box(DESKTOP)
+        calls, answers = [], iter([0, 1, 1, 0])
+        run.start_desktop(execute=lambda argv: calls.append(argv) or (next(answers), "", ""), pause=lambda _: None)
+        self.assertTrue(run.desktop_up)
+        self.assertEqual(calls[0][:3], ["docker", "exec", "-d"])
+        self.assertEqual(calls[0][-5:], [field_test.BOX_DESKTOP_SESSION, "start", *DESKTOP["box_desktop"]["application"]])
+        self.assertEqual([argv[-2:] for argv in calls[1:]], [["ready", "/usr/bin/example-desk"]] * 3)
+        self.assertNotIn("--user", " ".join(calls[0]), "the session runs as the box's own user")
+        run.start_desktop(execute=lambda argv: calls.append(argv) or (0, "", ""))
+        self.assertEqual(len(calls), 4, "a session starts once")
+
+    def test_an_application_that_never_reaches_the_bus_stops_the_run_by_name(self):
+        run = field_test.Run("example", token="abc")
+        run.desktop = self.box(DESKTOP)
+        now = [0.0]
+        def clock():
+            now[0] += 10
+            return now[0]
+        def execute(argv):
+            if "start" in argv:
+                return 0, "", ""
+            if "ready" in argv:
+                return 1, "", ""
+            return 0, "a2m-desktop: the display did not start", ""
+        with self.assertRaises(field_test.CannotRun) as stop:
+            run.start_desktop(execute=execute, wait=30, clock=clock, pause=lambda _: None)
+        self.assertIn("desktop_not_ready", str(stop.exception))
+        self.assertIn("the display did not start", str(stop.exception))
+        self.assertFalse(run.desktop_up)
+
+    def test_a_desktop_step_needs_the_session(self):
+        with self.assertRaises(field_test.CannotRun):
+            field_test.do_step({"desktop": {}}, {"project": "/p"}, {}, field_test.Run("example", token="abc"))
+
+    def test_a_desktop_recipe_is_held_to_the_box_s_refusals(self):
+        recipe = {"system": {**DESKTOP, "box_desktop": {"application": ["/usr/bin/example-desk", "--no-sandbox"]}}}
+        self.assertTrue(field_test.sandbox_off_in(recipe))
+        with self.assertRaises(field_test.CannotRun):
+            self.box({**DESKTOP, "box_seccomp": "unconfined"})
+
+    def test_the_session_script_names_no_application_and_listens_on_no_tcp_port(self):
+        text = Path(field_test.DESKTOP_SESSION).read_text()
+        self.assertIn("-nolisten tcp", text)
+        self.assertIn('exec "$@"', text)
+        self.assertNotIn("--listen", text)
+        self.assertNotIn("tcp:", text)
+        for start in ("Xvfb", "dbus-daemon", "at-spi-bus-launcher"):
+            self.assertIn(start, text)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the script is a POSIX shell's")
+    def test_the_session_script_refuses_root_and_a_bad_call(self):
+        done = subprocess.run(["sh", field_test.DESKTOP_SESSION], capture_output=True, text=True, check=False)
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("usage", done.stderr)
+        done = subprocess.run(["sh", "-n", field_test.DESKTOP_SESSION], capture_output=True, text=True, check=False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
