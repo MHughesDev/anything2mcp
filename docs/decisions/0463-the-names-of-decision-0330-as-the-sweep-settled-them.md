@@ -1,6 +1,6 @@
-# 0999. The names of decision 0330, as the sweep settled them
+# 0463. The names of decision 0330, as the sweep settled them
 
-**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), in package N0b. The owner had not read this record when it was merged. The number 0999 is a placeholder the lead renumbers on merge.
+**Status:** Accepted. Design decision, made under [decision 0294](0294-the-owner-hands-the-open-questions-to-the-agents.md), in package N0b. The owner had not read this record when it was merged. The number 0463 is a placeholder the lead renumbers on merge.
 
 **Date:** 2026-11-25
 
