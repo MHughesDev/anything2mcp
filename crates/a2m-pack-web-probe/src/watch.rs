@@ -30,22 +30,28 @@
 //! holds a parameter is `inferred`, with the limitation `sampled` (decision
 //! 0392, point 3). Every finding has coverage `partial`.
 //!
-//! The page that sent a request is taken as the screen the person was on
-//! when the capture took the request: the requests are taken each time the
-//! tab has taken the snapshot of a screen, which it does once the screen's
-//! own requests have ended. A request sent as the person moved on, such as
-//! a save, may be put to the screen they came to, and each finding says
-//! so.
+//! The page that sent a request is the screen of the document that sent
+//! it (decision 0999): the tab hands out each screen with its document,
+//! once it has looked at it, and the requests are taken with it up to that
+//! document, so that a request of the page the person came to next waits
+//! for its own screen. A screen the person left before it was quiet has no
+//! snapshot and still has its requests. A request a document sent after
+//! its screen was taken, such as a save, is put to the next screen of that
+//! document, or to the screen before the next document's, and each finding
+//! says so.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{EvidenceLevel, Failure, Finding, LimitationCode};
-use a2m_pack_web_browser::{Deadline, SCREENS_KEPT, Snapshot, WatchTab};
+use a2m_pack_web_browser::{
+    Deadline, DocumentMark, SCREENS_KEPT, Snapshot, WatchTab, WatchedScreen, captured,
+};
 use a2m_provider::{
-    BoxFuture, CaptureEnd, CapturedRequest, Discoverer, DiscovererName, DiscoveryReport,
-    DiscoveryScope, FindingSink, SandboxPort, SurfaceDescription, take_capture,
+    BoxFuture, CaptureEnd, CapturedRequest, CapturedTraffic, Discoverer, DiscovererName,
+    DiscoveryReport, DiscoveryScope, FindingSink, SandboxPort, SurfaceDescription, TrafficCapture,
+    take_capture,
 };
 use serde_json::Value as Json;
 
@@ -82,8 +88,15 @@ struct Taken {
     requests: Vec<(Exchange, Noted, usize)>,
     /// Each screen, as `web_snapshot` keeps one.
     screens: Vec<Looked>,
-    /// The path of the screen the person is on, by the last snapshot.
+    /// The path of the screen the person is on, by the last screen the
+    /// tab handed out.
     current: String,
+    /// The document of the tab's frame that screen was in: the requests
+    /// of the documents up to it are put to it.
+    document: Option<DocumentMark>,
+    /// A screen the tab handed out whose requests are still to be taken:
+    /// kept, so that a take the end of the capture cut short loses none.
+    handing: Option<WatchedScreen>,
     origin: String,
     /// Whether the tab came to a screen past the most it keeps.
     screens_bound: bool,
@@ -93,7 +106,7 @@ struct Taken {
 fn attributed() -> (LimitationCode, String) {
     (
         LimitationCode::Sampled,
-        "The page that sent it is taken as the screen the person was on when the capture took the request; a request sent as the person moved to another screen may be put to that one.".to_owned(),
+        "The page that sent it is taken as the screen of the document that sent it; a request sent after that screen was taken is put to the screen the person was on then, in that document.".to_owned(),
     )
 }
 
@@ -196,25 +209,86 @@ fn looked(snapshot: &Snapshot) -> Option<Looked> {
     Some((place, found, noted))
 }
 
+/// The requests of a watching tab up to one document of its frame, as a
+/// traffic capture of the contract, so that they pass its check.
+struct Through<'a>(&'a WatchTab, Option<DocumentMark>);
+
+impl TrafficCapture for Through<'_> {
+    fn start(&self) {}
+
+    fn take_recorded<'a>(&'a self, until: Deadline) -> BoxFuture<'a, CapturedTraffic> {
+        Box::pin(async move { captured(self.0.exchanges_through(self.1, until).await) })
+    }
+}
+
 impl Taken {
-    /// Takes the snapshots the tab has taken since the last call, then the
-    /// requests its pages sent, put to the screen the person is on.
-    async fn take(&mut self, tab: &WatchTab, scope: &DiscoveryScope<'_>, until: Deadline) {
-        let screens = tab.screens();
-        self.screens_bound |= screens.bound_hit;
-        self.report.dropped += screens.missed as u64;
-        for snapshot in &screens.snapshots {
-            match looked(snapshot) {
-                Some(seen) => {
-                    self.current.clone_from(&seen.0.path);
-                    self.screens.push(seen);
-                }
-                None => self.report.dropped += 1,
+    /// Takes each screen the tab has looked at since the last call, oldest
+    /// first, and with each the requests of the documents of the tab's
+    /// frame up to the screen's, put to it; at the `last`, every request
+    /// left, put to the screen the person was on last. A request of a
+    /// document the person came to later waits for its own screen.
+    async fn take(
+        &mut self,
+        tab: &WatchTab,
+        scope: &DiscoveryScope<'_>,
+        until: Deadline,
+        last: bool,
+    ) {
+        loop {
+            if self.handing.is_none() {
+                self.handing = tab.next_screen();
             }
+            let Some(screen) = self.handing.clone() else {
+                break;
+            };
+            // What the screen before sent since it was taken, and what is
+            // done of it, is its own.
+            if self.document.is_some() {
+                self.requests_through(tab, scope, self.document, Deadline::after(Duration::ZERO))
+                    .await;
+            }
+            // From here the screen is the person's: a take cut short after
+            // this leaves its requests to the next, which puts them to it.
+            self.handing = None;
+            match &screen.snapshot {
+                Some(snapshot) => match looked(snapshot) {
+                    Some(seen) => {
+                        self.current.clone_from(&seen.0.path);
+                        self.screens.push(seen);
+                    }
+                    None => self.report.dropped += 1,
+                },
+                None => {
+                    self.screens_bound |= screen.past_bound;
+                    if !screen.past_bound {
+                        self.report.dropped += 1;
+                    }
+                    if let Some(place) = Place::parse(&screen.address) {
+                        self.current = place.path;
+                    }
+                }
+            }
+            self.document = Some(screen.document);
+            self.requests_through(tab, scope, self.document, until)
+                .await;
         }
+        if last {
+            self.requests_through(tab, scope, None, until).await;
+        }
+    }
+
+    /// Takes the requests of the documents up to `through`, put to the
+    /// screen the person is on.
+    async fn requests_through(
+        &mut self,
+        tab: &WatchTab,
+        scope: &DiscoveryScope<'_>,
+        through: Option<DocumentMark>,
+        until: Deadline,
+    ) {
         let blocked = tab.blocked();
         self.report.dropped += blocked.len() as u64;
-        let taken = take_capture(tab, until, scope.redact).await;
+        let taken = take_capture(&Through(tab, through), until, scope.redact).await;
         self.report.dropped += (taken.withheld + taken.dropped) as u64;
         for own in taken.requests {
             if own.origin != self.origin {
@@ -581,6 +655,8 @@ impl WebUse {
             requests: Vec::new(),
             screens: Vec::new(),
             current: start.path.clone(),
+            document: None,
+            handing: None,
             origin: start.origin.clone(),
             screens_bound: false,
             report: DiscoveryReport::default(),
@@ -597,13 +673,15 @@ impl WebUse {
             }
             let until = Deadline::after(TAKE_WAIT.min(scope.deadline.remaining()));
             tokio::select! {
-                () = taken.take(&tab, scope, until) => {}
+                () = taken.take(&tab, scope, until, false) => {}
                 () = end.ended() => break,
             }
         }
         // What the tab holds once the capture has ended. A request still
         // unanswered by then is left out, and counted.
-        taken.take(&tab, scope, Deadline::after(LAST_WAIT)).await;
+        taken
+            .take(&tab, scope, Deadline::after(LAST_WAIT), true)
+            .await;
         drop(tab);
         taken.give(core, kinds, scope, out)
     }
