@@ -296,6 +296,9 @@ struct Session {
     /// browser: the browser is asked for a word before the next step there
     /// uses it, since a browser can be dead before the tab sees it.
     unsure: bool,
+    /// What the observing tab refused when its page made it, kept as a
+    /// limitation of the run (decision 0999).
+    limits: Limits,
 }
 
 /// What opens the observing tab again, in a new browser started from the
@@ -734,7 +737,7 @@ impl Session {
     /// or a download, which was denied, is a state no screen declares.
     /// `None` when it refused nothing.
     fn refused(&self, what: &str) -> Option<Failure> {
-        let mut refused = self.looking.blocked();
+        let mut refused = self.limits.keep(self.looking.blocked());
         if let Some(acting) = &self.acting {
             refused.extend(acting.blocked());
         }
@@ -883,13 +886,202 @@ const LEFT_THE_PAGE: &[&str] = &["POPUP", "DOWNLOAD"];
 /// What the browser engine reports a socket, a shared worker, or a service
 /// worker under, which the page's lock refused when the page made it, before
 /// anything was sent; with the words a person reads for each.
-const REFUSED_WHEN_MADE: &[(&str, &str)] = &[
+const WHEN_MADE_WORDS: &[(&str, &str)] = &[
     ("WEBSOCKET", "a WebSocket"),
     ("WEBTRANSPORT", "a WebTransport session"),
     ("PEERCONNECTION", "a peer connection"),
     ("SHAREDWORKER", "a shared worker"),
     ("SERVICEWORKER", "a service worker"),
 ];
+
+/// The words a person reads for what a page's lock refused when the page
+/// made it; the base's word when it has none here.
+fn made_words(refused: &RequestShape) -> &str {
+    WHEN_MADE_WORDS
+        .iter()
+        .find(|(method, _)| *method == refused.method)
+        .map_or(refused.method.as_str(), |(_, made)| made)
+}
+
+/// Where a refusal led, as a person may be shown it: the origin, and the
+/// path by structure, so that a segment that may be a token is not shown. A
+/// socket's address, `ws:` or `wss:`, is not a page address, so it is cut
+/// at its first `/` after the host by hand; one with no `://` shows nothing.
+fn refused_place(refused: &RequestShape) -> String {
+    let (place, sent) = match Address::new(&refused.address) {
+        Ok(address) => {
+            let origin = address.origin();
+            let sent = address
+                .as_str()
+                .strip_prefix(&origin)
+                .unwrap_or_default()
+                .to_owned();
+            (origin, sent)
+        }
+        Err(_) => match refused.address.split_once("://") {
+            Some((scheme, rest)) => {
+                let (host, path) = rest.find('/').map_or((rest, ""), |at| rest.split_at(at));
+                (format!("{scheme}://{host}"), path.to_owned())
+            }
+            None => (String::new(), String::new()),
+        },
+    };
+    shown(&format!("{place}{}", path_by_structure(&sent)))
+}
+
+/// The stops that say a page did not show what its screen declares, which
+/// may be because it went on without what the observing tab refused when
+/// the page made it.
+const NOT_SHOWN: [&a2m_core::CodeEntry; 3] = [
+    &codes::row::UNEXPECTED_PAGE,
+    &codes::row::LOCATOR_NOT_FOUND,
+    &a2m_provider::codes::row::TIMEOUT,
+];
+
+/// What an observing tab's lock refused when the page made it, kept as a
+/// limitation of the run rather than a stop (decision 0999): a socket, a
+/// shared worker, or a service worker, through which nothing was sent. A
+/// read goes on past it where the page goes on without it, and the run says
+/// what was refused: each one, once, as a `refused` detail of what the step
+/// measured, of the step during or before which the tab heard of it. What
+/// the acting tab refused is never kept here: it stops the run.
+#[derive(Debug, Default)]
+pub(crate) struct Limits(std::sync::Mutex<Kept>);
+
+#[derive(Debug, Default)]
+struct Kept {
+    /// Each refusal kept, once, oldest first.
+    refused: Vec<RequestShape>,
+    /// How many of them a step's outcome already says.
+    told: usize,
+}
+
+impl Limits {
+    fn kept(&self) -> std::sync::MutexGuard<'_, Kept> {
+        // Only this type writes what it holds, and every write leaves it
+        // whole, so a lock poisoned elsewhere still holds a true list.
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Keeps what the observing tab refused when its page made it, and
+    /// hands back everything else it refused, in its order, for
+    /// [`refusal`].
+    pub(crate) fn keep(&self, refused: Vec<RequestShape>) -> Vec<RequestShape> {
+        let (made, rest): (Vec<_>, Vec<_>) = refused
+            .into_iter()
+            .partition(RequestShape::refused_when_made);
+        let mut kept = self.kept();
+        for one in made {
+            if !kept.refused.contains(&one) {
+                kept.refused.push(one);
+            }
+        }
+        rest
+    }
+
+    /// The first refusal kept, if any.
+    pub(crate) fn first(&self) -> Option<RequestShape> {
+        self.kept().refused.first().cloned()
+    }
+
+    /// Adds to the step's capture of how it was done each refusal kept that
+    /// no step's outcome says yet, as a `refused` detail of what was
+    /// measured: the base's word and where it led. Two runs of the same
+    /// page may hear it at different steps, so it is not in the signature.
+    pub(crate) fn tell(&self, observed: &mut Observed) {
+        let mut kept = self.kept();
+        if kept.told == kept.refused.len() {
+            return;
+        }
+        let details: Vec<Detail> = kept.refused[kept.told..]
+            .iter()
+            .map(|one| Detail::new("refused", format!("{} {}", one.method, refused_place(one))))
+            .collect();
+        kept.told = kept.refused.len();
+        let at = observed.captures.iter().position(Capture::is_acting);
+        let mut acting_now = at
+            .and_then(|at| serde_json::from_slice::<Acting>(&observed.captures[at].bytes).ok())
+            .unwrap_or(Acting {
+                means: Vec::new(),
+                measured: Vec::new(),
+            });
+        acting_now.measured.extend(details);
+        let capture = Capture::acting(&acting_now);
+        match at {
+            Some(at) => observed.captures[at] = capture,
+            None => observed.captures.insert(0, capture),
+        }
+    }
+
+    /// A step's outcome, given what was kept. In a driver whose read is
+    /// what the page shows (`shown_by_page`), a page that shows the record
+    /// absent after a refusal kept is a state no rule covers, and stops:
+    /// the page may say so only because it went without what it made. And a
+    /// step there that did not find what its screen declares, or waited for
+    /// it in vain, says what was refused before it, since the page may need
+    /// it to show its record. Every other outcome is the step's own, with
+    /// what was kept told.
+    pub(crate) fn after(
+        &self,
+        done: Result<StepOutcome, StepFailure>,
+        what: &str,
+        shown_by_page: bool,
+    ) -> Result<StepOutcome, StepFailure> {
+        let first = self.first();
+        match (done, first) {
+            (Ok(StepOutcome::Absent(_)), Some(first)) if shown_by_page => {
+                Err(StepFailure::not_sent(fail(
+                    &codes::row::UNEXPECTED_PAGE,
+                    format!(
+                        "The page shows that the record is absent, at {what}, after the tab, which may only read, refused {} (`{}`) when the page made it. Whether the record is absent is not known: the page may say so only because it went on without it.",
+                        made_words(&first),
+                        refused_place(&first)
+                    ),
+                    &format!(
+                        "Look at what the page does when it loads. A page that needs {} to show its record cannot be read by the web pack; read the record from a page that does not.",
+                        made_words(&first)
+                    ),
+                )))
+            }
+            (Err(failed), Some(first))
+                if shown_by_page && failed.sent == a2m_provider::Sent::NotSent =>
+            {
+                // Only a stop that says the page did not show what its
+                // screen declares is said again, from its own row.
+                let Some(row) = NOT_SHOWN
+                    .iter()
+                    .find(|row| row.failure_code() == *failed.failure.code())
+                else {
+                    return Err(failed);
+                };
+                let made = made_words(&first);
+                Err(StepFailure::not_sent(fail(
+                    row,
+                    format!(
+                        "{} Before it, the tab, which may only read, refused {made} (`{}`) when the page made it, and the page may need it to show the screen.",
+                        failed.failure.message(),
+                        refused_place(&first)
+                    ),
+                    &format!(
+                        "{} A page that needs {made} to show its record cannot be read by the web pack; read the record from a page that does not.",
+                        failed.failure.next_step()
+                    ),
+                )))
+            }
+            (Ok(StepOutcome::Done(mut observed)), _) => {
+                self.tell(&mut observed);
+                Ok(StepOutcome::Done(observed))
+            }
+            (Ok(StepOutcome::Absent(mut observed)), _) => {
+                self.tell(&mut observed);
+                Ok(StepOutcome::Absent(observed))
+            }
+            (failed, _) => failed,
+        }
+    }
+}
 
 /// What a tab refused since it was last asked, as a failure: a move of the
 /// page, which the browser ended, is `policy`, `surface_not_declared`; a
@@ -900,7 +1092,10 @@ const REFUSED_WHEN_MADE: &[(&str, &str)] = &[
 /// write, and a read that needs such a request cannot be made (decision
 /// 0195). When an asserted read of the surface names the request's method
 /// and path, the next step names that page request (decision 0394, point
-/// 4). `None` when it refused nothing.
+/// 4). A socket, a shared worker, or a service worker the acting tab
+/// refused when the page made it is `page_write_refused` too; one the
+/// observing tab refused is kept by [`Limits::keep`] before this is asked,
+/// and is no stop (decision 0999). `None` when it refused nothing.
 pub(crate) fn refusal(
     refused: &[RequestShape],
     what: &str,
@@ -925,25 +1120,21 @@ pub(crate) fn refusal(
             ),
             "Look at why the page moves. Declare the surface in the target's files if the system really lives there.",
         )
-    } else if let Some((_, made)) = REFUSED_WHEN_MADE
-        .iter()
-        .find(|(method, _)| *method == first.method)
-    {
+    } else if first.refused_when_made() {
         // Nothing was sent: the lock refused it when the page made it. It
         // is not a request an asserted read could name, so the next step
-        // does not send the person to one (field test 11, finding 63).
-        let sent = address
-            .as_ref()
-            .and_then(|address| address.as_str().strip_prefix(&address.origin()))
-            .unwrap_or_default();
+        // does not send the person to one (field test 11, finding 63). Only
+        // the acting tab's refusals come here: a write is not made on a
+        // page that goes on without what it made.
+        let made = made_words(first);
         fail(
             &codes::row::PAGE_WRITE_REFUSED,
             format!(
-                "The page opened {made} (`{}`), at {what}, in a tab that may only read. The tab refused it when the page made it, so nothing was sent through it, and the run stops: what it would have sent is not held to what the tab may reach, and what the page shows without it is not known.",
-                shown(&format!("{place}{}", path_by_structure(sent))),
+                "The page opened {made} (`{}`), at {what}, in the tab a write is made in. The tab refused it when the page made it, so nothing was sent through it, and the run stops: a write is not made on a page that goes on without what it made, since what the page then does is not known.",
+                refused_place(first),
             ),
             &format!(
-                "Look at what the page does when it loads. A page that opens {made} as it loads cannot be read by the web pack yet, and no page request can say it only reads; read the record from a page that does not."
+                "Look at what the page does when it loads. A write through a page that opens {made} as it loads cannot be made by the web pack yet; a read of such a page goes on without it."
             ),
         )
     } else if LEFT_THE_PAGE.contains(&first.method.as_str()) {
@@ -2674,6 +2865,7 @@ impl UiDriver {
             reopen: Reopen::new(self.browsers.clone(), setup),
             since_goto: Vec::new(),
             unsure: false,
+            limits: Limits::default(),
             gotos,
             origin,
             sections,
@@ -2748,6 +2940,9 @@ impl Driver for UiDriver {
             // a save it followed is in doubt.
             let what = format!("the end of a `{}` step", step.kind);
             let Some(failure) = session.refused(&what) else {
+                // What the observing tab refused when its page made it is a
+                // limitation: the step's outcome says it (decision 0999).
+                let done = session.limits.after(done, &what, true);
                 if let Ok(StepOutcome::Done(_)) = &done {
                     session.remember(step, input);
                 }
@@ -2798,6 +2993,140 @@ impl Driver for UiDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shape(method: &str, address: &str) -> RequestShape {
+        RequestShape {
+            method: method.to_owned(),
+            address: address.to_owned(),
+        }
+    }
+
+    fn measured(observed: &Observed) -> Vec<Detail> {
+        observed
+            .acting()
+            .map(|acting| acting.measured)
+            .unwrap_or_default()
+    }
+
+    fn done() -> Result<StepOutcome, StepFailure> {
+        Ok(StepOutcome::Done(Observed {
+            captures: vec![acting(vec![Detail::new("step", "wait")], Vec::new())],
+            ..Observed::default()
+        }))
+    }
+
+    /// What an observing tab refused when its page made it is kept, once,
+    /// and told once, on the step's measured details and not in how it was
+    /// done; everything else it refused is handed back for a stop, in its
+    /// order (decision 0999).
+    #[test]
+    fn a_refusal_made_when_the_page_made_it_is_kept_and_told_once() {
+        let limits = Limits::default();
+        let worker = shape(
+            "SHAREDWORKER",
+            "http://127.0.0.1:9/escapes/shared-worker.js",
+        );
+        let rest = limits.keep(vec![
+            worker.clone(),
+            shape("POST", "http://127.0.0.1:9/traps/write"),
+            worker.clone(),
+            shape("WORKER", "http://127.0.0.1:9/w.js"),
+            shape("REFUSED", "http://127.0.0.1:9/x"),
+        ]);
+        let methods: Vec<_> = rest.iter().map(|one| one.method.as_str()).collect();
+        assert_eq!(methods, ["POST", "WORKER", "REFUSED"]);
+        let Ok(StepOutcome::Done(first)) = limits.after(done(), "a step", true) else {
+            panic!("a step that was done stays done");
+        };
+        let told = measured(&first);
+        assert_eq!(told.len(), 1, "{told:?}");
+        assert_eq!(told[0].name, "refused");
+        assert_eq!(
+            told[0].value,
+            "SHAREDWORKER http://127.0.0.1:9/escapes/shared-worker.js"
+        );
+        assert_eq!(first.acting().unwrap().means.len(), 1);
+        // The same refusal heard again is not told again.
+        assert!(limits.keep(vec![worker]).is_empty());
+        let Ok(StepOutcome::Done(second)) = limits.after(done(), "a step", true) else {
+            panic!("a step that was done stays done");
+        };
+        assert!(measured(&second).is_empty());
+    }
+
+    /// After a refusal kept: a page that shows the record absent stops, in
+    /// the `ui` driver; a step that did not find its screen says what was
+    /// refused before it; any other failure is the step's own. In the
+    /// `page_http` driver, whose read is its own request, the outcome is
+    /// the step's own.
+    #[test]
+    fn after_a_refusal_kept_an_absent_record_stops_and_a_screen_not_found_names_it() {
+        let limits = Limits::default();
+        limits.keep(vec![shape("WEBSOCKET", "ws://127.0.0.1:9/events")]);
+        let absent = || Ok(StepOutcome::Absent(Observed::default()));
+        let stopped = limits.after(absent(), "a step", true).unwrap_err();
+        assert_eq!(stopped.failure.code().as_str(), "unexpected_page");
+        assert_eq!(stopped.sent, a2m_provider::Sent::NotSent);
+        assert!(
+            stopped.failure.message().contains("a WebSocket"),
+            "{stopped:?}"
+        );
+        assert!(
+            matches!(
+                limits.after(absent(), "a step", false),
+                Ok(StepOutcome::Absent(_))
+            ),
+            "a page request's answer is its own"
+        );
+
+        let not_shown = || {
+            Err(StepFailure::not_sent(fail(
+                &codes::row::UNEXPECTED_PAGE,
+                "The page did not become the screen.".to_owned(),
+                "Look at the page.",
+            )))
+        };
+        let named = limits.after(not_shown(), "a step", true).unwrap_err();
+        assert_eq!(named.failure.code().as_str(), "unexpected_page");
+        assert!(
+            named
+                .failure
+                .message()
+                .starts_with("The page did not become the screen.")
+        );
+        assert!(
+            named
+                .failure
+                .message()
+                .contains("`ws://127.0.0.1:9/events`"),
+            "{named:?}"
+        );
+        assert!(named.failure.next_step().starts_with("Look at the page."));
+        let own = limits.after(not_shown(), "a step", false).unwrap_err();
+        assert_eq!(own.failure.message(), "The page did not become the screen.");
+
+        let ended = || {
+            Err(StepFailure::not_sent(fail(
+                &codes::row::APP_VALIDATION_ERROR,
+                "The page refused.".to_owned(),
+                "Correct the values.",
+            )))
+        };
+        let kept_own = limits.after(ended(), "a step", true).unwrap_err();
+        assert_eq!(kept_own.failure.message(), "The page refused.");
+
+        // With nothing kept, every outcome is the step's own.
+        let none = Limits::default();
+        assert!(matches!(
+            none.after(absent(), "a step", true),
+            Ok(StepOutcome::Absent(_))
+        ));
+        let plain = none.after(not_shown(), "a step", true).unwrap_err();
+        assert_eq!(
+            plain.failure.message(),
+            "The page did not become the screen."
+        );
+    }
 
     /// Every control the pack registers has a rule, and a control it did
     /// not register is a stop with its own code, never a guess at a text

@@ -26,6 +26,9 @@
 //! - `/leaving/shared/...`: as it loads, the form's script opens a shared worker
 //!   by a relative address, `/escapes/shared-worker.js`, and goes on without it
 //!   when that is refused, as a signed-in page of a forge did in field test 11.
+//! - `/leaving/needs-shared/...`: the same, on a page that needs the worker to
+//!   show its record: when it is refused, the page says the record is not
+//!   found, as a page whose data arrives through its worker would.
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -96,6 +99,12 @@ fn added(how: &str) -> Option<String> {
         "shared" => "try { new SharedWorker(\"/escapes/shared-worker.js\", {name: \"events\"}); } \
                      catch (_) { document.body.dataset.events = \"polled\"; }"
             .to_owned(),
+        "needs-shared" => {
+            "try { new SharedWorker(\"/escapes/shared-worker.js\", {name: \"events\"}); } \
+                           catch (_) { document.querySelector(\"main\").innerHTML = \
+                           \"<h1>Not found</h1><p>The record arrives through its events.</p>\"; }"
+                .to_owned()
+        }
         _ => return None,
     })
 }
