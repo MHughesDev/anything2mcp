@@ -24,12 +24,17 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  rust:
-    name: Rust on ${{ matrix.os }}
+  # The Rust jobs of each operating system (decision 0999): one builds and
+  # lints the workspace, stores the compiled dependencies, lists every test,
+  # and runs the steps that need the debug build; three run the workspace's
+  # tests between them; one runs the benchmark; and the job named "Rust on"
+  # each system passes only when all five passed and the three ran every
+  # test of the workspace exactly once. Its tests alone took about thirty
+  # minutes on Windows and macOS by 2026-11-25, and one job about fifty-five.
+  rust-build:
+    name: Build and lint on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # The whole workspace is built, linted, and tested here, and its tests
-    # alone took close to thirty minutes on Windows by 2026-11-23.
-    timeout-minutes: 60
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -66,35 +71,19 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings
       - name: Build
         run: cargo build --workspace --all-targets --locked
-      # Every crate's tests run even when one crate fails, so that one run
-      # shows every failure on this operating system.
-      - name: Test
-        run: cargo test --workspace --locked --no-fail-fast
+      # Every test of the workspace, each under the name of the program that
+      # holds it, as `cargo test --workspace` itself names them; the job named
+      # "Rust on" this system holds the shards' records to it.
+      - name: List every test of the workspace
+        shell: bash
+        run: python3 tools/gate.py --list-tests tests.txt
       # The browser's memory tests once more, with their output shown, so
       # that this log holds each process's kind and figure and the browser's
       # sum on this operating system, each line starting `a2m-memory:`
-      # (package OS4, decision 0425). It runs even when a test above failed.
+      # (package OS4, decision 0425). It runs even when a step above failed.
       - name: The memory figures of a browser
         if: ${{ !cancelled() }}
         run: 'cargo test -p a2m-pack-web-browser --locked tests::memory:: -- --nocapture --test-threads=1'
-      # The compiled dependencies are stored when this lock file and toolchain
-      # had none stored, before the release builds below: the workspace's own
-      # crates are taken out first, since they change with every commit.
-      - name: Take the workspace's own crates out of what is stored
-        if: ${{ !cancelled() && steps.deps.outputs.cache-hit != 'true' }}
-        shell: bash
-        run: python3 tools/ci_cache.py prune target/debug
-      # Pinned by commit; this is v6.1.0.
-      - name: Store the compiled dependencies
-        if: ${{ !cancelled() && steps.deps.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/debug/
-          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml') }}
       # The vault's root key in the operating system's own key store, which
       # no other test touches (package 2.2). On macOS the keychain is a
       # throwaway one, created and unlocked here, so that no prompt can
@@ -112,6 +101,107 @@ jobs:
       - name: The real key store holds the root
         if: runner.os != 'Linux'
         run: cargo test -p a2m-vault --locked -- --ignored the_real_key_store_holds_the_root
+      # The compiled dependencies are stored when this lock file and toolchain
+      # had none stored, by this job alone of the system's Rust jobs: the
+      # workspace's own crates are taken out first, since they change with
+      # every commit.
+      - name: Take the workspace's own crates out of what is stored
+        if: ${{ !cancelled() && steps.deps.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: python3 tools/ci_cache.py prune target/debug
+      # Pinned by commit; this is v6.1.0.
+      - name: Store the compiled dependencies
+        if: ${{ !cancelled() && steps.deps.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml') }}
+      # The last step, so that it is stored only when every step above
+      # passed: the job named "Rust on" this system reads its being there as
+      # this job's pass.
+      # Pinned by commit; this is v7.0.2.
+      - name: Store the list of every test
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: tests-${{ matrix.os }}-full
+          path: tests.txt
+          if-no-files-found: error
+          overwrite: true
+
+  rust-test:
+    name: Tests ${{ matrix.shard }} of 3 on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # The 3 here, in the job's name and the step below, and the three
+        # records the job named "Rust on" reads are one count: a shard left
+        # out of any of them leaves tests unrun, which that job names.
+        shard: [1, 2, 3]
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # The dependencies the build job stores; a shard restores them and
+      # never stores them.
+      # Pinned by commit; this is v6.1.0.
+      - name: Restore the compiled dependencies
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml') }}
+          restore-keys: deps-${{ runner.os }}-
+      # Builds the tests of the whole workspace, as `cargo test --workspace`
+      # builds them, and runs this shard's share of the test programs, shared
+      # out by how many tests each holds, each from its package's folder as
+      # cargo runs it; the first shard also runs the doctests. Every program
+      # runs even when one fails, and the log names each program's time and
+      # shows the whole output of each that failed.
+      - name: Test
+        shell: bash
+        run: python3 tools/gate.py --shard ${{ matrix.shard }}/3 --tests-only --record tests.txt
+      # The last step, so that it is stored only when this shard passed.
+      # Pinned by commit; this is v7.0.2.
+      - name: Store the record of the tests this shard ran
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: tests-${{ matrix.os }}-shard-${{ matrix.shard }}
+          path: tests.txt
+          if-no-files-found: error
+          overwrite: true
+
+  rust-bench:
+    name: Benchmark on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # Every step here builds for release, which the stored dependencies,
+      # compiled for the debug and test builds, do not serve; so nothing is
+      # restored. The steps ran after the tests in one job before decision
+      # 0999 and keep their conditions; they no longer wait for the tests.
       # The harness and its scenarios (spec section 225); the comparison below
       # gates once a baseline from a quiet runner is stored.
       # The scenarios that start the product's program find it beside the
@@ -169,6 +259,64 @@ jobs:
           path: bench-results/
           if-no-files-found: error
 
+  rust:
+    # Today's name for each system's one Rust result, which the checks of a
+    # pull request show: it passes only when the build job, the three shards,
+    # and the benchmark of this system passed, and the shards ran every test
+    # of the workspace exactly once (decision 0999). Each of those jobs
+    # stores its record or result as its last step, so a record that is
+    # missing is a job that did not pass; the other systems' results do not
+    # decide this one.
+    name: Rust on ${{ matrix.os }}
+    needs: [rust-build, rust-test, rust-bench]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # A job that did not pass stored nothing, and the step after this one
+      # names it; this step may find fewer records than it looks for.
+      # Pinned by commit; this is v8.0.2.
+      - name: Fetch this system's records of its tests
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: tests-${{ matrix.os }}-*
+          path: records
+      # Pinned by commit; this is v8.0.2.
+      - name: Fetch this system's benchmark result
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: bench-${{ matrix.os }}
+          path: bench-results
+      - name: Every Rust job of this system passed
+        shell: bash
+        env:
+          OS: ${{ matrix.os }}
+        run: |
+          red=0
+          if [ ! -f "records/tests-$OS-full/tests.txt" ]; then echo "Build and lint on $OS did not pass"; red=1; fi
+          for k in 1 2 3; do
+            if [ ! -f "records/tests-$OS-shard-$k/tests.txt" ]; then echo "Tests $k of 3 on $OS did not pass"; red=1; fi
+          done
+          if [ -z "$(ls -A bench-results 2>/dev/null)" ]; then echo "Benchmark on $OS did not pass"; red=1; fi
+          exit $red
+      - name: The shards ran every test of the workspace exactly once
+        shell: bash
+        env:
+          OS: ${{ matrix.os }}
+        run: |
+          python3 tools/gate.py --compare-tests "records/tests-$OS-full/tests.txt" \
+            "records/tests-$OS-shard-1/tests.txt" "records/tests-$OS-shard-2/tests.txt" "records/tests-$OS-shard-3/tests.txt"
+
   promotion:
     name: The exit test of Phase 4, in a release build
     runs-on: ubuntu-24.04
@@ -225,7 +373,7 @@ jobs:
         run: python3 tools/check_workflows.py
       - name: Prove the workflow check fails on a file that does not read
         run: python3 tools/test_check_workflows.py
-      - name: Prove the gate weighs a test program of many files by its whole folder
+      - name: Prove the gate weighs a test program by its files and holds shards to one run
         run: python3 tools/test_gate.py
       # Every build against every release kept in contracts/ (decision 0437).
       - name: Check the tree against every kept release's contract
