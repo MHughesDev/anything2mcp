@@ -5,7 +5,9 @@
 //! `test` (decision 0270). Against the test application's case 39,
 //! `/cases/rows-by-post`, whose route searches with `op: search` and
 //! archives with `op: archive`; every proof asks the application's control
-//! interface what it stored and what it heard.
+//! interface what it stored and what it heard. Under the drafts, an entry
+//! its person confirmed on the engine's page is let through in a try in an
+//! environment of kind `test`, and nowhere else (decision 0999).
 
 #![allow(
     clippy::unwrap_used,
@@ -18,7 +20,7 @@ mod common;
 use std::sync::Arc;
 
 use a2m_core::{CompiledTarget, Environment, FailureClass, NoSecrets, Value, Values};
-use a2m_provider::{Posture, StepFailure};
+use a2m_provider::{ConfirmedReads, Posture, StepFailure};
 use common::{Scene, Stand, compile, compile_changed, shown};
 use example_app::harness::TestApp;
 
@@ -152,9 +154,28 @@ async fn list(
     environment: &str,
     posture: Posture,
 ) -> Result<common::Ran, StepFailure> {
+    list_confirmed(
+        app,
+        compiled_target,
+        environment,
+        posture,
+        ConfirmedReads::none(),
+    )
+    .await
+}
+
+/// As [`list`], with what the kernel says the person confirmed.
+async fn list_confirmed(
+    app: &TestApp,
+    compiled_target: CompiledTarget,
+    environment: &str,
+    posture: Posture,
+    confirmed: ConfirmedReads,
+) -> Result<common::Ran, StepFailure> {
     let stand = Stand::new("asserted", Arc::new(NoSecrets));
     let mut scene = Scene::over(stand, compiled_target, &app.url(""));
     scene.surface.environment = Environment::new(environment).unwrap();
+    scene.confirmed = confirmed;
     let (handle, mut prepared) = scene
         .try_prepare(None, posture)
         .await
@@ -375,6 +396,130 @@ async fn a_read_from_inside_a_page_that_searches_by_post_runs_only_from_a_publis
             example_app::store::format_length_in(u32::try_from(sixteenths).unwrap()).as_str()
         ))
     );
+    let after = app.case_rows().await.unwrap();
+    assert_eq!(after.rows, seeded.rows);
+    assert_eq!(after.received, vec!["search".to_owned()], "{after:?}");
+    assert!(app.writes().await.unwrap().is_empty());
+    stand.end().await;
+}
+
+/// The search's entry, as the kernel names a confirmed one.
+fn search_confirmed() -> ConfirmedReads {
+    ConfirmedReads::of([(
+        "page_request".to_owned(),
+        "app".to_owned(),
+        "cases_rows_search".to_owned(),
+    )])
+}
+
+/// Under the drafts, the entry its person confirmed is let through in a try
+/// in an environment of kind `test`, and in no other place; a request that
+/// does not fit it, and a request of another page that writes, still stop
+/// the read and reach nothing (decision 0999).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_confirmed_draft_lets_its_search_through_in_a_try_in_test_and_nowhere_else() {
+    let app = TestApp::start().await.unwrap();
+    let seeded = app.case_rows().await.unwrap();
+    let stand = Stand::new("confirmed-targets", Arc::new(NoSecrets));
+    let draft = compile(&stand.registry, "rows").compiled_target;
+    let page_write_refused = (FailureClass::Policy, "page_write_refused");
+    let sandbox = Posture::Sandbox {
+        test_records: false,
+    };
+
+    // A try of the drafts in an environment of kind `test`, the search
+    // confirmed: the rows arrive as the control interface holds them.
+    let open: Vec<Value> = seeded
+        .rows
+        .iter()
+        .filter(|row| row.status == "open")
+        .map(|row| Value::from(row.case_id.as_str()))
+        .collect();
+    let read = list_confirmed(&app, draft.clone(), "test", sandbox, search_confirmed())
+        .await
+        .unwrap_or_else(|failure| panic!("{failure}"));
+    assert_eq!(read.values.get("case_ids"), Some(&Value::List(open)));
+
+    // Confirmed, and anywhere else: live under the drafts, a try in an
+    // environment of another kind, discovery. Each stops.
+    for (environment, posture) in [
+        ("test", Posture::Live),
+        ("production", sandbox),
+        ("test", Posture::Discovery),
+    ] {
+        let stopped = list_confirmed(
+            &app,
+            draft.clone(),
+            environment,
+            posture,
+            search_confirmed(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            class_and_code(&stopped),
+            page_write_refused,
+            "{environment} {posture:?}: {stopped}"
+        );
+    }
+
+    // A confirmation of another entry covers nothing, and the stop says
+    // to ask the person.
+    let other = ConfirmedReads::of([(
+        "page_request".to_owned(),
+        "app".to_owned(),
+        "cases_rows_other".to_owned(),
+    )]);
+    let stopped = list_confirmed(&app, draft.clone(), "test", sandbox, other)
+        .await
+        .unwrap_err();
+    assert_eq!(class_and_code(&stopped), page_write_refused, "{stopped}");
+    let next = stopped.failure.next_step();
+    assert!(
+        next.contains("cases_rows_search") && next.contains("assertion.confirm"),
+        "{next}"
+    );
+
+    // A confirmed entry the page's body does not fit lets nothing through.
+    let narrower = compile_changed(&stand.registry, "rows", ENTRY, |text| {
+        text.replace("enum: [open]", "enum: [closed]")
+    })
+    .unwrap_or_else(|problems| panic!("{}", shown(&problems)))
+    .compiled_target;
+    let stopped = list_confirmed(&app, narrower, "test", sandbox, search_confirmed())
+        .await
+        .unwrap_err();
+    assert_eq!(class_and_code(&stopped), page_write_refused, "{stopped}");
+    assert!(
+        stopped.failure.next_step().contains("did not fit"),
+        "{}",
+        stopped.failure.next_step()
+    );
+
+    // A try that meets a page that writes, with the search confirmed,
+    // stops, and the write reaches nothing.
+    let stopped = {
+        let stand = Stand::new("confirmed-trap", Arc::new(NoSecrets));
+        let mut scene = Scene::over(stand, draft.clone(), &app.url(""));
+        scene.confirmed = search_confirmed();
+        let (handle, mut prepared) = scene.try_prepare(None, sandbox).await.unwrap();
+        let ran = scene
+            .read(
+                &handle,
+                &mut prepared,
+                "example_activity_get",
+                &Values::new(),
+            )
+            .await;
+        assert!(handle.release(prepared, true).await.complete);
+        scene.stand.end().await;
+        ran.unwrap_err()
+    };
+    assert_eq!(class_and_code(&stopped), page_write_refused, "{stopped}");
+    assert!(app.trap_writes().await.unwrap().is_empty());
+
+    // The route heard the one search that was let through, and never an
+    // archive; no row changed.
     let after = app.case_rows().await.unwrap();
     assert_eq!(after.rows, seeded.rows);
     assert_eq!(after.received, vec!["search".to_owned()], "{after:?}");
