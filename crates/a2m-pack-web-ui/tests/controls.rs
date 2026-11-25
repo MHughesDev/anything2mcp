@@ -28,6 +28,8 @@ async fn scene(name: &str, app: &TestApp) -> Scene {
 
 /// What the application was told, once it has been told at least `count`
 /// things.
+/// Ask it before the run's tab is released: releasing closes the tab, and
+/// a tell still on its way is lost with it.
 async fn told(app: &TestApp, count: usize) -> Vec<String> {
     let started = std::time::Instant::now();
     loop {
@@ -127,9 +129,9 @@ async fn each_custom_control_is_set_saved_and_read_back() {
     )
     .await
     .unwrap();
-    assert!(handle.release(prepared, false).await.complete);
 
     let events = told(&app, 1).await;
+    assert!(handle.release(prepared, false).await.complete);
     assert_eq!(events.len(), 1, "{events:?}");
     let held = saved(&events);
     for (name, wanted) in [
@@ -202,8 +204,8 @@ async fn a_slider_is_moved_by_its_keys_and_a_value_it_cannot_take_stops() {
         FailureClass::UnknownVariant,
         "{stopped}"
     );
-    handle.release(prepared, true).await;
     let events = told(&app, 2).await;
+    handle.release(prepared, true).await;
     assert_eq!(events.len(), 2, "{events:?}");
     assert_eq!(saved(&events[..1])["level"], serde_json::json!("9"));
     assert_eq!(saved(&events[1..])["level"], serde_json::json!("3"));
@@ -240,12 +242,12 @@ async fn a_staged_file_is_attached_and_a_path_or_a_missing_name_is_refused() {
     )
     .await
     .unwrap();
-    assert!(handle.release(prepared, false).await.complete);
     assert_eq!(
         back.values.get("attachment"),
         Some(&Value::from("label.txt"))
     );
     let events = told(&app, 1).await;
+    assert!(handle.release(prepared, false).await.complete);
     assert_eq!(
         saved(&events)["attachment"],
         serde_json::json!("label.txt:12")
@@ -308,12 +310,12 @@ async fn a_grid_cell_is_edited_and_read_by_the_key_of_its_row() {
         .unwrap();
         counts.push(back.values.get("count").cloned().unwrap());
     }
-    assert!(handle.release(prepared, false).await.complete);
     assert_eq!(
         counts,
         [Value::from("4"), Value::from("12"), Value::from("1")]
     );
     let events = told(&app, 1).await;
+    assert!(handle.release(prepared, false).await.complete);
     assert_eq!(
         saved(&events)["counts"],
         serde_json::json!({"P-100": "4", "P-200": "12", "P-300": "1"})
