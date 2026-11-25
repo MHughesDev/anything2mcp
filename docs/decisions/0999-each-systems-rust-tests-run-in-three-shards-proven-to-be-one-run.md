@@ -1,0 +1,41 @@
+# 0999. Each system's Rust tests run in three shards, proven to be one run
+
+**Status:** Accepted. Design decision, made at the lead's request that CI take much less time with every test still run on every system exactly once and no check weakened. The owner had not read this record when it was merged.
+
+**Date:** 2026-11-25
+
+**Changes:** CI's one Rust job of each operating system becomes five jobs of that system, and the job of today's name, "Rust on <os>", becomes the one that passes only when the other four did and their tests are proven to be the workspace's whole run. `tools/gate.py` gains `--tests-only` and `--record` for `--shard`, `--list-tests`, and `--compare-tests`; `tools/test_gate.py` proves them, and still runs in the documents job. No crate, no test, and no other job changes. Builds on [decision 0372](0372-a-push-waits-for-the-checks-of-cis-linux-job-run-here-and-ci-keeps-the-compiled-dependencies.md), whose gate already shares the tests over machines, and [decision 0446](0446-the-products-end-to-end-tests-are-one-test-program.md), whose weighing of a `main.rs` program by its folder makes the shares even.
+
+## Context
+
+By 2026-11-25 the Rust job took about 50 to 56 minutes on macOS, 50 to 58 on Windows, and about 50 on Linux, and the whole run waited on them. The job built and linted once and then ran `cargo test --workspace --locked --no-fail-fast`, which alone took about thirty minutes on Windows; the release builds and the benchmark ran after it, in the same job. Cargo's caching had already cut the Windows build to about seven minutes and Linux's to two (journal of 2026-11-24).
+
+## Decision
+
+1. **Five jobs per system.** For each of Linux, macOS, and Windows:
+   - **Build and lint on <os>**: format, lints, and the build, each once; then the list of every test (point 3), the browser's memory figures (with `!cancelled()`, as before), the throwaway keychain on macOS and the real key store test off Linux, as before; and it alone stores the compiled dependencies, under the same key and conditions as before.
+   - **Tests K of 3 on <os>**, for K from 1 to 3: restores the compiled dependencies and never stores them, and runs `python3 tools/gate.py --shard K/3 --tests-only --record tests.txt`. Each shard builds the tests of the whole workspace as `cargo test --workspace` builds them, with the features the whole workspace unifies (decision 0372 says why a share must not be built alone), and runs its share of the test programs, each from its package's folder with the variables cargo gives it, one after another as cargo runs them; the first shard also runs the doctests. A failing program does not stop the others. Its log names each program's time, and shows the whole output of each that failed.
+   - **Benchmark on <os>**: the release builds, the benchmark, the size of the program, and the comparison with a stored baseline, each with the condition it had. They no longer wait for the tests: they ran only after every test passed before, and now run whatever the tests do, on a runner of their own, so no test shares the machine they measure on. It restores nothing, since it builds for release alone.
+   - **Rust on <os>**, the name the checks showed before: needs the other jobs and runs unless the run was cancelled. It passes only when the build job, the three shards, and the benchmark of this system each stored what its last step stores (a job that fails stores nothing, so a missing record names the job that did not pass), and the shards' records match the full list. Another system's result does not decide it.
+2. **Three shards.** The test programs of the workspace hold about 3,030 tests by `program_weight()` in 184 programs, the largest, the product's end-to-end program, 172 (about 6%). Shared out by weight, three shards hold 1,009 each, so no one program makes a shard long. Each shard pays for its own setup and build (about two to three minutes of setup and restore, and about seven of building on Windows), so a fourth shard would cut about two and a half minutes from each share of the tests while the build job and the benchmark take about twenty minutes either way: three is where the shards stop being the longest jobs. On macOS, where runners are fewest, the five jobs start at once.
+3. **The proof that the shards are one run.** The build job runs `cargo test --workspace --locked --no-fail-fast -- --list --format terse` through `--list-tests` and writes every test under the program that holds it: a program is known by its file name as cargo built it, hash included, so that two programs of one name in two packages differ, and doctests by their package. Each shard lists each program it runs with `--list --format terse` before running it, and writes the same. `--compare-tests` fails on any test the shards left out, ran more than once, or ran though the full list has not got it, and on a full list with no test. A program run with no filter runs every test it lists, so the record is of what ran; an ignored test is listed, by both, as cargo lists it. The hash is the same on two machines of one system: it does not depend on the folder the repository is in, which was checked here on two copies of one package.
+4. **Every job's own name.** The shard, build, and benchmark jobs are named for what they do and their system, and the job of today's name stands for the five, so a reader of the checks, and a branch rule that names "Rust on <os>", sees one result per system as before.
+
+## Expected time
+
+Not measured; the lead reads the first run. From the job times above, with the tests at about thirty minutes on Windows and macOS and the build at about seven on Windows: a shard about 3 minutes of setup and restore, 7 of building, and 10 to 13 of tests, so about 20 to 23 minutes; the build job about 3 of setup, 1 of format, 5 of lints, 7 of building, and 4 of listing, memory figures, key store and storing, so about 20; the benchmark about 2 of setup and 15 to 18 of release builds and runs, so about 20. Each system's result is then due in about 25 minutes where it was 50 to 58; Linux sooner. Runner minutes rise: each shard builds the tests again, so a system uses about 85 to 95 runner minutes where it used about 55, and macOS's are the dearest.
+
+## Alternatives considered
+
+- **Build once and hand the test programs to the shards.** One build per system, and each shard starts when it ends: the shards would wait for the build, and the workspace's test programs, with line tables, are some gigabytes to upload and download three times. Not taken.
+- **A test runner that shares tests out itself (`cargo-nextest` with `--partition` and an archive).** It runs each test in its own process, which is not how `cargo test` runs them, so a test that passes alone or fails alone under it says less about today's run, and it runs no doctests. A new tool on the path of every check, for a split the gate already makes. Not taken.
+- **One job per system with today's steps, given larger runners.** Not offered on every plan, and the tests would still run one after another.
+- **The benchmark in the build job.** One runner fewer per system, and that job about thirty-five minutes long, longer than any shard. Not taken.
+- **A summary that reads every job's result from the GitHub API.** Exact, but it needs a token to read the run and a rule for each re-run's attempts. The records each job stores as its last step say the same, and the summary needs them for the proof anyway.
+
+## Consequences
+
+- A re-run of a failed shard re-runs the job of today's name, which reads the records of the jobs that passed before. The records are stored with `overwrite` so that a re-run of every job can store them again.
+- The count 3 is in the shard job's matrix, its name, its step, and the summary's step. A shard left out of any of them leaves tests unrun or a record missing, which the summary names; it cannot pass with fewer tests run.
+- macOS's concurrency is the tightest: five jobs start at once on it, and the wheel jobs that follow the sign-in window job may wait for a macOS runner. The first run shows whether they do.
+- The gate's own run, which the lead runs before a push, is unchanged; `--tests-only` and `--record` are for CI, and `--list-tests` and `--compare-tests` can be run anywhere.

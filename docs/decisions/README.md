@@ -440,3 +440,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0446 | [The product's end-to-end tests are one test program](0446-the-products-end-to-end-tests-are-one-test-program.md) | Accepted (design decision) |
 | 0447 | [The field test's box takes a pinned image, a user that is not root, and a named filter for the browser's sandbox](0447-the-field-test-box-takes-a-pinned-image-a-user-that-is-not-root-and-a-named-filter-for-the-browsers-sandbox.md) | Accepted (design decision) |
 | 0448 | [Debug builds keep line tables of the workspace and no debug information of the dependencies](0448-debug-builds-keep-line-tables-of-the-workspace-and-no-debug-information-of-dependencies.md) | Accepted (design decision) |
+| 0999 | [Each system's Rust tests run in three shards, proven to be one run](0999-each-systems-rust-tests-run-in-three-shards-proven-to-be-one-run.md) | Accepted (design decision) |
