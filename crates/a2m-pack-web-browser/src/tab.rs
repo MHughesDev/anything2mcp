@@ -1011,8 +1011,17 @@ pub(crate) struct Page {
     /// browser's number for them, and how many there are.
     pending: Mutex<BTreeMap<String, Pending>>,
     waiting: watch::Sender<usize>,
-    /// The page's own requests answered whole, oldest first.
-    exchanges: Mutex<Vec<PageExchange>>,
+    /// The page's own requests answered whole, oldest first, each with
+    /// the loader of the document it was sent under, where the browser
+    /// said.
+    exchanges: Mutex<Vec<(Option<String>, PageExchange)>>,
+    /// The loaders of the documents of a watching tab's own frame, in the
+    /// order they were parsed: a document's place in it is its
+    /// [`watching::DocumentMark`].
+    documents: Mutex<Vec<String>>,
+    /// The address of each document of a watching tab, by its loader, as
+    /// the browser said it, newest last.
+    addresses: Mutex<std::collections::VecDeque<(String, String)>>,
     /// Whether the page's own requests are recorded: only once
     /// [`ObserveTab::record_exchanges`] asked, so that a tab whose
     /// exchanges nobody takes fetches no answer (decision 0195).
@@ -1068,7 +1077,8 @@ pub use downloads::{Download, DownloadError};
 use site_tools::SiteState;
 pub use site_tools::{SiteAnswer, SiteTool, digest_of};
 pub use watching::{
-    LONGEST_WATCHED_BODY, SCREENS_KEPT, SETTLE_BOUND, WatchStart, WatchTab, WatchedScreens,
+    DocumentMark, LONGEST_WATCHED_BODY, SCREENS_KEPT, SETTLE_BOUND, WatchStart, WatchTab,
+    WatchedScreen, WatchedScreens,
 };
 
 /// A call to the page that has not been answered. Dropped unanswered, at
@@ -2772,6 +2782,7 @@ impl Page {
             EventKind::Lifecycle(lifecycle) if own => {
                 if lifecycle.frame_id == self.target && lifecycle.name == "DOMContentLoaded" {
                     if self.watching {
+                        self.parsed(&lifecycle.loader_id);
                         self.left_behind(&lifecycle.loader_id);
                     }
                     // Counted before the document is said to be parsed: a
@@ -2960,6 +2971,7 @@ impl Page {
             EventKind::RequestSent(sent) if own && self.watching => self.heard_sent(&sent),
             EventKind::SameDocument(moved) if own && self.watching => {
                 if moved.frame_id == self.target {
+                    self.moved_within(&moved.url);
                     self.changes.send_modify(|count| *count += 1);
                 }
             }
@@ -3162,6 +3174,7 @@ impl Page {
         let Some(Pending {
             mut exchange,
             answered: true,
+            loader,
             ..
         }) = taken
         else {
@@ -3200,7 +3213,7 @@ impl Page {
         }
         if let Ok(mut exchanges) = self.exchanges.lock() {
             if exchanges.len() < EXCHANGES_KEPT {
-                exchanges.push(exchange);
+                exchanges.push((loader, exchange));
             } else {
                 self.dropped.fetch_add(1, Ordering::SeqCst);
             }
@@ -3211,16 +3224,69 @@ impl Page {
     /// The page's own requests answered whole, oldest first, taken out,
     /// once none is awaiting its answer or the deadline has passed, with
     /// how many were left out and how many were still awaited.
-    async fn take_exchanges(&self, deadline: Deadline) -> PageExchanges {
-        let mut waiting = self.waiting.subscribe();
-        let _ = tokio::time::timeout_at(deadline.at(), waiting.wait_for(|count| *count == 0)).await;
-        let awaited = *self.waiting.borrow();
-        PageExchanges {
-            exchanges: self
-                .exchanges
+    ///
+    /// With `through`, only the requests sent under a document of the
+    /// tab's own frame up to that one are taken, and waited for: those of
+    /// a document parsed after it, or not parsed yet, are kept for a later
+    /// take. A request the browser gave no document for is taken with any.
+    async fn take_exchanges(
+        &self,
+        deadline: Deadline,
+        through: Option<watching::DocumentMark>,
+    ) -> PageExchanges {
+        let documents = || {
+            self.documents
                 .lock()
-                .map(|mut exchanges| std::mem::take(&mut *exchanges))
-                .unwrap_or_default(),
+                .map(|known| known.clone())
+                .unwrap_or_default()
+        };
+        let taken = |loader: Option<&String>, documents: &[String]| match (through, loader) {
+            (None, _) | (_, None) => true,
+            (Some(mark), Some(loader)) => documents
+                .iter()
+                .position(|known| known == loader)
+                .is_some_and(|at| at <= mark.0),
+        };
+        let awaited = || {
+            let documents = documents();
+            self.pending
+                .lock()
+                .map(|pending| {
+                    pending
+                        .values()
+                        .filter(|one| taken(one.loader.as_ref(), &documents))
+                        .count()
+                })
+                .unwrap_or(0)
+        };
+        // The count is read with the list's lock and never inside the
+        // watch's own: the list is changed under its lock before the count
+        // is sent.
+        let mut waiting = self.waiting.subscribe();
+        let _ = tokio::time::timeout_at(deadline.at(), async {
+            loop {
+                let _ = waiting.borrow_and_update();
+                if awaited() == 0 || waiting.changed().await.is_err() {
+                    return;
+                }
+            }
+        })
+        .await;
+        let awaited = awaited();
+        let documents = documents();
+        let exchanges = self
+            .exchanges
+            .lock()
+            .map(|mut exchanges| {
+                let (out, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *exchanges)
+                    .into_iter()
+                    .partition(|(loader, _)| taken(loader.as_ref(), &documents));
+                *exchanges = kept;
+                out.into_iter().map(|(_, one)| one).collect()
+            })
+            .unwrap_or_default();
+        PageExchanges {
+            exchanges,
             dropped: self.dropped.swap(0, Ordering::SeqCst),
             awaited,
         }
@@ -3661,6 +3727,8 @@ pub(crate) async fn open_page(
         pending: Mutex::new(BTreeMap::new()),
         waiting: watch::Sender::new(0),
         exchanges: Mutex::new(Vec::new()),
+        documents: Mutex::new(Vec::new()),
+        addresses: Mutex::new(std::collections::VecDeque::new()),
         // A watching tab is opened for a capture alone: it records from
         // its first request.
         recording: AtomicBool::new(matches!(posture, Posture::Watch)),
@@ -4446,7 +4514,7 @@ impl ObserveTab {
     ///
     /// Nothing is recorded until [`Self::record_exchanges`] is called.
     pub async fn exchanges(&self, deadline: Deadline) -> PageExchanges {
-        self.page.take_exchanges(deadline).await
+        self.page.take_exchanges(deadline, None).await
     }
 
     /// Starts recording the requests its page makes by itself, for

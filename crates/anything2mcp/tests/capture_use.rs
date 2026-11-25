@@ -250,9 +250,12 @@ fn visit(path: &str) -> [WalkStep; 3] {
 const LINGER: u64 = 3000;
 
 /// What the person does in the window, from the page the engine opened.
+/// The second summary shows a picture that is answered only after the
+/// person has moved on, so its page is never quiet while they read it: its
+/// screen's snapshot is missed, and its request is still put to it.
 fn walk() -> Vec<WalkStep> {
     let mut steps = vec![WalkStep::Linger(LINGER)];
-    for page in [ROWS, FIRST, ROWS, SECOND] {
+    for page in [ROWS, FIRST, ROWS, &format!("{SECOND}?picture=slow")] {
         steps.extend(visit(page));
     }
     steps.extend([
@@ -451,6 +454,7 @@ async fn a_person_s_use_is_captured_in_a_watching_tab_and_drafted_held_on_the_di
         format!("POST {ROWS_SEARCH}"),
         "GET /api/orders/A-100/totals".to_owned(),
         "GET /api/orders/A-101/totals".to_owned(),
+        "GET /pictures/slow".to_owned(),
         format!("GET {FORM}"),
         format!("PUT {ITEM}"),
         format!("POST {ROWS_SEARCH}"),
