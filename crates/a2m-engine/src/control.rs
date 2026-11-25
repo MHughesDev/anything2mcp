@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use a2m_auth::{ExpirySign, SessionLease};
 use a2m_core::{
-    CompiledTarget, Digest, EffectClass, Environment, Failure, FailureClass, FailureCode, Finding,
-    Hazard, Mode, OperationName, RunState, SurfaceName, Values, Version,
+    CompiledTarget, Coverage, Digest, EffectClass, Environment, Failure, FailureClass, FailureCode,
+    Finding, Hazard, Mode, OperationName, RunState, SurfaceName, Values, Version,
 };
 use a2m_ledger::{
     Acted, ActedToken, BlobKind, BlobRef, IntentToken, LockHeld, PlannedRecord, ReadBack,
@@ -199,7 +199,14 @@ pub enum EngineEvent {
         outputs: BlobRef,
     },
     /// What the tool returns: the outputs of a read, or of the last step.
-    Result(Values),
+    Result {
+        /// The outputs.
+        values: Values,
+        /// Whether they hold every record the system has that matches the
+        /// input (decision 0999): what the steps of a tool that is one read,
+        /// called once, stated; `unknown` for any other tool.
+        coverage: Coverage,
+    },
     /// A binding failed in a way that says something about the binding
     /// itself, or worked after it was thought unhealthy.
     BindingHealth {
@@ -250,7 +257,10 @@ impl EngineEvent {
     pub const fn must_be_acknowledged(&self) -> bool {
         matches!(
             self,
-            Self::Moved(_) | Self::BeforeCommit { .. } | Self::Result(_) | Self::Discovered { .. }
+            Self::Moved(_)
+                | Self::BeforeCommit { .. }
+                | Self::Result { .. }
+                | Self::Discovered { .. }
         )
     }
 }

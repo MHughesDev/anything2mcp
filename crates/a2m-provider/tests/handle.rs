@@ -728,6 +728,7 @@ async fn a_secret_a_driver_returns_does_not_pass_the_handle() {
                 bytes: picture.clone(),
             },
         ],
+        coverage: a2m_core::Coverage::Unknown,
     }));
     let StepOutcome::Done(observed) = handle
         .act(&mut prepared, &fetch, &read, Authority::Read)

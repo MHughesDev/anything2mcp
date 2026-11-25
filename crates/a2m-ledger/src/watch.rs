@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use a2m_core::{
-    CompiledExpr, Digest, DigestPurpose, EffectClass, Environment, Failure, FailureClass,
+    CompiledExpr, Coverage, Digest, DigestPurpose, EffectClass, Environment, Failure, FailureClass,
     FailureCode, OperationName, PrincipalId, RecordKey, RunId, RunState, SurfaceName, TargetName,
     Timestamp, Value, ValueType, Values, WorkspaceId,
 };
@@ -36,11 +36,6 @@ pub const WATCH_INTERVAL_FLOOR: Duration = Duration::from_secs(60);
 /// The longest a watch may last from when it is asked for, whatever asks:
 /// 366 days. The scheduler's setting may only shorten it.
 pub const WATCH_LONGEST: Duration = Duration::from_secs(366 * 86_400);
-
-/// Whether the engine records that a read returned every record. It does
-/// not yet: until it does, no check is complete, and no removal is ever
-/// reported, only `unseen` (decision 0262).
-const COMPLETENESS_RECORDED: bool = false;
 
 words! {
     /// Why a watch paused or ended: a state of the watch, not a failure.
@@ -215,6 +210,17 @@ pub enum WatchShape {
         /// The fields of a record that make its key, in order. At least one.
         key: Vec<String>,
     },
+    /// The records of a read that declares them over its list outputs
+    /// (decision 0999): each output of `columns` is a list, and the record
+    /// `i` is the `i`th item of each; `key` names the columns whose items
+    /// make its key. An output that is not a column is no part of a record.
+    Columns {
+        /// The list outputs, in declared order. At least one.
+        columns: Vec<String>,
+        /// The columns that make a record's key, in order. At least one,
+        /// each a column.
+        key: Vec<String>,
+    },
 }
 
 impl WatchShape {
@@ -225,6 +231,9 @@ impl WatchShape {
         match self {
             Self::Whole => serde_json::json!({ "whole": true }).to_string(),
             Self::List { list, key } => serde_json::json!({ "key": key, "list": list }).to_string(),
+            Self::Columns { columns, key } => {
+                serde_json::json!({ "columns": columns, "key": key }).to_string()
+            }
         }
     }
 
@@ -233,6 +242,22 @@ impl WatchShape {
         let json: Json = serde_json::from_str(text).map_err(|_| corrupt())?;
         if json == serde_json::json!({ "whole": true }) {
             return Ok(Self::Whole);
+        }
+        let names = |field: &str| -> Result<Vec<String>, Failure> {
+            json.get(field)
+                .and_then(Json::as_array)
+                .ok_or_else(corrupt)?
+                .iter()
+                .map(|name| name.as_str().map(str::to_owned).ok_or_else(corrupt))
+                .collect()
+        };
+        if json.get("columns").is_some() {
+            let shape = Self::Columns {
+                columns: names("columns")?,
+                key: names("key")?,
+            };
+            shape.check().map_err(|_| corrupt())?;
+            return Ok(shape);
         }
         let list = json
             .get("list")
@@ -269,7 +294,30 @@ impl WatchShape {
                 }
                 Ok(())
             }
+            Self::Columns { columns, key } => {
+                let distinct: BTreeSet<&String> = columns.iter().collect();
+                let keyed: BTreeSet<&String> = key.iter().collect();
+                if columns.is_empty()
+                    || key.is_empty()
+                    || columns.iter().any(String::is_empty)
+                    || distinct.len() != columns.len()
+                    || keyed.len() != key.len()
+                    || !keyed.is_subset(&distinct)
+                {
+                    return Err(failure::invalid(
+                        "a watch's shape with no column, or a key that is empty, names a column twice, or names what is no column",
+                    ));
+                }
+                Ok(())
+            }
         }
+    }
+
+    /// Whether the watch compares records one by one, so that a record can
+    /// be added, removed, or unseen.
+    #[must_use]
+    pub const fn keyed(&self) -> bool {
+        !matches!(self, Self::Whole)
     }
 
     /// The records of a check's result: the whole result as one, or each
@@ -297,6 +345,45 @@ impl WatchShape {
                         Ok(ObservedRecord {
                             key: Some(RecordKey::new(parts).map_err(|_| CheckFault::NotItsShape)?),
                             values: values.clone(),
+                        })
+                    })
+                    .collect()
+            }
+            Self::Columns { columns, key } => {
+                let mut lists = Vec::with_capacity(columns.len());
+                for column in columns {
+                    let Some(Value::List(items)) = result.get(column) else {
+                        return Err(CheckFault::NotItsShape);
+                    };
+                    lists.push((column, items));
+                }
+                let rows = lists.first().map_or(0, |(_, items)| items.len());
+                if lists.iter().any(|(_, items)| items.len() != rows) {
+                    return Err(CheckFault::NotItsShape);
+                }
+                (0..rows)
+                    .map(|row| {
+                        let values: Values = lists
+                            .iter()
+                            .map(|(column, items)| {
+                                items
+                                    .get(row)
+                                    .map(|item| ((*column).clone(), item.clone()))
+                                    .ok_or(CheckFault::NotItsShape)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?
+                            .into_iter()
+                            .collect();
+                        let parts = key
+                            .iter()
+                            .map(|field| match values.get(field) {
+                                Some(value) if !value.is_null() => Ok(value.clone()),
+                                _ => Err(CheckFault::NotItsShape),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok(ObservedRecord {
+                            key: Some(RecordKey::new(parts).map_err(|_| CheckFault::NotItsShape)?),
+                            values,
                         })
                     })
                     .collect()
@@ -1213,9 +1300,10 @@ impl Watches<'_, '_> {
     ///
     /// What was observed is never the caller's word (decision 0262): the
     /// bytes must name the run's stored result, the records are worked out
-    /// here from them and the watch's shape, and the check is never
-    /// complete while the engine records no completeness, so no removal is
-    /// reported. The values are reduced to keyed digests here and never
+    /// here from them and the watch's shape, and the check is complete only
+    /// when its run's row holds the coverage `complete` the engine stored
+    /// with that result (decision 0999), its records are compared one by
+    /// one, and it saw a record or its baseline held none. The values are reduced to keyed digests here and never
     /// stored. A result that is not of the watch's shape is a gap with
     /// `watch_result_not_its_shape`.
     ///
@@ -1306,6 +1394,15 @@ impl Watches<'_, '_> {
             Ok(observed) => observed,
             Err(fault) => return self.faulted(id, seq, &fault.failure()),
         };
+        // A check is complete only when the engine stored, with its run's
+        // own result, that the read returned every record (decision 0999),
+        // and only for records compared one by one. A check that saw no
+        // record after a baseline that held some is not taken as proof that
+        // every record is gone: an empty answer is as often a read that
+        // went wrong, so its records are unseen (decision 0262, B9).
+        let complete = watch.shape.keyed()
+            && self.tx.ledger().result_coverage(check.run)? == Coverage::Complete
+            && (!observed.is_empty() || !self.baseline_holds_records(&watch)?);
         // The condition is answered on the same result the comparison
         // reads, before anything of the check is stored: a condition that
         // gives no answer makes the check a gap, and leaves the baseline as
@@ -1333,7 +1430,7 @@ impl Watches<'_, '_> {
                 );
                 (key, digests)
             });
-            CheckDigests::new(COMPLETENESS_RECORDED, records)
+            CheckDigests::new(complete, records)
         };
         let digests = match digests {
             Ok(digests) => digests,
@@ -1584,6 +1681,17 @@ impl Watches<'_, '_> {
             through,
             records,
         }))
+    }
+
+    /// Whether the watch's baseline holds any record.
+    fn baseline_holds_records(&mut self, watch: &WatchRow) -> Result<bool, Failure> {
+        Ok(self
+            .tx
+            .row(
+                "SELECT 1 FROM watch_baseline WHERE watch_id = ?1 LIMIT 1",
+                &[watch.id.to_string().into()],
+            )?
+            .is_some())
     }
 
     fn store_baseline(&mut self, watch: &WatchRow, baseline: &Baseline) -> Result<(), Failure> {
@@ -2217,6 +2325,74 @@ mod tests {
             "{}",
             r#"{"list":"orders","key":[]}"#,
             r#"{"whole":false}"#,
+        ] {
+            assert!(WatchShape::from_stored(bad).is_err(), "{bad}");
+        }
+    }
+
+    /// Decision 0999: the records of a read that declares them over its
+    /// list outputs are the rows across its columns, and an output that is
+    /// no column is no part of them.
+    #[test]
+    fn records_over_columns_are_rows_across_the_lists_and_their_key_is_never_empty() {
+        let shape = WatchShape::Columns {
+            columns: vec![
+                "order_id".to_owned(),
+                "line".to_owned(),
+                "quantity".to_owned(),
+            ],
+            key: vec!["order_id".to_owned(), "line".to_owned()],
+        };
+        assert!(shape.keyed() && !WatchShape::Whole.keyed());
+        assert_eq!(WatchShape::from_stored(&shape.stored()).unwrap(), shape);
+        assert_eq!(
+            shape.stored(),
+            r#"{"columns":["order_id","line","quantity"],"key":["order_id","line"]}"#
+        );
+        let list = |items: &[Value]| Value::List(items.to_vec());
+        let result = Values::new()
+            .with("order_id", list(&["A-1".into(), "A-1".into()]))
+            .with("line", list(&[1_i64.into(), 2_i64.into()]))
+            .with("quantity", list(&[3_i64.into(), 4_i64.into()]))
+            .with("more", false);
+        let records = shape.records(&result).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(
+            records[1].key,
+            Some(RecordKey::new(vec![Value::from("A-1"), Value::from(2_i64)]).unwrap())
+        );
+        assert_eq!(
+            records[1].values,
+            Values::new()
+                .with("order_id", "A-1")
+                .with("line", 2_i64)
+                .with("quantity", 4_i64)
+        );
+        // No rows: no records, and that is of its form.
+        let none = Values::new()
+            .with("order_id", list(&[]))
+            .with("line", list(&[]))
+            .with("quantity", list(&[]));
+        assert!(shape.records(&none).unwrap().is_empty());
+        // Not of its form: a column missing or not a list, columns of two
+        // lengths, a key part with no value.
+        for wrong in [
+            result.clone().with("line", Value::from(1_i64)),
+            Values::new()
+                .with("order_id", list(&["A-1".into()]))
+                .with("quantity", list(&[3_i64.into()])),
+            result.clone().with("quantity", list(&[3_i64.into()])),
+            result
+                .clone()
+                .with("line", list(&[1_i64.into(), Value::Null])),
+        ] {
+            assert_eq!(shape.records(&wrong).unwrap_err(), CheckFault::NotItsShape);
+        }
+        for bad in [
+            r#"{"columns":[],"key":["a"]}"#,
+            r#"{"columns":["a"],"key":[]}"#,
+            r#"{"columns":["a"],"key":["b"]}"#,
+            r#"{"columns":["a","a"],"key":["a"]}"#,
         ] {
             assert!(WatchShape::from_stored(bad).is_err(), "{bad}");
         }

@@ -6,9 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    CompiledBinding, CompiledInput, CompiledOperation, Digest, EffectClass, ExprIndex, Failure,
-    FailureClass, OperationIndex, OperationName, REDACTED, RecordKey, RecordMatching, RecordState,
-    RunState, StepArg, Timestamp, ToolRuns, Value, Values, WriteEvidence,
+    CompiledBinding, CompiledInput, CompiledOperation, Coverage, Digest, EffectClass, ExprIndex,
+    Failure, FailureClass, OperationIndex, OperationName, REDACTED, RecordKey, RecordMatching,
+    RecordState, RunState, StepArg, Timestamp, ToolRuns, Value, Values, WriteEvidence,
 };
 use a2m_expr::names;
 use a2m_ledger::{
@@ -597,6 +597,10 @@ struct Tool<'p> {
     scope: Scope,
     /// What the tool returns: the result of the last step that ran.
     last: Values,
+    /// How much of what it could return the result holds (decision 0999):
+    /// what the read stated, for a tool that is one operation called once;
+    /// `unknown` for any other.
+    coverage: Coverage,
 }
 
 impl Tool<'_> {
@@ -883,6 +887,7 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
         steps,
         scope,
         last: Values::new(),
+        coverage: Coverage::Unknown,
     };
     if writing {
         write_tool(run, &loaded, &mut tool).await
@@ -899,7 +904,10 @@ pub(crate) async fn run_tool(run: &mut Run<'_>, name: &OperationName) -> Result<
         let sent = match read {
             Ok(()) => run
                 .control
-                .send(EngineEvent::Result(kept(run, &tool.last)))
+                .send(EngineEvent::Result {
+                    values: kept(run, &tool.last),
+                    coverage: tool.coverage,
+                })
                 .await
                 .map_err(Stop::from),
             Err(stop) => Err(stop),
@@ -953,6 +961,14 @@ async fn read_steps_of(
             }
             results.push(outputs);
         }
+        // Only one read of one operation, the whole of the tool, says what
+        // the result holds: a pipeline's last step, or a step called for
+        // each of several inputs, says nothing of the records of the whole.
+        tool.coverage = if tool.steps.len() == 1 && calls.len() == 1 {
+            run.read_coverage
+        } else {
+            Coverage::Unknown
+        };
         let step = &tool.steps[position];
         let kept = StepShape { ..*step };
         tool.keep(&kept, results);
@@ -1103,8 +1119,11 @@ async fn read_pass(
         .await
         .map_err(|failure| (failure, None))?;
     let failed = |failure: Failure| (failure, Some(held));
-    match observe(run, held, binding, scope, fields).await {
-        Ok(Some(seen)) => outputs_of(loaded, found, &seen).map_err(failed),
+    match observe_covered(run, held, binding, scope, fields).await {
+        Ok(Some((seen, coverage))) => {
+            run.read_coverage = coverage;
+            outputs_of(loaded, found, &seen).map_err(failed)
+        }
         Ok(None) => Err(failed(codes::fail(
             &codes::row::OUTPUT_UNEXPECTED,
             format!("The operation `{}` found nothing to read.", found.name),
@@ -1124,6 +1143,20 @@ pub(crate) async fn observe(
     scope: &Scope,
     fields: &[Field],
 ) -> Result<Option<Values>, Failure> {
+    observe_covered(run, held, binding, scope, fields)
+        .await
+        .map(|seen| seen.map(|(values, _)| values))
+}
+
+/// [`observe`], with what the steps that returned values stated of their
+/// coverage (decision 0999).
+async fn observe_covered(
+    run: &mut Run<'_>,
+    held: usize,
+    binding: &CompiledBinding,
+    scope: &Scope,
+    fields: &[Field],
+) -> Result<Option<(Values, Coverage)>, Failure> {
     let steps = binding.act.len() + binding.confirm.len() + binding.read_back.len();
     run.budget(held, steps).await?;
     let mut scope = scope.clone();
@@ -1145,7 +1178,7 @@ pub(crate) async fn observe(
             None => return Ok(None),
         }
     }
-    Ok(Some(seen.values))
+    Ok(Some((seen.values, seen.coverage)))
 }
 
 /// A write tool: the preview, the approval check, reconcile on resume, and
@@ -1357,8 +1390,12 @@ async fn write_tool(run: &mut Run<'_>, loaded: &Loaded, tool: &mut Tool<'_>) -> 
     }
     // The read steps after the first write step run only now.
     read_steps_of(run, loaded, tool, first_write, all).await?;
+    // A write's result states nothing of the records a read could return.
     run.control
-        .send(EngineEvent::Result(kept(run, &tool.last)))
+        .send(EngineEvent::Result {
+            values: kept(run, &tool.last),
+            coverage: Coverage::Unknown,
+        })
         .await?;
     Ok(Done::Completed)
 }

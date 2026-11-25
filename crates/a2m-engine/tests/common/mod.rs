@@ -967,6 +967,7 @@ impl AppDriver {
                             Values::new().with("item_code", code.as_str())
                         },
                         captures: Vec::new(),
+                        coverage: a2m_core::Coverage::Unknown,
                     }))
                 }
                 // A create whose code the system assigns. With no
@@ -2827,7 +2828,7 @@ impl ControlPort for StoreControl {
                         })
                         .await?;
                 }
-                EngineEvent::Result(values) => {
+                EngineEvent::Result { values, .. } => {
                     self.results.lock().unwrap().push(values.clone());
                 }
                 EngineEvent::Trace(trace) => {

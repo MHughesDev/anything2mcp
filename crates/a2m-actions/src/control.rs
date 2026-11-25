@@ -21,8 +21,8 @@ use std::time::Duration;
 
 use a2m_auth::{AuthEntry, ExpirySign, LeaseRequest, Purpose, SessionKey, SessionLease, Wait};
 use a2m_core::{
-    CompiledTarget, Digest, EffectClass, Failure, FailureClass, Identity, RunState, SurfaceIndex,
-    SurfaceName, ToolRuns, Values,
+    CompiledTarget, Coverage, Digest, EffectClass, Failure, FailureClass, Identity, RunState,
+    SurfaceIndex, SurfaceName, ToolRuns, Values,
 };
 use a2m_engine::{
     BoxFuture, Clearance, ControlPort, EngineEvent, Evidence, GuardQuestion, KeptCapture, Preview,
@@ -937,7 +937,9 @@ impl ControlPort for InProcessControl {
                         })
                         .await
                 }
-                EngineEvent::Result(values) => self.store_result(&values).await,
+                EngineEvent::Result { values, coverage } => {
+                    self.store_result(&values, coverage).await
+                }
                 EngineEvent::BindingHealth {
                     operation,
                     mode,
@@ -1157,7 +1159,7 @@ impl ControlPort for InProcessControl {
 }
 
 impl InProcessControl {
-    async fn store_result(&self, values: &Values) -> Result<(), Failure> {
+    async fn store_result(&self, values: &Values, coverage: Coverage) -> Result<(), Failure> {
         // Everything leaving passes the redactor; the stored result is what
         // a later `run.get` returns.
         let redacted = self.kernel.redact().redact_values(values);
@@ -1185,7 +1187,7 @@ impl InProcessControl {
         self.kernel
             .store()?
             .write(self.run_durability(), move |tx| {
-                tx.ledger().store_result(&fence, blob)
+                tx.ledger().store_result(&fence, blob, coverage)
             })
             .await
     }

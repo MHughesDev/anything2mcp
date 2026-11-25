@@ -9,9 +9,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use a2m_core::{
-    ApprovalId, DecisionId, Digest, DigestPurpose, EffectClass, Environment, Epoch, Failure,
-    FailureClass, FailureCode, Identity, Mode, OperationName, PrincipalId, RecordKey, RecordState,
-    RunId, RunState, TargetName, Timestamp, WorkspaceId, WriteEvidence,
+    ApprovalId, Coverage, DecisionId, Digest, DigestPurpose, EffectClass, Environment, Epoch,
+    Failure, FailureClass, FailureCode, Identity, Mode, OperationName, PrincipalId, RecordKey,
+    RecordState, RunId, RunState, TargetName, Timestamp, WorkspaceId, WriteEvidence,
 };
 use serde_json::json;
 
@@ -1731,20 +1731,49 @@ impl Ledger<'_, '_> {
         Ok(())
     }
 
-    /// Stores the run's result. Before the run reaches a final state.
+    /// Stores the run's result, with how much of what the read could
+    /// return it holds, as the engine stated it (decision 0999). Before the
+    /// run reaches a final state.
     ///
     /// # Errors
     ///
     /// `possible_commit`/`runner_lost`;
     /// `unknown_variant`/`ledger_state_unexpected` for a final run or a
     /// reference that names no blob.
-    pub fn store_result(&mut self, fence: &Fence, result: BlobRef) -> Result<(), Failure> {
+    pub fn store_result(
+        &mut self,
+        fence: &Fence,
+        result: BlobRef,
+        coverage: Coverage,
+    ) -> Result<(), Failure> {
         let run = self.fenced(fence)?;
         self.tx.exec(
-            "UPDATE runs SET result_ref = ?2 WHERE id = ?1",
-            &[run.id.to_string().into(), result.into()],
+            "UPDATE runs SET result_ref = ?2, result_coverage = ?3 WHERE id = ?1",
+            &[
+                run.id.to_string().into(),
+                result.into(),
+                coverage.as_str().into(),
+            ],
         )?;
         Ok(())
+    }
+
+    /// How much of what its read could return the run's stored result
+    /// holds: `unknown` for a run that stored none, or whose driver stated
+    /// nothing (decision 0999).
+    ///
+    /// # Errors
+    ///
+    /// `input`/`not_found` when there is no such run.
+    pub fn result_coverage(&mut self, run: RunId) -> Result<Coverage, Failure> {
+        let row = self
+            .tx
+            .row(
+                "SELECT result_coverage FROM runs WHERE id = ?1",
+                &[run.to_string().into()],
+            )?
+            .ok_or_else(|| failure::not_found("run"))?;
+        parse(row.text(0)?)
     }
 
     /// Stores the run's finished trace. A trace may arrive after the run's
