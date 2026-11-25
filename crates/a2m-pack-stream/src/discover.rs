@@ -271,6 +271,15 @@ impl Discoverer for BrokerLook {
                     ("address", Json::text(address)),
                     ("shape", text_json(facts.get("shape"))),
                     ("key_field", text_json(facts.get("key_field"))),
+                    (
+                        "key_from_subject",
+                        Json::Bool(
+                            facts
+                                .get("key_from_subject")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false),
+                        ),
+                    ),
                     ("dedupe_header", text_json(facts.get("dedupe_header"))),
                     (
                         "dedupe_window_ms",

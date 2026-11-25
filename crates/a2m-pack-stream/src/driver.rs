@@ -591,6 +591,11 @@ impl Run {
         {
             return Err(changed("the broker takes the key from another field"));
         }
+        if entry.key_from_subject && facts.key_field.is_some() {
+            return Err(changed(
+                "the broker takes the key from a field of the message, not from the subject",
+            ));
+        }
         if entry.broker_dedupe {
             // The file says the broker refuses a repeated token. Where the
             // broker says otherwise, a resumed publish could store twice.
@@ -1858,6 +1863,7 @@ fn facts_values(facts: &ChannelFacts) -> Values {
                 .map_or(Value::Null, |shape| Value::from(shape.as_str())),
         )
         .with("key_field", text(&facts.key_field))
+        .with("key_from_subject", facts.key_from_subject)
         .with("dedupe_header", text(&facts.dedupe_header))
         .with(
             "dedupe_window_ms",

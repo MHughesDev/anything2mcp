@@ -124,6 +124,11 @@ pub(crate) struct ChannelEntry {
     pub schema: Option<String>,
     /// The field of the body the message key is taken from.
     pub key_field: Option<String>,
+    /// Whether the key is the last token of the subject a message is
+    /// published on, as a broker that keys by subject takes it
+    /// (`key: {from: subject}`); a binding then names its key as it will.
+    #[serde(default)]
+    pub key_from_subject: bool,
     /// How a reply is matched to a request: `headers.<name>`, or a field of
     /// the body.
     pub correlation: Option<String>,
@@ -165,6 +170,10 @@ impl ChannelEntry {
             && self.consumers == Consumers::None
     }
 }
+
+/// The one place other than a field a key is taken from: the last token
+/// of the subject a message is published on (`key: {from: subject}`).
+pub(crate) const KEY_FROM_SUBJECT: &str = "subject";
 
 /// A lint code of this pack.
 pub(crate) fn code(rule: &'static str) -> LintCode {
@@ -274,11 +283,26 @@ pub(crate) fn read_channel(
         .get("key")
         .and_then(|key| key.text("field"))
         .map(str::to_owned);
-    if shape == Shape::Retained && key_field.is_none() {
+    let key_from_subject = doc
+        .get("key")
+        .and_then(|key| key.text("from"))
+        .is_some_and(|from| from == KEY_FROM_SUBJECT);
+    if let Some(key) = doc.get("key") {
+        let field = key.get("field").is_some();
+        let from = key.get("from").is_some();
+        if field == from {
+            wrong(
+                &key.at,
+                "A key is taken from one place: a field of the message, or the subject it is published on.".to_owned(),
+                "Write `key: {field: ...}` with the field of the message the key is taken from, or `key: {from: subject}` where the broker keys a message by the last token of its subject.",
+            );
+        }
+    }
+    if shape == Shape::Retained && key_field.is_none() && !key_from_subject {
         wrong(
             &doc.at,
             "A retained channel keeps one value per key, and this one states no key.".to_owned(),
-            "Add `key: {field: ...}` with the field of the message the key is taken from.",
+            "Add `key: {field: ...}` with the field of the message the key is taken from, or `key: {from: subject}` where the broker keys a message by the last token of its subject.",
         );
     }
 
@@ -439,6 +463,7 @@ pub(crate) fn read_channel(
             role,
             schema: doc.text("schema").map(str::to_owned),
             key_field,
+            key_from_subject,
             correlation,
             browse,
             own_subscription,
@@ -471,7 +496,8 @@ pub(crate) fn channel_schema() -> JsonSchema {
         .optional(
             "key",
             JsonSchema::object()
-                .required("field", JsonSchema::text())
+                .optional("field", JsonSchema::text())
+                .optional("from", JsonSchema::words(&[KEY_FROM_SUBJECT]))
                 .optional("type", JsonSchema::field_type()),
         )
         .optional(

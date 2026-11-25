@@ -1020,12 +1020,27 @@ impl NatsLink {
             Some("limits")
         );
         let may_lose_inside = !per_subject_unlimited || ttl || removes_read;
+        // The server keys a stored message by its whole subject, and the
+        // channel's key is the token below the channel's subject: the
+        // stream keys by subject where it stores a subject below it.
+        let key_from_subject =
+            config
+                .get("subjects")
+                .and_then(Json::as_list)
+                .is_some_and(|subjects| {
+                    subjects.iter().any(|s| {
+                        s.as_str()
+                            .and_then(|s| s.strip_prefix(subject))
+                            .is_some_and(|rest| rest.starts_with('.'))
+                    })
+                });
         let last = number(state, "last_seq")?;
         let first = number(state, "first_seq")?;
         Ok(ChannelFacts {
             address,
             shape,
             key_field: None,
+            key_from_subject: within && key_from_subject,
             schema: None,
             dedupe_header: (window_ns > 0).then(|| MSG_ID.to_owned()),
             dedupe_window_ms: Some(window_ns / 1_000_000),
@@ -1262,6 +1277,7 @@ impl Link for NatsLink {
                         address: address.to_owned(),
                         shape: (!stored).then_some(Shape::Topic),
                         key_field: None,
+                        key_from_subject: false,
                         schema: None,
                         dedupe_header: None,
                         dedupe_window_ms: None,

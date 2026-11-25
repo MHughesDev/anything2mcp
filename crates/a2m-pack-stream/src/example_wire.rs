@@ -334,6 +334,8 @@ fn facts_of(value: &Json) -> Result<ChannelFacts, WireError> {
             .and_then(Json::as_str)
             .and_then(Shape::from_word),
         key_field: text_of(value.get("key_field")),
+        // The test broker keys a message by a field of its body.
+        key_from_subject: false,
         schema: value
             .get("schema")
             .filter(|schema| !schema.is_null())

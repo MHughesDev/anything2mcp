@@ -121,6 +121,11 @@ pub(crate) struct ChannelFacts {
     pub shape: Option<Shape>,
     /// The field of the body the broker says the key is taken from.
     pub key_field: Option<String>,
+    /// Whether the broker keys a message by the last token of the subject
+    /// it is published on, below the channel's own subject: what the
+    /// channel's configuration states, as a stream's subjects do. A broker
+    /// that keys so takes no field of the body as the key.
+    pub key_from_subject: bool,
     /// A schema the broker holds for the body: a claim, not a check.
     pub schema: Option<Json>,
     /// The header whose repeated value the broker refuses.
