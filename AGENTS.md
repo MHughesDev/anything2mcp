@@ -38,7 +38,7 @@ The owner does not review plans or pull requests, and has said so ([decision 005
 
 ## Read these first, in this order
 
-1. The newest entry in [docs/journal/](docs/journal/README.md), then [docs/plan/working-method.md](docs/plan/working-method.md).
+1. The newest entry in [docs/journal/](docs/journal/README.md), then [docs/plan/working-method.md](docs/plan/working-method.md). In a new cloud session, also [continuing in a cloud session](docs/plan/continuing-in-a-cloud-session.md), which says how to set up the machine and run builders.
 2. [docs/plan/roadmap.md](docs/plan/roadmap.md): every work package, what it needs, what proves it, and which are ready now.
 3. [docs/architecture/README.md](docs/architecture/README.md): how the crates fit together. Then the design, in `docs/architecture/crates/`, of each crate you are about to touch.
 4. Part 1 of the [specification](docs/spec/README.md), once: the [summary](docs/spec/1-product/101-summary.md), [requirements](docs/spec/1-product/102-requirements-and-guarantees.md), [principles](docs/spec/1-product/103-design-principles.md), [overview](docs/spec/1-product/104-system-overview.md), [concepts](docs/spec/1-product/105-core-concepts.md), [what it latches onto](docs/spec/1-product/106-what-it-latches-onto.md), and [the bar](docs/spec/1-product/107-the-bar.md). Then [kernel and packs](docs/spec/2-kernel/202-kernel-and-packs.md) and [the scout, and who does what](docs/spec/4-building-tools/402-the-scout-and-who-does-what.md).
