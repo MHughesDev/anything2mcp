@@ -11,7 +11,7 @@ The single list of everything a person, an agent, or a program can ask Anything2
 
 This is a design draft. The list is settled action by action as each phase builds it; adding, renaming, or removing an action after its phase ships is a change to a public interface and needs a decision record. An action's inputs and output are promised from the release that builds it: one with no handler is to carry `x-sdk: false` and get no client method, and each release's built actions are kept and checked against every later build ([decision 0437](../decisions/0437-what-a-release-publishes-is-kept-and-every-later-build-is-checked-against-it.md); package YL4 keeps and checks them, and no release is kept yet; package YL5 built the rest: the API description says `x-sdk: false` for every route of an action with no handler, so neither client has a method for one, and `tools/contracts.py check` holds `x-sdk` to the actions `handler_for` builds).
 
-**Columns.** *Who* is the lowest role that may use the action on a server ([spec section 214](../spec/2-kernel/214-access-control-toolsets-and-tenancy.md)); on one machine the user holds every role. *Listed* says whether the MCP tool appears in a tool list (`use` or `build` toolset) or is reached through `a2m_action_run`. *Phase* is when it is built.
+**Columns.** *Who* is the lowest role that may use the action on a server ([spec section 214](../spec/2-kernel/214-access-control-toolsets-and-tenancy.md)); on one machine the user holds every role. *Listed* says whether the MCP tool appears in a tool list (`use` or `build` toolset) or is reached through `a2m_action_run`. *Phase* is when it is built. *Not built* after the phase marks an action with no handler: it answers `action_not_built`, is not listed up front, and has no SDK method. Each is left unbuilt on purpose, for the reason [decision 0456](../decisions/0456-the-first-release-leaves-out-what-its-first-hour-never-meets-and-a-shortcut-is-offered-only-when-built.md), point 6, gives; the list with each reason is the test `every_action_without_a_handler_is_named_with_its_reason` in `crates/a2m-actions/src/tests/unbuilt.rs` (package 5.1), and `tools/docs_audit.py` holds these marks to it. An action that gains its handler loses its mark, and leaves the list, in the same change.
 
 ## Using tools
 
@@ -24,8 +24,8 @@ This is a design draft. The list is settled action by action as each phase build
 | `run.list` | The caller's recent runs | Viewer | No | 3 |
 | `run.resume` | Continue a stopped run after reconciling | Operator | use | 3 |
 | `run.cancel` | Stop a running or waiting run | Operator | use | 3 |
-| `run.undo` | Build the reverse diff of a completed write run, for approval | Operator | No | 9 |
-| `run.trace` | Summary of a run's trace, with links to artifacts | Viewer | No | 1 |
+| `run.undo` | Build the reverse diff of a completed write run, for approval | Operator | No | 9, not built |
+| `run.trace` | Summary of a run's trace, with links to artifacts | Viewer | No | 1, not built |
 | `session.status` | Whether each target is signed in for the caller | Viewer | use | 2 |
 | `session.login` | Ask the caller's person to sign in to a target; the person gives any credential on the engine's own page, never through an input | Viewer | use | 2 |
 | `session.revoke` | End one of the caller's own sessions | Viewer | No | 2 |
@@ -43,10 +43,10 @@ This is a design draft. The list is settled action by action as each phase build
 | `target.status` | The target's build state and the next action | Builder | build | 5 |
 | `target.list` | Targets in the project and their versions | Builder | No | 5 |
 | `auth.detect` | The sign-in method, with evidence, and a recommended identity mode | Builder | build | 2 |
-| `screen.snapshot` | Compact accessibility snapshot of the current page or window | Builder | build | 1 |
+| `screen.snapshot` | Compact accessibility snapshot of the current page or window | Builder | build | 1, not built |
 | `capture.start` | Ask for a capture of the caller's person's own use of a surface: nothing records until the person begins it on the engine's page, past the presence prompt, where they are told what is kept; then only structure is kept, never a value ([decision 0392](../decisions/0392-a-page-that-reads-by-a-method-that-may-write-is-learned-from-a-persons-watched-use-and-read-through-an-asserted-request.md), point 2; [decision 0433](../decisions/0433-a-capture-is-asked-for-by-capture-start-begun-by-its-person-on-the-page-and-held-in-the-engines-memory.md)). The press on the page carries the capture's identifier, with the person's proof | Builder | build | 4 |
 | `capture.stop` | End a capture the caller asked for, or read how it ended: by the asker, by its person on its page, or at its discoverer's bound. What it found is stored as findings, and goes through the scout's stages from the draft stage on: drafted by rule, the drafted reads tried, and reported, stored stage by stage. Answers with `report`, the report's reference (the scout's identifier and the report's hash, or the stage it stopped at), which `scout.report` reads by `scout`; `wait_seconds` bounds the wait for the trials, and a call again goes on (decision 0451) | Builder | build | 4 |
-| `endpoints.infer` | Endpoint templates, schemas, and dependencies from recordings | Builder | build | 4 |
+| `endpoints.infer` | Endpoint templates, schemas, and dependencies from recordings | Builder | build | 4, not built |
 | `spec.import` | A new scout of a target handed one file of the project's `sources` folder, a description the system publishes about itself: `scout.run` with `files` naming it `description`, and nothing more | Builder | build | 4 |
 | `draft.read` | Read a draft file; stands in for a file system | Builder | build | 5 |
 | `draft.write` | Write a draft file after validation and lint | Builder | build | 5 |
@@ -69,12 +69,12 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | --- | --- | --- | --- | --- |
 | `provider.list` | Every pack and provider: installed, enabled, ready, or what it lacks | Viewer | build | Stage B |
 | `provider.describe` | One provider's manifest, effects, and requirements | Viewer | No | Stage B |
-| `provider.enable`, `provider.disable` | Switch a provider on or off; a protected setting on one machine where it starts processes or reaches a network | Admin | No | Stage B |
-| `component.list` | Outside programs providers need: found or not, with path and digest | Viewer | No | Stage B |
+| `provider.enable`, `provider.disable` | Switch a provider on or off; a protected setting on one machine where it starts processes or reaches a network | Admin | No | Stage B, not built |
+| `component.list` | Outside programs providers need: found or not, with path and digest | Viewer | No | Stage B, not built |
 | `discover.run` | Run the discoverers that suit a target's surfaces; returns findings. `files` hands them files of the project's `sources` folder, each under a name a discoverer reads | Builder | build | Stage E |
 | `finding.list`, `finding.describe` | Findings for a target, by level, kind, or source | Builder | build | Stage E |
 | `unknown.list` | The open questions about a target | Builder | build | Stage E |
-| `unknown.settle` | Settle an open question with evidence | Builder | No | Stage E |
+| `unknown.settle` | Settle an open question with evidence | Builder | No | Stage E, not built |
 | `scout.run` | Identify a target, run the discoverers that suit it, draft what follows by rule, and try the drafted reads; resumable. `files` hands its discoverers files of the project's `sources` folder, as for `discover.run`, and a resumed scout hands the same ones. A scout whose discovery of every surface it observed failed answers `ok: false`, with that failure and the report; one where only some failed answers `ok` with a warning for each (decision 0451) | Builder | build | Stage E |
 | `scout.report` | The last scout's report, or the one `scout` names, such as a capture's: found, drafted, proven, open, and what to look at first; each list counted and cut to its first entries, one read whole in pages with `part`, `limit`, `offset`. A report from a capture says so, how it ended, and that its coverage is partial | Builder | build | Stage E |
 
@@ -84,11 +84,11 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | --- | --- | --- | --- | --- |
 | `version.publish` | Publish a reviewed version; a person, never an agent; with `tools`, of only those tools ([decision 0457](../decisions/0457-a-publish-of-named-tools-compiles-only-their-files.md)) | Publisher | No | 5 |
 | `binding.promote` | Make a drafted operation's first binding verified on the evidence of its tests and a trial, or a shadow binding on its run of exact matches; for a write or a shadow binding, a person | Publisher | No | 4 |
-| `version.activate` | Move a toolset to a version, through the candidate stage | Publisher | No | 6 |
-| `version.rollback` | Make an earlier version current | Publisher | No | 5 |
-| `version.bundle` | Pack a version into a signed file | Publisher | No | 6 |
-| `version.import` | Import a signed bundle | Publisher | No | 6 |
-| `version.migrate` | Recompile stored sources for a newer engine | Publisher | No | 9 |
+| `version.activate` | Move a toolset to a version, through the candidate stage | Publisher | No | 6, not built |
+| `version.rollback` | Make an earlier version current | Publisher | No | 5, not built |
+| `version.bundle` | Pack a version into a signed file | Publisher | No | 6, not built |
+| `version.import` | Import a signed bundle | Publisher | No | 6, not built |
+| `version.migrate` | Recompile stored sources for a newer engine | Publisher | No | 9, not built |
 
 ## Administration
 
@@ -105,12 +105,12 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | `policy.explain` | Why a past call was allowed or denied | Auditor or Admin | No | 6 |
 | `session.list` | Sessions in a workspace, without contents | Admin | No | 6 |
 | `session.end` | End someone's session; never use it | Admin | No | 6 |
-| `runner.enroll`, `runner.list`, `runner.drain`, `runner.revoke` | Manage runners | Admin | No | 7 |
+| `runner.enroll`, `runner.list`, `runner.drain`, `runner.revoke` | Manage runners | Admin | No | 7, not built |
 | `killswitch.set` | Stop a target, a workspace, or the whole system | Admin | No | 3 |
 | `audit.query` | Read the audit log | Auditor | No | 6 |
 | `secret.set` | Store a secret from a prompt or standard input | Admin | No | 2 |
-| `vault.rotate` | Rotate a key layer | Admin | No | 9 |
-| `delegation.grant`, `delegation.revoke`, `delegation.list` | A person lets an agent act for them, and withdraws it | The person | No | 7 |
+| `vault.rotate` | Rotate a key layer | Admin | No | 9, not built |
+| `delegation.grant`, `delegation.revoke`, `delegation.list` | A person lets an agent act for them, and withdraws it | The person | No | 7, not built |
 
 ## The machine itself
 
@@ -118,17 +118,18 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | --- | --- | --- | --- | --- |
 | `engine.status`, `engine.start`, `engine.stop`, `engine.logs` | Control the local engine | Local user | No | 1 |
 | `config.show` | Effective settings and where each came from | Local user | No | 1 |
-| `config.set` | Change a setting; protected settings need the user-presence prompt | Local user | No | 3 |
+| `config.set` | Change a setting; protected settings need the user-presence prompt | Local user | No | 3, not built |
 | `doctor.run` | Check browser, key store, network, sessions, clock; print fixes | Local user | No | 2 |
 | `net.interfaces`, `net.routes`, `net.resolvers`, `net.neighbours`, `net.listeners`, `net.proxy` | What this machine already knows of its own networks, read from the operating system; sends nothing. `net.proxy` reads this engine's own environment on Linux and the user's system setting on Windows, and removes any credentials | Local user | No | 2 |
 | `net.standing` | Where this machine stands: the kind of place each address is, and which interface carries each family's preferred default route; sends nothing | Local user | use | 2 |
 | `net.current` | Which facts of the network this machine is on were read, to recognize it again, and which were left out and why; shows no digest and no address; sends nothing | Local user | No | 2 |
 | `reach.name`, `reach.withdraw` | A person names the network this machine is on now, with the destinations that may be looked at and sent to, or forgets a reach; the network is read from the machine and never taken from an input; an agent cannot do either ([decision 0339](../decisions/0339-the-access-actions-the-built-in-toolsets-and-where-a-reach-is-kept.md)) | The person | No | N3 |
 | `reach.list` | The reaches a person has named: label, the names of the facts each states, whether it is in force here, and the person's own entries; no digest | The person | No | N3 |
-| `browser.install` | Fetch a pinned browser | Local user | No | 1 |
-| `plugin.install`, `plugin.list` | Manage plug-ins | Admin | No | 8 |
+| `browser.install` | Fetch a pinned browser | Local user | No | 1, not built |
+| `plugin.install`, `plugin.list` | Manage plug-ins | Admin | No | 8, not built |
 | `client.connect` | Give the configuration an MCP client needs to start the bridge: printed for `generic`, or set in the file a client profile names, shown first, by a local person | Local user | No | 5 |
-| `trace.show`, `trace.export` | View or export a run's evidence | Auditor | No | 1 |
+| `trace.show` | View a run's evidence | Auditor | No | 1 |
+| `trace.export` | Export a run's evidence | Auditor | No | 1, not built |
 | `action.search`, `action.describe`, `action.run` | Reach any action without listing it | Any | use and build | 5 |
 | `docs.get` | Built-in reference pages | Any | No | 5 |
 | `self.update` | Update a standalone install | Local user | No | 9 |

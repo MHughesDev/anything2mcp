@@ -35,8 +35,8 @@ fn backticked(cell: &str) -> Vec<String> {
         .collect()
 }
 
-/// The action rows of the catalog: name to (who, listed).
-fn catalog_rows() -> BTreeMap<String, (String, String)> {
+/// The action rows of the catalog: name to (who, listed, phase).
+fn catalog_rows() -> BTreeMap<String, (String, String, String)> {
     let text = document("docs/reference/action-catalog.md");
     let actions = text
         .split("## What is deliberately absent")
@@ -48,7 +48,14 @@ fn catalog_rows() -> BTreeMap<String, (String, String)> {
         let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
         assert_eq!(cells.len(), 5, "a catalog row has five columns: {line}");
         for name in backticked(cells[0]) {
-            let before = rows.insert(name.clone(), (cells[2].to_owned(), cells[3].to_owned()));
+            let before = rows.insert(
+                name.clone(),
+                (
+                    cells[2].to_owned(),
+                    cells[3].to_owned(),
+                    cells[4].to_owned(),
+                ),
+            );
             assert!(before.is_none(), "{name} is in the catalog twice");
         }
     }
@@ -74,9 +81,17 @@ fn the_registry_holds_exactly_the_actions_of_the_catalog() {
     assert!(rows.len() > 80, "the catalog was read: {} rows", rows.len());
 
     for def in registry.iter() {
-        let (who, listed) = &rows[def.name.as_str()];
+        let (who, listed, phase) = &rows[def.name.as_str()];
         assert_eq!(def.who.as_str(), who, "the role of {}", def.name);
         assert_eq!(def.listed.as_str(), listed, "the listing of {}", def.name);
+        // Package 5.1: the catalog marks an action with no handler, and only
+        // such an action, "not built" (decision 0456, point 6).
+        assert_eq!(
+            phase.ends_with("not built"),
+            !def.built(),
+            "the catalog's mark of {}: {phase}",
+            def.name
+        );
     }
 }
 

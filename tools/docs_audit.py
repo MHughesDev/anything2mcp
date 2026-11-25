@@ -126,6 +126,29 @@ def main():
             elif f"{parts[0]}.{'_'.join(parts[1:])}" not in actions:
                 note("naming", f"{k}: {t} has no action in the catalog")
 
+    # 3a. The catalog marks "not built" exactly the actions package 5.1's test names as having no
+    #     handler (decision 0456, point 6). A row names one or more actions; it is marked in its
+    #     last cell, and all of its actions are on the list or none are.
+    unbuilt_src = (repo / "crates/a2m-actions/src/tests/unbuilt.rs").read_text(encoding="utf-8")
+    unbuilt = set(re.findall(r'^\s+"([a-z]+\.[a-z_]+)",$', unbuilt_src, re.M))
+    if not unbuilt:
+        note("catalog", "crates/a2m-actions/src/tests/unbuilt.rs: no list of unbuilt actions found")
+    seen = set()
+    for line in catalog[:catalog.index("## What is deliberately absent")].splitlines():
+        m = re.match(r"^\| (`[^|]*`) \|.*\| ([^|]*) \|$", line)
+        if not m:
+            continue
+        names = re.findall(r"`([a-z]+\.[a-z_]+)`", m.group(1))
+        marked = m.group(2).strip().endswith("not built")
+        for a in names:
+            seen.add(a)
+            if marked and a not in unbuilt:
+                note("catalog", f"action-catalog.md: `{a}` is marked not built and has a handler")
+            if not marked and a in unbuilt:
+                note("catalog", f"action-catalog.md: `{a}` has no handler and is not marked not built")
+    for a in sorted(unbuilt - seen):
+        note("catalog", f"action-catalog.md: `{a}`, which has no handler, has no row")
+
     # 4. Crates: spec 29 layout and the layering table agree; nothing else is named.
     layout = set(re.findall(r"\b(a2m-[a-z-]+)/", md["docs/spec/6-running-it/605-packaging-and-release.md"]))
     layer_text = ref[ref.index("## Crate layering"):ref.index("## Driver interface")]
