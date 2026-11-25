@@ -52,10 +52,138 @@ fn compile_target(
     folder: &CheckedPath,
     mode: CompileMode,
     version: Version,
-) -> Result<Compiled, Diagnostics> {
+    tools: Option<&[String]>,
+) -> Result<Result<Compiled, Diagnostics>, Failure> {
     let set = kernel.providers().compiler_set();
-    let sources = a2m_files::load(&TargetRoot::new(folder.as_path()), set)?;
-    a2m_files::compile(&sources, set, mode, version)
+    let sources = match a2m_files::load(&TargetRoot::new(folder.as_path()), set) {
+        Ok(sources) => sources,
+        Err(problems) => return Ok(Err(problems)),
+    };
+    let sources = match tools {
+        Some(tools) => chosen_sources(sources, tools)?,
+        None => sources,
+    };
+    Ok(a2m_files::compile(&sources, set, mode, version))
+}
+
+/// The tools a call names under `tools`, in its order: `None` when it
+/// names none, and every drafted tool is meant.
+pub(crate) fn chosen_tools(call: &Call) -> Option<Vec<String>> {
+    call.input
+        .get("tools")
+        .and_then(Json::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(Json::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+}
+
+/// The name a file of an operation, a pipeline, or a test is of: what each
+/// of its documents names under the kind's own key. `None` for a file of
+/// another kind.
+fn names_in(file: &a2m_files::SourceFile) -> Option<Vec<&str>> {
+    let key = match file.kind.as_str() {
+        a2m_files::kernel::OPERATION => "operation",
+        a2m_files::kernel::PIPELINE => "pipeline",
+        a2m_files::kernel::TEST => "test",
+        _ => return None,
+    };
+    Some(file.docs.iter().filter_map(|doc| doc.text(key)).collect())
+}
+
+/// The sources a publish of only `tools` compiles (decision 0457): every
+/// file but each operation and pipeline file that defines no tool named,
+/// each test of a tool not named, and each fixture only those tests name.
+/// The other files stay whole, so what a named tool needs is compiled as
+/// the drafts hold it, and a file is never cut: one that defines a tool
+/// named and one not named refuses the call.
+///
+/// # Errors
+///
+/// `input`/`not_found` for a name no operation or pipeline file defines;
+/// `input`/`schema_invalid` for a file that defines both a tool named and
+/// one not named.
+pub(crate) fn chosen_sources(
+    sources: a2m_files::Sources,
+    tools: &[String],
+) -> Result<a2m_files::Sources, Failure> {
+    let named = |name: &str| tools.iter().any(|tool| tool == name);
+    for tool in tools {
+        let defined = sources
+            .files
+            .iter()
+            .filter(|file| file.kind.as_str() != a2m_files::kernel::TEST)
+            .filter_map(names_in)
+            .any(|names| names.contains(&tool.as_str()));
+        if !defined {
+            return Err(codes::input(
+                codes::NOT_FOUND,
+                format!(
+                    "The drafts hold no tool named `{}`, so nothing was compiled.",
+                    codes::shown(tool)
+                ),
+                "Call `draft.lint` to list the drafted tools, and name only those under `tools`.",
+            ));
+        }
+    }
+    // The fixtures the tests left in name, and those the tests left out.
+    let (mut kept_fixtures, mut dropped_fixtures) = (Vec::new(), Vec::new());
+    for file in sources.of_kind(a2m_files::kernel::TEST) {
+        for doc in &file.docs {
+            if let Some(fixture) = doc.text("fixture") {
+                if doc.text("test").is_some_and(named) {
+                    kept_fixtures.push(fixture.to_owned());
+                } else {
+                    dropped_fixtures.push(fixture.to_owned());
+                }
+            }
+        }
+    }
+    let mut kept = Vec::with_capacity(sources.files.len());
+    for file in sources.files {
+        if file.kind.as_str() == a2m_files::kernel::FIXTURE {
+            let folder = file
+                .path
+                .as_str()
+                .strip_prefix("fixtures/")
+                .and_then(|rest| rest.split_once('/'))
+                .map(|(folder, _)| folder.to_owned());
+            if folder.is_some_and(|folder| {
+                dropped_fixtures.contains(&folder) && !kept_fixtures.contains(&folder)
+            }) {
+                continue;
+            }
+            kept.push(file);
+            continue;
+        }
+        let Some(names) = names_in(&file) else {
+            kept.push(file);
+            continue;
+        };
+        let (wanted, unwanted) = names.iter().partition::<Vec<&str>, _>(|name| named(name));
+        match (wanted.is_empty(), unwanted.is_empty()) {
+            (false, false) => {
+                return Err(codes::input(
+                    codes::SCHEMA_INVALID,
+                    format!(
+                        "`{}` defines `{}`, which is named under `tools`, and `{}`, which is not; a publish of some tools leaves whole files out and never cuts one.",
+                        file.path.as_str(),
+                        codes::shown(wanted[0]),
+                        codes::shown(unwanted[0])
+                    ),
+                    "Name every tool of the file under `tools`, or move the one not wanted into a file of its own.",
+                ));
+            }
+            (false, true) => kept.push(file),
+            // A file with no document named, and one of tools not named,
+            // is left out.
+            (true, _) if names.is_empty() => kept.push(file),
+            (true, _) => {}
+        }
+    }
+    Ok(a2m_files::Sources::from_files(sources.root, kept))
 }
 
 /// Compiles what of a target's drafts can compile, for observing and trying
@@ -298,7 +426,15 @@ async fn compiled_target(
     version: Version,
 ) -> Result<Result<Compiled, Diagnostics>, Failure> {
     let project_folder = call.project_folder()?.to_path_buf();
-    compile_in(kernel, project_folder, target, mode, version).await
+    compile_chosen_in(
+        kernel,
+        project_folder,
+        target,
+        mode,
+        version,
+        chosen_tools(call),
+    )
+    .await
 }
 
 /// Compiles the drafts of `target` in the checked project folder, off the
@@ -310,10 +446,23 @@ pub(crate) async fn compile_in(
     mode: CompileMode,
     version: Version,
 ) -> Result<Result<Compiled, Diagnostics>, Failure> {
+    compile_chosen_in(kernel, project_folder, target, mode, version, None).await
+}
+
+/// As [`compile_in`], of only the tools `tools` names, when it names some
+/// ([`chosen_sources`]).
+pub(crate) async fn compile_chosen_in(
+    kernel: &Kernel,
+    project_folder: std::path::PathBuf,
+    target: &TargetName,
+    mode: CompileMode,
+    version: Version,
+    tools: Option<Vec<String>>,
+) -> Result<Result<Compiled, Diagnostics>, Failure> {
     let (kernel, target) = (kernel.clone(), target.clone());
     off_thread(move || {
         let folder = target_folder(&project_folder, &target)?;
-        Ok(compile_target(&kernel, &folder, mode, version))
+        compile_target(&kernel, &folder, mode, version, tools.as_deref())
     })
     .await
 }
@@ -382,6 +531,17 @@ pub(crate) async fn publish_next(
                     "draft.lint",
                     json!({"target": target.as_str()}),
                     "after correcting what the publish compile refuses",
+                );
+            }
+            // Reads the newest scout proved are made ready by one action
+            // (package 5.6c), which leaves the rest alone with its reason.
+            if let Ok(Some(scout)) = super::scout::scout_tried(kernel, call, target).await
+                && scout.entries.iter().any(|entry| entry["state"] == "proven")
+            {
+                return Next::new(
+                    "draft.ready",
+                    json!({"target": target.as_str()}),
+                    "to record the offline test and fixture of each read the scout proved, promote its binding, run the publish gates, and ask a person to publish, in one action; `tools` names the reads to publish when not all are wanted",
                 );
             }
             let files: Vec<&str> = untested
@@ -995,6 +1155,9 @@ handler!(
         input.insert("target".to_owned(), json!(call.required("target")?));
         if let Some(version) = call.text("version") {
             input.insert("version".to_owned(), json!(version));
+        }
+        if let Some(tools) = chosen_tools(&call) {
+            input.insert("tools".to_owned(), json!(tools));
         }
         let project = (call.project.clone(), call.project_refused.clone());
         let target = call.required("target")?.to_owned();

@@ -9,7 +9,7 @@
     reason = "a test file: a helper that cannot do its work stops the test"
 )]
 
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};

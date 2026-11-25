@@ -332,10 +332,12 @@ pub struct RestRouteFace {
     /// The input fields taken from the path. The rest come from the query
     /// of a `GET`, or the JSON body of a `POST`.
     pub path_fields: Vec<String>,
-    /// Whether the action has an SDK method (its `faces.sdk`). The API
-    /// description carries it as `x-sdk`, so the generators of the clients,
-    /// which read the description, write no method for an action without
-    /// one.
+    /// Whether the action has an SDK method: it has an SDK face
+    /// (`faces.sdk`) and a handler ([`ActionDef::built`]), so an action that
+    /// answers `action_not_built` has none until it is built (decision 0437,
+    /// point 5). The API description carries it as `x-sdk`, so the
+    /// generators of the clients, which read the description, write no
+    /// method for an action without one.
     pub sdk: bool,
     /// One line for the API description.
     pub summary: String,
@@ -357,7 +359,7 @@ pub fn rest_routes(registry: &ActionRegistry) -> Vec<RestRouteFace> {
             action: def.name.to_string(),
             alias,
             path_fields,
-            sdk: def.faces.sdk,
+            sdk: has_sdk_method(def),
             summary: def.summary.clone(),
             input_schema: def.input.schema.to_json(),
             output_schema: def.output.to_json(),
@@ -405,12 +407,21 @@ pub struct SdkMethodFace {
     pub output_schema: Json,
 }
 
-/// The SDK method of every action that has one, in catalog order.
+/// Whether an action has a method in the clients: an SDK face and a
+/// handler. An action with no handler is described with `x-sdk: false` and
+/// gains its method when it gains a handler (decision 0437, point 5).
+#[must_use]
+pub const fn has_sdk_method(def: &ActionDef) -> bool {
+    def.faces.sdk && def.built()
+}
+
+/// The SDK method of every action that has one, in catalog order: an
+/// action with an SDK face and a handler ([`has_sdk_method`]).
 #[must_use]
 pub fn sdk_methods(registry: &ActionRegistry) -> Vec<SdkMethodFace> {
     registry
         .iter()
-        .filter(|def| def.faces.sdk)
+        .filter(|def| has_sdk_method(def))
         .map(|def| SdkMethodFace {
             action: def.name.to_string(),
             namespace: def.name.noun().to_owned(),
@@ -458,8 +469,8 @@ pub struct Shortcut {
     pub word: &'static str,
     /// What it does, in a sentence.
     pub does: &'static str,
-    /// The actions, in order. Empty for `init`, which has no action beneath
-    /// it yet.
+    /// The actions, in order. Empty for `init`, which the command carries
+    /// out itself (decision 0164).
     pub steps: &'static [ShortcutStep],
     /// The flags it takes beside its one argument, each filling one field
     /// of one step. Without them, a shortcut of several actions takes no
@@ -467,76 +478,46 @@ pub struct Shortcut {
     pub options: &'static [ShortcutOption],
 }
 
-/// What a shortcut does on this engine: the steps to carry out, and where it
-/// stops when a step is not built yet.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ShortcutRun {
-    /// The steps to carry out, in order: the shortcut's steps up to the
-    /// first whose action is not built.
-    pub steps: Vec<ShortcutStep>,
-    /// The first action that is not built. The shortcut stops before it and
-    /// carries out no step after it.
-    pub stops_before: Option<&'static str>,
-    /// What to print when the shortcut stops early: what was done, what it
-    /// stopped before, and what was left undone. `None` when every step is
-    /// built.
-    pub note: Option<String>,
+impl Shortcut {
+    /// Whether this shortcut is offered where `built` says which actions
+    /// have a handler: only when every one of its steps is built (decision
+    /// 0456), so that no shortcut stops before a step that is not. `init`,
+    /// which has no step, always is. A shortcut whose last step gains a
+    /// handler is offered from then on, with no other change.
+    #[must_use]
+    pub fn offered_where(&self, built: impl Fn(&str) -> bool) -> bool {
+        self.steps.iter().all(|step| built(step.action))
+    }
+
+    /// Whether this shortcut is offered on an engine whose registry is
+    /// `registry`.
+    #[must_use]
+    pub fn offered(&self, registry: &ActionRegistry) -> bool {
+        self.offered_where(|action| registry.find(action).is_some_and(ActionDef::built))
+    }
 }
 
-impl Shortcut {
-    /// What this shortcut does with the actions `registry` holds. A
-    /// shortcut never begins a step that is not built: it stops before it,
-    /// whatever was done already stays done, and the note says so.
-    #[must_use]
-    pub fn on(&self, registry: &ActionRegistry) -> ShortcutRun {
-        let built = |step: &&ShortcutStep| registry.find(step.action).is_some_and(ActionDef::built);
-        let steps: Vec<ShortcutStep> = self.steps.iter().take_while(built).copied().collect();
-        let rest = &self.steps[steps.len()..];
-        let Some(first) = rest.first() else {
-            return ShortcutRun {
-                steps,
-                stops_before: None,
-                note: None,
-            };
-        };
-        let names = |steps: &[ShortcutStep]| {
-            steps
-                .iter()
-                .map(|step| format!("`{}`", step.action))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let note = if steps.is_empty() {
-            format!(
-                "`{}` does nothing yet: its first step, `{}`, is not built. Call `action.search` to see which actions are built.",
-                self.word, first.action
-            )
-        } else {
-            format!(
-                "`{}` stopped before `{}`, which is not built yet. Done: {}. Not done: {}.",
-                self.word,
-                first.action,
-                names(&steps),
-                names(rest)
-            )
-        };
-        ShortcutRun {
-            steps,
-            stops_before: Some(first.action),
-            note: Some(note),
-        }
-    }
+/// The shortcuts offered with the actions `registry` holds, in the order of
+/// the action catalog: the command tree, its help, and its completions hold
+/// these and no other.
+#[must_use]
+pub fn shortcuts_offered(registry: &ActionRegistry) -> Vec<&'static Shortcut> {
+    SHORTCUTS
+        .iter()
+        .filter(|shortcut| shortcut.offered(registry))
+        .collect()
 }
 
 const fn step(action: &'static str, argument: Option<&'static str>) -> ShortcutStep {
     ShortcutStep { action, argument }
 }
 
-/// Every shortcut, in the order of the action catalog.
+/// Every shortcut defined, in the order of the action catalog. Only those
+/// whose every step is built are offered ([`shortcuts_offered`]).
 pub const SHORTCUTS: &[Shortcut] = &[
     Shortcut {
         word: "init",
-        does: "Create a project and the guidance file; choose a profile.",
+        does: "Make the folder it is run in, or the one `--project` names, a project: write the project file `anything2mcp.toml`, the guidance for agents as `AGENTS.md` (the page `docs get guidance` prints), the `targets` folder, and a `.gitignore`, each only where it is not there yet; what is there is kept. Run it first, in a folder of your own.",
         steps: &[],
         options: &[],
     },
@@ -574,12 +555,8 @@ pub const SHORTCUTS: &[Shortcut] = &[
     },
     Shortcut {
         word: "learn",
-        does: "Record a session and infer endpoints from it.",
-        steps: &[
-            step("capture.start", Some("target")),
-            step("capture.stop", Some("target")),
-            step("endpoints.infer", Some("target")),
-        ],
+        does: "Ask for a capture of your person's own use of a target, and give the page where they begin and end it. Once they have used the system, `capture stop` says how it ended and scouts what it found.",
+        steps: &[step("capture.start", Some("target"))],
         options: &[],
     },
     Shortcut {

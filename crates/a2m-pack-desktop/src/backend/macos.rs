@@ -802,6 +802,8 @@ impl Ax {
             secret,
             has_text: TEXT_ROLES.contains(&role.as_str()) && !secret,
             labels: false,
+            // This system's tables are read by their rows only.
+            columns: None,
             children: Vec::new(),
             el: El {
                 bus: String::new(),
@@ -934,6 +936,8 @@ impl Ax {
                         secret: false,
                         has_text: false,
                         labels: false,
+                        // This system's tables are read by their rows only.
+                        columns: None,
                         children: Vec::new(),
                         el: El {
                             bus: String::new(),

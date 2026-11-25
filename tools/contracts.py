@@ -15,8 +15,9 @@ the built engine serves), with an action built where `a2m-actions` gives it a ha
 in the client; the failure codes, each with its class and whether it passes by itself, as
 `tools/failure_codes.py` reads them; the names of the vocabularies of `a2m-core` that a result, a stored
 row, or a file carries, from their `vocabulary!` tables; the settings keys with their types, from the
-kernel's schema and each pack's manifest. `write` also compiles the `example` target through the test
-`kept_compiled_target` of `a2m-sources`, and keeps its bytes and hash; `a2m-core`'s test `kept_contracts`
+kernel's schema, less each key marked not built (decision 0455), and from each pack's manifest, read
+where the pack's source embeds it with `include_str!`. `write` also compiles the `example` target
+through the test `kept_compiled_target` of `a2m-sources`, and keeps its bytes and hash; `a2m-core`'s test `kept_contracts`
 proves on every build that each kept compiled target still loads with its hash.
 
 `check` names each break, one line each, in a form `contracts/next-breaks` can list: an action, a route,
@@ -26,7 +27,9 @@ required; an input's or an output field's type changed; a member added to a clos
 class, run state, effect class, evidence level). Additions pass. A break passes only when the kept folder
 of a later release, or `contracts/next-breaks` for the release not yet made, lists it as
 `<break> <record>`, the record being the number of the decision record that made it; `write` moves
-`next-breaks` into the new folder as its `breaks`. A listed break that does not happen is a problem, so
+`next-breaks` into the new folder as its `breaks`. `check` also holds the description's `x-sdk` to the built actions:
+true for an action with a handler, false for one without, so that a client has a method for an action
+from the build that builds it (decision 0437, point 5). A listed break that does not happen is a problem, so
 the list stays true. Types are compared one level deep: a field's JSON type, an array's item type, a
 reference's name; what an object field holds inside is not compared yet.
 
@@ -121,10 +124,33 @@ def built_actions(root):
     return built
 
 
+def sdk_problems(root, document=None, built=None):
+    """Every route whose `x-sdk` does not say whether its action is built. An action has a client method
+    from the build that gives it a handler, and none before (decision 0437, point 5): the description
+    says `x-sdk: true` for a built action and `false` for one with no handler, so this count of the built
+    actions and the clients' generators, which read `x-sdk`, are made from the one place."""
+    if document is None:
+        document = json.loads((root / OPENAPI).read_text(encoding="utf-8"))
+    if built is None:
+        built = built_actions(root)
+    problems = []
+    for path, operations in document.get("paths", {}).items():
+        for method, op in operations.items():
+            name = op.get("x-action")
+            if name and op.get("x-sdk") is not (name in built):
+                said = "has no handler" if name not in built else "is built"
+                problems.append(f"{OPENAPI}: {method.upper()} {path} says `x-sdk: {json.dumps(op.get('x-sdk'))}`, "
+                                f"and `{name}` {said}; regenerate the description and the clients")
+    return problems
+
+
 def kept_openapi(root):
     """The API description as served, cut to the routes of built actions."""
     document = json.loads((root / OPENAPI).read_text(encoding="utf-8"))
     built = built_actions(root)
+    disagree = sdk_problems(root, document, built)
+    if disagree:
+        raise Fault("\n".join(disagree))
     paths = {}
     for path, operations in document.get("paths", {}).items():
         kept = {method: op for method, op in operations.items() if op.get("x-action") in built}
@@ -199,24 +225,72 @@ KINDS = {"Kind::Bool": "bool", "Kind::Int": "int", "Kind::Text": "text", "Kind::
          "Kind::List": "list", "Kind::Words": "words"}
 
 
+def call_end(text, start):
+    """The index of the parenthesis that closes the call opened just before `start`, skipping
+    strings; -1 when it is not closed."""
+    depth, i = 1, start
+    while i < len(text):
+        c = text[i]
+        if c == '"':
+            i += 1
+            while i < len(text) and text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+INCLUDE = re.compile(r'\binclude_str!\(\s*"([^"]+\.toml)"\s*\)')
+
+
+def pack_manifests(root):
+    """Every pack manifest the registry reads: each TOML file with a `[provider]` table that a crate's
+    source, outside its tests, embeds with `include_str!`, wherever in the crate the file is."""
+    found = set()
+    crates = root / "crates"
+    for crate_dir in sorted(d for d in crates.iterdir() if d.is_dir()) if crates.is_dir() else []:
+        for p in failure_codes.source_files(crate_dir):
+            for m in INCLUDE.finditer(strip_comments(failure_codes.without_tests(p.read_text(encoding="utf-8")))):
+                path = (p.parent / m.group(1)).resolve()
+                if path.is_file() and crate_dir.resolve() in path.parents:
+                    found.add(path)
+    return sorted(found)
+
+
 def settings(root):
-    """{key: type} of every setting: the kernel's schema and each pack's manifest."""
+    """{key: type} of every setting that is built: the kernel's schema, less each key marked not built
+    (decision 0455), and each pack's manifest."""
     text = strip_comments((root / SCHEMA).read_text(encoding="utf-8"))
     consts = {m.group(1): KINDS.get(m.group(2)) for m in re.finditer(r"\bconst\s+(\w+)\s*:\s*Kind\s*=\s*(Kind::\w+)", text)}
     start = text.find("pub const SCHEMA")
     if start < 0:
         raise Fault(f"{SCHEMA}: `SCHEMA` is not there")
+    later = []
+    for m in re.finditer(r"\bnot_built\(", text[start:]):
+        end = call_end(text, start + m.end())
+        if end < 0:
+            raise Fault(f"{SCHEMA}: a `not_built(` call is not closed")
+        later.append((start + m.end(), end))
     found = {}
     for m in re.finditer(r'\bdef\(\s*"([^"]+)"\s*,\s*(Kind::\w+|\w+)', text[start:]):
         kind = KINDS.get(m.group(2)) or consts.get(m.group(2))
         if not kind:
             raise Fault(f"{SCHEMA}: the type `{m.group(2)}` of `{m.group(1)}` cannot be read")
+        if any(a <= start + m.start() < b for a, b in later):
+            continue
         found[m.group(1)] = kind
     if not found:
         raise Fault(f"{SCHEMA}: no setting could be read")
-    for manifest in sorted((root / "crates").glob("*/anything2mcp-provider.toml")):
+    for manifest in pack_manifests(root):
         data = tomllib.loads(manifest.read_text(encoding="utf-8"))
         pack = data.get("provider", {}).get("name")
+        if not pack:
+            continue
         for setting in data.get("settings", []):
             found[f"packs.{pack}.{setting['key']}"] = setting["type"]
     return dict(sorted(found.items()))
@@ -442,6 +516,7 @@ def main(argv):
             return 1 if problems else 0
         if command == "check":
             problems, compared = check(root)
+            problems = sdk_problems(root) + problems
             for p in problems:
                 print("-", p)
             print(f"{compared} kept release(s) compared; {len(problems)} problem(s)")

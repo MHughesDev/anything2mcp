@@ -143,13 +143,42 @@ handler!(
             .await?;
         let mut out = described(&found);
         mark(&mut out, unavailable.get(&found.tool.name));
+        // The call is shown with every required input, each a placeholder
+        // an agent puts its own value in (package 5.6c).
+        let input = example_input(&out["input_schema"]);
+        let when = if holds_placeholder(&input) {
+            "to call it, with a value of yours in place of each `<...>`"
+        } else {
+            "to call it"
+        };
         Ok(Output::ok(out).then(Next::new(
             "tool.call",
-            json!({"tool": found.tool.name.as_str(), "input": {}}),
-            "to call it",
+            json!({"tool": found.tool.name.as_str(), "input": input}),
+            when,
         )))
     }
 );
+
+/// An input that holds every input a tool's input schema requires, each as
+/// the placeholder `<name>`, in place of a value only the caller knows. A
+/// schema that requires nothing gives an empty input.
+pub(crate) fn example_input(schema: &Json) -> Json {
+    let required = schema["required"].as_array().into_iter().flatten();
+    Json::Object(
+        required
+            .filter_map(Json::as_str)
+            .map(|name| (name.to_owned(), json!(format!("<{name}>"))))
+            .collect(),
+    )
+}
+
+/// Whether an input [`example_input`] made holds a placeholder.
+pub(crate) fn holds_placeholder(input: &Json) -> bool {
+    input.as_object().is_some_and(|map| {
+        map.iter()
+            .any(|(name, value)| value.as_str() == Some(format!("<{name}>").as_str()))
+    })
+}
 
 /// The most bytes of rows a call may carry inline. A larger input is a
 /// file.
@@ -520,6 +549,9 @@ fn described(found: &FoundTool) -> Json {
         "target": found.target.as_str(),
         "version": found.compiled_target.header.version.to_string(),
         "compiled_target_hash": found.compiled_target_hash.to_string(),
+        // What the tool is, exactly, so that a client can pin it and see
+        // that it changed (decision 0439, point 1).
+        "digest": a2m_files::tool_digest(&found.tool).map(|digest| digest.to_string()),
         "kind": found.kind(),
         "effect": effect.to_string(),
         "hazard": hazard.to_string(),
@@ -1682,6 +1714,8 @@ pub(crate) async fn run_output(
     let _ = call;
     let mut output = Output::ok(Json::Object(out)).exit(exit);
     output.next = next;
+    // A run that rests on a person has not done its part (decision 0458).
+    output.run_rests = exit == ExitClass::PersonNeeded;
     if exit == ExitClass::Failed {
         let failure = failure.unwrap_or_else(|| {
             Failure::new(
@@ -1911,6 +1945,72 @@ handler!(
             "compiled_target_hash": hash.to_string(),
             "text": compiled_target.show()?,
         })))
+    }
+);
+
+handler!(
+    /// `version.diff`: what changed in each tool between two published
+    /// versions of a target, each change classified by the closed list of
+    /// decision 0439. The breaking tools come first, then the compatible,
+    /// then the unchanged; within a tool, the breaking changes first.
+    version_diff,
+    |kernel, call| {
+        let target = a2m_core::TargetName::new(call.required("target")?)?;
+        let parsed = |field: &str| -> Result<a2m_core::Version, Failure> {
+            call.required(field)?.parse::<a2m_core::Version>().map_err(|_| {
+                codes::input(
+                    codes::SCHEMA_INVALID,
+                    format!("`{field}` is not three numbers joined by dots."),
+                    "Write a version as, for example, `2.0.0`; `target.status` lists the published ones.",
+                )
+            })
+        };
+        let (from, to) = (parsed("from")?, parsed("to")?);
+        let workspace = kernel.installation()?.workspace;
+        let listed = target.clone();
+        let versions = kernel
+            .store()?
+            .read(move |tx| tx.versions().list(&workspace, &listed))
+            .await?;
+        let hash_of = |version: a2m_core::Version| {
+            versions
+                .iter()
+                .find(|row| row.version == version)
+                .map(|row| row.compiled_target_hash)
+                .ok_or_else(|| {
+                    codes::input(
+                        codes::NOT_FOUND,
+                        format!("The target `{target}` has no published version `{version}`."),
+                        "Name two published versions; `target.status` lists them.",
+                    )
+                })
+        };
+        let (before_hash, after_hash) = (hash_of(from)?, hash_of(to)?);
+        let before = kernel
+            .compiled_target_by_hash(&target, &before_hash)
+            .await?;
+        let after = kernel.compiled_target_by_hash(&target, &after_hash).await?;
+        let changes = a2m_files::changes_between(&before, &after);
+        let breaking = changes.breaking().count();
+        let mut output = Output::ok(json!({
+            "target": target.as_str(),
+            "from": from.to_string(),
+            "to": to.to_string(),
+            "breaking": breaking,
+            "tools": serde_json::to_value(&changes.tools).map_err(|_| {
+                codes::input(
+                    codes::SCHEMA_INVALID,
+                    "The comparison could not be written as JSON.",
+                    "Report this as a fault of the engine.",
+                )
+            })?,
+        }));
+        if breaking > 0 {
+            output = output.warn(format!(
+                "{breaking} of the tools of `{from}` break from `{from}` to `{to}` for an agent that calls them as they were; each names why."
+            ));
+        }
+        Ok(output)
     }
 );
 

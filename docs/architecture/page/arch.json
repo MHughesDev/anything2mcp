@@ -10834,7 +10834,7 @@
    "group": "Compiled Target",
    "state": "b",
    "where": "a2m-files: src/review.rs",
-   "text": "The risk-ordered list a person sees on the publish page before a version goes live: what each tool can do, its evidence, which gates ran, and each program a tool starts, with a fixed notice. Each asserted read is shown with the sign-ins, before the tools, with the sentence that the person's word is its only evidence. A server started through a launcher is shown as a launcher, with its entry file's path and digest and the sentence that whatever the entry file loads is not pinned and not shown. Designed and not built (YL1): each tool whose change from the current published version is breaking, listed first with why, by a closed list; the publish is not refused.",
+   "text": "The risk-ordered list a person sees on the publish page before a version goes live: what each tool can do, its evidence, which gates ran, and each program a tool starts, with a fixed notice. Each asserted read is shown with the sign-ins, before the tools, with the sentence that the person's word is its only evidence. A server started through a launcher is shown as a launcher, with its entry file's path and digest and the sentence that whatever the entry file loads is not pinned and not shown. Each tool whose change from the version in force is breaking is listed first, with why, by a closed list; the answer of the waiting publish names the same, and the publish is not refused (decision 0454).",
    "never": [
     "Gate a publish on a notice: a notice informs."
    ],

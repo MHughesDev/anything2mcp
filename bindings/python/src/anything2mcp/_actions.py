@@ -27,16 +27,10 @@ ACTIONS = (
     "audit.query",
     "auth.detect",
     "binding.promote",
-    "browser.install",
     "capture.start",
     "capture.stop",
     "client.connect",
-    "component.list",
-    "config.set",
     "config.show",
-    "delegation.grant",
-    "delegation.list",
-    "delegation.revoke",
     "discover.run",
     "docs.get",
     "doctor.run",
@@ -46,7 +40,6 @@ ACTIONS = (
     "draft.ready",
     "draft.try",
     "draft.write",
-    "endpoints.infer",
     "engine.logs",
     "engine.start",
     "engine.status",
@@ -66,8 +59,6 @@ ACTIONS = (
     "net.resolvers",
     "net.routes",
     "net.standing",
-    "plugin.install",
-    "plugin.list",
     "policy.explain",
     "policy.publish",
     "policy.test",
@@ -75,8 +66,6 @@ ACTIONS = (
     "policy.versions",
     "policy.who_can",
     "provider.describe",
-    "provider.disable",
-    "provider.enable",
     "provider.list",
     "publish.request",
     "reach.list",
@@ -86,15 +75,8 @@ ACTIONS = (
     "run.get",
     "run.list",
     "run.resume",
-    "run.trace",
-    "run.undo",
-    "runner.drain",
-    "runner.enroll",
-    "runner.list",
-    "runner.revoke",
     "scout.report",
     "scout.run",
-    "screen.snapshot",
     "secret.set",
     "self.update",
     "session.end",
@@ -117,18 +99,10 @@ ACTIONS = (
     "toolset.list",
     "toolset.remove",
     "toolset.update",
-    "trace.export",
     "trace.show",
     "unknown.list",
-    "unknown.settle",
-    "vault.rotate",
-    "version.activate",
-    "version.bundle",
     "version.diff",
-    "version.import",
-    "version.migrate",
     "version.publish",
-    "version.rollback",
     "watch.changes",
     "watch.confirm",
     "watch.create",
@@ -277,13 +251,6 @@ class Actions:
             idempotency_key,
         )
 
-    def browser_install(self, *, idempotency_key: Optional[str] = None) -> "Response":
-        """Fetch a pinned browser for the pack that drives one.
-
-        The engine action is ``browser.install``.
-        """
-        return self._action("browser.install", {}, idempotency_key)
-
     def capture_start(
         self,
         *,
@@ -313,10 +280,13 @@ class Actions:
         *,
         target: str,
         capture: Optional[str] = None,
+        wait_seconds: Optional[int] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """End a capture you asked for, or read how it ended, and store what it
-        found as findings.
+        """End a capture you asked for, or read how it ended; store what it found
+        as findings, and scout from them as `scout.run` does from a discovery:
+        draft by rule, try the drafted reads, and report. Answers with the
+        report's reference; never writes to the system.
 
         The engine action is ``capture.stop``.
         """
@@ -325,6 +295,7 @@ class Actions:
             {
                 "target": target,
                 "capture": capture,
+                "wait_seconds": wait_seconds,
             },
             idempotency_key,
         )
@@ -357,36 +328,6 @@ class Actions:
             idempotency_key,
         )
 
-    def component_list(self, *, idempotency_key: Optional[str] = None) -> "Response":
-        """The outside programs providers need: found or not, with path and digest.
-
-        The engine action is ``component.list``.
-        """
-        return self._action("component.list", {}, idempotency_key)
-
-    def config_set(
-        self,
-        *,
-        key: str,
-        value: str,
-        layer: Optional[Literal["user", "project"]] = None,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Change one setting in a settings file. Loosening a protected setting
-        needs a person present.
-
-        The engine action is ``config.set``.
-        """
-        return self._action(
-            "config.set",
-            {
-                "key": key,
-                "value": value,
-                "layer": layer,
-            },
-            idempotency_key,
-        )
-
     def config_show(
         self,
         *,
@@ -399,37 +340,6 @@ class Actions:
         The engine action is ``config.show``.
         """
         return self._action("config.show", {"key": key}, idempotency_key)
-
-    def delegation_grant(
-        self,
-        *,
-        agent: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """A person lets an agent act for them.
-
-        The engine action is ``delegation.grant``.
-        """
-        return self._action("delegation.grant", {"agent": agent}, idempotency_key)
-
-    def delegation_list(self, *, idempotency_key: Optional[str] = None) -> "Response":
-        """The delegations a person has given.
-
-        The engine action is ``delegation.list``.
-        """
-        return self._action("delegation.list", {}, idempotency_key)
-
-    def delegation_revoke(
-        self,
-        *,
-        agent: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """A person withdraws a delegation.
-
-        The engine action is ``delegation.revoke``.
-        """
-        return self._action("delegation.revoke", {"agent": agent}, idempotency_key)
 
     def discover_run(
         self,
@@ -605,19 +515,6 @@ class Actions:
             },
             idempotency_key,
         )
-
-    def endpoints_infer(
-        self,
-        *,
-        target: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Endpoint templates, schemas, and dependencies worked out from stored
-        recordings.
-
-        The engine action is ``endpoints.infer``.
-        """
-        return self._action("endpoints.infer", {"target": target}, idempotency_key)
 
     def engine_logs(
         self,
@@ -887,26 +784,6 @@ class Actions:
         """
         return self._action("net.standing", {}, idempotency_key)
 
-    def plugin_install(
-        self,
-        *,
-        file: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Install a plug-in from a file, after checking its manifest and
-        signature.
-
-        The engine action is ``plugin.install``.
-        """
-        return self._action("plugin.install", {"file": file}, idempotency_key)
-
-    def plugin_list(self, *, idempotency_key: Optional[str] = None) -> "Response":
-        """The plug-ins found on this machine.
-
-        The engine action is ``plugin.list``.
-        """
-        return self._action("plugin.list", {}, idempotency_key)
-
     def policy_explain(
         self,
         *,
@@ -1028,31 +905,6 @@ class Actions:
             idempotency_key,
         )
 
-    def provider_disable(
-        self,
-        *,
-        provider: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Switch a provider off.
-
-        The engine action is ``provider.disable``.
-        """
-        return self._action("provider.disable", {"provider": provider}, idempotency_key)
-
-    def provider_enable(
-        self,
-        *,
-        provider: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Switch a provider on. A protected setting on one machine where the
-        provider starts processes or reaches a network.
-
-        The engine action is ``provider.enable``.
-        """
-        return self._action("provider.enable", {"provider": provider}, idempotency_key)
-
     def provider_list(self, *, idempotency_key: Optional[str] = None) -> "Response":
         """Every pack and provider: installed, enabled, ready, or what it lacks and
         how to get it.
@@ -1065,6 +917,7 @@ class Actions:
         self,
         *,
         target: str,
+        tools: Optional[List[str]] = None,
         version: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
@@ -1077,6 +930,7 @@ class Actions:
             "publish.request",
             {
                 "target": target,
+                "tools": tools,
                 "version": version,
             },
             idempotency_key,
@@ -1205,74 +1059,6 @@ class Actions:
             idempotency_key,
         )
 
-    def run_trace(
-        self,
-        *,
-        run_id: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """A summary of one run's trace, with references to its kept artifacts.
-
-        The engine action is ``run.trace``.
-        """
-        return self._action("run.trace", {"run_id": run_id}, idempotency_key)
-
-    def run_undo(
-        self,
-        *,
-        run_id: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Build the reverse diff of a completed write run, for a person's
-        approval.
-
-        The engine action is ``run.undo``.
-        """
-        return self._action("run.undo", {"run_id": run_id}, idempotency_key)
-
-    def runner_drain(
-        self,
-        *,
-        runner: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Stop giving a runner new jobs.
-
-        The engine action is ``runner.drain``.
-        """
-        return self._action("runner.drain", {"runner": runner}, idempotency_key)
-
-    def runner_enroll(
-        self,
-        *,
-        name: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Enroll a runner on another machine.
-
-        The engine action is ``runner.enroll``.
-        """
-        return self._action("runner.enroll", {"name": name}, idempotency_key)
-
-    def runner_list(self, *, idempotency_key: Optional[str] = None) -> "Response":
-        """The runners, what each serves, and when each was last heard from.
-
-        The engine action is ``runner.list``.
-        """
-        return self._action("runner.list", {}, idempotency_key)
-
-    def runner_revoke(
-        self,
-        *,
-        runner: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Revoke a runner's enrollment.
-
-        The engine action is ``runner.revoke``.
-        """
-        return self._action("runner.revoke", {"runner": runner}, idempotency_key)
-
     def scout_report(
         self,
         *,
@@ -1280,6 +1066,7 @@ class Actions:
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         part: Optional[Literal["surfaces", "found", "compared.differs", "compared.would_draft", "compared.not_covered", "drafted.written", "drafted.held_back", "drafted.not_drafted", "drafted.conflicts", "drafted.refused", "checked.problems", "checked.tools", "tried.tools", "tried.left_out", "open", "not_looked_at"]] = None,
+        scout: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """The last scout's report on a target: found, drafted, proven, open, and
@@ -1295,6 +1082,7 @@ class Actions:
                 "limit": limit,
                 "offset": offset,
                 "part": part,
+                "scout": scout,
             },
             idempotency_key,
         )
@@ -1321,31 +1109,6 @@ class Actions:
                 "files": files,
                 "fresh": fresh,
                 "wait_seconds": wait_seconds,
-            },
-            idempotency_key,
-        )
-
-    def screen_snapshot(
-        self,
-        *,
-        target: str,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        surface: Optional[str] = None,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """A compact snapshot of what a surface shows now, with stable references
-        to its elements.
-
-        The engine action is ``screen.snapshot``.
-        """
-        return self._action(
-            "screen.snapshot",
-            {
-                "target": target,
-                "limit": limit,
-                "offset": offset,
-                "surface": surface,
             },
             idempotency_key,
         )
@@ -1599,13 +1362,21 @@ class Actions:
         self,
         *,
         target: str,
+        tools: Optional[List[str]] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """Run the publish gates on a target's drafts and return the evidence.
 
         The engine action is ``test.run``.
         """
-        return self._action("test.run", {"target": target}, idempotency_key)
+        return self._action(
+            "test.run",
+            {
+                "target": target,
+                "tools": tools,
+            },
+            idempotency_key,
+        )
 
     def tool_call(
         self,
@@ -1645,7 +1416,8 @@ class Actions:
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """The full description, input schema, and output schema of one published
-        tool, by its name.
+        tool, by its name, and its digest, which changes when and only when its
+        definition does.
 
         The engine action is ``tool.describe``.
         """
@@ -1792,18 +1564,6 @@ class Actions:
             idempotency_key,
         )
 
-    def trace_export(
-        self,
-        *,
-        run_id: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Export one run's evidence to a file in the project.
-
-        The engine action is ``trace.export``.
-        """
-        return self._action("trace.export", {"run_id": run_id}, idempotency_key)
-
     def trace_show(
         self,
         *,
@@ -1828,80 +1588,6 @@ class Actions:
         """
         return self._action("unknown.list", {"target": target}, idempotency_key)
 
-    def unknown_settle(
-        self,
-        *,
-        evidence: str,
-        unknown: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Settle an open question about a target, with evidence.
-
-        The engine action is ``unknown.settle``.
-        """
-        return self._action(
-            "unknown.settle",
-            {
-                "evidence": evidence,
-                "unknown": unknown,
-            },
-            idempotency_key,
-        )
-
-    def vault_rotate(
-        self,
-        *,
-        layer: Literal["root", "workspace", "owner"],
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Rotate one layer of the vault's keys.
-
-        The engine action is ``vault.rotate``.
-        """
-        return self._action("vault.rotate", {"layer": layer}, idempotency_key)
-
-    def version_activate(
-        self,
-        *,
-        target: str,
-        version: str,
-        toolset: Optional[str] = None,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Move a toolset to a version, through the candidate stage.
-
-        The engine action is ``version.activate``.
-        """
-        return self._action(
-            "version.activate",
-            {
-                "target": target,
-                "version": version,
-                "toolset": toolset,
-            },
-            idempotency_key,
-        )
-
-    def version_bundle(
-        self,
-        *,
-        target: str,
-        version: Optional[str] = None,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Pack a published version into a signed file.
-
-        The engine action is ``version.bundle``.
-        """
-        return self._action(
-            "version.bundle",
-            {
-                "target": target,
-                "version": version,
-            },
-            idempotency_key,
-        )
-
     def version_diff(
         self,
         *,
@@ -1924,35 +1610,12 @@ class Actions:
             idempotency_key,
         )
 
-    def version_import(
-        self,
-        *,
-        file: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Import a signed bundle as a published version.
-
-        The engine action is ``version.import``.
-        """
-        return self._action("version.import", {"file": file}, idempotency_key)
-
-    def version_migrate(
-        self,
-        *,
-        target: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Recompile stored sources for a newer engine.
-
-        The engine action is ``version.migrate``.
-        """
-        return self._action("version.migrate", {"target": target}, idempotency_key)
-
     def version_publish(
         self,
         *,
         target: str,
         compiled_target_hash: Optional[str] = None,
+        tools: Optional[List[str]] = None,
         version: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
@@ -1966,26 +1629,7 @@ class Actions:
             {
                 "target": target,
                 "compiled_target_hash": compiled_target_hash,
-                "version": version,
-            },
-            idempotency_key,
-        )
-
-    def version_rollback(
-        self,
-        *,
-        target: str,
-        version: str,
-        idempotency_key: Optional[str] = None,
-    ) -> "Response":
-        """Make an earlier version of a target current.
-
-        The engine action is ``version.rollback``.
-        """
-        return self._action(
-            "version.rollback",
-            {
-                "target": target,
+                "tools": tools,
                 "version": version,
             },
             idempotency_key,

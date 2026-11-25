@@ -9,6 +9,7 @@ stand-in for the compiled target: the comparison is of the files, and `a2m-core`
 import copy
 import hashlib
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -86,6 +87,77 @@ class Contracts(unittest.TestCase):
         self.assertIn(ACTION, actions)
         self.assertIn("engine.start", actions, "an action the client carries out is built")
         self.assertNotIn("version.migrate", actions, "an action with no handler is not kept")
+
+    def test_a_setting_not_built_is_left_out_and_a_built_one_is_kept(self):
+        # Decision 0455, point 1: the kept contract holds only the settings whose part is built.
+        kept = TODAY["settings.json"]
+        for key in ("store.database", "profile.roles", "store.blobs", "vault.root_key"):
+            self.assertNotIn(key, kept, f"`{key}` is marked not built and must not be kept")
+        for key in ("profile.name", "profile.preset", "store.free_space_floor", "vault.backend"):
+            self.assertIn(key, kept, f"`{key}` is built and must be kept")
+        declared = re.findall(r'\bdef\(\s*"([^"]+)"', (HERE.parent / c.SCHEMA).read_text(encoding="utf-8"))
+        kernel = [k for k in TODAY["settings.json"] if not k.startswith("packs.")]
+        self.assertEqual(len(declared) - len(kernel), 55, "the 55 settings marked not built are left out")
+        root = scratch()
+        schema = root / c.SCHEMA
+        schema.parent.mkdir(parents=True)
+        schema.write_text('''
+const fn not_built(mut setting: SettingDef, instead: &'static str, arrives_with: &'static str) -> SettingDef { setting }
+const COUNT: Kind = Kind::Int { min: 0, max: 10 };
+pub const SCHEMA: &[SettingDef] = &[
+    def("a.built", Kind::Bool, B(true), I, NextStart, "Built (one), and kept."),
+    not_built(
+        def("a.later", COUNT, N(1), I, NextStart, "Not built; a \\"quoted\\" (word)."),
+        "What happens instead (for now).",
+        "a slice of its own",
+    ),
+    protected(def("a.guarded", Kind::Text, T(""), I, NextStart, "Built and protected."), Safer::Lower),
+    not_built(protected(def("a.both", Kind::Text, T(""), I, NextStart, "Neither."), Safer::Lower), "x", "y"),
+];
+''', encoding="utf-8")
+        self.assertEqual(c.settings(root), {"a.built": "bool", "a.guarded": "text"})
+
+    def test_every_setting_of_every_pack_manifest_is_kept(self):
+        # Section 226's per-pack table names each pack setting; each is kept, wherever in its crate
+        # the pack's manifest is (decision 0455, point 1).
+        text = (HERE.parent / "docs/spec/2-kernel/226-configuration.md").read_text(encoding="utf-8")
+        named = set(re.findall(r"^\| `(packs\.[a-z_]+\.[a-z_]+)` \|", text, re.M))
+        self.assertEqual(len(named), 28, sorted(named))
+        missing = sorted(named - set(TODAY["settings.json"]))
+        self.assertEqual(missing, [], "pack settings section 226 names and the kept contract misses")
+        kept = {k for k in TODAY["settings.json"] if k.startswith("packs.")}
+        self.assertEqual(sorted(kept - named), [], "pack settings kept that section 226 does not name")
+
+    def test_a_manifest_is_read_where_its_pack_embeds_it(self):
+        root = scratch()
+        schema = root / c.SCHEMA
+        schema.parent.mkdir(parents=True)
+        schema.write_text('pub const SCHEMA: &[SettingDef] = &[def("a.built", Kind::Bool, B(true), I, NextStart, "Kept.")];\n')
+        src = root / "crates" / "a2m-pack-x" / "src"
+        src.mkdir(parents=True)
+        (src / "lib.rs").write_text('pub const MANIFEST: &str = include_str!("manifest.toml");\n'
+                                    '#[cfg(test)]\nmod tests { const F: &str = include_str!("../fixture.toml"); }\n')
+        (src / "manifest.toml").write_text('[provider]\nname = "x"\n[[settings]]\nkey = "limit"\ntype = "int"\n')
+        (src.parent / "fixture.toml").write_text('[provider]\nname = "fixture"\n[[settings]]\nkey = "k"\ntype = "int"\n')
+        (src.parent / "anything2mcp-provider.toml").write_text('[provider]\nname = "unused"\n[[settings]]\nkey = "k"\ntype = "int"\n')
+        self.assertEqual(c.settings(root), {"a.built": "bool", "packs.x.limit": "int"},
+                         "the manifest the pack embeds is read, and a test's fixture or a file nothing embeds is not")
+
+    def test_the_description_says_x_sdk_for_exactly_the_built_actions(self):
+        root = HERE.parent
+        self.assertEqual(c.sdk_problems(root), [])
+        document = json.loads((root / c.OPENAPI).read_text(encoding="utf-8"))
+        built = c.built_actions(root)
+        for path, operations in document["paths"].items():
+            for op in operations.values():
+                if op.get("x-action") == "version.migrate":
+                    op["x-sdk"] = True
+                if op.get("x-action") == ACTION:
+                    op["x-sdk"] = False
+        problems = c.sdk_problems(root, document, built)
+        self.assertEqual(len(problems), 2, problems)
+        self.assertTrue(any("`version.migrate` has no handler" in p for p in problems), problems)
+        self.assertTrue(any(f"`{ACTION}` is built" in p for p in problems), problems)
 
     def test_a_folder_kept_from_today_passes(self):
         root = scratch()

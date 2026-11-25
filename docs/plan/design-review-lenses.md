@@ -23,7 +23,7 @@ A round that finds nothing has probably not looked hard enough. A round that rew
 | 4 | The steered agent | What could an agent do if text it read told it to? | 2026-11-24, with lens 5 |
 | 5 | Self-failure | What happens when each of the engine's own parts fails? | 2026-11-24 |
 | 6 | One pipeline, line by line | Walk one real pipeline through every section it touches. Where do two steps not connect? | 2026-11-16 |
-| 7 | Less | What can be removed from the first release without losing the core? What is designed and not needed? | Not yet |
+| 7 | Less | What can be removed from the first release without losing the core? What is designed and not needed? | 2026-11-25 ([report](../reviews/less-review-2026-11-25.md)) |
 | 8 | The security reviewer | Read the company-server path as an organization's security team would. What would they refuse? | Not yet |
 | 9 | The first-time user | Follow the walkthrough as someone who has never seen the project. Where do they get stuck? | Not yet |
 | 10 | The measured system | Now that numbers exist, which sections assumed something the numbers contradict? | 2026-11-24 ([report](../reviews/measured-system-review-2026-11-24.md)) |

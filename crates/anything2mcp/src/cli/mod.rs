@@ -39,7 +39,7 @@ use crate::engine::{Engine, EngineOptions, action_registry};
 use crate::person::{ProcessTerminal, TerminalSurface};
 pub use parse::COMPLETION_COMMAND;
 pub(crate) use parse::Tree;
-use parse::{Globals, Parsed, Step, Stop};
+use parse::{Globals, Parsed, Step};
 pub use process::READY_LINE;
 use serde_json::Value as Json;
 
@@ -278,30 +278,6 @@ fn stopped(tree: &Tree, action: &str, failure: &Failure, exit: ExitClass, json: 
     render::render(&render::refused(action, failure, exit), tree, json)
 }
 
-/// What a shortcut that stops early ends with, once the steps it could
-/// carry out have succeeded: the failure that names the step it stopped
-/// before, with the shortcut's own note. That step was never begun. When
-/// an earlier step did not succeed, its own answer stands.
-fn after_steps(finished: Finished, stop: Option<&Stop>, tree: &Tree, json: bool) -> Finished {
-    match stop {
-        Some(stop) if finished.code == 0 => stopped(
-            tree,
-            stop.before,
-            &Failure::new(
-                FailureClass::Input,
-                codes::ACTION_NOT_BUILT,
-                stop.note.clone(),
-                format!(
-                    "Run the steps that are built by their own commands. `{PROGRAM} --help` lists the commands."
-                ),
-            ),
-            ExitClass::Failed,
-            json,
-        ),
-        _ => finished,
-    }
-}
-
 fn stdin_unreadable() -> Failure {
     // Nothing of what was read is in the message, and nothing of the
     // system's own error, which could quote it.
@@ -365,13 +341,12 @@ pub async fn run_on(engine: &Engine, args: &[String], json: bool, is_agent: bool
     // it is open.
     let tree = engine.command_tree();
     match tree.parse(args) {
-        Ok(Parsed::Invoke(globals, mut steps, stop)) => {
+        Ok(Parsed::Invoke(globals, mut steps)) => {
             let json = json || globals.json;
             if let Err(failure) = take_stdin(&mut steps).await {
                 return stopped(tree, "", &failure, ExitClass::Malformed, json);
             }
-            let finished = run_steps(engine, tree, &globals, steps, json, is_agent).await;
-            after_steps(finished, stop.as_ref(), tree, json)
+            run_steps(engine, tree, &globals, steps, json, is_agent).await
         }
         Ok(other) => without_engine(tree, other, json),
         Err(failure) => stopped(tree, "", &failure, ExitClass::Malformed, json),
@@ -439,8 +414,8 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
             return stopped(&Tree::empty(), "", &failure, ExitClass::Failed, json);
         }
     };
-    let (globals, mut steps, stop) = match tree.parse(args) {
-        Ok(Parsed::Invoke(globals, steps, stop)) => (globals, steps, stop),
+    let (globals, mut steps) = match tree.parse(args) {
+        Ok(Parsed::Invoke(globals, steps)) => (globals, steps),
         Ok(Parsed::Process(globals, word, rest)) => {
             return process::run(&tree, &globals, word, &rest, host, json || globals.json).await;
         }
@@ -457,16 +432,6 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
         .unwrap_or_default();
     if let Err(failure) = take_stdin(&mut steps).await {
         return stopped(&tree, &action, &failure, ExitClass::Malformed, json);
-    }
-    if steps.is_empty() {
-        // A shortcut whose first step is not built: there is nothing to
-        // send, so no engine is looked for.
-        let nothing = Finished {
-            code: 0,
-            stdout: String::new(),
-            stderr: String::new(),
-        };
-        return after_steps(nothing, stop.as_ref(), &tree, json);
     }
     let paths = match Paths::resolve(&host.env()) {
         Ok(paths) => paths,
@@ -517,9 +482,7 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
                 project: project.as_deref(),
                 paths: &paths,
             };
-            let finished =
-                client::run_steps(&link, &tree, &asking, steps, json, warning.as_deref()).await;
-            return after_steps(finished, stop.as_ref(), &tree, json);
+            return client::run_steps(&link, &tree, &asking, steps, json, warning.as_deref()).await;
         }
         // No engine runs and none was started: `engine.in_process` is on,
         // no passphrase was given for a vault that needs one, or the
@@ -550,7 +513,7 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
     // of a person (a program can give itself a terminal), and it is never
     // carried over the local channel; a person's act here is asked for at
     // the terminal and recorded as proving nobody (decision 0158).
-    let finished = run_steps(
+    let mut finished = run_steps(
         &engine,
         &tree,
         &globals,
@@ -560,7 +523,6 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
     )
     .await;
     engine.close().await;
-    let mut finished = after_steps(finished, stop.as_ref(), &tree, json);
     if let Some(refused) = refused {
         finished.stderr.insert_str(
             0,

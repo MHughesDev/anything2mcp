@@ -110,6 +110,12 @@ fn not_looked_at(done: &BTreeMap<u8, Json>) -> Vec<Json> {
             }));
         }
     }
+    if stage(0)["from"] == "capture" {
+        out.push(json!({
+            "what": "what its person did not use",
+            "why": "The scout began from a capture, which sees only what its person used while it recorded. Its coverage is partial: it says nothing of the rest. `scout.run` looks at the whole surface, and another capture records more.",
+        }));
+    }
     out.push(json!({
         "what": "described against observed, by each pack's own rule",
         "why": "No pack's comparison of what a system describes with what was observed is built (roadmap E3); the scout compares only what the drafter writes by rule with the target's files.",
@@ -206,15 +212,96 @@ pub(crate) fn assemble(
             },
         ],
     });
+    let mut content = content;
+    let captured = &stage(0)["capture"];
+    if stage(0)["from"] == "capture" {
+        // A report from a capture says so (decision 0400, point 4): how it
+        // ended, the bounds it hit, and what it saw, by kind. When it ran
+        // and how long are kept beside the content, as the scout's own
+        // identifier is, so that the same findings give the same hash.
+        content["capture"] = json!({
+            "ended_by": captured["ended_by"],
+            "bounds_hit": captured["bounds_hit"],
+            "findings_by_kind": captured["findings_by_kind"],
+            "coverage": "partial",
+            "why": "A capture sees only what its person used while it recorded.",
+        });
+    }
     let hash = Digest::of(content.to_string().as_bytes());
-    json!({
+    let mut report = json!({
         "target": target.as_str(),
         "scout_id": scout.to_string(),
         "report_hash": hash.to_string(),
         "compiled_target_hash": stage(1)["compiled_target_hash"],
         "content": content,
         "runs": {"identify": stage(1)["runs"], "tried": stage(6)["runs"]},
-    })
+    });
+    if stage(0)["from"] == "capture" {
+        report["capture"] = json!({
+            "capture_id": captured["capture_id"],
+            "began_at": captured["began_at"],
+            "ended_at": captured["ended_at"],
+            "ran_ms": captured["ran_ms"],
+        });
+    }
+    report
+}
+
+/// Each surface the scout observed, by name, with the failure its
+/// discovery ended with when it saw nothing for one: its run failed or was
+/// refused, or every discoverer of it failed and it found nothing. A
+/// surface with no provider or no discoverer was not observed, and is not
+/// listed (field test 9, finding 56).
+pub(crate) fn observed(report: &Json) -> Vec<(String, Option<Json>)> {
+    list(&report["content"]["surfaces"])
+        .filter(|surface| {
+            matches!(
+                surface["state"].as_str(),
+                Some("identified" | "failed" | "refused")
+            )
+        })
+        .map(|surface| {
+            let name = surface["surface"].as_str().unwrap_or_default().to_owned();
+            let ended: Vec<&Json> = list(&surface["ended"]).collect();
+            // The fix the first failed discoverer's failure declares.
+            let fix = ended
+                .iter()
+                .find_map(|one| one["report"]["failure"]["fix"].as_str());
+            let found: u64 = surface["findings_by_kind"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .flat_map(|(_, levels)| levels.as_object().into_iter().flatten())
+                .filter_map(|(_, count)| count.as_u64())
+                .sum();
+            let failure = if surface["state"] == "identified" {
+                (!ended.is_empty()
+                    && found == 0
+                    && ended.iter().all(|one| one["report"]["failure"].is_object()))
+                .then(|| ended[0]["report"]["failure"].clone())
+            } else {
+                Some(json!({
+                    "class": surface["failure"]["class"],
+                    "code": surface["failure"]["code"],
+                    "fix": fix,
+                }))
+            };
+            (name, failure)
+        })
+        .collect()
+}
+
+/// The warning for a surface whose discovery failed, in the product's
+/// words and the failure's code.
+pub(crate) fn failed_line(name: &str, failure: Option<&Json>) -> String {
+    match failure.and_then(|failure| failure["code"].as_str()) {
+        Some(code) => format!(
+            "The discovery of the surface `{name}` failed with `{code}`, and nothing was found there; the report's `not_looked_at` says why."
+        ),
+        None => format!(
+            "The discovery of the surface `{name}` failed, and nothing was found there; the report's `not_looked_at` says why."
+        ),
+    }
 }
 
 /// The entries of a list counted by their `state`, as "2 compiles, 1 fails".
@@ -242,6 +329,12 @@ fn rendered(report: &Json) -> String {
         report["target"].as_str().unwrap_or_default(),
         report["report_hash"].as_str().unwrap_or_default()
     )];
+    if content["capture"].is_object() {
+        lines.push(format!(
+            "Made from a capture of the person's use, ended `{}`: it covers only what the person used.",
+            content["capture"]["ended_by"].as_str().unwrap_or_default()
+        ));
+    }
     for surface in list(&content["surfaces"]) {
         let found: u64 = surface["findings_by_kind"]
             .as_object()
@@ -516,6 +609,14 @@ pub(crate) fn shown(report: &Json) -> Output {
             "session.login",
             json!({"target": target}),
             "a read waits for a sign-in; the person signs in, then the scout runs again",
+        )
+    } else if list(&report["content"]["tried"]["tools"]).any(|tool| tool["state"] == "proven") {
+        // The reads the scout proved go to a publish in one action
+        // (package 5.6c); what it could not decide waits apart from them.
+        Next::new(
+            "draft.ready",
+            json!({"target": target}),
+            "to record the offline test and fixture of each read the scout proved, promote its binding, run the publish gates, and ask a person to publish, in one action; `tools` names the reads to publish when not all are wanted",
         )
     } else if open > 0 {
         Next::new(

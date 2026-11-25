@@ -22,8 +22,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use a2m_core::{
-    Digest, Environment, Failure, Finding, PrincipalId, Redact, SurfaceName, TargetName, Timestamp,
-    Values, WorkspaceId,
+    Digest, Environment, Failure, Finding, PrincipalId, Redact, RunId, SurfaceName, TargetName,
+    Timestamp, Values, WorkspaceId,
 };
 use a2m_ledger::Durability;
 use a2m_provider::{
@@ -127,6 +127,9 @@ struct Capture {
     asked_at: Timestamp,
     bound_seconds: u32,
     stage: Stage,
+    /// The scout its findings go through once it has ended, claimed by the
+    /// first `capture.stop` after its end (decision 0400).
+    scout: Option<RunId>,
 }
 
 impl Capture {
@@ -712,6 +715,53 @@ impl Kernel {
     }
 }
 
+impl Kernel {
+    /// What a capture that ended after its person began it hands the
+    /// scout, with the scout it goes through, claimed now when no call
+    /// claimed one before: `None` for a capture that recorded nothing.
+    fn captured(&self, capture: &Capture) -> Result<Option<super::scout::Captured>, Failure> {
+        let Stage::Ended {
+            began_at: Some(began_at),
+            ended,
+        } = &capture.stage
+        else {
+            return Ok(None);
+        };
+        let fresh = {
+            let mut bytes = [0_u8; 10];
+            self.inner.random.fill(&mut bytes)?;
+            RunId::from_parts(self.inner.clock.now(), bytes)?
+        };
+        let scout = {
+            let mut state = self.captures().state();
+            let held = state.get_mut(&capture.id).ok_or_else(no_such_capture)?;
+            *held.scout.get_or_insert(fresh)
+        };
+        Ok(Some(super::scout::Captured {
+            scout,
+            capture_id: capture.id.clone(),
+            target: capture.target.clone(),
+            surface: capture.surface.clone(),
+            compiled_target: Arc::clone(&capture.compiled_target),
+            compiled_target_hash: capture.compiled_target_hash,
+            ended_by: ended.by.as_str(),
+            began_at: Some(began_at.as_unix_millis()),
+            ended_at: ended.at.as_unix_millis(),
+            reported: ended
+                .reported
+                .iter()
+                .map(|reported| {
+                    (
+                        reported.provider.clone(),
+                        reported.discoverer.clone(),
+                        reported.report.clone(),
+                    )
+                })
+                .collect(),
+        }))
+    }
+}
+
 /// A new capture's identifier.
 fn new_id(kernel: &Kernel) -> Result<String, Failure> {
     let mut bytes = [0_u8; 16];
@@ -798,6 +848,7 @@ handler!(
                     asked_at: kernel.inner.clock.now(),
                     bound_seconds,
                     stage: Stage::Asked,
+                    scout: None,
                 };
                 kernel
                     .captures()
@@ -918,10 +969,50 @@ handler!(
         } else {
             kernel.own_capture(&call.caller, &id)?
         };
-        Ok(Output::ok(capture.json()).then(Next::new(
-            "finding.list",
-            json!({"target": target.as_str()}),
-            "to read what the capture found",
-        )))
+        let mut result = capture.json();
+        let Some(captured) = kernel.captured(&capture)? else {
+            // Not begun, nothing was recorded: there is nothing to scout.
+            return Ok(Output::ok(result).then(Next::new(
+                "capture.start",
+                json!({"target": target.as_str()}),
+                "to ask for a new capture; this one recorded nothing",
+            )));
+        };
+        // A capture ends as a scout does (decision 0400): its findings go
+        // through the scout's stages from the draft stage on, and the
+        // answer is the report's reference.
+        let scout = captured.scout;
+        let made = super::scout::scout_capture(kernel, &call, captured).await?;
+        let finished = made.result["report_hash"].as_str().map(str::to_owned);
+        let mut reference = json!({"scout_id": scout.to_string()});
+        let next = match &finished {
+            Some(hash) => {
+                reference["state"] = json!("finished");
+                reference["report_hash"] = json!(hash);
+                Next::new(
+                    "scout.report",
+                    json!({"target": target.as_str(), "scout": scout.to_string()}),
+                    "to read the report of what the capture found, drafted, and tried",
+                )
+            }
+            None => {
+                reference["state"] = json!("working");
+                reference["stage"] = made.result["stage"].clone();
+                Next::new(
+                    "capture.stop",
+                    json!({"target": target.as_str(), "capture": id}),
+                    "to go on with the report from the last stage stored",
+                )
+            }
+        };
+        if let Json::Object(map) = &mut result {
+            map.insert("report".to_owned(), reference);
+        }
+        let mut output = Output::ok(result).then(next);
+        output.warnings = made.warnings;
+        if let Some(failure) = made.failure {
+            output = output.failed(failure);
+        }
+        Ok(output)
     }
 );

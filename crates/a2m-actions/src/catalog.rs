@@ -36,6 +36,7 @@ const DRAFTED_HELP: &str =
     "Who drafted the change, where that is known; the author cannot be the second administrator.";
 
 const TARGET: &str = "The target's name.";
+const CHOSEN_TOOLS: &str = "Only these drafted tools, by name: the version holds them and what they need, and no other operation, pipeline, test, or fixture. Every drafted tool when left out.";
 const RUN: &str = "The run's identifier, as an earlier result gave it.";
 const LIMIT: &str = "The most entries to return.";
 const OFFSET_HELP: &str = "How many entries to skip.";
@@ -253,6 +254,7 @@ fn capture_output() -> JsonSchema {
         )
         .optional("findings", JsonSchema::int())
         .optional("discoverers", list_of(any_map()))
+        .optional("report", any_map())
         .optional("act", text())
         .optional("link", text())
         .optional("person", text())
@@ -319,7 +321,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .opt("kind", FieldType::Word(&["operation", "pipeline"]), "Only operations, or only pipelines. Both when left out.")
             .opt("limit", COUNT, LIMIT)
             .opt("offset", OFFSET, OFFSET_HELP)
-            .opt("full", BOOL, "Return each tool in full, as tool.describe gives it: title, hazard, compiled target hash, input schema, output schema, and annotations. For listing a toolset in one call.")
+            .opt("full", BOOL, "Return each tool in full, as tool.describe gives it: title, hazard, compiled target hash, digest, input schema, output schema, and annotations. For listing a toolset in one call.")
             .output(JsonSchema::object()
                 .required("tools", list_of(JsonSchema::object()
                     .required("name", text())
@@ -331,6 +333,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                     .required("available", JsonSchema::bool())
                     .optional("unavailable", unavailable())
                     .optional("compiled_target_hash", text())
+                    .optional("digest", text())
                     .optional("hazard", text())
                     .optional("title", text())
                     .optional("description_by", text())
@@ -342,7 +345,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .example(r#"{"query": "order"}"#)
             .alias("GET", "/tools")
             .done(),
-        act("tool.describe", "The full description, input schema, and output schema of one published tool, by its name.", VIEWER, Use, "1", Inspect)
+        act("tool.describe", "The full description, input schema, and output schema of one published tool, by its name, and its digest, which changes when and only when its definition does.", VIEWER, Use, "1", Inspect)
             .pos("tool", TEXT, "The tool's full name.")
             .output(JsonSchema::object()
                 .required("name", text())
@@ -352,6 +355,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                 .required("effect", text())
                 .required("hazard", text())
                 .required("compiled_target_hash", text())
+                .required("digest", text())
                 .required("title", text())
                 .required("description", text())
                 .required("description_by", text())
@@ -564,10 +568,12 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .output(capture_output())
             .example(r#"{"target": "example"}"#)
             .done(),
-        act("capture.stop", "End a capture you asked for, or read how it ended, and store what it found as findings.", BUILDER, Build, "4", Observe)
+        act("capture.stop", "End a capture you asked for, or read how it ended; store what it found as findings, and scout from them as `scout.run` does from a discovery: draft by rule, try the drafted reads, and report. Answers with the report's reference; never writes to the system.", BUILDER, Build, "4", Observe)
             .pos("target", TEXT, TARGET)
             .opt("capture", TEXT, "The capture, as `capture.start` gave it. The newest of the target when left out.")
+            .opt("wait_seconds", FieldType::Int { min: 0, max: 600 }, "How long to wait for each trial of a drafted read to end before returning; called again, it goes on from there.")
             .writes()
+            .long_running()
             .output(capture_output())
             .example(r#"{"target": "example"}"#)
             .done(),
@@ -630,6 +636,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .done(),
         act("test.run", "Run the publish gates on a target's drafts and return the evidence.", BUILDER, Build, "3", Observe)
             .pos("target", TEXT, TARGET)
+            .opt("tools", LIST, "Only the gates a publish of these drafted tools runs, by name, as `publish.request` with `tools` compiles them. Every drafted tool when left out.")
             .long_running()
             .done(),
         act("fixture.record", "Record an offline test's fixture from one real read, every value scrubbed by rule, and the test that replays it.", BUILDER, No, "3", Change)
@@ -658,7 +665,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .done(),
         act("draft.ready", "Make every drafted read a trial in this project read a value through ready to publish: record its offline test and fixture, promote its first binding, run the publish gates, and ask a person to publish, each step by its own action. A write, a pipeline, and a read with no trial are left alone, each with its reason.", BUILDER, Build, "5", Change)
             .pos("target", TEXT, TARGET)
-            .opt("tools", LIST, "The drafted reads to make ready, by name; every drafted tool is looked at when left out. A named tool that cannot be made ready refuses the call, and nothing is done.")
+            .opt("tools", LIST, "The drafted reads to make ready and publish, by name; every drafted tool is looked at, and published, when left out. A named tool that cannot be made ready refuses the call, and nothing is done. Named, the publish holds only these, as `publish.request` with `tools` asks.")
             .opt("version", TEXT, "The version's label for the publish asked for. The next number when left out.")
             .long_running()
             .writes()
@@ -669,6 +676,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                 .required("failed", list_of(any_map()))
                 .optional("gates", any_map())
                 .required("publish", any_map())
+                .optional("state", text())
                 .required("text", text()))
             .example(r#"{"target": "example"}"#)
             .example(r#"{"target": "example", "tools": ["example_order_get"]}"#)
@@ -708,10 +716,18 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .pos("target", TEXT, TARGET)
             .req("from", TEXT, "The earlier version.")
             .req("to", TEXT, "The later version.")
+            .output(JsonSchema::object()
+                .required("target", text())
+                .required("from", text())
+                .required("to", text())
+                .required("breaking", JsonSchema::int())
+                .required("tools", list_of(crate::def::tool_change_schema())))
+            .example(r#"{"target": "example", "from": "1.0.0", "to": "2.0.0"}"#)
             .done(),
         act("publish.request", "Submit a target's drafts for a person's review. Publishing itself is a person's act.", BUILDER, Build, "5", Change)
             .pos("target", TEXT, TARGET)
             .opt("version", TEXT, "The version's label. The next number when left out.")
+            .opt("tools", LIST, CHOSEN_TOOLS)
             .writes()
             .output(published().optional("state", text()))
             .asks_a_person()
@@ -793,6 +809,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .done(),
         act("scout.report", "The last scout's report on a target: found, drafted, proven, open, and what to look at first. Each list is counted and shows its first entries; `part` reads one whole, in pages.", BUILDER, Build, "Stage E", Inspect)
             .pos("target", TEXT, TARGET)
+            .opt("scout", TEXT, "The scout whose report to read, as `capture.stop` or `scout.run` gave its identifier. The last one that finished when left out.")
             .opt("part", FieldType::Word(crate::handlers::scout_report::PARTS), "One list of the report to read whole, by its path in the report's content, such as `drafted.written`. The report with each list cut to its first entries when left out.")
             .opt("limit", COUNT, LIMIT)
             .opt("offset", OFFSET, OFFSET_HELP)
@@ -802,6 +819,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .pos("target", TEXT, TARGET)
             .opt("version", TEXT, "The version's label. The next number when left out.")
             .opt("compiled_target_hash", TEXT, "The hash of the compiled target the drafts must compile to. A publish shown to a person on a page carries the one they read.")
+            .opt("tools", LIST, CHOSEN_TOOLS)
             .writes()
             .person(PersonNeed::Presence)
             .output(published())

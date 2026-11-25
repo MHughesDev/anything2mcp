@@ -157,6 +157,13 @@ pub struct BrowserSettings {
     /// than its caller's limit does, so that a test can drop it there.
     #[cfg(test)]
     pub(crate) stall_after_start: Option<Arc<StallOnce>>,
+    /// This crate's own tests only: the launch reads one byte from the
+    /// program before it writes its first request. The program that stops
+    /// as it starts sends that byte once it has closed the end of its pipe
+    /// it reads from, so the first request is written to a pipe nobody
+    /// reads, in that order every time.
+    #[cfg(test)]
+    pub(crate) hear_before_first_request: bool,
 }
 
 /// This crate's own tests only: one launch that stops after its program
@@ -191,6 +198,8 @@ impl Default for BrowserSettings {
             environment_for_tests: Vec::new(),
             #[cfg(test)]
             stall_after_start: None,
+            #[cfg(test)]
+            hear_before_first_request: false,
         }
     }
 }
@@ -319,6 +328,9 @@ pub struct OpenBrowser {
     pub verified: bool,
     /// How many tabs are open.
     pub tabs: usize,
+    /// How many tabs are being closed: released, and not yet detached by
+    /// the browser. Each fails every request of its page until then.
+    pub closing: usize,
     /// How many acting tabs it has opened since it started.
     pub runs: u64,
     /// How many of its tabs hung and were closed since it started.
@@ -335,6 +347,8 @@ pub(crate) struct BrowserInner {
     program_digest: Digest,
     verified: bool,
     pub(crate) tabs: AtomicUsize,
+    /// How many released tabs the browser has not yet detached.
+    pub(crate) closing: AtomicUsize,
     runs: AtomicU64,
     /// How many of its tabs hung and were closed: past the count the
     /// settings give, the browser is recycled between runs.
@@ -1146,10 +1160,19 @@ impl Browsers {
                 // is no secret, so the folder itself is what keeps them.
                 .and_then(|directory| launch::make_private(&directory).map(|()| directory))
                 .map_err(LaunchReason::DataDirectory)?;
-            Ok::<_, LaunchReason>((program, directory))
+            // What an earlier start wrote is not this start's. A file that
+            // cannot be removed is written on; what is shown of it is still
+            // what the browser wrote.
+            let log = directory
+                .join(launch::LOG_FILE)
+                .map_err(LaunchReason::DataDirectory)?;
+            if log.exists() {
+                let _ = log.remove_file();
+            }
+            Ok::<_, LaunchReason>((program, (directory, log)))
         })
         .await;
-        let (program, directory) = match found {
+        let (program, (directory, log)) = match found {
             Ok(found) => found.map_err(failed)?,
             Err(_) => {
                 return Err(failed(LaunchReason::DataDirectory(Failure::new(
@@ -1161,7 +1184,7 @@ impl Browsers {
             }
         };
         #[allow(unused_mut, reason = "only a test build adds an argument")]
-        let mut args = launch::arguments(directory.as_path(), window);
+        let mut args = launch::arguments(directory.as_path(), log.as_path(), window);
         #[cfg(any(test, feature = "test-support"))]
         if shared.settings.without_sandbox {
             args.push(crate::test_support::WITHOUT_SANDBOX.into());
@@ -1224,11 +1247,14 @@ impl Browsers {
 
         let known = &shared.settings.known_digests;
         let reviewed = known.contains(&link.program_digest);
-        let client = Client::connect(
-            link.from_child,
-            link.to_child,
-            shared.settings.max_message_bytes,
-        );
+        #[allow(unused_mut, reason = "only this crate's tests read from it first")]
+        let mut from_child = link.from_child;
+        #[cfg(test)]
+        if shared.settings.hear_before_first_request {
+            use tokio::io::AsyncReadExt as _;
+            let _ = from_child.read_u8().await;
+        }
+        let client = Client::connect(from_child, link.to_child, shared.settings.max_message_bytes);
         // Ownership: the digest of the program that runs, and what it
         // answers over the pipe only its owner holds.
         let owned = if !known.is_empty() && !reviewed {
@@ -1256,10 +1282,32 @@ impl Browsers {
                     );
                     // Silence with the pipe still open is not proof of
                     // anything but slowness: a browser on a cold machine
-                    // can take longer than any deadline. Everything else
-                    // is a program that is not a browser.
+                    // can take longer than any deadline. A pipe that ended
+                    // after the program wrote why in its log is a browser
+                    // that could not start here, such as one that cannot
+                    // make its sandbox (decision 0450). It ends in either
+                    // order: the engine reads the end, or the program is
+                    // gone before the first request is written, and the
+                    // write fails; a read that fails is an end too. Each
+                    // reads the log the same way. Everything else is a
+                    // program that is not a browser.
                     Err(match error {
                         ClientError::Timeout { .. } => LaunchReason::NoAnswer(why),
+                        ClientError::Closed {
+                            why: Why::Ended | Why::WriteFailed,
+                            ..
+                        } => {
+                            let read = log.clone();
+                            let redact = Arc::clone(&shared.redact);
+                            match tokio::task::spawn_blocking(move || {
+                                launch::what_it_wrote(&read, redact.as_ref())
+                            })
+                            .await
+                            {
+                                Ok(Some(wrote)) => LaunchReason::Stopped(wrote),
+                                _ => LaunchReason::NotOwned(why),
+                            }
+                        }
                         _ => LaunchReason::NotOwned(why),
                     })
                 }
@@ -1273,6 +1321,9 @@ impl Browsers {
                 return Err(failed(reason));
             }
         };
+        // A browser that answered needs its log no more. Where the system
+        // keeps an open file from being removed, the next start removes it.
+        let _ = tokio::task::spawn_blocking(move || log.remove_file()).await;
         // Every tab is opened in a context of the browser's own making,
         // which keeps what pages store in memory: no cookie and no page
         // storage is written to the data directory (decision 0245).
@@ -1301,6 +1352,7 @@ impl Browsers {
             program_digest: link.program_digest,
             verified: link.verified || reviewed,
             tabs: AtomicUsize::new(0),
+            closing: AtomicUsize::new(0),
             runs: AtomicU64::new(0),
             hangs: AtomicU64::new(0),
             pages: Mutex::new(BTreeMap::new()),
@@ -1367,6 +1419,7 @@ impl Browsers {
                 program_digest: browser.program_digest,
                 verified: browser.verified,
                 tabs: browser.tabs.load(Ordering::SeqCst),
+                closing: browser.closing.load(Ordering::SeqCst),
                 runs: browser.runs.load(Ordering::SeqCst),
                 hangs: browser.hangs.load(Ordering::SeqCst),
                 health: browser.health(),

@@ -19,7 +19,8 @@ use a2m_files::{
 
 use crate::codes::shown;
 use crate::model::{
-    Action, Cond, Field, Locator, PAYLOAD_FORMAT, Rows, Screen, ScreenSection, Variant, WindowMatch,
+    Action, Cond, Field, Locator, PAYLOAD_FORMAT, Rows, Screen, ScreenSection, TitleHole, Variant,
+    WindowMatch,
 };
 use crate::roles;
 
@@ -88,7 +89,7 @@ pub(crate) fn screen_schema() -> JsonSchema {
         .required("control", JsonSchema::control())
         .required("locate", locate_schema());
     let rows = JsonSchema::object()
-        .required("locate", locate_schema())
+        .optional("locate", locate_schema())
         .required("header", JsonSchema::non_empty_list(JsonSchema::text()))
         .required(
             "columns",
@@ -254,8 +255,14 @@ impl Reader {
         found.pop()
     }
 
+    /// A table: located by its locators, or, with none, as the one table
+    /// of the window whose headings are its `header` (decision 0462).
     fn rows(&mut self, doc: &Located<Doc>) -> Option<Rows> {
-        let locate = self.locators(doc)?;
+        let locate = if doc.get("locate").is_some() {
+            self.locators(doc)?
+        } else {
+            Vec::new()
+        };
         let header: Vec<String> = doc
             .get("header")?
             .items()
@@ -302,9 +309,22 @@ impl Reader {
                 "Write the window's title as the application gives it. A window with no title is not read in this version.",
             );
         }
+        let hole = match title_hole(&title) {
+            Ok(hole) => hole,
+            Err(why) => {
+                self.refuse(
+                    "title_invalid",
+                    &window.at,
+                    why.to_owned(),
+                    "Write the title as the application gives it, with at most one `{name}` where the part that names the record is, and words beside it.",
+                );
+                None
+            }
+        };
         let window = WindowMatch {
             role: window.text("role")?.to_owned(),
             title,
+            hole,
         };
         let ready = self.condition(doc.get("ready")?);
         let mut fields = BTreeMap::new();
@@ -362,6 +382,48 @@ impl Reader {
             variants,
         })
     }
+}
+
+/// The placeholder of a window's title, `{name}` with `name` a name in the
+/// form target files use, and the words around it; `None` when it has
+/// none. Braces around anything else are the title's own words. A title
+/// with two placeholders, or with nothing beside its one, is refused: the
+/// first is not built, and the second would match every window.
+pub(crate) fn title_hole(title: &str) -> Result<Option<TitleHole>, &'static str> {
+    let mut found = None;
+    let mut from = 0;
+    while let Some(open) = title[from..].find('{').map(|at| at + from) {
+        let Some(close) = title[open..].find('}').map(|at| at + open) else {
+            break;
+        };
+        let name = &title[open + 1..close];
+        let named = name.starts_with(|c: char| c.is_ascii_lowercase())
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        if named {
+            if found.is_some() {
+                return Err(
+                    "A screen's window title holds more than one placeholder; one is built in this version.",
+                );
+            }
+            found = Some(TitleHole {
+                before: title[..open].to_owned(),
+                name: name.to_owned(),
+                after: title[close + 1..].to_owned(),
+            });
+        }
+        from = close + 1;
+    }
+    if let Some(hole) = &found
+        && hole.before.trim().is_empty()
+        && hole.after.trim().is_empty()
+    {
+        return Err(
+            "A screen's window title is one placeholder and nothing else, so it would match every window of the application.",
+        );
+    }
+    Ok(found)
 }
 
 /// The `screens/` file kind, for `desktop` surfaces.
@@ -484,11 +546,51 @@ mod tests {
             "password_set",
             "unreadable_write",
             "key_unshown",
+            "title_invalid",
+            "title_unbound",
+            "title_write",
         ] {
             assert_eq!(code(rule).as_str(), format!("desktop.{rule}"));
         }
         for control in CONTROLS {
             assert!(a2m_core::ControlName::new(control).is_ok());
         }
+    }
+
+    #[test]
+    fn a_title_holds_at_most_one_placeholder_and_words_beside_it() {
+        let hole = |before: &str, name: &str, after: &str| TitleHole {
+            before: before.to_owned(),
+            name: name.to_owned(),
+            after: after.to_owned(),
+        };
+        assert_eq!(title_hole("Example order"), Ok(None));
+        assert_eq!(
+            title_hole("Order {order_id}"),
+            Ok(Some(hole("Order ", "order_id", "")))
+        );
+        assert_eq!(
+            title_hole("Order {key} - Example"),
+            Ok(Some(hole("Order ", "key", " - Example")))
+        );
+        // Braces round anything but a name are the title's own words.
+        assert_eq!(title_hole("Notes {Draft}"), Ok(None));
+        assert_eq!(title_hole("Notes {"), Ok(None));
+        assert!(title_hole("{a} and {b}").is_err());
+        assert!(title_hole(" {key} ").is_err());
+        let window = WindowMatch {
+            role: "frame".to_owned(),
+            title: "Order {order_id}".to_owned(),
+            hole: Some(hole("Order ", "order_id", "")),
+        };
+        assert_eq!(
+            window.title_with(Some("1001")).as_deref(),
+            Some("Order 1001")
+        );
+        assert_eq!(window.title_with(Some("")), None);
+        assert_eq!(window.title_with(None), None);
+        assert!(window.could_be("Order 1002"));
+        assert!(!window.could_be("Order "));
+        assert!(!window.could_be("Orders 1"));
     }
 }

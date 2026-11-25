@@ -151,11 +151,13 @@ struct Reported {
     report: Json,
 }
 
-fn discovery_results(tx: &mut Tx<'_>, run: RunId) -> Result<Vec<Reported>, Failure> {
+/// The rows of one discovery run, or of one capture, by its identifier:
+/// a capture's discoverers report under the capture's own (decision 0433).
+fn discovery_results(tx: &mut Tx<'_>, run: &str) -> Result<Vec<Reported>, Failure> {
     let rows = tx.tables(Owner::Actions).query(
         "SELECT provider, discoverer, findings, report FROM actions_discovery_results
          WHERE run_id = ?1 ORDER BY provider, discoverer",
-        &[SqlValue::from(run.to_string())],
+        &[SqlValue::from(run)],
     )?;
     let mut out = Vec::new();
     for row in rows {
@@ -340,7 +342,7 @@ async fn identify(
                 }
                 let reported = kernel
                     .store()?
-                    .read(move |tx| discovery_results(tx, run))
+                    .read(move |tx| discovery_results(tx, &run.to_string()))
                     .await?;
                 let named = target.clone();
                 let ids: Vec<Digest> = reported
@@ -664,6 +666,45 @@ fn newest_scout(
     Ok(None)
 }
 
+/// The scout `id` of a target by the caller's person in one project, when
+/// there is one.
+fn named_scout(
+    tx: &mut Tx<'_>,
+    workspace: &a2m_core::WorkspaceId,
+    principal: &a2m_core::PrincipalId,
+    target: &TargetName,
+    project: &str,
+    id: RunId,
+) -> Result<Option<Scout>, Failure> {
+    let rows = tx.tables(Owner::Actions).query(
+        "SELECT s.scout_id, s.finished_at FROM actions_scouts s
+         WHERE s.scout_id = ?1 AND s.workspace_id = ?2 AND s.principal_id = ?3
+             AND s.target = ?4 AND s.project = ?5",
+        &[
+            SqlValue::from(id.to_string()),
+            SqlValue::from(workspace.to_string()),
+            SqlValue::from(principal.to_string()),
+            SqlValue::from(target.as_str()),
+            SqlValue::from(project),
+        ],
+    )?;
+    match rows.first() {
+        Some(row) => Ok(Some(Scout {
+            id: row.text(0)?.parse()?,
+            finished_at: row.opt_int(1)?,
+        })),
+        None => Ok(None),
+    }
+}
+
+fn no_such_scout(target: &TargetName) -> Failure {
+    codes::input(
+        codes::NOT_FOUND,
+        format!("No such scout of `{target}` has finished."),
+        "Call `scout.run` on the target, or `capture.stop` on the capture the report was made from.",
+    )
+}
+
 /// What the newest finished scout of the target by the caller's person, in
 /// the call's project, found of one drafted read: its tried entry when it
 /// was proven at `executed`, with the scout's identifier.
@@ -853,16 +894,18 @@ fn open_questions(
     Ok(())
 }
 
-/// The findings an identify stage's runs made, in a fixed order.
+/// The findings an identify stage's runs made, in a fixed order. A run
+/// here is a discovery run, or the capture a scout from a capture began
+/// with.
 async fn findings_of(
     kernel: &Kernel,
     workspace: a2m_core::WorkspaceId,
     target: &TargetName,
     runs: &BTreeMap<String, String>,
 ) -> Result<(Vec<Finding>, Vec<Json>), Failure> {
-    let runs: Vec<(String, RunId)> = runs
+    let runs: Vec<(String, String)> = runs
         .iter()
-        .filter_map(|(surface, run)| Some((surface.clone(), run.parse().ok()?)))
+        .map(|(surface, run)| (surface.clone(), run.clone()))
         .collect();
     let target = target.clone();
     kernel
@@ -871,7 +914,7 @@ async fn findings_of(
             let mut findings = BTreeMap::<Digest, Finding>::new();
             let mut by_discoverer = Vec::new();
             for (surface, run) in &runs {
-                for reported in discovery_results(tx, *run)? {
+                for reported in discovery_results(tx, run)? {
                     for id in &reported.findings {
                         if let Some(finding) = tx.findings().get(&workspace, &target, id)? {
                             findings.insert(*id, finding);
@@ -1109,29 +1152,64 @@ async fn draft(
             .iter()
             .map(|path| path.as_str().to_owned())
             .collect();
-        // The findings a rule covers and drafted nothing from, each with
-        // the finding's own words (looked up by its id) and the reason the
-        // rule gave (roadmap package FT11).
-        let not_drafted: Vec<Json> = report
-            .not_drafted
-            .iter()
-            .map(|left| {
-                let description = findings
-                    .iter()
-                    .find(|finding| finding.id() == left.finding)
-                    .map_or(Json::Null, |finding| untrusted(json!(finding.found())));
-                json!({
-                    "finding": left.finding.to_string(),
-                    "description": description,
-                    "pack": left.pack,
-                    "reason": if left.reason.is_empty() {
-                        "the rule gave no reason"
-                    } else {
-                        left.reason.as_str()
-                    },
-                })
-            })
-            .collect();
+        // The findings a rule covers and drafted nothing from, each once,
+        // with the finding's own words (looked up by its id) and the
+        // reasons its rules gave (roadmap package FT11). Two rules of one
+        // pack that cover the same kind each leave the finding; it is
+        // listed once, with each reason once (package 5.6c).
+        let mut not_drafted: Vec<Json> = Vec::new();
+        for left in &report.not_drafted {
+            let id = left.finding.to_string();
+            let reason = left.reason.trim();
+            if let Some(listed) = not_drafted
+                .iter_mut()
+                .find(|listed| listed["finding"] == id.as_str() && listed["pack"] == left.pack.as_str())
+            {
+                if let Some(reasons) = listed["reasons"].as_array_mut()
+                    && !reason.is_empty()
+                    && !reasons.iter().any(|known| known == reason)
+                {
+                    reasons.push(json!(reason));
+                }
+                continue;
+            }
+            let found = findings.iter().find(|finding| finding.id() == left.finding);
+            let description = found.map_or(Json::Null, |finding| untrusted(json!(finding.found())));
+            let kind = found.map(|finding| finding.kind().as_str().to_owned());
+            not_drafted.push(json!({
+                "finding": id,
+                "kind": kind,
+                "description": description,
+                "pack": left.pack,
+                "reasons": if reason.is_empty() { json!([]) } else { json!([reason]) },
+            }));
+        }
+        // The reason the entry is read by: the rules' own, joined, or,
+        // where no rule gave one, what the report knows of it.
+        for listed in &mut not_drafted {
+            let reasons: Vec<String> = listed["reasons"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Json::as_str)
+                .map(str::to_owned)
+                .collect();
+            listed["reason"] = json!(if reasons.is_empty() {
+                format!(
+                    "No rule of the `{}` pack{} drafts a file from one of this shape, and none said why. No draft waits on it: it is listed under `found`, and a draft over it is written by hand.",
+                    listed["pack"].as_str().unwrap_or_default(),
+                    listed["kind"]
+                        .as_str()
+                        .map(|kind| format!(" for `{kind}` findings"))
+                        .unwrap_or_default()
+                )
+            } else {
+                reasons.join(" ")
+            });
+            if let Json::Object(map) = listed {
+                map.remove("reasons");
+            }
+        }
         Ok((
             json!({
                 "written": files,
@@ -1998,173 +2076,422 @@ handler!(
                 .await?;
             done.insert(1, result);
         }
-        let runs: BTreeMap<String, String> =
-            serde_json::from_value(done[&1]["runs"].clone()).unwrap_or_default();
-        let (findings, by_discoverer) = findings_of(kernel, workspace, &target, &runs).await?;
-        if !done.contains_key(&2) {
-            let found: Vec<Json> = findings
-                .iter()
-                .map(|finding| {
-                    json!({
-                        "id": finding.id().to_string(),
-                        "kind": finding.kind().as_str(),
-                        "level": finding.level().as_str(),
-                        "source": finding.source().as_str(),
-                        "coverage": finding.coverage().as_str(),
-                        "limitations": finding.limitations().iter().map(|limit| limit.code.as_str()).collect::<Vec<_>>(),
-                        "found": untrusted(json!(finding.found())),
-                    })
-                })
-                .collect();
-            let result = json!({"findings": found, "by_discoverer": by_discoverer});
-            kernel
-                .store_stage(id, 2, input_hash(&done[&1]), &result)
-                .await?;
-            done.insert(2, result);
-        }
-        // 3. Compare; 4. draft; 5. check. Only in a project that holds the
-        // target's folder: drafts are files of the project.
-        let no_folder = json!({"state": "not_looked_at", "why": "The call is not made in a project that holds the target's folder, so nothing is drafted."});
-        if !done.contains_key(&3) {
-            let result = match &folder {
-                Some(_) => {
-                    let (result, asked) =
-                        compare(kernel, &call, &target, id, findings.clone()).await?;
-                    let named = target.clone();
-                    kernel
-                        .store()?
-                        .write(Durability::Synced, move |tx| {
-                            open_questions(tx, workspace, &named, &asked)
-                        })
-                        .await?;
-                    result
-                }
-                None => no_folder.clone(),
-            };
-            kernel
-                .store_stage(id, 3, input_hash(&done[&2]), &result)
-                .await?;
-            done.insert(3, result);
-        }
-        if !done.contains_key(&4) {
-            let result = match &folder {
-                Some(folder) => {
-                    let (result, asked) = draft(kernel, folder.clone(), findings.clone()).await?;
-                    let named = target.clone();
-                    kernel
-                        .store()?
-                        .write(Durability::Synced, move |tx| {
-                            open_questions(tx, workspace, &named, &asked)
-                        })
-                        .await?;
-                    result
-                }
-                None => no_folder.clone(),
-            };
-            kernel
-                .store_stage(id, 4, input_hash(&done[&3]), &result)
-                .await?;
-            done.insert(4, result);
-        }
-        if !done.contains_key(&5) {
-            let result = match &folder {
-                Some(_) => {
-                    let project = call.project_folder()?.to_path_buf();
-                    match super::build::compile_in(
-                        kernel,
-                        project,
-                        &target,
-                        CompileMode::Draft,
-                        DRAFT_VERSION,
-                    )
-                    .await?
-                    {
-                        Ok(compiled) => json!({
-                            "compiles": true,
-                            "problems": marked_problems(&compiled.warnings),
-                            "tools": compiled.compiled_target.tools.iter().map(|tool| tool.name.to_string()).collect::<Vec<_>>(),
-                        }),
-                        Err(problems) => {
-                            json!({"compiles": false, "problems": marked_problems(&problems)})
-                        }
-                    }
-                }
-                None => no_folder.clone(),
-            };
-            kernel
-                .store_stage(id, 5, input_hash(&done[&4]), &result)
-                .await?;
-            done.insert(5, result);
-        }
-        // 6. Try.
-        if !done.contains_key(&6) {
-            let result = if kernel.settings().flag("authoring.scout.try_reads") == Some(false) {
-                json!({"state": "not_looked_at", "why": "The setting `authoring.scout.try_reads` is off."})
-            } else if let Some(folder) = &folder {
-                let written: Vec<String> = done[&4]["written"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|file| file["file"].as_str().map(str::to_owned))
-                    .collect();
-                let held_back: Vec<String> = done[&4]["held_back"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|file| file.as_str().map(str::to_owned))
-                    .collect();
-                let tools =
-                    drafted_tools(kernel, folder.clone(), written, held_back.clone()).await?;
-                let Tried {
-                    mut result,
-                    runs,
-                    complete,
-                } = try_reads(
-                    kernel,
-                    &call,
-                    id,
-                    &target,
-                    folder.clone(),
-                    &tools,
-                    held_back,
-                )
-                .await?;
-                if !complete {
-                    return Ok(stopped(
-                        &target,
-                        id,
-                        6,
-                        "The call's wait ended before every trial was made; each made is kept, and the next call goes on from there.",
-                        &done,
-                    ));
-                }
-                result["runs"] = json!(runs);
-                result
-            } else {
-                no_folder.clone()
-            };
-            kernel
-                .store_stage(id, 6, input_hash(&done[&5]), &result)
-                .await?;
-            done.insert(6, result);
-        }
-        // 7. Report.
-        if !done.contains_key(&7) {
-            let named = target.clone();
-            let open = kernel
-                .store()?
-                .read(move |tx| tx.findings().unknowns(&workspace, &named))
-                .await?;
-            let report = super::scout_report::assemble(&target, id, &done, &open);
-            kernel
-                .store_stage(id, 7, input_hash(&done[&6]), &report)
-                .await?;
-            done.insert(7, report);
-        }
-        let report = done.remove(&7).unwrap_or(Json::Null);
-        Ok(super::scout_report::shown(&report))
+        go_on(kernel, &call, &target, id, done, folder).await
     }
 );
+
+/// The stages of a scout after the identify stage, each stored before the
+/// next begins: what was found, compared, drafted, checked, tried, and the
+/// report. A scout of the engine's discovery and a scout of a capture go
+/// through them alike (decision 0400).
+#[allow(
+    clippy::too_many_lines,
+    reason = "the stages in their order; split, each part would take the whole state"
+)]
+async fn go_on(
+    kernel: &Kernel,
+    call: &Call,
+    target: &TargetName,
+    id: RunId,
+    mut done: BTreeMap<u8, Json>,
+    folder: Option<PathBuf>,
+) -> Result<Output, Failure> {
+    let workspace = call.caller.principal.workspace;
+    let runs: BTreeMap<String, String> =
+        serde_json::from_value(done[&1]["runs"].clone()).unwrap_or_default();
+    let (findings, by_discoverer) = findings_of(kernel, workspace, target, &runs).await?;
+    if !done.contains_key(&2) {
+        let found: Vec<Json> = findings
+            .iter()
+            .map(|finding| {
+                json!({
+                    "id": finding.id().to_string(),
+                    "kind": finding.kind().as_str(),
+                    "level": finding.level().as_str(),
+                    "source": finding.source().as_str(),
+                    "coverage": finding.coverage().as_str(),
+                    "limitations": finding.limitations().iter().map(|limit| limit.code.as_str()).collect::<Vec<_>>(),
+                    "found": untrusted(json!(finding.found())),
+                })
+            })
+            .collect();
+        let result = json!({"findings": found, "by_discoverer": by_discoverer});
+        kernel
+            .store_stage(id, 2, input_hash(&done[&1]), &result)
+            .await?;
+        done.insert(2, result);
+    }
+    // 3. Compare; 4. draft; 5. check. Only in a project that holds the
+    // target's folder: drafts are files of the project.
+    let no_folder = json!({"state": "not_looked_at", "why": "The call is not made in a project that holds the target's folder, so nothing is drafted."});
+    if !done.contains_key(&3) {
+        let result = match &folder {
+            Some(_) => {
+                let (result, asked) = compare(kernel, call, target, id, findings.clone()).await?;
+                let named = target.clone();
+                kernel
+                    .store()?
+                    .write(Durability::Synced, move |tx| {
+                        open_questions(tx, workspace, &named, &asked)
+                    })
+                    .await?;
+                result
+            }
+            None => no_folder.clone(),
+        };
+        kernel
+            .store_stage(id, 3, input_hash(&done[&2]), &result)
+            .await?;
+        done.insert(3, result);
+    }
+    if !done.contains_key(&4) {
+        let result = match &folder {
+            Some(folder) => {
+                let (result, asked) = draft(kernel, folder.clone(), findings.clone()).await?;
+                let named = target.clone();
+                kernel
+                    .store()?
+                    .write(Durability::Synced, move |tx| {
+                        open_questions(tx, workspace, &named, &asked)
+                    })
+                    .await?;
+                result
+            }
+            None => no_folder.clone(),
+        };
+        kernel
+            .store_stage(id, 4, input_hash(&done[&3]), &result)
+            .await?;
+        done.insert(4, result);
+    }
+    if !done.contains_key(&5) {
+        let result = match &folder {
+            Some(_) => {
+                let project = call.project_folder()?.to_path_buf();
+                match super::build::compile_in(
+                    kernel,
+                    project,
+                    target,
+                    CompileMode::Draft,
+                    DRAFT_VERSION,
+                )
+                .await?
+                {
+                    Ok(compiled) => json!({
+                        "compiles": true,
+                        "problems": marked_problems(&compiled.warnings),
+                        "tools": compiled.compiled_target.tools.iter().map(|tool| tool.name.to_string()).collect::<Vec<_>>(),
+                    }),
+                    Err(problems) => {
+                        json!({"compiles": false, "problems": marked_problems(&problems)})
+                    }
+                }
+            }
+            None => no_folder.clone(),
+        };
+        kernel
+            .store_stage(id, 5, input_hash(&done[&4]), &result)
+            .await?;
+        done.insert(5, result);
+    }
+    // 6. Try.
+    if !done.contains_key(&6) {
+        let result = if kernel.settings().flag("authoring.scout.try_reads") == Some(false) {
+            json!({"state": "not_looked_at", "why": "The setting `authoring.scout.try_reads` is off."})
+        } else if let Some(folder) = &folder {
+            let written: Vec<String> = done[&4]["written"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|file| file["file"].as_str().map(str::to_owned))
+                .collect();
+            let held_back: Vec<String> = done[&4]["held_back"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|file| file.as_str().map(str::to_owned))
+                .collect();
+            let tools = drafted_tools(kernel, folder.clone(), written, held_back.clone()).await?;
+            let Tried {
+                mut result,
+                runs,
+                complete,
+            } = try_reads(kernel, call, id, target, folder.clone(), &tools, held_back).await?;
+            if !complete {
+                return Ok(stopped(
+                    target,
+                    id,
+                    6,
+                    "The call's wait ended before every trial was made; each made is kept, and the next call goes on from there.",
+                    &done,
+                ));
+            }
+            result["runs"] = json!(runs);
+            result
+        } else {
+            no_folder.clone()
+        };
+        kernel
+            .store_stage(id, 6, input_hash(&done[&5]), &result)
+            .await?;
+        done.insert(6, result);
+    }
+    // 7. Report.
+    if !done.contains_key(&7) {
+        let named = target.clone();
+        let open = kernel
+            .store()?
+            .read(move |tx| tx.findings().unknowns(&workspace, &named))
+            .await?;
+        let report = super::scout_report::assemble(target, id, &done, &open);
+        kernel
+            .store_stage(id, 7, input_hash(&done[&6]), &report)
+            .await?;
+        done.insert(7, report);
+    }
+    let report = done.remove(&7).unwrap_or(Json::Null);
+    Ok(finished(&report))
+}
+
+/// A finished scout's report as `scout.run` answers it (field test 9,
+/// finding 56). A scout whose discovery of every surface it observed
+/// failed saw nothing, and answers with that failure beside the report:
+/// the class and code the first such surface stopped with, and the fix its
+/// failure declares where the report keeps one. A scout where some surface
+/// failed and another did not answers `ok`, with a warning naming each
+/// that failed.
+fn finished(report: &Json) -> Output {
+    let output = super::scout_report::shown(report);
+    let observed = super::scout_report::observed(report);
+    let failed: Vec<&(String, Option<Json>)> = observed
+        .iter()
+        .filter(|(_, failure)| failure.is_some())
+        .collect();
+    if failed.is_empty() {
+        return output;
+    }
+    if failed.len() < observed.len() {
+        return failed.iter().fold(output, |output, (name, failure)| {
+            output.warn(super::scout_report::failed_line(name, failure.as_ref()))
+        });
+    }
+    let Some((name, Some(failure))) = failed.first().copied() else {
+        return output;
+    };
+    let class = failure["class"]
+        .as_str()
+        .and_then(|class| class.parse().ok());
+    let code = failure["code"]
+        .as_str()
+        .and_then(|code| a2m_core::FailureCode::new(code).ok());
+    let (Some(class), Some(code)) = (class, code) else {
+        return output.warn(super::scout_report::failed_line(name, Some(failure)));
+    };
+    let fix = failure["fix"].as_str().map_or_else(
+        || "Read `not_looked_at` in the report, which names what stopped each surface, and run the scout again once it is put right.".to_owned(),
+        str::to_owned,
+    );
+    output.failed(Failure::new(
+        class,
+        code.clone(),
+        format!(
+            "The discovery of every surface the scout observed failed, so nothing was found to draft from: the surface `{}` stopped with `{code}`.",
+            codes::shown(name)
+        ),
+        fix,
+    ))
+}
+
+/// What a capture came to, as the scout of it begins (decision 0400): the
+/// capture's discoverers ran, a person drove them, and their findings are
+/// stored under the capture's identifier, as a discovery's are.
+pub(crate) struct Captured {
+    /// The scout the capture's report is kept under, claimed when the
+    /// capture ended.
+    pub(crate) scout: RunId,
+    /// The capture's identifier, under which its discoverers reported.
+    pub(crate) capture_id: String,
+    pub(crate) target: TargetName,
+    pub(crate) surface: SurfaceName,
+    /// The compiled target the capture was asked over, and its hash.
+    pub(crate) compiled_target: Arc<CompiledTarget>,
+    pub(crate) compiled_target_hash: Digest,
+    /// How it ended, by its name (decision 0433, point 5).
+    pub(crate) ended_by: &'static str,
+    /// When its person began it, and when it ended, by the engine's clock.
+    pub(crate) began_at: Option<i64>,
+    pub(crate) ended_at: i64,
+    /// What each discoverer reported: its provider, its name, and its
+    /// report as a discovery's is kept.
+    pub(crate) reported: Vec<(String, String, Json)>,
+}
+
+/// A scout of a capture: the same stages as `scout.run`'s, its identify
+/// and discover stages the capture's own (decision 0400, point 1). The
+/// first two stages say what the capture was; from the third on it is a
+/// scout's, stored stage by stage, so that a call again, of
+/// `capture.stop` or of `scout.run`, goes on from the last stage stored.
+/// Nothing reaches the system but the drafted reads' trials, in the
+/// sandbox.
+pub(crate) async fn scout_capture(
+    kernel: &Kernel,
+    call: &Call,
+    captured: Captured,
+) -> Result<Output, Failure> {
+    let principal = &call.caller.principal;
+    let (workspace, person) = (principal.workspace, principal.principal.id);
+    let id = captured.scout;
+    let (named, project) = (captured.target.clone(), project_key(call));
+    let stages = kernel
+        .store()?
+        .write(Durability::Synced, move |tx| {
+            let now = tx.now().as_unix_millis();
+            tx.tables(Owner::Actions).execute(
+                "INSERT INTO actions_scouts (scout_id, workspace_id, principal_id, target, started_at, project)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT (scout_id) DO NOTHING",
+                &[
+                    SqlValue::from(id.to_string()),
+                    SqlValue::from(workspace.to_string()),
+                    SqlValue::from(person.to_string()),
+                    SqlValue::from(named.as_str()),
+                    SqlValue::from(now),
+                    SqlValue::from(project.as_str()),
+                ],
+            )?;
+            stored_stages(tx, id)
+        })
+        .await?;
+    let mut done = stages;
+    let target = captured.target.clone();
+    if !done.contains_key(&0) || !done.contains_key(&1) {
+        // What the capture's discoverers found, as they stored it.
+        let run = captured.capture_id.clone();
+        let named = target.clone();
+        let (found, ended) = kernel
+            .store()?
+            .read(move |tx| {
+                let mut found = Vec::new();
+                let mut ended = Vec::new();
+                for reported in discovery_results(tx, &run)? {
+                    for id in &reported.findings {
+                        if let Some(finding) = tx.findings().get(&workspace, &named, id)? {
+                            found.push(finding);
+                        }
+                    }
+                    ended.push(json!({
+                        "provider": reported.provider,
+                        "discoverer": reported.discoverer,
+                        "findings": reported.findings.len(),
+                        "report": reported.report,
+                    }));
+                }
+                Ok((found, ended))
+            })
+            .await?;
+        let mut by_kind = BTreeMap::<String, u64>::new();
+        let mut by_level = BTreeMap::<String, BTreeMap<String, u64>>::new();
+        for finding in &found {
+            *by_kind.entry(finding.kind().to_string()).or_default() += 1;
+            *by_level
+                .entry(finding.kind().to_string())
+                .or_default()
+                .entry(finding.level().as_str().to_owned())
+                .or_default() += 1;
+        }
+        let bounds_hit: BTreeSet<String> = captured
+            .reported
+            .iter()
+            .flat_map(|(_, _, report)| {
+                report["bounds_hit"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Json::as_str)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        if let std::collections::btree_map::Entry::Vacant(slot) = done.entry(0) {
+            let result = json!({
+                "project": project_key(call),
+                "files": {},
+                "from": "capture",
+                "capture": {
+                    "capture_id": captured.capture_id,
+                    "ended_by": captured.ended_by,
+                    "began_at": captured.began_at,
+                    "ended_at": captured.ended_at,
+                    "ran_ms": captured.began_at.map(|began| captured.ended_at.saturating_sub(began).max(0)),
+                    "bounds_hit": bounds_hit,
+                    "findings_by_kind": by_kind,
+                },
+                "consent": {
+                    "recorded": false,
+                    "asked_by": if call.caller.is_agent { "agent" } else { "person" },
+                    "why": "A capture records what its person did, once they began it on the engine's page. The scout of it reaches the system only through trials of drafted reads, in the engine's sandbox, where nothing can be written.",
+                },
+                "decision": call.decision.to_string(),
+                "bounds": "Each discoverer of the capture was held to the bounds its manifest declares, and each trial is held to the step limits of its tool.",
+                "budget_in_force": false,
+                "why_not": "A capture is held to its discoverers' own bounds; no part of the engine keeps a budget for a whole scout yet.",
+            });
+            kernel
+                .store_stage(id, 0, input_hash(&json!(target.as_str())), &result)
+                .await?;
+            slot.insert(result);
+        }
+        if !done.contains_key(&1) {
+            let look = Look::of(kernel, &captured.compiled_target)
+                .into_iter()
+                .find(|look| look.name == captured.surface);
+            let failure = captured
+                .reported
+                .iter()
+                .all(|(_, _, report)| report.get("failure").is_some())
+                .then(|| captured.reported.first())
+                .flatten()
+                .map(|(_, _, report)| {
+                    json!({"class": report["failure"]["class"], "code": report["failure"]["code"]})
+                });
+            let mut entry = json!({
+                "surface": captured.surface.as_str(),
+                "kind": look.as_ref().map(|look| look.kind.clone()),
+                "archetype": look.as_ref().and_then(|look| look.archetype),
+                "provider": look.as_ref().and_then(|look| look.provider.clone()),
+                "keeps_a_session": look.as_ref().is_some_and(|look| look.keeps_a_session),
+                "observed_by": "person",
+                "discoverers": captured
+                    .reported
+                    .iter()
+                    .map(|(provider, discoverer, _)| json!({"provider": provider, "discoverer": discoverer}))
+                    .collect::<Vec<_>>(),
+                "session": match look.as_ref().and_then(|look| look.signs_in_with.as_ref()) {
+                    Some(provider) => json!({"needed": true, "provider": provider}),
+                    None => json!({"needed": false}),
+                },
+                "findings_by_kind": by_level,
+                "ended": ended,
+                "state": if failure.is_some() { "failed" } else { "identified" },
+            });
+            if let Some(failure) = failure {
+                entry["failure"] = failure;
+            }
+            let result = json!({
+                "compiled_target_hash": captured.compiled_target_hash.to_string(),
+                "surfaces": [entry],
+                "sign_in": [],
+                "runs": {captured.surface.as_str(): captured.capture_id},
+            });
+            kernel
+                .store_stage(id, 1, input_hash(&done[&0]), &result)
+                .await?;
+            done.insert(1, result);
+        }
+    }
+    let folder = folder_of(call, &target).await?;
+    go_on(kernel, call, &target, id, done, folder).await
+}
 
 /// The name `spec.import` hands its file under: the name a discoverer
 /// declares for a description a system publishes about itself (decision
@@ -2200,23 +2527,33 @@ handler!(
         let (workspace, person) = (principal.workspace, principal.principal.id);
         let named = target.clone();
         let project = project_key(&call);
+        // A scout named, as `capture.stop` gives its report's reference
+        // (decision 0400, point 2): it is read only when it is the
+        // caller's person's, of this target, in this project.
+        let asked: Option<RunId> = match call.text("scout") {
+            Some(text) => Some(text.parse().map_err(|_| no_such_scout(&target))?),
+            None => None,
+        };
         let found = kernel
             .store()?
             .read(move |tx| {
-                let Some(scout) = newest_scout(tx, &workspace, &person, &named, &project, true)?
-                else {
+                let scout = match asked {
+                    Some(id) => named_scout(tx, &workspace, &person, &named, &project, id)?
+                        .filter(|scout| scout.finished_at.is_some()),
+                    None => newest_scout(tx, &workspace, &person, &named, &project, true)?,
+                };
+                let Some(scout) = scout else {
                     return Ok(None);
                 };
-                let unfinished = newest_scout(tx, &workspace, &person, &named, &project, false)?;
+                let unfinished = match asked {
+                    Some(_) => None,
+                    None => newest_scout(tx, &workspace, &person, &named, &project, false)?,
+                };
                 Ok(Some((stored_stages(tx, scout.id)?, unfinished)))
             })
             .await?;
         let Some((mut stages, unfinished)) = found else {
-            return Err(codes::input(
-                codes::NOT_FOUND,
-                format!("No scout of `{target}` has finished."),
-                "Call `scout.run` on the target.",
-            ));
+            return Err(no_such_scout(&target));
         };
         let report = stages.remove(&7).unwrap_or(Json::Null);
         if let Some(path) = call.text("part") {
@@ -2225,6 +2562,13 @@ handler!(
             return Ok(super::scout_report::page(&report, path, limit, offset));
         }
         let mut output = super::scout_report::shown(&report);
+        // A surface whose discovery failed is named, as `scout.run` names
+        // it; reading the report succeeds all the same (finding 56).
+        for (name, failure) in super::scout_report::observed(&report) {
+            if failure.is_some() {
+                output = output.warn(super::scout_report::failed_line(&name, failure.as_ref()));
+            }
+        }
         if let Some(unfinished) = unfinished {
             output = output.warn(format!(
                 "A newer scout, {}, has not finished; this is the last one that did.",
@@ -2237,6 +2581,62 @@ handler!(
 
 #[cfg(test)]
 mod tests {
+    /// Field test 9, finding 56: a scout that observed surfaces and whose
+    /// discovery of every one failed answers with the first one's failure,
+    /// beside the report; one where another surface found something
+    /// answers `ok`, with a warning that names the surface that failed. A
+    /// surface no discoverer suits was not observed, and counts for
+    /// neither.
+    #[test]
+    fn a_scout_answers_ok_only_when_a_surface_it_observed_did_not_fail() {
+        use super::{ExitClass, finished, json};
+        let failed = |name: &str| {
+            json!({"surface": name, "state": "failed",
+                "failure": {"class": "unknown_variant", "code": "browser_not_owned"},
+                "ended": [{"report": {"failure": {"class": "unknown_variant", "code": "browser_not_owned", "fix": "Check the browser."}}}]})
+        };
+        // A run that ended, every discoverer of which failed before it
+        // found anything.
+        let none_found = |name: &str| {
+            json!({"surface": name, "state": "identified", "findings_by_kind": {},
+                "ended": [{"report": {"failure": {"class": "transient", "code": "timeout", "fix": "Try again."}}}]})
+        };
+        let found = |name: &str| {
+            json!({"surface": name, "state": "identified",
+                "findings_by_kind": {"screen": {"discovered": 2}},
+                "ended": [{"report": {"coverage": "partial", "bounds_hit": [], "dropped": 0}}]})
+        };
+        let unsuited = json!({"surface": "files", "state": "no_discoverer"});
+        let report = |surfaces: Vec<serde_json::Value>| json!({"target": "example", "report_hash": "h", "content": {"surfaces": surfaces}});
+
+        let alone = finished(&report(vec![failed("app"), unsuited.clone()]));
+        assert_eq!(alone.exit, ExitClass::Failed);
+        let failure = alone.failure.unwrap();
+        assert_eq!(failure.code().as_str(), "browser_not_owned");
+        assert_eq!(failure.class().as_str(), "unknown_variant");
+        assert_eq!(failure.next_step(), "Check the browser.");
+        assert!(failure.message().contains("`app`"), "{failure}");
+        assert_eq!(alone.result["report_hash"], "h");
+
+        let both = finished(&report(vec![failed("app"), none_found("api")]));
+        assert_eq!(both.failure.unwrap().code().as_str(), "browser_not_owned");
+
+        let partly = finished(&report(vec![failed("app"), found("api")]));
+        assert_eq!(partly.exit, ExitClass::Succeeded);
+        assert!(partly.failure.is_none());
+        assert_eq!(partly.warnings.len(), 1, "{:?}", partly.warnings);
+        assert!(
+            partly.warnings[0].contains("`app`")
+                && partly.warnings[0].contains("browser_not_owned"),
+            "{:?}",
+            partly.warnings
+        );
+
+        let unobserved = finished(&report(vec![unsuited]));
+        assert_eq!(unobserved.exit, ExitClass::Succeeded);
+        assert!(unobserved.warnings.is_empty());
+    }
+
     #[test]
     fn a_read_that_waits_for_a_sign_in_is_waiting_and_the_counts_add_up() {
         use super::{TRIES, json, trial_state, tried_counts};

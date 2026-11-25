@@ -9,12 +9,12 @@
     reason = "a test file: a helper that cannot do its work stops the test"
 )]
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeSet;
 use std::process::{Command, Output, Stdio};
 
-use a2m_actions::{PROCESS_COMMANDS, SHORTCUTS, command_faces};
+use a2m_actions::{PROCESS_COMMANDS, SHORTCUTS, command_faces, shortcuts_offered};
 use common::{Folder, Machine};
 use serde_json::Value as Json;
 
@@ -245,7 +245,9 @@ fn the_command_tree_is_the_action_registry_and_nothing_else() {
         .collect();
     let (commands, words) = listed_commands(&bare);
     assert_eq!(commands, described);
-    let allowed: BTreeSet<String> = SHORTCUTS
+    // The shortcuts listed are those offered, whose every step is built
+    // (decision 0456); one that is not offered is no command.
+    let allowed: BTreeSet<String> = shortcuts_offered(&registry)
         .iter()
         .map(|shortcut| shortcut.word.to_owned())
         .chain(PROCESS_COMMANDS.iter().map(|word| (*word).to_owned()))
@@ -254,6 +256,20 @@ fn the_command_tree_is_the_action_registry_and_nothing_else() {
         ))
         .collect();
     assert_eq!(words, allowed);
+    for shortcut in SHORTCUTS
+        .iter()
+        .filter(|shortcut| !shortcut.offered(&registry))
+    {
+        assert!(!words.contains(shortcut.word), "{}", shortcut.word);
+        let output = bare.run(&[shortcut.word, "example"]);
+        assert!(!output.status.success(), "{}", shortcut.word);
+        assert!(
+            text(&output.stderr).contains("There is no command")
+                || text(&output.stdout).contains("There is no command"),
+            "{}",
+            shortcut.word
+        );
+    }
 
     // The help of every command is built from its description: the usage
     // line, the summary, and every argument; for an action that is not
@@ -574,8 +590,14 @@ fn run_with_stdin(mut command: Command, input: &'static [u8]) -> Output {
     use std::io::Write;
     let mut child = command.stdin(Stdio::piped()).spawn().unwrap();
     // The pipe is closed when the handle is dropped: the program reads to
-    // the end of its input.
-    child.stdin.take().unwrap().write_all(input).unwrap();
+    // the end of its input. A program that refuses its arguments may end
+    // before it reads any of it, and the write then meets a closed pipe;
+    // that is the program's answer, which the test reads from its output.
+    match child.stdin.take().unwrap().write_all(input) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(error) => panic!("writing the program's input: {error}"),
+    }
     child.wait_with_output().unwrap()
 }
 

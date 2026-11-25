@@ -60,7 +60,8 @@ session = true
 
 [points]
 driver = ["stand"]
-discoverer = ["calls"]
+discoverer = ["calls", "used"]
+traffic_capture = ["stand"]
 
 [[discoverers]]
 name = "calls"
@@ -70,6 +71,16 @@ kinds = ["stand_call"]
 sources = ["live_system"]
 max_level = "discovered"
 bounds = { seconds = 30, bytes = 100000, depth = 1 }
+
+[[discoverers]]
+name = "used"
+archetype = "request"
+surface_kinds = ["stand"]
+kinds = ["stand_call"]
+sources = ["live_system"]
+max_level = "discovered"
+bounds = { seconds = 30, bytes = 100000, depth = 1 }
+driven_by = "person"
 
 [[file_kinds]]
 name = "call"
@@ -135,6 +146,8 @@ struct More {
     spare_differs: std::sync::atomic::AtomicBool,
     /// How many times the spare read of an order was made.
     spare: std::sync::atomic::AtomicU32,
+    /// The discoverer fails before it finds anything.
+    fails: std::sync::atomic::AtomicBool,
 }
 
 /// The note the spare read gives when it differs: a value no report may
@@ -305,6 +318,14 @@ impl a2m_provider::Discoverer for CallsDiscoverer {
         out: &'a mut dyn a2m_provider::FindingSink,
     ) -> BoxFuture<'a, Result<a2m_provider::DiscoveryReport, Failure>> {
         Box::pin(async move {
+            if self.0.fails.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(Failure::new(
+                    a2m_core::FailureClass::UnknownVariant,
+                    a2m_core::FailureCode::fixed("stand_unexpected"),
+                    "The stand answered what no rule covers.",
+                    "Look at the stand.",
+                ));
+            }
             let args = a2m_core::Values::new();
             let input = a2m_provider::StepInput {
                 args: &args,
@@ -389,6 +410,96 @@ impl a2m_provider::Discoverer for CallsDiscoverer {
                 }
             }
             Ok(a2m_provider::DiscoveryReport::default())
+        })
+    }
+}
+
+/// The stand's discoverer a person drives: whatever its person does, it
+/// hands over the same three calls, one that reads, one that does not say
+/// whether it writes, and one that writes, and returns when its capture
+/// ends (package E5).
+struct UsedDiscoverer;
+
+/// A finding of a call, as the stand's discoverers make one.
+fn stand_call(found: &str) -> a2m_core::Finding {
+    a2m_core::Finding::about(
+        a2m_core::Subject::Address(
+            a2m_core::Address::new(
+                "https://test.example.com",
+                found.split_whitespace().nth(1).unwrap(),
+            )
+            .unwrap(),
+        ),
+        a2m_core::FindingKind::new("stand_call").unwrap(),
+        found,
+        a2m_core::Source::LiveSystem,
+        a2m_core::ProducedBy {
+            provider: "stand".to_owned(),
+            version: "0.1.0".to_owned(),
+            component: None,
+        },
+        Timestamp::from_unix_millis(1_800_000_000_000),
+    )
+    .level(a2m_core::EvidenceLevel::Discovered)
+    .build()
+    .unwrap()
+}
+
+impl a2m_provider::Discoverer for UsedDiscoverer {
+    fn name(&self) -> a2m_provider::DiscovererName {
+        a2m_provider::DiscovererName::new("used").unwrap()
+    }
+
+    fn suits(&self, _surface: &a2m_provider::SurfaceDescription) -> bool {
+        true
+    }
+
+    fn discover<'a>(
+        &'a self,
+        _port: &'a dyn a2m_provider::SandboxPort,
+        _scope: &'a a2m_provider::DiscoveryScope<'a>,
+        _out: &'a mut dyn a2m_provider::FindingSink,
+    ) -> BoxFuture<'a, Result<a2m_provider::DiscoveryReport, Failure>> {
+        unreachable!("a discoverer a person drives is never asked to discover")
+    }
+
+    fn watch<'a>(
+        &'a self,
+        _scope: &'a a2m_provider::DiscoveryScope<'a>,
+        end: &'a a2m_provider::CaptureEnd,
+        out: &'a mut dyn a2m_provider::FindingSink,
+    ) -> BoxFuture<'a, Result<a2m_provider::DiscoveryReport, Failure>> {
+        Box::pin(async move {
+            for found in [
+                "order_list /orders read",
+                "order_purge /purge",
+                "order_save /orders/save write",
+            ] {
+                out.found(stand_call(found))?;
+            }
+            end.ended().await;
+            Ok(a2m_provider::DiscoveryReport::default())
+        })
+    }
+}
+
+/// The stand's capture source: its discoverer a person drives never opens
+/// one, and the manifest declares it because that discoverer watches.
+struct NoTraffic;
+
+impl a2m_provider::CaptureSource for NoTraffic {
+    fn open<'a>(
+        &'a self,
+        _surface: &'a a2m_provider::SurfaceRef,
+        _deadline: a2m_provider::Deadline,
+    ) -> BoxFuture<'a, Result<Box<dyn a2m_provider::TrafficCapture>, Failure>> {
+        Box::pin(async {
+            Err(Failure::new(
+                a2m_core::FailureClass::UnknownVariant,
+                a2m_core::FailureCode::fixed("stand_unexpected"),
+                "The stand records no traffic.",
+                "Nothing to do.",
+            ))
         })
     }
 }
@@ -570,6 +681,8 @@ impl Pack for StandPack {
             Arc::new(CallsDiscoverer(Arc::clone(&self.more))),
             Arc::new(Plain),
         )?;
+        to.discoverer(Arc::new(UsedDiscoverer), Arc::new(Plain))?;
+        to.traffic_capture(Arc::new(NoTraffic))?;
         to.compiler(
             CompilerRegistrations::new()
                 .surface_kind(testing::surface_kind_spec())
@@ -2170,6 +2283,228 @@ async fn a_scout_drafts_reads_by_rule_tries_them_and_never_writes() {
             .contains("declares no surface"),
         "{blank}"
     );
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// Field test 9, finding 56: a scout whose only surface's discovery failed
+/// saw nothing, and does not answer `ok`. It answers with the failure the
+/// discovery stopped with, beside the report, which is stored and read
+/// again with `scout.report`, and names the surface under "not looked at".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scout_whose_every_surface_failed_does_not_answer_ok() {
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    std::fs::remove_file(target_dir.join("auth.yaml")).unwrap();
+    world
+        .more
+        .fails
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let scouted = world
+        .call(&agent, "scout.run", json!({"target": "example"}))
+        .await;
+    assert!(!scouted.ok, "{scouted:?}");
+    assert_eq!(scouted.exit, ExitClass::Failed);
+    let error = scouted.error.clone().unwrap();
+    assert_eq!(
+        (error.class, error.code.as_str()),
+        (a2m_core::FailureClass::UnknownVariant, "stand_unexpected"),
+        "{error:?}"
+    );
+    assert!(error.message.contains("`desk`"), "{error:?}");
+    let report = scouted.result.unwrap();
+    assert!(report["report_hash"].is_string(), "{report}");
+    assert!(
+        report["content"]["not_looked_at"]
+            .to_string()
+            .contains("stand_unexpected"),
+        "{report}"
+    );
+    // The report is read again: the read succeeds, and says the surface
+    // failed.
+    let read = world
+        .call(&agent, "scout.report", json!({"target": "example"}))
+        .await;
+    assert!(read.ok, "{:?}", read.error);
+    assert!(
+        read.warnings
+            .iter()
+            .any(|warning| warning.contains("`desk`") && warning.contains("stand_unexpected")),
+        "{:?}",
+        read.warnings
+    );
+    world.kernel.close(CloseReason::Asked).await;
+}
+
+/// An agent asks for a capture of the stand's surface, its person begins
+/// it on the page, and the agent ends it: the answer of `capture.stop`.
+async fn captured(world: &World, agent: &Caller) -> Json {
+    let asked = world
+        .call(agent, "capture.start", json!({"target": "example"}))
+        .await;
+    assert_eq!(asked.exit, ExitClass::PersonNeeded, "{asked:?}");
+    let ask = world.surface.acts.lock().unwrap().last().unwrap().clone();
+    let begun = world
+        .surface
+        .desk()
+        .carry_out(ask.act, proof_for(world, ask.act))
+        .await
+        .unwrap();
+    assert!(begun.ok, "{:?}", begun.error);
+    assert_eq!(begun.result.unwrap()["state"], "recording");
+    let stopped = world
+        .call(agent, "capture.stop", json!({"target": "example"}))
+        .await;
+    assert!(stopped.ok, "{:?}", stopped.error);
+    assert_eq!(stopped.next.as_ref().unwrap().action, "scout.report");
+    stopped.result.unwrap()
+}
+
+/// Decision 0400 (package E5): a capture ends as a scout does. The
+/// stand's discoverer a person drives hands over fixed findings; when the
+/// capture ends, they go through the scout's draft, check, try, and report
+/// stages, and `capture.stop` answers with the report's reference, which
+/// `scout.report` reads. The report lists the drafted read and what its
+/// trials came to, the held draft with its question, and the call that
+/// writes, drafted and never tried; it says it came from a capture, how
+/// it ended, and that it covers only what the person used. The same
+/// findings captured again give the same report, by hash, and no step that
+/// saves reaches the stand.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_capture_ends_as_a_scout_does_and_its_report_is_the_same_twice() {
+    let world = World::open().await;
+    world.kernel.start_runner_loop(2).await.unwrap();
+    *world.surface.pages.lock().unwrap() = true;
+    let agent = Caller::new(world.person.principal.clone(), FrontDoor::Mcp, true);
+    let target_dir = world.project.path().join("targets").join("example");
+    std::fs::remove_file(target_dir.join("auth.yaml")).unwrap();
+    *world.behaviour.lock().unwrap() = Behaviour::Saw(a2m_provider::Observed {
+        values: a2m_core::Values::new().with("note", "Kept by the stand"),
+        ..a2m_provider::Observed::default()
+    });
+
+    let stopped = captured(&world, &agent).await;
+    assert_eq!(stopped["state"], "ended", "{stopped}");
+    assert_eq!(stopped["ended_by"], "asked", "{stopped}");
+    assert_eq!(stopped["findings"], 3, "{stopped}");
+    let reference = &stopped["report"];
+    assert_eq!(reference["state"], "finished", "{stopped}");
+    let scout_id = reference["scout_id"].as_str().unwrap().to_owned();
+    let hash = reference["report_hash"].as_str().unwrap().to_owned();
+
+    // `scout.report` reads it, by the reference, and as the newest.
+    let read = world
+        .call(
+            &agent,
+            "scout.report",
+            json!({"target": "example", "scout": scout_id}),
+        )
+        .await;
+    assert!(read.ok, "{:?}", read.error);
+    let report = read.result.unwrap();
+    assert_eq!(report["report_hash"], hash.as_str(), "{report}");
+    let newest = world
+        .call(&agent, "scout.report", json!({"target": "example"}))
+        .await;
+    assert_eq!(newest.result.unwrap()["scout_id"], scout_id.as_str());
+    let content = &report["content"];
+
+    // It came from a capture: how it ended, what it saw, and that it says
+    // nothing of what the person did not use. When it ran is kept beside
+    // the hashed content, as the scout's identifier is.
+    assert_eq!(content["capture"]["ended_by"], "asked", "{report}");
+    assert_eq!(content["capture"]["coverage"], "partial", "{report}");
+    assert_eq!(
+        content["capture"]["findings_by_kind"],
+        json!({"stand_call": 3}),
+        "{report}"
+    );
+    assert_eq!(content["surfaces"][0]["state"], "identified", "{report}");
+    assert_eq!(content["surfaces"][0]["observed_by"], "person", "{report}");
+    assert_eq!(
+        report["capture"]["capture_id"], stopped["capture_id"],
+        "{report}"
+    );
+    assert!(report["capture"]["ran_ms"].is_u64(), "{report}");
+    assert!(
+        content["not_looked_at"]
+            .to_string()
+            .contains("what its person did not use"),
+        "{report}"
+    );
+    assert!(
+        report["text"].as_str().unwrap().contains("from a capture"),
+        "{report}"
+    );
+
+    // Drafted by the pack's rules: the read and its call. The call that
+    // writes is refused by the drafter, which drafts nothing that writes,
+    // and the call that does not say whether it writes waits, held, with
+    // its question.
+    let drafted: Vec<&str> = content["drafted"]["written"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["file"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        drafted,
+        ["calls/order_list.yaml", "operations/order_list.yaml"],
+        "{report}"
+    );
+    assert_eq!(
+        content["drafted"]["refused"][0]["file"], "calls/order_save.yaml",
+        "{report}"
+    );
+    assert!(!target_dir.join("calls").join("order_save.yaml").exists());
+    let held = "held/calls/order_purge.yaml";
+    assert_eq!(content["drafted"]["held_back"], json!([held]), "{report}");
+    assert!(target_dir.join(held).is_file());
+    let question = content["open"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|open| open["scope"] == "calls/order_purge.yaml")
+        .unwrap_or_else(|| panic!("{report}"));
+    assert_eq!(
+        question["question"]["text"], "Does the quoted call read or write?",
+        "{report}"
+    );
+
+    // Tried: the drafted read alone, five times, proven; nothing that may
+    // write was tried, and no step that saves reached the stand.
+    let tried = content["tried"]["tools"].as_array().unwrap();
+    assert_eq!(tried.len(), 1, "{report}");
+    assert_eq!(tried[0]["tool"], "example_order_list", "{report}");
+    assert_eq!(tried[0]["state"], "proven", "{report}");
+    assert_eq!(tried[0]["tries"], 5, "{report}");
+    assert_eq!(content["tried"]["counts"]["held"], 1, "{report}");
+    assert!(
+        !report.to_string().contains("Kept by the stand"),
+        "{report}"
+    );
+    let reached = world.reached.lock().unwrap().clone();
+    assert!(!reached.is_empty());
+    assert!(reached.iter().all(|step| step == "fetch"), "{reached:?}");
+
+    // `capture.stop` called again gives the same answer.
+    let again = world
+        .call(&agent, "capture.stop", json!({"target": "example"}))
+        .await;
+    assert_eq!(again.result.unwrap(), stopped);
+
+    // The same findings, captured again: another scout, the same report.
+    let second = captured(&world, &agent).await;
+    assert_ne!(second["capture_id"], stopped["capture_id"]);
+    assert_ne!(second["report"]["scout_id"], scout_id.as_str());
+    assert_eq!(
+        second["report"]["report_hash"],
+        hash.as_str(),
+        "{stopped}\n{second}"
+    );
+    let reached = world.reached.lock().unwrap().clone();
+    assert!(reached.iter().all(|step| step == "fetch"), "{reached:?}");
     world.kernel.close(CloseReason::Asked).await;
 }
 

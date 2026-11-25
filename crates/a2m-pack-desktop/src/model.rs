@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 
 /// The version of the shapes below. A compiled target written in another is
 /// refused. Format 2 added a screen's actions and variants, and the payloads
-/// of `set` and `invoke` (decision 0218).
-pub(crate) const PAYLOAD_FORMAT: u16 = 2;
+/// of `set` and `invoke` (decision 0218); format 3 a window's title with a
+/// placeholder, and a table located by its headings (decision 0462).
+pub(crate) const PAYLOAD_FORMAT: u16 = 3;
 
 /// Every screen of the target's desktop surfaces, by name.
 pub(crate) type ScreenSection = BTreeMap<String, Screen>;
@@ -56,11 +57,53 @@ pub(crate) struct Variant {
 }
 
 /// How a screen's window is told from the application's other windows: by
-/// its role and its title, exactly.
+/// its role and its title, exactly. A title may hold one placeholder,
+/// `{name}`, which the operation's input of that name fills: the window
+/// is then the one whose title is exactly the words around it with that
+/// value between them (decision 0462).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WindowMatch {
     pub role: String,
+    /// The title as the screen writes it.
     pub title: String,
+    /// Its placeholder, when it has one.
+    pub hole: Option<TitleHole>,
+}
+
+/// The placeholder of a window's title, and the words around it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TitleHole {
+    pub before: String,
+    /// The name of the input that fills it.
+    pub name: String,
+    pub after: String,
+}
+
+impl WindowMatch {
+    /// The exact title of the window, its placeholder filled with `value`;
+    /// `None` when the title has a placeholder and no value fills it.
+    pub(crate) fn title_with(&self, value: Option<&str>) -> Option<String> {
+        match (&self.hole, value) {
+            (None, _) => Some(self.title.clone()),
+            (Some(hole), Some(value)) if !value.is_empty() => {
+                Some(format!("{}{value}{}", hole.before, hole.after))
+            }
+            (Some(_), _) => None,
+        }
+    }
+
+    /// Whether a window of this title is one this screen may show, for
+    /// some value of its placeholder.
+    pub(crate) fn could_be(&self, title: &str) -> bool {
+        match &self.hole {
+            None => self.title == title,
+            Some(hole) => {
+                title.len() > hole.before.len() + hole.after.len()
+                    && title.starts_with(hole.before.as_str())
+                    && title.ends_with(hole.after.as_str())
+            }
+        }
+    }
 }
 
 /// One locator: a role and an accessible name, both exact. The only kind a
@@ -80,7 +123,9 @@ pub(crate) struct Field {
 }
 
 /// A table: where it is, its headings as the window shows them, and the
-/// position of each column a read may name.
+/// position of each column a read may name. With no locators, the table is
+/// the one of the window whose headings are `header`, exactly: how a table
+/// the application gives no name is found (decision 0462).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Rows {
     pub locate: Vec<Locator>,

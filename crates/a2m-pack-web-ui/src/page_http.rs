@@ -60,8 +60,8 @@ use serde_json::Value as Json;
 
 use crate::codes::{self, shown};
 use crate::driver::{
-    Reopen, acting, browser_failure, edge_refusal, fail, refusal, segment, tab_setup, until,
-    within_pattern,
+    Reopen, acting, browser_failure, edge_refusal, fail, lost_page, refusal, segment, tab_setup,
+    until, within_pattern,
 };
 use crate::lower::{GOTO, REACH_ARG};
 use crate::model::{GotoStep, PAYLOAD_FORMAT, ReadItem, ScreenSection, TabKind};
@@ -833,6 +833,10 @@ struct Session {
     /// leaves it, since every read is made in the observing tab whichever
     /// tab the last `goto` chose.
     last_look: Option<(Step, Values)>,
+    /// Whether the last step in the observing tab lost its page or its
+    /// browser: the browser is asked for a word before the next step there
+    /// uses it, since a browser can be dead before the tab sees it.
+    unsure: bool,
 }
 
 /// The tab a `goto` asks for. A compiled target compiled before a `goto`
@@ -902,7 +906,10 @@ impl Session {
     }
 
     /// When the browser of the observing tab is lost and `step` runs in
-    /// that tab: places the session's state into a new browser started from
+    /// that tab: lost by what the tab has seen, or, after a step there that
+    /// lost its page or its browser, by giving no answer when it is asked
+    /// for one, since a browser can be dead before the tab sees it. Then it
+    /// places the session's state into a new browser started from
     /// the same profile, opens the observing tab there, and, for a read's
     /// `request`, brings its page back by the last `goto` in that tab, done
     /// again (decisions 0424 and 0428). The tab can only read, so doing it
@@ -913,9 +920,15 @@ impl Session {
     /// the acting tab, which was in the lost browser too, and a write is
     /// never sent again.
     async fn recover(&mut self, step: &Step, input: &StepInput<'_>) -> Result<(), StepFailure> {
-        if !self.looking.browser_lost() || !self.in_observing_tab(step)? {
+        let mut lost = self.looking.browser_lost();
+        if !lost && self.unsure && self.in_observing_tab(step)? {
+            self.unsure = false;
+            lost = !self.looking.browser_answers(input.deadline).await;
+        }
+        if !lost || !self.in_observing_tab(step)? {
             return Ok(());
         }
+        self.unsure = false;
         self.looking = self
             .reopen
             .observing_tab(&self.asserted.safe_requests(&self.origin), input.deadline)
@@ -1672,6 +1685,7 @@ impl PageHttpDriver {
             asserted,
             reopen: Reopen::new(self.browsers.clone(), setup),
             last_look: None,
+            unsure: false,
         })
     }
 }
@@ -1701,7 +1715,10 @@ impl Driver for PageHttpDriver {
             }
             // A read goes on in a new browser of the same profile when the
             // observing tab's browser was lost (decisions 0424 and 0428).
-            session.recover(step, input).await?;
+            if let Err(failed) = session.recover(step, input).await {
+                session.unsure |= lost_page(&failed);
+                return Err(failed);
+            }
             let done = if step.kind == GOTO {
                 session.goto(step, input).await
             } else if step.kind == REQUEST {
@@ -1716,7 +1733,7 @@ impl Driver for PageHttpDriver {
             // page tried to leave, or to write where it may only read. After
             // a write was sent, it leaves the write in doubt.
             let what = format!("the end of a `{}` step", step.kind);
-            match session.refused(&what) {
+            let ended = match session.refused(&what) {
                 Some(failure)
                     if step.commits
                         && !matches!(&done, Err(failed) if failed.sent == a2m_provider::Sent::NotSent) =>
@@ -1737,7 +1754,13 @@ impl Driver for PageHttpDriver {
                     }
                     done
                 }
+            };
+            if matches!(&ended, Err(failed) if lost_page(failed))
+                && session.in_observing_tab(step).unwrap_or(false)
+            {
+                session.unsure = true;
             }
+            ended
         })
     }
 

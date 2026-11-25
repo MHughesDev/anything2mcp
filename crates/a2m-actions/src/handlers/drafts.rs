@@ -724,12 +724,13 @@ handler!(
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
         let project_folder = call.project_folder()?.to_path_buf();
-        let compiled = super::build::compile_in(
+        let compiled = super::build::compile_chosen_in(
             kernel,
             project_folder.clone(),
             &target,
             CompileMode::Publish,
             DRAFT_VERSION,
+            super::build::chosen_tools(&call),
         )
         .await?;
         let compiled = match compiled {

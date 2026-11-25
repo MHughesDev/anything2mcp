@@ -14,16 +14,10 @@ const ACTIONS = Object.freeze([
   "audit.query",
   "auth.detect",
   "binding.promote",
-  "browser.install",
   "capture.start",
   "capture.stop",
   "client.connect",
-  "component.list",
-  "config.set",
   "config.show",
-  "delegation.grant",
-  "delegation.list",
-  "delegation.revoke",
   "discover.run",
   "docs.get",
   "doctor.run",
@@ -33,7 +27,6 @@ const ACTIONS = Object.freeze([
   "draft.ready",
   "draft.try",
   "draft.write",
-  "endpoints.infer",
   "engine.logs",
   "engine.start",
   "engine.status",
@@ -53,8 +46,6 @@ const ACTIONS = Object.freeze([
   "net.resolvers",
   "net.routes",
   "net.standing",
-  "plugin.install",
-  "plugin.list",
   "policy.explain",
   "policy.publish",
   "policy.test",
@@ -62,8 +53,6 @@ const ACTIONS = Object.freeze([
   "policy.versions",
   "policy.who_can",
   "provider.describe",
-  "provider.disable",
-  "provider.enable",
   "provider.list",
   "publish.request",
   "reach.list",
@@ -73,15 +62,8 @@ const ACTIONS = Object.freeze([
   "run.get",
   "run.list",
   "run.resume",
-  "run.trace",
-  "run.undo",
-  "runner.drain",
-  "runner.enroll",
-  "runner.list",
-  "runner.revoke",
   "scout.report",
   "scout.run",
-  "screen.snapshot",
   "secret.set",
   "self.update",
   "session.end",
@@ -104,18 +86,10 @@ const ACTIONS = Object.freeze([
   "toolset.list",
   "toolset.remove",
   "toolset.update",
-  "trace.export",
   "trace.show",
   "unknown.list",
-  "unknown.settle",
-  "vault.rotate",
-  "version.activate",
-  "version.bundle",
   "version.diff",
-  "version.import",
-  "version.migrate",
   "version.publish",
-  "version.rollback",
   "watch.changes",
   "watch.confirm",
   "watch.create",
@@ -180,14 +154,6 @@ class Actions {
   }
 
   /**
-   * Fetch a pinned browser for the pack that drives one. The engine action is
-   * `browser.install`.
-   */
-  browserInstall(input = {}, options = {}) {
-    return this.call("browser.install", input, options);
-  }
-
-  /**
    * Ask for a capture of your person's own use of a surface. Nothing records until the
    * person begins it on the engine's page; then only the structure of what they use is
    * kept, never a value. The engine action is `capture.start`.
@@ -197,8 +163,10 @@ class Actions {
   }
 
   /**
-   * End a capture you asked for, or read how it ended, and store what it found as
-   * findings. The engine action is `capture.stop`.
+   * End a capture you asked for, or read how it ended; store what it found as findings,
+   * and scout from them as `scout.run` does from a discovery: draft by rule, try the
+   * drafted reads, and report. Answers with the report's reference; never writes to the
+   * system. The engine action is `capture.stop`.
    */
   captureStop(input, options = {}) {
     return this.call("capture.stop", input, options);
@@ -214,48 +182,11 @@ class Actions {
   }
 
   /**
-   * The outside programs providers need: found or not, with path and digest. The engine
-   * action is `component.list`.
-   */
-  componentList(input = {}, options = {}) {
-    return this.call("component.list", input, options);
-  }
-
-  /**
-   * Change one setting in a settings file. Loosening a protected setting needs a person
-   * present. The engine action is `config.set`.
-   */
-  configSet(input, options = {}) {
-    return this.call("config.set", input, options);
-  }
-
-  /**
    * The effective settings, and for each the layer that set it. With a key, that key's
    * documentation. The engine action is `config.show`.
    */
   configShow(input = {}, options = {}) {
     return this.call("config.show", input, options);
-  }
-
-  /**
-   * A person lets an agent act for them. The engine action is `delegation.grant`.
-   */
-  delegationGrant(input, options = {}) {
-    return this.call("delegation.grant", input, options);
-  }
-
-  /**
-   * The delegations a person has given. The engine action is `delegation.list`.
-   */
-  delegationList(input = {}, options = {}) {
-    return this.call("delegation.list", input, options);
-  }
-
-  /**
-   * A person withdraws a delegation. The engine action is `delegation.revoke`.
-   */
-  delegationRevoke(input, options = {}) {
-    return this.call("delegation.revoke", input, options);
   }
 
   /**
@@ -333,14 +264,6 @@ class Actions {
    */
   draftWrite(input, options = {}) {
     return this.call("draft.write", input, options);
-  }
-
-  /**
-   * Endpoint templates, schemas, and dependencies worked out from stored recordings.
-   * The engine action is `endpoints.infer`.
-   */
-  endpointsInfer(input, options = {}) {
-    return this.call("endpoints.infer", input, options);
   }
 
   /**
@@ -501,21 +424,6 @@ class Actions {
   }
 
   /**
-   * Install a plug-in from a file, after checking its manifest and signature. The
-   * engine action is `plugin.install`.
-   */
-  pluginInstall(input, options = {}) {
-    return this.call("plugin.install", input, options);
-  }
-
-  /**
-   * The plug-ins found on this machine. The engine action is `plugin.list`.
-   */
-  pluginList(input = {}, options = {}) {
-    return this.call("plugin.list", input, options);
-  }
-
-  /**
    * Why a past call was allowed or denied: the decision, the policy version, and the
    * rules that made it. For an auditor or an administrator. The engine action is
    * `policy.explain`.
@@ -571,21 +479,6 @@ class Actions {
    */
   providerDescribe(input, options = {}) {
     return this.call("provider.describe", input, options);
-  }
-
-  /**
-   * Switch a provider off. The engine action is `provider.disable`.
-   */
-  providerDisable(input, options = {}) {
-    return this.call("provider.disable", input, options);
-  }
-
-  /**
-   * Switch a provider on. A protected setting on one machine where the provider starts
-   * processes or reaches a network. The engine action is `provider.enable`.
-   */
-  providerEnable(input, options = {}) {
-    return this.call("provider.enable", input, options);
   }
 
   /**
@@ -666,51 +559,6 @@ class Actions {
   }
 
   /**
-   * A summary of one run's trace, with references to its kept artifacts. The engine
-   * action is `run.trace`.
-   */
-  runTrace(input, options = {}) {
-    return this.call("run.trace", input, options);
-  }
-
-  /**
-   * Build the reverse diff of a completed write run, for a person's approval. The
-   * engine action is `run.undo`.
-   */
-  runUndo(input, options = {}) {
-    return this.call("run.undo", input, options);
-  }
-
-  /**
-   * Stop giving a runner new jobs. The engine action is `runner.drain`.
-   */
-  runnerDrain(input, options = {}) {
-    return this.call("runner.drain", input, options);
-  }
-
-  /**
-   * Enroll a runner on another machine. The engine action is `runner.enroll`.
-   */
-  runnerEnroll(input, options = {}) {
-    return this.call("runner.enroll", input, options);
-  }
-
-  /**
-   * The runners, what each serves, and when each was last heard from. The engine action
-   * is `runner.list`.
-   */
-  runnerList(input = {}, options = {}) {
-    return this.call("runner.list", input, options);
-  }
-
-  /**
-   * Revoke a runner's enrollment. The engine action is `runner.revoke`.
-   */
-  runnerRevoke(input, options = {}) {
-    return this.call("runner.revoke", input, options);
-  }
-
-  /**
    * The last scout's report on a target: found, drafted, proven, open, and what to look
    * at first. Each list is counted and shows its first entries; `part` reads one whole,
    * in pages. The engine action is `scout.report`.
@@ -726,14 +574,6 @@ class Actions {
    */
   scoutRun(input, options = {}) {
     return this.call("scout.run", input, options);
-  }
-
-  /**
-   * A compact snapshot of what a surface shows now, with stable references to its
-   * elements. The engine action is `screen.snapshot`.
-   */
-  screenSnapshot(input, options = {}) {
-    return this.call("screen.snapshot", input, options);
   }
 
   /**
@@ -873,7 +713,8 @@ class Actions {
 
   /**
    * The full description, input schema, and output schema of one published tool, by its
-   * name. The engine action is `tool.describe`.
+   * name, and its digest, which changes when and only when its definition does. The
+   * engine action is `tool.describe`.
    */
   toolDescribe(input, options = {}) {
     return this.call("tool.describe", input, options);
@@ -923,14 +764,6 @@ class Actions {
   }
 
   /**
-   * Export one run's evidence to a file in the project. The engine action is
-   * `trace.export`.
-   */
-  traceExport(input, options = {}) {
-    return this.call("trace.export", input, options);
-  }
-
-  /**
    * View one run's evidence: its trace lines and artifact references. The engine action
    * is `trace.show`.
    */
@@ -946,36 +779,6 @@ class Actions {
   }
 
   /**
-   * Settle an open question about a target, with evidence. The engine action is
-   * `unknown.settle`.
-   */
-  unknownSettle(input, options = {}) {
-    return this.call("unknown.settle", input, options);
-  }
-
-  /**
-   * Rotate one layer of the vault's keys. The engine action is `vault.rotate`.
-   */
-  vaultRotate(input, options = {}) {
-    return this.call("vault.rotate", input, options);
-  }
-
-  /**
-   * Move a toolset to a version, through the candidate stage. The engine action is
-   * `version.activate`.
-   */
-  versionActivate(input, options = {}) {
-    return this.call("version.activate", input, options);
-  }
-
-  /**
-   * Pack a published version into a signed file. The engine action is `version.bundle`.
-   */
-  versionBundle(input, options = {}) {
-    return this.call("version.bundle", input, options);
-  }
-
-  /**
    * Compare two versions of a target and classify each change. The engine action is
    * `version.diff`.
    */
@@ -984,35 +787,11 @@ class Actions {
   }
 
   /**
-   * Import a signed bundle as a published version. The engine action is
-   * `version.import`.
-   */
-  versionImport(input, options = {}) {
-    return this.call("version.import", input, options);
-  }
-
-  /**
-   * Recompile stored sources for a newer engine. The engine action is
-   * `version.migrate`.
-   */
-  versionMigrate(input, options = {}) {
-    return this.call("version.migrate", input, options);
-  }
-
-  /**
    * Publish a target's drafts, compiled, as an immutable version. A person's act, never
    * an agent's. The engine action is `version.publish`.
    */
   versionPublish(input, options = {}) {
     return this.call("version.publish", input, options);
-  }
-
-  /**
-   * Make an earlier version of a target current. The engine action is
-   * `version.rollback`.
-   */
-  versionRollback(input, options = {}) {
-    return this.call("version.rollback", input, options);
   }
 
   /**

@@ -557,21 +557,31 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         operations: Vec::new(),
     };
     let Some(elements) = elements(finding.found())? else {
+        cx.not_drafted(why::CUT_SHORT);
         return Ok(out);
     };
     // A tool is named after its target, and a screen is on one of its
     // surfaces; with neither there is nothing to draft.
-    let (Some(target), Some((path, holes, page)), Some(origin)) =
-        (cx.target(), reach_of(finding), origin(finding))
-    else {
+    let Some(target) = cx.target() else {
+        cx.not_drafted(why::NO_TARGET);
+        return Ok(out);
+    };
+    let Some(origin) = origin(finding) else {
+        cx.not_drafted(why::NOT_AN_ADDRESS);
+        return Ok(out);
+    };
+    let Some((path, holes, page)) = reach_of(finding) else {
+        cx.not_drafted(why::NO_REACH);
         return Ok(out);
     };
     let Some(surface) = surface(cx, origin) else {
+        cx.not_drafted(why::NO_SURFACE);
         return Ok(out);
     };
     // A placeholder of the address named as a secret would be an input
     // that is a secret: nothing is drafted (decision 0302).
     if holes.iter().any(|hole| named_as_secret(hole, &snake(hole))) {
+        cx.not_drafted(why::SECRET_PLACEHOLDER);
         return Ok(out);
     }
     let reach = || DraftValue::map(vec![("url", DraftValue::text(path))]);
@@ -886,7 +896,30 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
             }
         }
     }
+    // A rule that drafts nothing says why: no screen at all, or a screen
+    // whose questions hold its read back.
+    cx.not_drafted(if out.screens.is_empty() {
+        why::NOTHING_TO_READ
+    } else {
+        why::SCREEN_HAS_QUESTIONS
+    });
     Ok(out)
+}
+
+/// Why a rule from a `screen` finding drafts nothing, in plain words, with
+/// what a person could do instead (package 5.6c's follow-up).
+mod why {
+    // `NO_REACH` states the bound in words.
+    const _: () = assert!(super::LONGEST_PATH == 160);
+
+    pub(super) const CUT_SHORT: &str = "The page's snapshot was cut short, or is of a form these rules do not read whole, so a table's rows or headings may be missing. Scout the page again; if it is too large to take whole, write its screen by hand.";
+    pub(super) const NO_TARGET: &str = "The target has no name in its target file, and a read is named after its target. Name the target, then draft again.";
+    pub(super) const NOT_AN_ADDRESS: &str = "The finding is not about an address on the web, so there is no page to draft a screen for.";
+    pub(super) const NO_REACH: &str = "The page's path is longer than 160 characters, or a part of it is neither plain words nor one whole placeholder, or it names one placeholder twice, so no screen can be reached by it. Write the screen by hand if it is wanted.";
+    pub(super) const NO_SURFACE: &str = "The page is at an origin that is not exactly one `web` surface of the target. If the page belongs to this application, give the target one `web` surface at that origin and draft again; otherwise it belongs to another system.";
+    pub(super) const SECRET_PLACEHOLDER: &str = "A placeholder of the page's path is named as a secret, so a read of the page would take a secret as an input, and nothing is drafted (decision 0302). A secret comes from the session, never from a caller.";
+    pub(super) const NOTHING_TO_READ: &str = "The page shows no table with a plain name and plain headings, and no value beside a plain label, that a screen could locate. Write its screen by hand, naming what it reads.";
+    pub(super) const SCREEN_HAS_QUESTIONS: &str = "Each screen drafted from the page holds a question for a person, so no read is drafted over it yet. Answer the screen's questions, then write the read by hand.";
 }
 
 /// From a `screen` finding to the screens that read its tables.

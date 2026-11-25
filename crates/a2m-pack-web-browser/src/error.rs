@@ -11,7 +11,8 @@ use a2m_core::{Failure, FailureClass, FailureCode};
 ///
 /// Whether a `busy` code passes by itself, and why: `browser_unavailable`
 /// does not, because a person must install a browser or name one in the
-/// settings first; `memory_short` does, because a browser past its limit is
+/// settings first, nor does `browser_stopped_at_start`, because a person
+/// must change what stopped it; `memory_short` does, because a browser past its limit is
 /// recycled between runs and the work in flight ends.
 pub mod codes {
     use a2m_core::FailureCode;
@@ -25,6 +26,10 @@ pub mod codes {
             meaning "The engine's browsers hold their memory ceiling or more, or one of them could not be measured, so no new browser work is started (decision 0425).",
             next "Call again after the wait the failure gives; a browser past its own limit is recycled between runs. If it persists, close other work on the machine, or raise the ceiling in the settings.",
             passes by_itself;
+        BROWSER_STOPPED_AT_START = Busy, "browser_stopped_at_start",
+            meaning "The browser program started and stopped before it answered, and wrote why, such as a sandbox it cannot make (decision 0450).",
+            next "Act on what the browser wrote, which the message shows. Where it names its sandbox, run the engine as a user that is not root, and let that user make user namespaces; in a container, give it a filter that allows them. The engine never starts a browser without its sandbox.",
+            passes not_by_itself;
         BROWSER_NOT_OWNED = UnknownVariant, "browser_not_owned",
             meaning "The program that started is not a browser this crate can own.",
             next "Check the browser program named in the settings, and its version.";
@@ -111,6 +116,10 @@ pub enum LaunchReason {
     /// pipe ended or carried something else, it answered with another
     /// protocol, or its digest is not a known one. It was closed.
     NotOwned(String),
+    /// The program started, its pipe ended or could not be written to
+    /// before it answered, and it wrote why in its log file: its own lines, redacted and cut, such as
+    /// a sandbox it cannot make. It was closed (decision 0450).
+    Stopped(String),
     /// The program started, its pipe stayed open, and it did not answer
     /// before the launch deadline. It was closed. It may be a browser that
     /// starts slowly, so this passes: nothing reached any system.
@@ -289,6 +298,15 @@ impl BrowserError {
                 format!("The program that was started is not a browser the engine can own: {why}."),
                 "Check the browser program named in the settings, and its version.",
             )),
+            Self::LaunchFailed(LaunchReason::Stopped(wrote)) => Some(Failure::new(
+                FailureClass::Busy,
+                codes::BROWSER_STOPPED_AT_START,
+                format!(
+                    "The browser stopped as it started, before it answered. It wrote: {}.",
+                    wrote.trim_end_matches('.')
+                ),
+                "Act on what the browser wrote. Where it names its sandbox, run the engine as a user that is not root, and let that user make user namespaces; in a container, give it a filter that allows them. The engine never starts a browser without its sandbox.",
+            )),
             Self::LaunchFailed(LaunchReason::MemoryShort(short)) => Some(
                 Failure::new(
                     FailureClass::Busy,
@@ -405,6 +423,9 @@ impl fmt::Display for BrowserError {
                 }
                 LaunchReason::MemoryShort(short) => {
                     write!(f, "memory runs short: {short}; nothing was started")
+                }
+                LaunchReason::Stopped(wrote) => {
+                    write!(f, "the browser stopped as it started; it wrote: {wrote}")
                 }
                 LaunchReason::NotOwned(why) => {
                     write!(

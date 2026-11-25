@@ -19,7 +19,7 @@
     reason = "a test file: a helper that cannot do its work stops the test"
 )]
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -96,7 +96,7 @@ async fn run(machine: &Machine, args: &[&str]) -> Output {
     command
         .args([
             "--exact",
-            "one_command_in_a_process_of_its_own",
+            "trust_roots::one_command_in_a_process_of_its_own",
             "--test-threads=1",
         ])
         .env(CHILD, spec.to_string())

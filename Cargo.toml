@@ -159,6 +159,19 @@ expect_used = "deny"
 # first-party pack in it, at no measured cost in speed (decision 0191).
 # `panic` stays `unwind`: the engine's failure handling rests on it, and that
 # is the lead's to change, not a profile setting's.
+# The debug and test builds (`test` inherits `dev`) keep line tables, so that a
+# backtrace names the file and line of each frame of the workspace's own code,
+# and drop the rest of the debug information, which made most of the build
+# folder and of the link time. The dependencies keep none: a frame in one
+# still shows its function, and a panic's message still names its file and
+# line, which it carries without debug information. The release profile is
+# not touched (decisions 0372 and 0448).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

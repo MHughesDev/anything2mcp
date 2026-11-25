@@ -11,8 +11,7 @@ use std::path::PathBuf;
 
 use a2m_actions::{
     ActionDef, ActionRegistry, CommandArg, CommandFace, Effect, PROCESS_COMMANDS, PROGRAM,
-    PersonNeed, RunsIn, SHORTCUTS, Shortcut, ShortcutOption, ShortcutRun, ShortcutStep, codes,
-    command_faces,
+    PersonNeed, RunsIn, Shortcut, ShortcutOption, codes, command_faces,
 };
 use a2m_core::{Failure, FailureClass};
 
@@ -222,16 +221,6 @@ pub(crate) struct Step {
     pub(crate) stdin_for: Option<String>,
 }
 
-/// Where a shortcut stops on this build: before the first of its actions
-/// that is not built. It never begins that step.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Stop {
-    /// The action it stops before.
-    pub(crate) before: &'static str,
-    /// What to say: what was done, and what was not.
-    pub(crate) note: String,
-}
-
 /// What a command line asks for.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Parsed {
@@ -240,10 +229,9 @@ pub(crate) enum Parsed {
     /// Help text.
     Help(String),
     /// Actions to dispatch in turn; the first that is not a success ends
-    /// the sequence. One for an action command, several for a shortcut. A
-    /// shortcut that cannot do all of its steps on this build says where
-    /// it stops.
-    Invoke(Globals, Vec<Step>, Option<Stop>),
+    /// the sequence. One for an action command, several for a shortcut,
+    /// whose every step is built, or it is not offered.
+    Invoke(Globals, Vec<Step>),
     /// A process command, with the words that follow it.
     Process(Globals, &'static str, Vec<String>),
     /// A shortcut with no action beneath it.
@@ -254,8 +242,9 @@ pub(crate) enum Parsed {
 #[derive(Debug, Clone)]
 pub(crate) struct Tree {
     faces: Vec<CommandFace>,
-    /// What each shortcut does on this build, by its word.
-    runs: BTreeMap<&'static str, ShortcutRun>,
+    /// The shortcuts offered on this build: those whose every step is
+    /// built (decision 0456).
+    offered: Vec<&'static Shortcut>,
     /// What the help of each action says of it, by the action's name.
     facts: BTreeMap<String, Facts>,
     /// The width help is wrapped to.
@@ -292,15 +281,12 @@ fn nearest<'a>(wrong: &str, known: impl Iterator<Item = &'a str>) -> Vec<&'a str
 }
 
 impl Tree {
-    /// The tree of a registry: its command faces, and what each shortcut
-    /// does with the actions the registry holds.
+    /// The tree of a registry: its command faces, and the shortcuts whose
+    /// every step the registry has built.
     pub(crate) fn of(registry: &ActionRegistry) -> Self {
         Self {
             faces: command_faces(registry),
-            runs: SHORTCUTS
-                .iter()
-                .map(|shortcut| (shortcut.word, shortcut.on(registry)))
-                .collect(),
+            offered: a2m_actions::shortcuts_offered(registry),
             facts: registry
                 .iter()
                 .map(|def| (def.name.to_string(), Facts::of(def)))
@@ -320,7 +306,7 @@ impl Tree {
     pub(crate) fn empty() -> Self {
         Self {
             faces: Vec::new(),
-            runs: BTreeMap::new(),
+            offered: Vec::new(),
             facts: BTreeMap::new(),
             width: DEFAULT_WIDTH,
         }
@@ -336,9 +322,9 @@ impl Tree {
         self.facts(action).is_none_or(|facts| facts.built)
     }
 
-    /// The shortcuts, in order, with what each does.
-    pub(crate) fn shortcuts(&self) -> impl Iterator<Item = &'static Shortcut> {
-        SHORTCUTS.iter()
+    /// The shortcuts offered, in order, with what each does.
+    pub(crate) fn shortcuts(&self) -> impl Iterator<Item = &'static Shortcut> + '_ {
+        self.offered.iter().copied()
     }
 
     /// Every command face, in catalog order.
@@ -398,32 +384,18 @@ impl Tree {
                     input,
                     stdin_for,
                 }],
-                None,
             ));
         }
-        if let Some(shortcut) = SHORTCUTS.iter().find(|shortcut| shortcut.word == first) {
+        if let Some(shortcut) = self.shortcuts().find(|shortcut| shortcut.word == first) {
             if help {
                 return Ok(Parsed::Help(self.help_shortcut(shortcut)));
             }
             if shortcut.steps.is_empty() {
                 return Ok(Parsed::EmptyShortcut(globals, shortcut.word));
             }
-            // The steps this build can carry out: those before the first
-            // action that is not built.
-            let (steps, stop) = match self.runs.get(shortcut.word) {
-                Some(run) => (
-                    run.steps.as_slice(),
-                    run.stops_before.map(|before| Stop {
-                        before,
-                        note: run.note.clone().unwrap_or_default(),
-                    }),
-                ),
-                None => (shortcut.steps, None),
-            };
             return Ok(Parsed::Invoke(
                 globals,
-                self.shortcut_steps(shortcut, steps, &rest[1..])?,
-                stop,
+                self.shortcut_steps(shortcut, &rest[1..])?,
             ));
         }
         if first == COMPLETION_COMMAND {
@@ -459,7 +431,7 @@ impl Tree {
         let words = self
             .nouns()
             .into_iter()
-            .chain(SHORTCUTS.iter().map(|shortcut| shortcut.word))
+            .chain(self.shortcuts().map(|shortcut| shortcut.word))
             .chain(process_commands().map(|word| -> &str { word }));
         let close = nearest(first, words);
         Err(malformed(
@@ -478,17 +450,12 @@ impl Tree {
     /// The actions of a shortcut, each with the shortcut's own argument in
     /// the field its step names. A shortcut of one action also takes that
     /// action's flags.
-    fn shortcut_steps(
-        &self,
-        shortcut: &Shortcut,
-        run: &[ShortcutStep],
-        rest: &[String],
-    ) -> Result<Vec<Step>, Failure> {
+    fn shortcut_steps(&self, shortcut: &Shortcut, rest: &[String]) -> Result<Vec<Step>, Failure> {
         let single = shortcut.steps.len() == 1;
         let (given, rest) = shortcut_options(shortcut, rest)?;
         let rest = rest.as_slice();
         let mut steps = Vec::new();
-        for step in run {
+        for step in shortcut.steps {
             let Some(face) = self.face_of(step.action) else {
                 return Err(malformed(
                     format!(
@@ -597,7 +564,7 @@ impl Tree {
             out.push_str(&row("  ", noun, 12, &verbs.join(", "), width));
         }
         out.push_str("\nShortcuts:\n");
-        for shortcut in SHORTCUTS {
+        for shortcut in self.shortcuts() {
             out.push_str(&row("  ", shortcut.word, 12, shortcut.does, width));
         }
         out.push('\n');
@@ -642,7 +609,13 @@ impl Tree {
         out.push('\n');
         out.push_str(&paragraphs(shortcut.does, width));
         if shortcut.steps.is_empty() {
-            out.push_str("\nNo action is beneath it yet.\n");
+            out.push('\n');
+            out.push_str(&wrap(
+                "",
+                "The command does this itself, in the folder, and starts no engine: no action of the engine is beneath it.",
+                0,
+                width,
+            ));
             return out;
         }
         if !shortcut.options.is_empty() {
@@ -664,23 +637,11 @@ impl Tree {
             0,
             width,
         ));
-        let built = self
-            .runs
-            .get(shortcut.word)
-            .map_or(shortcut.steps.len(), |run| run.steps.len());
-        for (at, step) in shortcut.steps.iter().enumerate() {
+        for step in shortcut.steps {
             let usage = self
                 .face_of(step.action)
                 .map_or_else(|| step.action.to_owned(), |face| face.usage.clone());
             out.push_str(&wrap("  ", &usage, 6, width));
-            if at == built {
-                out.push_str(&wrap(
-                    "      ",
-                    "Not built yet: the shortcut stops before this step.",
-                    6,
-                    width,
-                ));
-            }
         }
         out
     }
@@ -1336,7 +1297,7 @@ mod tests {
             for face in command_faces(&registry) {
                 texts.push(help(&tree, &[&face.noun, &face.verb]));
             }
-            for shortcut in SHORTCUTS {
+            for shortcut in tree.shortcuts() {
                 texts.push(tree.help_shortcut(shortcut));
             }
             for word in process_commands() {
@@ -1377,7 +1338,7 @@ mod tests {
         let parsed = tree
             .parse(&words(&["secret", "set", "example_name", "--stdin"]))
             .unwrap();
-        let Parsed::Invoke(_, steps, None) = parsed else {
+        let Parsed::Invoke(_, steps) = parsed else {
             panic!("{parsed:?}");
         };
         assert_eq!(steps[0].action, "secret.set");
@@ -1388,7 +1349,7 @@ mod tests {
         let parsed = tree
             .parse(&words(&["secret", "set", "example_name", "--value", "v"]))
             .unwrap();
-        let Parsed::Invoke(_, steps, None) = parsed else {
+        let Parsed::Invoke(_, steps) = parsed else {
             panic!("{parsed:?}");
         };
         assert_eq!(
@@ -1432,14 +1393,13 @@ mod tests {
     }
 
     #[test]
-    fn a_shortcut_gives_the_steps_this_build_has_and_says_where_it_stops() {
+    fn a_shortcut_is_a_command_only_when_every_step_is_built_and_gives_them_all() {
         let registry = ActionRegistry::kernel_only();
         let tree = Tree::of(&registry);
         for shortcut in SHORTCUTS
             .iter()
             .filter(|shortcut| !shortcut.steps.is_empty())
         {
-            let run = shortcut.on(&registry);
             // The shortcut's own argument, when its steps take one.
             let takes = shortcut.steps.iter().any(|step| step.argument.is_some());
             let mut line = if takes {
@@ -1447,6 +1407,29 @@ mod tests {
             } else {
                 words(&[shortcut.word])
             };
+            if !shortcut.offered(&registry) {
+                // Not offered: no command, and no help or completion names it.
+                let refused = tree.parse(&line).unwrap_err();
+                assert_eq!(refused.code().as_str(), "schema_invalid");
+                assert!(
+                    refused.message().contains("There is no command"),
+                    "{refused:?}"
+                );
+                assert!(
+                    !tree
+                        .shortcuts()
+                        .any(|offered| offered.word == shortcut.word)
+                );
+                let top = tree.help_top();
+                let listed = top
+                    .split("Shortcuts:")
+                    .nth(1)
+                    .unwrap()
+                    .lines()
+                    .any(|row| row.split_whitespace().next() == Some(shortcut.word));
+                assert!(!listed, "{}", shortcut.word);
+                continue;
+            }
             // A shortcut of one action takes that action's flags, and a
             // required one is given a value, as its refusal names it.
             let mut parsed = tree.parse(&line);
@@ -1461,20 +1444,13 @@ mod tests {
                 parsed = tree.parse(&line);
             }
             let parsed = parsed.unwrap();
-            let Parsed::Invoke(_, steps, stop) = parsed else {
+            let Parsed::Invoke(_, steps) = parsed else {
                 panic!("{parsed:?}");
             };
-            // Never a step that is not built, and never one after it.
+            // Every step, each built.
             let actions: Vec<&str> = steps.iter().map(|step| step.action.as_str()).collect();
-            let built: Vec<&str> = run.steps.iter().map(|step| step.action).collect();
-            assert_eq!(actions, built, "{}", shortcut.word);
-            assert_eq!(
-                stop.as_ref().map(|stop| stop.before),
-                run.stops_before,
-                "{}",
-                shortcut.word
-            );
-            assert_eq!(stop.map(|stop| stop.note), run.note, "{}", shortcut.word);
+            let all: Vec<&str> = shortcut.steps.iter().map(|step| step.action).collect();
+            assert_eq!(actions, all, "{}", shortcut.word);
         }
     }
 }

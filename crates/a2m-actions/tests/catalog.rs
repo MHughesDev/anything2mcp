@@ -14,7 +14,7 @@ use std::path::Path;
 
 use a2m_actions::{
     ActionRegistry, BuiltInToolset, Handler, PROCESS_COMMANDS, SHORTCUTS, command_faces, mcp_tools,
-    rest_routes, sdk_methods,
+    rest_routes, sdk_methods, shortcuts_offered,
 };
 
 fn document(relative: &str) -> String {
@@ -87,7 +87,12 @@ fn every_action_has_all_four_faces_and_they_share_its_name() {
     let routes = rest_routes(&registry);
     let methods = sdk_methods(&registry);
     assert_eq!(commands.len(), registry.len());
-    assert_eq!(methods.len(), registry.len());
+    // An action has its method from the build that gives it a handler
+    // (decision 0437, point 5).
+    assert_eq!(
+        methods.len(),
+        registry.iter().filter(|def| def.built()).count()
+    );
     for def in registry.iter() {
         let name = def.name.as_str();
         let (noun, verb) = name.split_once('.').unwrap();
@@ -107,11 +112,13 @@ fn every_action_has_all_four_faces_and_they_share_its_name() {
                 && route.path == format!("/api/v1/actions/{name}")
                 && !route.alias
         }));
-        let method = methods.iter().find(|face| face.action == name).unwrap();
-        assert_eq!(
-            (method.namespace.as_str(), method.method.as_str()),
-            (noun, verb)
-        );
+        if def.built() {
+            let method = methods.iter().find(|face| face.action == name).unwrap();
+            assert_eq!(
+                (method.namespace.as_str(), method.method.as_str()),
+                (noun, verb)
+            );
+        }
         // A summary whose first 240 characters choose the action.
         assert!(
             def.summary.len() >= 15 && def.summary.ends_with('.'),
@@ -146,6 +153,40 @@ fn every_action_has_all_four_faces_and_they_share_its_name() {
         .find(|route| route.path == "/api/v1/runs/{run_id}/resume")
         .unwrap();
     assert_eq!(resume.path_fields, ["run_id"]);
+}
+
+#[test]
+fn an_action_has_a_client_method_only_when_it_has_a_handler() {
+    // Decision 0437, point 5: an action with no handler is described with
+    // `x-sdk: false` and has no method in either client; when it gains a
+    // handler, it gains its method. The handler is the one place this is
+    // known.
+    let registry = ActionRegistry::kernel_only();
+    let routes = rest_routes(&registry);
+    let methods = sdk_methods(&registry);
+    let mut unbuilt = 0;
+    for def in registry.iter() {
+        let name = def.name.as_str();
+        let has = def.faces.sdk && def.built();
+        unbuilt += usize::from(!def.built());
+        for route in routes.iter().filter(|route| route.action == name) {
+            assert_eq!(route.sdk, has, "{} {}", route.method, route.path);
+        }
+        assert_eq!(
+            methods.iter().any(|face| face.action == name),
+            has,
+            "{name}"
+        );
+    }
+    // Every route of an action that answers `action_not_built` says false.
+    for route in routes.iter().filter(|route| route.sdk) {
+        let def = registry.find(&route.action).unwrap();
+        assert!(def.built(), "{} has `x-sdk` and no handler", route.action);
+    }
+    assert!(
+        unbuilt > 0,
+        "every action is built: this test proves nothing"
+    );
 }
 
 #[test]
@@ -225,7 +266,9 @@ fn the_shortcuts_and_process_commands_are_those_of_the_catalog_and_add_no_action
             words.insert(word.split_whitespace().next().unwrap().to_owned());
         }
     }
-    let ours: BTreeSet<String> = SHORTCUTS
+    // The table lists the shortcuts offered, those whose every step is
+    // built (decision 0456), and no other.
+    let ours: BTreeSet<String> = shortcuts_offered(&registry)
         .iter()
         .map(|shortcut| shortcut.word.to_owned())
         .collect();
@@ -310,5 +353,59 @@ fn no_action_without_a_handler_is_listed_up_front_and_the_trial_is() {
     );
     for built in ["capture.start", "capture.stop"] {
         assert!(build.iter().any(|name| name == built), "{built}");
+    }
+}
+
+#[test]
+fn a_shortcut_is_offered_once_its_last_step_is_built_in_the_catalog() {
+    // Asked of the recorded catalog: what is offered follows what each
+    // entry says is built, and nothing else.
+    let registry = ActionRegistry::kernel_only();
+    let catalog = registry.catalog();
+    let built_in = |catalog: &a2m_actions::Catalog, action: &str| {
+        catalog
+            .actions
+            .iter()
+            .any(|entry| entry.name == action && entry.built)
+    };
+    for shortcut in SHORTCUTS {
+        assert_eq!(
+            shortcut.offered_where(|action| built_in(&catalog, action)),
+            shortcut.offered(&registry),
+            "{}",
+            shortcut.word
+        );
+    }
+    let withheld: Vec<_> = SHORTCUTS
+        .iter()
+        .filter(|shortcut| !shortcut.offered(&registry))
+        .collect();
+    assert!(!withheld.is_empty(), "no shortcut waits for a step today");
+    for shortcut in withheld {
+        // The catalog as it will be once the steps it waits for are built:
+        // the shortcut is offered, with nothing else changed.
+        let mut later = catalog.clone();
+        for entry in &mut later.actions {
+            if shortcut.steps.iter().any(|step| step.action == entry.name) {
+                entry.built = true;
+            }
+        }
+        assert!(
+            shortcut.offered_where(|action| built_in(&later, action)),
+            "{}",
+            shortcut.word
+        );
+        // And not while one of them is still unbuilt.
+        let last = shortcut.steps.last().unwrap().action;
+        for entry in &mut later.actions {
+            if entry.name == last {
+                entry.built = false;
+            }
+        }
+        assert!(
+            !shortcut.offered_where(|action| built_in(&later, action)),
+            "{}",
+            shortcut.word
+        );
     }
 }

@@ -710,7 +710,15 @@ async fn the_openapi_document_describes_every_route_and_nothing_else() {
             .actions()
             .find(op["x-action"].as_str().unwrap())
             .unwrap();
-        assert_eq!(op["x-sdk"], Json::Bool(def.faces.sdk), "{method} {path}");
+        // An action with no handler has no method (decision 0437, point 5).
+        assert_eq!(
+            op["x-sdk"],
+            Json::Bool(def.faces.sdk && def.built()),
+            "{method} {path}"
+        );
+        if op["x-sdk"] == Json::Bool(true) {
+            assert!(def.built(), "{method} {path} has `x-sdk` and no handler");
+        }
         assert_eq!(body["error"]["class"], "input", "{method} {path}: {body}");
     }
     world.close().await;

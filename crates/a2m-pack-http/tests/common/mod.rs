@@ -624,7 +624,9 @@ pub fn schema_fits(schema: &serde_json::Value, value: &serde_json::Value) -> Res
     };
     for (word, rule) in words {
         match word.as_str() {
-            "description" | "title" => {}
+            // Words that say what a value is, and hold it to nothing: the
+            // untrusted mark tells an agent the text is data (decision 0460).
+            "description" | "title" | "x-anything2mcp-untrusted" => {}
             "type" => {
                 let kind = rule.as_str().unwrap_or_default();
                 let fits = match (kind, value) {

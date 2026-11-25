@@ -41,8 +41,7 @@ mkdir first-project && cd first-project
 # Make a project, point it at the test application, and let the scout
 # draft and try its reads. Nothing here writes to the application.
 anything2mcp init
-anything2mcp target add example --address http://127.0.0.1:4010/ --kind http
-anything2mcp scout run example        # prints its summary; `scout report example --json` has the whole report
+anything2mcp add example --address http://127.0.0.1:4010/ --kind http   # the target, the scout, and its report
 anything2mcp try example --tool example_api_orders_get --input '{"order_id": "A-100"}'
 ```
 
@@ -56,19 +55,16 @@ result:
 status: completed      (and a warning: this was a trial of a draft; nothing was published)
 ```
 
-To make that read a published tool: keep it, record its offline test from one real read (every value replaced by a made-up one), run the gates, promote its binding on that evidence, and ask for the publish.
+To make the proven reads published tools, one command does the rest: for each read a trial proved, it records an offline test from one real read (every value replaced by a made-up one), promotes the read's binding on that evidence, runs the gates, and asks a person to publish.
 
 ```sh
-for op in api_orders_list api_stock_get orders_delivery_get orders_items_get orders_totals_get; do
-  anything2mcp draft delete example --file operations/$op.yaml
-done
-anything2mcp fixture record example --tool example_api_orders_get --input '{"order_id": "A-100"}'
-anything2mcp test example             # passed: true; ten gates listed as not run
-anything2mcp binding promote example --tool example_api_orders_get --mode http
-anything2mcp publish example --version 1.0.0   # state: needs_person, and a link
+anything2mcp ready example
+# The read the scout could not prove is left alone, with its reason, and `next`
+# names the removal of its draft. Run that removal as given, then:
+anything2mcp ready example --version 1.0.0   # needs_person, and a link: only the person's press is left
 ```
 
-**This is where a run by hand stops on most machines.** The link opens a page that shows exactly what will be published and which gates ran. Pressing Carry out raises the operating system's presence prompt, and only a person passing it publishes. On a Linux desktop the prompt is polkit's, once an administrator has copied `crates/a2m-local/polkit/io.github.mhughesdev.anything2mcp.presence.policy` into `/usr/share/polkit-1/actions`. In a container or with no desktop, the page says that nothing on the machine can approve, and nothing is published: that is the design, not a fault. The macOS and Windows prompts are written and not yet run by a person, so a publish by hand there is untried. The whole flow, through the publish and `anything2mcp call example_api_orders_get`, is the test `crates/anything2mcp/tests/first_hour.rs`, which stands in for the prompt and runs on all three systems in CI.
+**This is where a run by hand stops on most machines.** The link opens a page that shows exactly what will be published and which gates ran. Pressing Carry out raises the operating system's presence prompt, and only a person passing it publishes. On a Linux desktop the prompt is polkit's, once an administrator has copied `crates/a2m-local/polkit/io.github.mhughesdev.anything2mcp.presence.policy` into `/usr/share/polkit-1/actions`. In a container or with no desktop, the page says that nothing on the machine can approve, and nothing is published: that is the design, not a fault. The macOS and Windows prompts are written and not yet run by a person, so a publish by hand there is untried. After the press, `anything2mcp ready example --version 1.0.0` again says the version is published, and `anything2mcp call example_api_orders_get --input '{"order_id": "A-100"}'` reads the order. The whole flow is the test `crates/anything2mcp/tests/ready.rs`, which stands in for the prompt and runs on all three systems in CI; each step `ready` takes is also an action of its own (`fixture record`, `test`, `binding promote`, `publish`), which the guidance file the project holds describes.
 
 `anything2mcp engine stop` stops the engine, `anything2mcp doctor` says what this machine lacks and how to fix it, and `anything2mcp config show` lists every setting and the layer that set it.
 

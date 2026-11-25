@@ -21,7 +21,7 @@
     reason = "a test file: a helper that cannot do its work stops the test"
 )]
 
-mod common;
+use crate::common;
 
 use std::path::Path;
 use std::time::Duration;

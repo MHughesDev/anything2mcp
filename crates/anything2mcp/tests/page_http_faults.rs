@@ -16,7 +16,7 @@
     reason = "a test file: a helper that cannot do its work stops the test"
 )]
 
-mod common;
+use crate::common;
 
 use a2m_actions::PresenceProof;
 use a2m_core::RunId;

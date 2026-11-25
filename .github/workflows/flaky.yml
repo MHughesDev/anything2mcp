@@ -1,0 +1,57 @@
+name: Flaky tests
+
+# The workspace's tests on Linux under CPU load, every night, with the test
+# programs that start engines, browsers, and child processes, or take locks,
+# run several times (decision 0452). Races that pass on an idle runner were
+# found this way by hand. No pull request or push starts it, so it is never a
+# check a pull request waits for; a failure names each test and its pass, and
+# no failing test is run again to make it pass.
+on:
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flaky-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  under-load:
+    name: Tests under load on ubuntu-latest
+    runs-on: ubuntu-latest
+    # The hour of runner time a night may take: the run's own time is 45
+    # minutes from its start, and setup and the build are inside it.
+    timeout-minutes: 60
+    steps:
+      # Pinned by commit; this is v7.0.1.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain pinned in rust-toolchain.toml
+        run: rustup toolchain install
+      # The dependencies CI's Linux build job stores; restored and never
+      # stored here.
+      # Pinned by commit; this is v6.1.0.
+      - name: Restore the compiled dependencies
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml') }}
+          restore-keys: deps-${{ runner.os }}-
+      # One busy process per processor while every program runs: the focus
+      # programs once and then four more times, the others once, starting
+      # from a different one each day, all within 45 minutes.
+      - name: Tests under load
+        shell: bash
+        run: python3 tools/flaky.py --repeat 4 --minutes 45

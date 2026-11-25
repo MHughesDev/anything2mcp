@@ -17,6 +17,7 @@ use a2m_core::{
 };
 use serde::Serialize;
 
+use crate::changes::VersionChanges;
 use crate::register::{AssertedField, AssertedRead};
 
 /// What the summary says of a binding whose pack does not state what it
@@ -175,6 +176,13 @@ pub struct ReviewSummary {
     /// such a request through for every read of its surface, whichever tool
     /// sends it (decision 0394, point 5).
     pub asserted: Vec<AssertedReview>,
+    /// What changed in each tool since the version in force, when one is
+    /// (decision 0439): a page shows the breaking ones first, before the
+    /// sign-ins, and each compatible change with its tool. None for a
+    /// target's first version, and until the registry compares
+    /// ([`ReviewSummary::compare_with`]): the compiler does not know what
+    /// is published.
+    pub changes: Option<VersionChanges>,
 }
 
 /// One asserted read, for the person who publishes.
@@ -612,7 +620,15 @@ impl ReviewSummary {
             items,
             sign_ins,
             asserted,
+            changes: self.changes.as_ref().map(|changes| changes.map_text(f)),
         }
+    }
+
+    /// States what changed in each tool from `published`, the version in
+    /// force, to `compiled_target`, the version this summary is of. The
+    /// caller is `a2m-actions`, which knows what is published.
+    pub fn compare_with(&mut self, published: &CompiledTarget, compiled_target: &CompiledTarget) {
+        self.changes = Some(crate::changes::changes_between(published, compiled_target));
     }
 
     /// States where a sign-in sends in one environment: the addresses the
@@ -932,6 +948,7 @@ pub(crate) fn review_of(
         items,
         sign_ins,
         asserted,
+        changes: None,
     }
 }
 

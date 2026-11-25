@@ -5,7 +5,7 @@
 //!
 //! | Step | What it does |
 //! | --- | --- |
-//! | `goto` | Finds the one window of the application with the screen's role and title, waiting for the application to signal one until the step's deadline |
+//! | `goto` | Finds the one window of the application with the screen's role and title (its placeholder, when it has one, filled with the input the step carries), waiting for the application to signal one until the step's deadline |
 //! | `wait` | Reads the window's tree, and again each time the application signals a change, until the screen's `ready` condition holds or the deadline passes; then, for a record with a key, proves the window shows that record |
 //! | `read` | Reads each field's value, or each column of the table as a list. A control that holds a secret is refused, never read |
 //! | `set` | Finds the field in a fresh walk, proves again the application's process, sets its whole text (on Linux through its editable-text interface, on Windows through UI Automation's value pattern, on macOS through its `AXValue`), and reads the field: a value the field does not hold as it was set stops the run before anything is saved |
@@ -42,7 +42,7 @@ use crate::backend::{App, AxError, Limits, Look};
 use crate::codes::{self, shown};
 use crate::lower::{
     COM_GET, GOTO, INTROSPECT, INVOKE, KEY_ARG, MANAGEMENT_GET, PROPERTY, READ, SCHEMA, SET,
-    SNAPSHOT, WAIT,
+    SNAPSHOT, TITLE_ARG, WAIT,
 };
 use crate::model::{
     Cond, PAYLOAD_FORMAT, PropertyStep, ReadStep, Screen, ScreenSection, SurfaceFields,
@@ -196,9 +196,25 @@ impl Held {
             .map_err(|error| unsent(&error, &self.program))
     }
 
-    async fn goto(&mut self, step: &Step, deadline: Deadline) -> Result<Observed, StepFailure> {
+    async fn goto(&mut self, step: &Step, input: &StepInput<'_>) -> Result<Observed, StepFailure> {
+        let deadline = input.deadline;
         let (name, screen) = self.screen(step)?;
         let (name, want) = (name.to_owned(), screen.window.clone());
+        // A title with a placeholder is filled with the input the step
+        // carries: the window is the one of exactly that title.
+        let value = step
+            .args
+            .iter()
+            .find(|arg| arg.name == TITLE_ARG)
+            .map(|arg| value_text(input.args.get(&arg.name)));
+        let title = match value {
+            Some(Some(value)) if value.chars().any(char::is_control) => None,
+            Some(value) => want.title_with(value.as_deref()),
+            None => want.title_with(None),
+        }
+        .ok_or_else(|| {
+            codes::not_usable("its window's title has a placeholder that no text fills")
+        })?;
         let mut watch = self
             .look
             .watch(&self.app)
@@ -212,7 +228,7 @@ impl Held {
                 .map_err(|error| unsent(&error, &self.program))?;
             let found: Vec<El> = windows
                 .into_iter()
-                .filter(|window| window.role == want.role && window.title == want.title)
+                .filter(|window| window.role == want.role && window.title == title)
                 .map(|window| window.el)
                 .collect();
             match found.len() {
@@ -297,9 +313,6 @@ impl Held {
             let rows = screen.rows.as_ref().ok_or_else(|| {
                 codes::not_usable(format!("the screen `{}` has no table", shown(name)))
             })?;
-            let table = tree
-                .one(&rows.locate)
-                .map_err(|miss| missed(miss, &format!("the table of `{}`", shown(name))))?;
             let mismatch = |why: &str| {
                 drift(
                     &codes::row::FINGERPRINT_MISMATCH,
@@ -307,38 +320,35 @@ impl Held {
                     "Take a snapshot of the window and correct the screen's `header`.",
                 )
             };
-            let mut header = None;
-            let mut body = Vec::new();
-            for row in &tree.nodes[table].children {
-                let row = &tree.nodes[*row];
-                if row.role != "table_row" {
-                    return Err(mismatch("holds something that is not a row"));
-                }
-                let cells: Vec<&Node> = row.children.iter().map(|at| &tree.nodes[*at]).collect();
-                if cells.iter().all(|cell| cell.role == "table_column_header") {
-                    if header.is_some() {
-                        return Err(mismatch("has more than one row of headings"));
+            let table = if rows.locate.is_empty() {
+                // A table found by its headings: when none shows them, a
+                // table whose rows cannot be read says why.
+                tree.table_headed(&rows.header).map_err(|miss| {
+                    let unread = tree
+                        .nodes
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, node)| node.role == "table")
+                        .find_map(|(at, _)| tree.table(at).err());
+                    match (miss, unread) {
+                        (Miss::None, Some(why)) => mismatch(why),
+                        (miss, _) => missed(miss, &format!("the table of `{}`", shown(name))),
                     }
-                    header = Some(
-                        cells
-                            .iter()
-                            .map(|cell| cell.name.clone())
-                            .collect::<Vec<_>>(),
-                    );
-                } else {
-                    body.push(cells);
-                }
-            }
-            if header.as_ref() != Some(&rows.header) {
+                })?
+            } else {
+                tree.one(&rows.locate)
+                    .map_err(|miss| missed(miss, &format!("the table of `{}`", shown(name))))?
+            };
+            let (header, body) = tree.table(table).map_err(mismatch)?;
+            if header != rows.header {
                 return Err(mismatch("does not show the headings it declares"));
             }
+            let body: Vec<Vec<&Node>> = body
+                .iter()
+                .map(|cells| cells.iter().map(|at| &tree.nodes[*at]).collect())
+                .collect();
             let mut columns: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
             for cells in &body {
-                if cells.len() != rows.header.len()
-                    || cells.iter().any(|cell| cell.role != "table_cell")
-                {
-                    return Err(mismatch("has a row without one cell under each heading"));
-                }
                 for item in &payload.columns {
                     let position = rows
                         .columns
@@ -428,7 +438,7 @@ impl Held {
             self.sections
                 .values()
                 .flat_map(|section| section.values())
-                .any(|screen| screen.window.role == role && screen.window.title == title)
+                .any(|screen| screen.window.role == role && screen.window.could_be(title))
         };
         if let Some(stranger) = windows
             .iter()
@@ -1067,6 +1077,15 @@ impl Held {
                     if node.secret {
                         one["secret"] = json!(true);
                     }
+                    // Whether a control gives its value as text, and how
+                    // many columns a table states it has: the shape, never
+                    // a value (decision 0462).
+                    if node.has_text && !node.secret {
+                        one["text"] = json!(true);
+                    }
+                    if let Some(columns) = node.columns {
+                        one["columns"] = json!(columns);
+                    }
                     one
                 })
                 .collect();
@@ -1233,7 +1252,7 @@ impl Driver for DesktopDriver {
                 .ok_or_else(|| codes::not_usable("it was prepared by another driver"))?;
             let deadline = input.deadline;
             let observed = if step.kind == GOTO {
-                held.goto(step, deadline).await?
+                held.goto(step, input).await?
             } else if step.kind == WAIT {
                 held.wait(step, input).await?
             } else if step.kind == READ {

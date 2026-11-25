@@ -12,7 +12,7 @@
     reason = "a test file: a helper that cannot do its work stops the test"
 )]
 
-mod common;
+use crate::common;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -216,9 +216,20 @@ impl Watching {
     /// any of them (see `common::tending`); the wait is bounded by
     /// [`CHECK_WAIT`] of real time.
     async fn checked(&self, by: Duration, ids: &[&str], checks: u64) {
+        // An engine opened again may already be making a check it found
+        // due: a running watch names no next due time, so the test waits,
+        // on the watch's own state and bounded by real time, until it
+        // stands waiting again before it reads where it stands.
+        let started = std::time::Instant::now();
         let mut before = Vec::new();
         for id in ids {
-            before.push(self.watch(id).await);
+            let mut watch = self.watch(id).await;
+            while watch["state"] == "running" && started.elapsed() < CHECK_WAIT {
+                self.world.engine.kernel().tend().await;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                watch = self.watch(id).await;
+            }
+            before.push(watch);
         }
         self.clock.advance(by);
         let now = self.clock.now().as_unix_millis();

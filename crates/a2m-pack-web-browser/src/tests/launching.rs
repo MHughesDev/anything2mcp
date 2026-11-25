@@ -427,3 +427,118 @@ async fn a_launch_dropped_after_its_program_started_is_stopped_by_the_shutdown()
     // no subsystem and no process is left.
     stand.end().await;
 }
+
+/// The program in this crate's examples that stops as a browser does when
+/// it cannot make its sandbox, built by `cargo test` into the `examples`
+/// folder of the build profile this test runs from.
+fn stops_as_it_starts() -> PathBuf {
+    let name = format!("stops_as_it_starts{}", std::env::consts::EXE_SUFFIX);
+    let this = std::env::current_exe().unwrap();
+    let program = this
+        .ancestors()
+        .map(|folder| folder.join("examples").join(&name))
+        .find(|program| program.is_file());
+    let program = program.unwrap_or_else(|| {
+        panic!(
+            "no `examples/{name}` above {}: run the tests with `cargo test`, which builds the examples",
+            this.display()
+        )
+    });
+    a2m_provider::resolved_path(&program).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_that_stops_as_it_starts_is_named_with_what_it_wrote() {
+    // As a browser that cannot make its sandbox, run as root or under a
+    // filter that refuses user namespaces: it writes why to its log file
+    // and exits before it answers.
+    let program = stops_as_it_starts();
+    let planted = "secret-for-tests-stop-line";
+    let mut settings = BrowserSettings::default().with_program(program.clone());
+    settings.environment_for_tests = vec![(
+        "STOP_LINE_FOR_TESTS".to_owned(),
+        format!("it also wrote {planted}").into(),
+    )];
+    let stand = Stand::with_redactor("stops", settings, &[&program], Arc::new(Knows(planted)));
+    let error = stand
+        .browsers
+        .open(&profile("clerk"), Visibility::Background)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, BrowserError::LaunchFailed(LaunchReason::Stopped(_))),
+        "{error}"
+    );
+    assert_eq!(error.dispatch(), Dispatch::NotSent);
+    let failure = error.failure().unwrap();
+    assert_eq!(
+        (failure.class(), failure.code()),
+        (FailureClass::Busy, &codes::BROWSER_STOPPED_AT_START)
+    );
+    // The browser's own words, its fatal line first, without the secret.
+    assert!(
+        failure.message().contains(
+            "It wrote: Zygote process exited prematurely with exit code 82 (setuid sandbox: failed to move to new namespaces); it also wrote [redacted]."
+        ),
+        "{}",
+        failure.message()
+    );
+    assert!(!format!("{failure:?}").contains(planted));
+    assert!(!error.to_string().contains(planted));
+    assert!(
+        failure.next_step().contains("sandbox"),
+        "{}",
+        failure.next_step()
+    );
+    // The program was closed, and a second open starts it again and reads
+    // only what that start wrote.
+    assert!(stand.supervisor.list().is_empty());
+    let again = stand
+        .browsers
+        .open(&profile("clerk"), Visibility::Background)
+        .await
+        .unwrap_err();
+    assert_eq!(again, error);
+    stand.end().await;
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_gone_before_its_first_request_is_written_is_named_with_what_it_wrote() {
+    // The other order of the same stop: the program has written its log
+    // and closed the end of its pipe it reads from before the engine
+    // writes its first request, so that write fails, and the engine never
+    // reads the pipe's end. The browser's words are shown all the same.
+    let program = stops_as_it_starts();
+    let mut settings = BrowserSettings::default().with_program(program.clone());
+    settings.environment_for_tests = vec![(
+        "STOP_ORDER_FOR_TESTS".to_owned(),
+        "read_end_closed_first".into(),
+    )];
+    settings.hear_before_first_request = true;
+    let stand = Stand::new("stops-unwritten", settings, &[&program]);
+    let error = stand
+        .browsers
+        .open(&profile("clerk"), Visibility::Background)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, BrowserError::LaunchFailed(LaunchReason::Stopped(_))),
+        "{error}"
+    );
+    let failure = error.failure().unwrap();
+    assert_eq!(
+        (failure.class(), failure.code()),
+        (FailureClass::Busy, &codes::BROWSER_STOPPED_AT_START)
+    );
+    assert!(
+        failure.message().contains(
+            "It wrote: Zygote process exited prematurely with exit code 82 (setuid sandbox: failed to move to new namespaces)."
+        ),
+        "{}",
+        failure.message()
+    );
+    // The program, which waited to be stopped, was stopped.
+    assert!(stand.supervisor.list().is_empty());
+    stand.end().await;
+}

@@ -1580,6 +1580,7 @@ fn the_act_page_shows_sign_ins_before_tools_and_escapes_and_hides_every_secret_v
             },
             says: a2m_files::ASSERTED_NOTICE,
         }],
+        changes: None,
     };
     let page = review_html(&review);
     let at = |text: &str| page.find(text).unwrap_or_else(|| panic!("{text}: {page}"));

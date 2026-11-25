@@ -28,7 +28,7 @@
     reason = "a test file: a helper that cannot do its work stops the test"
 )]
 
-mod common;
+use crate::common;
 
 use std::process::{Command, Output};
 use std::sync::Arc;
@@ -372,20 +372,25 @@ fn check_report(report: &Json) {
     // Case 36: the read that requires a parameter named as a secret is
     // reported as not drafted, with the finding's own words and the rule's
     // reason, and the report counts what was left out by name.
+    // The finding is listed once, with each reason its pack's rules gave:
+    // the read rule's, and the pinned description's rule's, that nothing
+    // was pinned (decision 0389; package 5.6c).
     let left = content["drafted"]["not_drafted"].as_array().unwrap();
-    let pickup = left
+    let pickups: Vec<&Json> = left
         .iter()
-        .find(|entry| {
-            // The read rule's entry: the pinned description's rule says of
-            // the same finding only that nothing was pinned (decision 0389).
-            entry["description"].to_string().contains("/pickup")
-                && !entry["reason"].to_string().contains("not pinned")
-        })
-        .unwrap_or_else(|| panic!("the pickup read is not in not_drafted: {report}"));
+        .filter(|entry| entry["description"].to_string().contains("/pickup"))
+        .collect();
+    assert_eq!(
+        pickups.len(),
+        1,
+        "the pickup read is not in not_drafted once: {report}"
+    );
+    let pickup = pickups[0];
     assert!(pickup["finding"].is_string(), "{pickup}");
     assert_eq!(pickup["pack"], "http", "{pickup}");
     let reason = pickup["reason"].as_str().unwrap();
     assert!(reason.contains("is a secret"), "{pickup}");
+    assert!(reason.contains("not pinned"), "{pickup}");
     assert!(
         content["drafted"]["left_out_as_secret"].as_u64().unwrap() >= 1,
         "{report}"

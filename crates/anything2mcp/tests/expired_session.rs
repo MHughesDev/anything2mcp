@@ -22,7 +22,7 @@
     reason = "a test file: a helper that cannot do its work stops the test"
 )]
 
-mod common;
+use crate::common;
 
 use std::process::{Command, Output};
 use std::sync::Arc;
@@ -58,7 +58,8 @@ auth:
 ";
 
 /// The name of the test that runs in the child process below.
-const CHILD: &str = "an_expired_session_returns_needs_login_on_the_display_it_is_given";
+const CHILD: &str =
+    "expired_session::an_expired_session_returns_needs_login_on_the_display_it_is_given";
 
 /// A presence prompt that a person passes.
 struct Passed;

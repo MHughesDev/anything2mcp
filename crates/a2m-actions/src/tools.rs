@@ -171,6 +171,28 @@ impl Kernel {
         Ok((compiled_targets, unreadable))
     }
 
+    /// The compiled target of `target`'s version in force, or `None` when
+    /// it has none.
+    ///
+    /// # Errors
+    ///
+    /// The store's failures, and a stored version that cannot be read.
+    pub(crate) async fn current_compiled_target(
+        &self,
+        target: &TargetName,
+    ) -> Result<Option<Arc<CompiledTarget>>, Failure> {
+        let workspace = self.installation()?.workspace;
+        let named = target.clone();
+        let current = self
+            .store()?
+            .read(move |tx| tx.versions().current(&workspace, &named))
+            .await?;
+        match current {
+            None => Ok(None),
+            Some(hash) => self.compiled_target_by_hash(target, &hash).await.map(Some),
+        }
+    }
+
     /// Which tools of `compiled_target`, published for `target`, the drift
     /// marks of the target make unavailable now (decision 0396), each with
     /// why. Read when tools are listed or described.

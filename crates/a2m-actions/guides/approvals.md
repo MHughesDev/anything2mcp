@@ -36,7 +36,7 @@ A hazard raises the approval an effect asks for. It never lowers it.
 
 `publish.request` asks for review. It answers `needs_person` with a link to a page: give the person the link and stop. The page shows exactly what will be published: the target, the version, the hash of the compiled target the drafts compile to, and what each tool may do, the most dangerous first. The person presses Carry out and answers the computer's own prompt; only then is the version published, once, as the person. If the drafts change before the press, nothing is published. Call `publish.request` again afterwards to be told what was done. Only a person publishes. You cannot, and you cannot change a version once published.
 
-Not shown yet: what changed since the last version (new surfaces and destinations, effects that rose, changed identity and read-back, expressions, and descriptions), which needs `version.diff`.
+When a version is in force, the page shows, right after where it leads, each tool whose change breaks an agent that calls it as it was, and why: a tool gone, an input gone or now required, a type changed or its words narrowed, an output gone or now possibly absent, the effect risen, the hazard added or changed, the record's key changed. The answer names the same under `breaking`. Nothing is refused for it: tell the person, and let them decide. `version.diff` gives the same classification for any two published versions. Not shown yet: changed read-back, expressions, and steps.
 
 ## Decision points
 

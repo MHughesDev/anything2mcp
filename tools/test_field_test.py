@@ -693,5 +693,281 @@ class Expectations(unittest.TestCase):
         self.assertIsNone(field_test.kept(answer, "result.nothing"))
 
 
+PINNED = "example/browser-box@sha256:" + "1" * 64
+
+
+def masked_eq_allows(rule, flags):
+    """Whether one argument rule of a filter lets a call with these flags through."""
+    arg = rule["args"][0]
+    return flags & arg["value"] == arg["valueTwo"]
+
+
+class BoxOptions(unittest.TestCase):
+    def test_without_options_the_box_is_as_it_was(self):
+        box = field_test.box_options(SYSTEM, "0:0")
+        self.assertEqual(box, {"image": field_test.BOX_IMAGE, "user": "0:0", "filter": None})
+        argv = field_test.Run("example", token="abc").box_argv("/b", "/h", "/p", box["user"])
+        self.assertNotIn("--security-opt", argv)
+        self.assertEqual(argv[-3:], [field_test.BOX_IMAGE, "sleep", "infinity"])
+
+    def test_a_box_image_is_named_by_its_digest_and_no_other_way(self):
+        for image in ("example/browser-box:latest", "example/browser-box", "example/b@sha256:" + "1" * 63,
+                      "example/b@sha256:" + "A" * 64, "example/b@sha256:" + "1" * 64 + " --privileged", 7):
+            with self.assertRaises(field_test.CannotRun, msg=image):
+                field_test.box_options({**SYSTEM, "box_image": image}, "0:0")
+        self.assertEqual(field_test.box_options({**SYSTEM, "box_image": PINNED}, "0:0")["image"], PINNED)
+
+    def test_a_box_user_is_numbers_and_never_root(self):
+        for user in ("0:0", "0:1201", "seluser", "1200", "1200:", "root:root", "1200:1201 --privileged", 1200):
+            with self.assertRaises(field_test.CannotRun, msg=user):
+                field_test.box_options({**SYSTEM, "box_user": user}, "0:0")
+        self.assertEqual(field_test.box_options({**SYSTEM, "box_user": "1200:1201"}, "0:0")["user"], "1200:1201")
+
+    def test_only_a_runner_that_is_root_hands_the_box_to_another_user(self):
+        with self.assertRaises(field_test.CannotRun):
+            field_test.box_options({**SYSTEM, "box_user": "1200:1201"}, "1000:1000")
+        self.assertEqual(field_test.box_options({**SYSTEM, "box_user": "1000:1000"}, "1000:1000")["user"], "1000:1000")
+
+    def test_a_filter_is_a_name_of_the_runner_s_own_list_and_never_unconfined(self):
+        for name in ("unconfined", "/tmp/profile.json", "default", {"syscalls": []}, ""):
+            with self.assertRaises(field_test.CannotRun, msg=name):
+                field_test.box_options({**SYSTEM, "box_user": "1200:1201", "box_seccomp": name}, "0:0")
+        self.assertEqual(list(field_test.BOX_FILTERS), ["browser_sandbox"])
+
+    def test_the_browser_filter_is_refused_to_a_box_whose_user_is_root(self):
+        with self.assertRaises(field_test.CannotRun):
+            field_test.box_options({**SYSTEM, "box_seccomp": "browser_sandbox"}, "0:0")
+        box = field_test.box_options({**SYSTEM, "box_user": "1200:1201", "box_seccomp": "browser_sandbox"}, "0:0")
+        self.assertEqual(box["filter"], "browser_sandbox")
+
+    def test_the_default_filter_kept_here_is_the_one_the_runner_was_written_for(self):
+        import hashlib
+        raw = Path(field_test.SECCOMP_DEFAULT).read_bytes()
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), field_test.SECCOMP_DEFAULT_SHA256)
+        self.assertEqual(json.loads(raw)["defaultAction"], "SCMP_ACT_ERRNO")
+
+    def test_a_changed_default_filter_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            changed = Path(folder, "default.json")
+            profile = json.loads(Path(field_test.SECCOMP_DEFAULT).read_text())
+            profile["defaultAction"] = "SCMP_ACT_ALLOW"
+            changed.write_text(json.dumps(profile))
+            with self.assertRaises(field_test.CannotRun):
+                field_test.box_filter("browser_sandbox", str(changed))
+
+    def test_the_browser_filter_is_the_default_and_two_rules_and_nothing_else(self):
+        default = json.loads(Path(field_test.SECCOMP_DEFAULT).read_text())
+        profile = field_test.box_filter("browser_sandbox")
+        self.assertEqual({k: v for k, v in profile.items() if k != "syscalls"},
+                         {k: v for k, v in default.items() if k != "syscalls"})
+        self.assertEqual(profile["syscalls"][: len(default["syscalls"])], default["syscalls"])
+        added = profile["syscalls"][len(default["syscalls"]):]
+        self.assertEqual([rule["names"] for rule in added], [["clone"], ["unshare"]])
+        for rule in added:
+            self.assertEqual(rule["action"], "SCMP_ACT_ALLOW")
+            self.assertEqual(rule["args"][0]["op"], "SCMP_CMP_MASKED_EQ")
+
+    def test_clone_may_make_only_the_sandbox_s_three_namespaces_and_unshare_only_a_user_one(self):
+        clone, unshare = field_test.BOX_FILTERS["browser_sandbox"]
+        user, pid, net = field_test.CLONE_NEWUSER, field_test.CLONE_NEWPID, field_test.CLONE_NEWNET
+        others = {"mount": 0x00020000, "cgroup": 0x02000000, "uts": 0x04000000, "ipc": 0x08000000}
+        sigchld = 17
+        self.assertTrue(masked_eq_allows(clone, user | pid | net | sigchld))
+        self.assertTrue(masked_eq_allows(clone, sigchld))
+        for name, flag in others.items():
+            self.assertFalse(masked_eq_allows(clone, user | pid | net | flag), name)
+        self.assertTrue(masked_eq_allows(unshare, user))
+        for flag in (pid, net, *others.values()):
+            self.assertFalse(masked_eq_allows(unshare, user | flag), hex(flag))
+
+    def test_the_box_carries_its_image_filter_and_user_and_never_its_entry_point(self):
+        run = field_test.Run("example", token="abc")
+        run.box_image = PINNED
+        run.box_security = ["--security-opt", "seccomp=/runs/box-seccomp.json"]
+        argv = run.box_argv("/b", "/h", "/p", "1200:1201")
+        self.assertEqual(argv[-3:], [PINNED, "sleep", "infinity"])
+        self.assertEqual(flag_value(argv, "--entrypoint"), "")
+        self.assertEqual(flag_value(argv, "--security-opt"), "seccomp=/runs/box-seccomp.json")
+        self.assertEqual(flag_value(argv, "--user"), "1200:1201")
+        for wider in ("--privileged", "--cap-add", "seccomp=unconfined", "--userns"):
+            self.assertNotIn(wider, " ".join(argv))
+
+    def test_a_recipe_that_switches_the_sandbox_off_is_found_in_its_text_and_its_files(self):
+        self.assertEqual(field_test.sandbox_off_in({"steps": [{"a2m": ["init"]}]}), [])
+        for flag in field_test.SANDBOX_OFF:
+            self.assertTrue(field_test.sandbox_off_in({"steps": [{"a2m": ["x", flag]}]}), flag)
+        with tempfile.TemporaryDirectory() as recipe:
+            Path(recipe, "wrapper").write_text('#!/bin/sh\nexec /opt/google/chrome/chrome --no-sandbox "$@"\n')
+            flags = field_test.file_mounts({"/opt/wrapper": "wrapper"}, recipe)
+            found = field_test.sandbox_off_in({}, field_test.mounted_files(flags))
+            self.assertEqual(len(found), 1)
+            self.assertIn("--no-sandbox", found[0])
+
+    def test_the_sandbox_check_passes_only_on_renderers_each_in_their_own_namespace(self):
+        verdict = field_test.sandboxed_verdict
+        self.assertTrue(verdict(0, "A2M_RENDERERS 3 SHARING_THE_BOX_NAMESPACE 0")[0])
+        self.assertFalse(verdict(0, "A2M_RENDERERS 0 SHARING_THE_BOX_NAMESPACE 0")[0])
+        self.assertFalse(verdict(0, "A2M_RENDERERS 3 SHARING_THE_BOX_NAMESPACE 1")[0])
+        self.assertFalse(verdict(0, "A2M_SANDBOX_OFF chrome\nA2M_RENDERERS 3 SHARING_THE_BOX_NAMESPACE 0")[0])
+        self.assertFalse(verdict(0, "")[0])
+        self.assertFalse(verdict(1, "A2M_RENDERERS 3 SHARING_THE_BOX_NAMESPACE 0")[0])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the check reads /proc")
+    def test_the_sandbox_check_s_script_gives_a_verdict(self):
+        done = subprocess.run(["sh", "-c", field_test.sandboxed_script()], capture_output=True, text=True, check=False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertRegex(done.stdout, r"A2M_RENDERERS \d+ SHARING_THE_BOX_NAMESPACE \d+")
+        self.assertNotIn("readlink", done.stdout, "the check found its own text")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the check reads /proc")
+    def test_the_sandbox_check_finds_a_flag_as_a_whole_argument_only(self):
+        def shown(flag):
+            process = subprocess.Popen(["sh", "-c", "sleep 30", "a2m-test-process", flag])
+            try:
+                done = subprocess.run(["sh", "-c", field_test.sandboxed_script()], capture_output=True, text=True, check=False)
+            finally:
+                process.kill()
+                process.wait()
+            return [line for line in done.stdout.splitlines() if "a2m-test-process" in line]
+        self.assertEqual(len(shown("--no-sandbox")), 1)
+        self.assertEqual(len(shown("--no-zygote")), 1)
+        self.assertEqual(shown("--no-zygote-sandbox"), [])
+
+    def test_a_sandboxed_step_needs_the_box(self):
+        with self.assertRaises(field_test.CannotRun):
+            field_test.do_step({"sandboxed": {}}, {"project": "/p"}, {}, field_test.Run("example", token="abc"))
+
+    def test_the_engine_s_home_and_the_project_are_given_to_the_box_s_user(self):
+        import os
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder, "a", "b").mkdir(parents=True)
+            Path(folder, "a", "b", "file").write_text("x")
+            user = f"{os.getuid()}:{os.getgid()}"
+            seen = []
+            with mock.patch.object(field_test.os, "chown", lambda path, uid, gid, **_: seen.append((path, uid, gid))):
+                field_test.give_to([folder], "1200:1201")
+            self.assertEqual(len(seen), 4)
+            self.assertTrue(all(entry[1:] == (1200, 1201) for entry in seen))
+            field_test.give_to([folder], user)
+
+
+DESKTOP = {"kind": "desktop", "box_image": "example/desktop-box@sha256:" + "2" * 64, "box_user": "1200:1201",
+           "box_desktop": {"application": ["/usr/bin/example-desk", "--orders", "1001"]}}
+
+
+class DesktopSession(unittest.TestCase):
+    """The box's desktop session (decision 0459)."""
+
+    def box(self, system, runner="0:0"):
+        return field_test.desktop_options(system, field_test.box_options(system, runner))
+
+    def test_without_it_the_box_has_no_session_and_its_commands_no_display(self):
+        self.assertIsNone(self.box(SYSTEM))
+        run = field_test.Run("example", token="abc")
+        self.assertNotIn(field_test.BOX_DESKTOP_SESSION, " ".join(run.box_argv("/b", "/h", "/p", "0:0")))
+        argv = run.exec_argv({"A2M_HOME": "/h"}, "/p", ["init"])
+        self.assertNotIn("DISPLAY", " ".join(argv))
+        self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", " ".join(argv))
+
+    def test_an_application_is_an_argument_list_from_an_absolute_program(self):
+        self.assertEqual(self.box(DESKTOP), {"application": DESKTOP["box_desktop"]["application"]})
+        for spec in ({"application": []}, {"application": "/usr/bin/example-desk"}, {"application": ["example-desk"]},
+                     {"application": ["/usr/bin/../bin/sh"]}, {"application": ["/usr/bin/example-desk", 7]},
+                     {"application": ["/usr/bin/example-desk", ""]}, {"application": ["/usr/bin/x"], "env": {"A": "b"}},
+                     ["/usr/bin/example-desk"], {}):
+            with self.assertRaises(field_test.CannotRun, msg=spec):
+                self.box({**DESKTOP, "box_desktop": spec})
+
+    def test_a_session_needs_an_image_of_its_own_and_a_user_that_is_not_root(self):
+        for drop in ("box_image", "box_user"):
+            with self.assertRaises(field_test.CannotRun, msg=drop):
+                self.box({key: value for key, value in DESKTOP.items() if key != drop})
+        with self.assertRaises(field_test.CannotRun):
+            self.box({**DESKTOP, "box_user": "0:0"})
+        with self.assertRaises(field_test.CannotRun):
+            self.box({"kind": "desktop", "box_image": DESKTOP["box_image"], "box_user": "1200:1201"})
+
+    def test_the_session_adds_one_read_only_file_to_the_box_and_nothing_wider(self):
+        plain, desk = field_test.Run("example", token="abc"), field_test.Run("example", token="abc")
+        for run in (plain, desk):
+            run.box_image = DESKTOP["box_image"]
+        desk.desktop = self.box(DESKTOP)
+        before = plain.box_argv("/b", "/h", "/p", "1200:1201")
+        after = desk.box_argv("/b", "/h", "/p", "1200:1201")
+        at = after.index(f"{field_test.DESKTOP_SESSION}:{field_test.BOX_DESKTOP_SESSION}:ro")
+        self.assertEqual(after[at - 1], "-v")
+        self.assertEqual(after[: at - 1] + after[at + 1:], before)
+        for wider in ("--privileged", "--cap-add", "--device", "--ipc", "--security-opt", "/tmp/.X11-unix",
+                      "/run/user", "--userns", "DISPLAY", "DBUS"):
+            self.assertNotIn(wider, " ".join(after), wider)
+
+    def test_the_harness_and_each_command_get_the_session_s_display_and_bus_only(self):
+        run = field_test.Run("example", token="abc")
+        run.desktop = self.box(DESKTOP)
+        for argv in (run.exec_argv({"A2M_HOME": "/h"}, "/p", ["init"]), run.harness_argv({"A2M_HOME": "/h"}, "/p")):
+            given = [argv[i + 1] for i, part in enumerate(argv) if part == "-e"]
+            self.assertEqual(sorted(given), sorted(["A2M_HOME=/h", "DISPLAY=:99",
+                                                    "DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/a2m-desktop/bus"]))
+
+    def test_the_session_starts_once_detached_and_waits_for_the_application_on_the_bus(self):
+        run = field_test.Run("example", token="abc")
+        run.desktop = self.box(DESKTOP)
+        calls, answers = [], iter([0, 1, 1, 0])
+        run.start_desktop(execute=lambda argv: calls.append(argv) or (next(answers), "", ""), pause=lambda _: None)
+        self.assertTrue(run.desktop_up)
+        self.assertEqual(calls[0][:3], ["docker", "exec", "-d"])
+        self.assertEqual(calls[0][-5:], [field_test.BOX_DESKTOP_SESSION, "start", *DESKTOP["box_desktop"]["application"]])
+        self.assertEqual([argv[-2:] for argv in calls[1:]], [["ready", "/usr/bin/example-desk"]] * 3)
+        self.assertNotIn("--user", " ".join(calls[0]), "the session runs as the box's own user")
+        run.start_desktop(execute=lambda argv: calls.append(argv) or (0, "", ""))
+        self.assertEqual(len(calls), 4, "a session starts once")
+
+    def test_an_application_that_never_reaches_the_bus_stops_the_run_by_name(self):
+        run = field_test.Run("example", token="abc")
+        run.desktop = self.box(DESKTOP)
+        now = [0.0]
+        def clock():
+            now[0] += 10
+            return now[0]
+        def execute(argv):
+            if "start" in argv:
+                return 0, "", ""
+            if "ready" in argv:
+                return 1, "", ""
+            return 0, "a2m-desktop: the display did not start", ""
+        with self.assertRaises(field_test.CannotRun) as stop:
+            run.start_desktop(execute=execute, wait=30, clock=clock, pause=lambda _: None)
+        self.assertIn("desktop_not_ready", str(stop.exception))
+        self.assertIn("the display did not start", str(stop.exception))
+        self.assertFalse(run.desktop_up)
+
+    def test_a_desktop_step_needs_the_session(self):
+        with self.assertRaises(field_test.CannotRun):
+            field_test.do_step({"desktop": {}}, {"project": "/p"}, {}, field_test.Run("example", token="abc"))
+
+    def test_a_desktop_recipe_is_held_to_the_box_s_refusals(self):
+        recipe = {"system": {**DESKTOP, "box_desktop": {"application": ["/usr/bin/example-desk", "--no-sandbox"]}}}
+        self.assertTrue(field_test.sandbox_off_in(recipe))
+        with self.assertRaises(field_test.CannotRun):
+            self.box({**DESKTOP, "box_seccomp": "unconfined"})
+
+    def test_the_session_script_names_no_application_and_listens_on_no_tcp_port(self):
+        text = Path(field_test.DESKTOP_SESSION).read_text()
+        self.assertIn("-nolisten tcp", text)
+        self.assertIn('exec "$@"', text)
+        self.assertNotIn("--listen", text)
+        self.assertNotIn("tcp:", text)
+        for start in ("Xvfb", "dbus-daemon", "at-spi-bus-launcher"):
+            self.assertIn(start, text)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the script is a POSIX shell's")
+    def test_the_session_script_refuses_root_and_a_bad_call(self):
+        done = subprocess.run(["sh", field_test.DESKTOP_SESSION], capture_output=True, text=True, check=False)
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("usage", done.stderr)
+        done = subprocess.run(["sh", "-n", field_test.DESKTOP_SESSION], capture_output=True, text=True, check=False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

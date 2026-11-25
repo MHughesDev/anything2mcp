@@ -3352,3 +3352,63 @@ fn a_url_input_compiles_with_a_destination_and_keeps_its_type_by_name() {
         Level::Error
     );
 }
+
+/// The digest of the `example` target's order read, held here so that each
+/// of the three CI systems compares its own to the same value (package
+/// YL2): the canonical JSON it is the hash of carries nothing of a machine.
+const ORDER_GET_DIGEST: &str = "d2ae486e5d83ab7f558b20639203d68e8c3bac25b64f618c86b02dd8892f124b";
+
+/// Decisions 0325 and 0439: a tool's digest is one value for one
+/// definition, the same under another version number, and another when its
+/// description changes; the output of a field type marked untrusted carries
+/// `x-anything2mcp-untrusted: true` in the output schema, and an output of
+/// one that is not marked carries no such key.
+#[test]
+fn a_tools_digest_follows_its_definition_and_the_systems_words_are_marked() {
+    let digest_of = |compiled: &Compiled| {
+        let tool = compiled
+            .compiled_target
+            .tools
+            .iter()
+            .find(|tool| tool.name.as_str() == "example_order_get")
+            .unwrap();
+        crate::tool_digest(tool).unwrap().to_string()
+    };
+    let first = compiled();
+    assert_eq!(digest_of(&first), ORDER_GET_DIGEST);
+
+    let set = stand_set().unwrap();
+    let sources = load(&example_root(), &set).unwrap_or_else(|problems| panic!("{problems}"));
+    let later = compile(&sources, &set, CompileMode::Publish, Version::new(7, 1, 0))
+        .unwrap_or_else(|problems| panic!("{problems}"));
+    assert_ne!(later.encoded.hash, first.encoded.hash);
+    assert_eq!(digest_of(&later), ORDER_GET_DIGEST);
+
+    let reworded = compiled_target_with(&[Case::Edit(
+        ORDER_GET,
+        "Reads the status, the total, and the note of one order.",
+        "Reads the status, the total, and the note of an order.",
+    )]);
+    assert_ne!(digest_of(&reworded), ORDER_GET_DIGEST);
+
+    let tool = first
+        .compiled_target
+        .tools
+        .iter()
+        .find(|tool| tool.name.as_str() == "example_order_get")
+        .unwrap();
+    let schema: serde_json::Value = serde_json::from_slice(tool.output_schema.as_bytes()).unwrap();
+    assert_eq!(
+        schema["properties"]["note"][crate::UNTRUSTED_MARK],
+        true,
+        "{schema}"
+    );
+    for plain in ["status", "total"] {
+        assert!(
+            schema["properties"][plain]
+                .get(crate::UNTRUSTED_MARK)
+                .is_none(),
+            "{schema}"
+        );
+    }
+}
