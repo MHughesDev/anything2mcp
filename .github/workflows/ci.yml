@@ -792,6 +792,18 @@ jobs:
           exit 0
       - name: Test the desktop pack against its stand
         run: cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop
+      # The writes again, alone, so that the log shows they ran here: the
+      # tests of tests/write.rs that use the faults the stand builds on this
+      # system, and the stand's child (decision 0399). A filter or a gate that
+      # leaves one out is not a pass. With A2M_REQUIRE_DESKTOP a skip is
+      # already a failure; the count holds the number of tests that ran.
+      - name: Test the desktop pack's writes against its stand, and count them
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop --test write 2>&1 | tee write-tests.log
+          grep -q "test result: ok. 7 passed; 0 failed; 0 ignored" write-tests.log
 
   desktop-macos:
     name: The desktop pack on macOS, against its stand
@@ -882,3 +894,15 @@ jobs:
         run: cargo test --locked -p example-desk --test stand -- a_machine_without_the_programs_skips_unless_required --nocapture
       - name: Test the desktop pack against its stand
         run: cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop
+      # The writes again, alone, so that the log shows they ran here: the
+      # tests of tests/write.rs that use the faults the stand builds on this
+      # system, and the stand's child (decision 0399). A filter or a gate that
+      # leaves one out is not a pass. With A2M_REQUIRE_DESKTOP a skip is
+      # already a failure; the count holds the number of tests that ran.
+      - name: Test the desktop pack's writes against its stand, and count them
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked --no-fail-fast -p example-desk -p a2m-pack-desktop --test write 2>&1 | tee write-tests.log
+          grep -q "test result: ok. 7 passed; 0 failed; 0 ignored" write-tests.log
