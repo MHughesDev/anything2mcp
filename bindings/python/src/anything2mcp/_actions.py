@@ -30,6 +30,7 @@ ACTIONS = (
     "capture.start",
     "capture.stop",
     "client.connect",
+    "component.list",
     "config.show",
     "discover.run",
     "docs.get",
@@ -75,6 +76,7 @@ ACTIONS = (
     "run.get",
     "run.list",
     "run.resume",
+    "run.trace",
     "scout.report",
     "scout.run",
     "secret.set",
@@ -99,10 +101,12 @@ ACTIONS = (
     "toolset.list",
     "toolset.remove",
     "toolset.update",
+    "trace.export",
     "trace.show",
     "unknown.list",
     "version.diff",
     "version.publish",
+    "version.rollback",
     "watch.changes",
     "watch.confirm",
     "watch.create",
@@ -327,6 +331,14 @@ class Actions:
             },
             idempotency_key,
         )
+
+    def component_list(self, *, idempotency_key: Optional[str] = None) -> "Response":
+        """The outside programs providers need: found or not, with path and digest,
+        known or unverified. Starts nothing.
+
+        The engine action is ``component.list``.
+        """
+        return self._action("component.list", {}, idempotency_key)
 
     def config_show(
         self,
@@ -1059,6 +1071,20 @@ class Actions:
             idempotency_key,
         )
 
+    def run_trace(
+        self,
+        *,
+        run_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """A summary of one of the caller's own runs' trace: each step's kind,
+        outcome, and time, with references to its kept captures, and never a
+        value.
+
+        The engine action is ``run.trace``.
+        """
+        return self._action("run.trace", {"run_id": run_id}, idempotency_key)
+
     def scout_report(
         self,
         *,
@@ -1564,6 +1590,21 @@ class Actions:
             idempotency_key,
         )
 
+    def trace_export(
+        self,
+        *,
+        run_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Export one run's evidence to one file in the project's working folder,
+        `.anything2mcp/exports/<run>.json`: its events, its step trace, and its
+        text captures, with a manifest that names each piece and what was left
+        out and why.
+
+        The engine action is ``trace.export``.
+        """
+        return self._action("trace.export", {"run_id": run_id}, idempotency_key)
+
     def trace_show(
         self,
         *,
@@ -1630,6 +1671,28 @@ class Actions:
                 "target": target,
                 "compiled_target_hash": compiled_target_hash,
                 "tools": tools,
+                "version": version,
+            },
+            idempotency_key,
+        )
+
+    def version_rollback(
+        self,
+        *,
+        target: str,
+        version: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Make another published version of a target the one that runs now: an
+        earlier one, or a later one again after a rollback. A person's act,
+        never an agent's.
+
+        The engine action is ``version.rollback``.
+        """
+        return self._action(
+            "version.rollback",
+            {
+                "target": target,
                 "version": version,
             },
             idempotency_key,

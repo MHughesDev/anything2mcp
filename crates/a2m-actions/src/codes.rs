@@ -139,6 +139,12 @@ a2m_core::failure_codes! {
     RUN_NOT_COMPLETED = Rejected, "run_not_completed",
         meaning "A run ended in a state other than completed, and carried no failure of its own.",
         next "Call `trace.show` with the run's identifier to see what happened.";
+    EXPORT_CHANGED = Stale, "export_changed",
+        meaning "`trace.export` wrote its file and, read back, the file did not hold what was written: something changed it in between.",
+        next "Export again, and let nothing else write in the project's working folder meanwhile.";
+    VERSION_MOVED = Stale, "version_moved",
+        meaning "`version.rollback` made its version current and stored that, and when it read the store back another version was current: a publish or a rollback came between.",
+        next "Call `target.status` to see which version is current, and roll back again if it is not the one wanted.";
 }
 
 pub(crate) fn stale(

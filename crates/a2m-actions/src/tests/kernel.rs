@@ -250,6 +250,15 @@ impl Options {
         }
     }
 
+    /// The defaults, with the store on disk, so that another connection
+    /// can hold its write lock.
+    pub(super) fn on_disk() -> Self {
+        Self {
+            place: StorePlace::Disk,
+            ..Self::default()
+        }
+    }
+
     /// The defaults, with a store on disk that cannot open: the kernel is
     /// stopped.
     pub(super) fn with_blocked_store() -> Self {

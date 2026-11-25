@@ -156,6 +156,42 @@ fn file_digest(path: &Path) -> Option<Digest> {
     crate::supervisor::digest_of(path).ok()
 }
 
+/// What the availability check finds of one outside program a provider
+/// needs (spec section 203), as `component.list` shows it: where it was
+/// found, its digest, and whether that digest is one the manifest knows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentState {
+    /// The first of the requirement's fixed places that holds a file, or
+    /// `None` when none does.
+    pub found: Option<PathBuf>,
+    /// The digest of the file found, when it could be read.
+    pub digest: Option<Digest>,
+    /// Whether the digest is one the manifest lists. False when the
+    /// manifest lists none, which takes any program found as unverified.
+    pub known: bool,
+}
+
+/// Looks for one requirement at its fixed places, in order, and takes the
+/// digest of what it finds. It starts nothing, and a place written for
+/// another operating system, which is not an absolute path here, is passed
+/// over rather than looked for in the engine's own working folder.
+#[must_use]
+pub fn component_state(needed: &crate::manifest::Requirement) -> ComponentState {
+    let found = needed
+        .paths
+        .iter()
+        .map(Path::new)
+        .find(|path| path.is_absolute() && path.is_file())
+        .map(Path::to_path_buf);
+    let digest = found.as_deref().and_then(file_digest);
+    let known = digest.is_some_and(|digest| needed.known_digests.contains(&digest));
+    ComponentState {
+        found,
+        digest,
+        known,
+    }
+}
+
 /// The availability check of spec section 203. It looks at the machine and
 /// starts nothing: this function has no way to reach the supervisor.
 fn availability(manifest: &Manifest) -> (Availability, String) {
@@ -170,20 +206,11 @@ fn availability(manifest: &Manifest) -> (Availability, String) {
         );
     }
     for needed in &manifest.requirements {
-        // A place written for another operating system is not an absolute
-        // path here; it would be looked for in the engine's own working
-        // folder, and is passed over.
-        let found = needed
-            .paths
-            .iter()
-            .map(Path::new)
-            .find(|path| path.is_absolute() && path.is_file());
-        let Some(found) = found else {
+        let state = component_state(needed);
+        if state.found.is_none() {
             return (Availability::ComponentMissing, needed.missing.clone());
-        };
-        if !needed.known_digests.is_empty()
-            && !file_digest(found).is_some_and(|digest| needed.known_digests.contains(&digest))
-        {
+        }
+        if !needed.known_digests.is_empty() && !state.known {
             return (
                 Availability::ComponentUnverified,
                 format!(
