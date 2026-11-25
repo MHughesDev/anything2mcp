@@ -28,6 +28,7 @@ mod identity;
 mod later;
 pub use later::EXPORT_MARKER;
 mod leaving;
+pub mod listed;
 mod openapi;
 pub mod own_requests;
 mod pages;
@@ -145,6 +146,7 @@ pub(crate) fn router_over(state: AppState) -> Router {
         .merge(commits::routes())
         .merge(later::routes())
         .merge(own_requests::routes())
+        .merge(listed::routes())
         .merge(forgery::routes())
         .merge(views::routes())
         .merge(answers::routes())
