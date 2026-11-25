@@ -228,6 +228,57 @@ fn watch_output() -> JsonSchema {
         .required("resource", text())
 }
 
+/// The fields that name what a repair bundle is of (decision 0999).
+const REPAIR_KNOWLEDGE: &str = "The knowledge a drift mark names, as `tool.describe` gives it under `unavailable.knowledge`: in the web pack a screen.";
+const REPAIR_NOW: &str = "The identifier of a finding of what the surface shows now, from `discover.run` and `finding.list`.";
+const REPAIR_BEFORE: &str = "The identifier of a finding of the same place from before the change, of the same kind, while the knowledge still fit. Without one, a pack's proposer may propose nothing.";
+
+/// A repair bundle, as `repair.propose` returns it (decision 0999).
+fn repair_output() -> JsonSchema {
+    let shape = JsonSchema::object()
+        .required("finding", text())
+        .required("shape", any_map());
+    JsonSchema::object()
+        .required("target", text())
+        .required("knowledge", text())
+        .required(
+            "drift",
+            JsonSchema::object()
+                .required("tool", text())
+                .required("mode", text())
+                .required("surface", text())
+                .required("code", text())
+                .required("run_id", text())
+                .required("marked_at", JsonSchema::int()),
+        )
+        .required(
+            "stops",
+            list_of(
+                JsonSchema::object()
+                    .required("tool", text())
+                    .required("mode", text()),
+            ),
+        )
+        .required("file_kind", text())
+        .required("files", list_of(text()))
+        .optional("before", shape.clone())
+        .required("now", shape)
+        .required("proposed", JsonSchema::bool())
+        .optional("reason", text())
+        .optional("file", text())
+        .optional("because", list_of(text()))
+        .optional(
+            "diff",
+            list_of(
+                JsonSchema::object()
+                    .required("line", JsonSchema::int())
+                    .required("before", text())
+                    .required("after", text()),
+            ),
+        )
+        .optional("proposal", text())
+}
+
 /// The words of a canary's state, as the scheduler keeps them.
 const CANARY_STATES: &[&str] = a2m_sched::CanaryState::NAMES;
 
@@ -902,6 +953,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .pos("target", TEXT, TARGET)
             .opt("surface", TEXT, "One surface. Every surface when left out.")
             .opt("files", MAP, "Files of the project's `inputs` folder to hand the discoverers, each under a name a discoverer reads, such as `description` for a published description of an interface: each name to the file's path from the project folder, such as `inputs/example-openapi.json`. Each is checked when asked and again before any discoverer runs, and is read only; no other file is.")
+            .opt("focus", MAP, "What to look at, by the names the surface's discoverers read, such as `paths` with a list of the surface's own paths for a web surface. Handed to them as data; a discoverer refuses what is not of its surface.")
             .long_running()
             .done(),
         act("finding.list", "Findings for a target, by level, kind, or source.", BUILDER, Build, "Stage E", List)
@@ -935,6 +987,25 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .opt("part", FieldType::Word(crate::handlers::scout_report::PARTS), "One list of the report to read whole, by its path in the report's content, such as `drafted.written`. The report with each list cut to its first entries when left out.")
             .opt("limit", COUNT, LIMIT)
             .opt("offset", OFFSET, OFFSET_HELP)
+            .done(),
+        // The repair bundle and its acceptance (decision 0999). Neither is
+        // listed: an agent reaches them through `action.run`.
+        act("repair.propose", "The repair bundle of a drift: the drift, the tools it stops, two shapes of the surface from findings of a discovery, before and now, the draft file that holds the knowledge, and the change the pack's repair proposer proposes, as a diff, or why it proposes none. Keeps nothing, and writes nothing.", BUILDER, No, "9", Inspect)
+            .pos("target", TEXT, TARGET)
+            .req("knowledge", TEXT, REPAIR_KNOWLEDGE)
+            .req("now", TEXT, REPAIR_NOW)
+            .opt("before", TEXT, REPAIR_BEFORE)
+            .output(repair_output())
+            .example(r#"{"target": "example", "knowledge": "line_item", "now": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0", "before": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"}"#)
+            .done(),
+        act("repair.accept", "Write a repair the pack proposed into the target's drafts, as `repair.propose` showed it. A person's act, carried out on the engine's page, never an agent's. The draft is linted, tested, and published like any other; nothing is published here.", Who::Person, No, "9", Change)
+            .pos("target", TEXT, TARGET)
+            .req("knowledge", TEXT, REPAIR_KNOWLEDGE)
+            .req("now", TEXT, REPAIR_NOW)
+            .opt("before", TEXT, REPAIR_BEFORE)
+            .req("proposal", TEXT, "The proposal's digest, as `repair.propose` gave it: the change written is exactly the one shown, or none.")
+            .writes()
+            .person(PersonNeed::Presence)
             .done(),
         // Publishing and versions.
         act("version.publish", "Publish a target's drafts, compiled, as an immutable version. A person's act, never an agent's.", PUBLISHER, No, "5", Change)

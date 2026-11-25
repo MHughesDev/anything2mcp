@@ -15,6 +15,7 @@ mod promote;
 mod provider;
 mod reach;
 mod ready;
+mod repairs;
 mod scout;
 pub(crate) mod scout_report;
 pub(crate) mod sessions;
@@ -127,6 +128,8 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "session.end" => sessions::session_end,
         "canary.create" => canaries::canary_create,
         "canary.confirm" => canaries::canary_confirm,
+        "repair.propose" => repairs::repair_propose,
+        "repair.accept" => repairs::repair_accept,
         "canary.get" => canaries::canary_get,
         "canary.list" => canaries::canary_list,
         "canary.end" => canaries::canary_end,

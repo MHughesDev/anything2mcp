@@ -297,6 +297,8 @@ fn a_tool_is_unavailable_when_every_binding_of_what_it_runs_is_stopped() {
         },
         entry: SCREEN.to_owned(),
         found_at,
+        code: "locator_not_found".to_owned(),
+        run: String::new(),
     };
     let marks = Marks::Read(vec![mark(5), mark(9)]);
     let stopped = unavailable(&compiled_target, &marks);
