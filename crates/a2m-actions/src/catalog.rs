@@ -711,6 +711,13 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .pos("target", TEXT, TARGET)
             .req("from", TEXT, "The earlier version.")
             .req("to", TEXT, "The later version.")
+            .output(JsonSchema::object()
+                .required("target", text())
+                .required("from", text())
+                .required("to", text())
+                .required("breaking", JsonSchema::int())
+                .required("tools", list_of(crate::def::tool_change_schema())))
+            .example(r#"{"target": "example", "from": "1.0.0", "to": "2.0.0"}"#)
             .done(),
         act("publish.request", "Submit a target's drafts for a person's review. Publishing itself is a person's act.", BUILDER, Build, "5", Change)
             .pos("target", TEXT, TARGET)

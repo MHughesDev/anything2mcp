@@ -851,8 +851,8 @@ pub(crate) mod review_shown {
 
     use a2m_core::AddressScope;
     use a2m_files::{
-        AssertedReview, BindingStates, ProbeReview, ProgramRun, Reach, ReachGroup, ReviewItem,
-        ReviewSummary, SentTo, SignInReview, VariableValue,
+        AssertedReview, BindingStates, Change, ProbeReview, ProgramRun, Reach, ReachGroup,
+        ReviewItem, ReviewSummary, SentTo, SignInReview, ToolChange, VariableValue, VersionChanges,
     };
 
     use super::escape;
@@ -1043,7 +1043,145 @@ pub(crate) mod review_shown {
         out
     }
 
-    fn tool_html(item: &ReviewItem) -> String {
+    /// One change to a tool, in the page's own words, from its typed
+    /// fields (decision 0439).
+    fn change_words(change: &Change) -> String {
+        match change {
+            Change::ToolGone => "the tool is gone: a call to it is refused".to_owned(),
+            Change::InputGone { input } => {
+                format!(
+                    "the input {} is gone or renamed: a call that gives it is refused",
+                    code(input)
+                )
+            }
+            Change::InputRequired { input } => format!(
+                "the input {} must now be given: a call without it is refused",
+                code(input)
+            ),
+            Change::InputTypeChanged { input, from, to } => format!(
+                "the input {} was a {} and is now a {}",
+                code(input),
+                code(from),
+                code(to)
+            ),
+            Change::InputWordsNarrowed { input, removed } => {
+                if removed.is_empty() {
+                    format!(
+                        "the input {} now takes only a fixed list of words",
+                        code(input)
+                    )
+                } else {
+                    format!(
+                        "the input {} no longer takes {}",
+                        code(input),
+                        codes(removed)
+                    )
+                }
+            }
+            Change::OutputGone { output } => {
+                format!("the output {} is gone", code(output))
+            }
+            Change::OutputMayBeAbsent { output } => format!(
+                "the output {} was always present and may now be absent",
+                code(output)
+            ),
+            Change::OutputTypeChanged { output, from, to } => format!(
+                "the output {} was a {} and is now a {}",
+                code(output),
+                code(from),
+                code(to)
+            ),
+            Change::EffectRose { from, to } => format!(
+                "its effect rose from {} to {}",
+                code(from.as_str()),
+                code(to.as_str())
+            ),
+            Change::HazardChanged { from, to } => format!(
+                "its hazard was {} and is now {}",
+                code(from.as_str()),
+                code(to.as_str())
+            ),
+            Change::KeyChanged { from, to } => format!(
+                "the inputs that name its record were {} and are now {}",
+                codes(from),
+                codes(to)
+            ),
+            Change::ToolAdded => "the tool is new".to_owned(),
+            Change::InputAdded { input } => {
+                format!("a new input {}, which a call may leave out", code(input))
+            }
+            Change::InputLoosened { input } => {
+                format!("the input {} may now be left out", code(input))
+            }
+            Change::InputWordsWidened { input, added } => {
+                format!("the input {} also takes {}", code(input), codes(added))
+            }
+            Change::OutputAdded { output } => format!("a new output {}", code(output)),
+            Change::OutputAlwaysPresent { output } => {
+                format!("the output {} is now always present", code(output))
+            }
+            Change::OutputWordsChanged {
+                output,
+                added,
+                removed,
+            } => format!(
+                "the words the output {} may hold changed: added {}, removed {}",
+                code(output),
+                codes(added),
+                codes(removed)
+            ),
+            Change::EffectLowered { from, to } => format!(
+                "its effect fell from {} to {}",
+                code(from.as_str()),
+                code(to.as_str())
+            ),
+            Change::HazardRemoved { from } => {
+                format!("its hazard {} is gone", code(from.as_str()))
+            }
+            Change::DescriptionChanged => "its description changed".to_owned(),
+            Change::DefinitionChanged => {
+                "something else a client reads in it changed, such as its title".to_owned()
+            }
+        }
+    }
+
+    fn changes_list(changes: &[Change]) -> String {
+        let mut out = String::from("<ul>");
+        for change in changes {
+            let _ = write!(out, "<li>{}.</li>", change_words(change));
+        }
+        out.push_str("</ul>");
+        out
+    }
+
+    /// Each tool whose change breaks an agent that calls it as it was,
+    /// with why: the first section of the page a person publishes from
+    /// (decisions 0439 and 0999). The publish is not refused.
+    pub(crate) fn breaking_html(changes: &VersionChanges) -> String {
+        let breaking: Vec<&ToolChange> = changes.breaking().collect();
+        if breaking.is_empty() {
+            return String::new();
+        }
+        let mut out = String::new();
+        let _ = write!(
+            out,
+            "<h2>What breaks</h2><p>Read these first. Compared with version {}, the version in force, each of these tools changes in a way that breaks an agent that calls it as it was. You may still publish.</p><ul>",
+            code(&changes.from.to_string()),
+        );
+        for tool in breaking {
+            let _ = write!(
+                out,
+                "<li><p><strong>{}</strong>:</p>",
+                code(tool.tool.as_str())
+            );
+            out.push_str(&changes_list(&tool.changes));
+            out.push_str("</li>");
+        }
+        out.push_str("</ul>");
+        out
+    }
+
+    fn tool_html(item: &ReviewItem, changes: Option<&VersionChanges>) -> String {
         let mut out = String::new();
         let _ = write!(
             out,
@@ -1054,6 +1192,19 @@ pub(crate) mod review_shown {
             item.commit_points,
             codes(&item.surfaces),
         );
+        // What changed since the version in force, where nothing breaks:
+        // a break is named in its own section, first.
+        if let Some((changes, tool)) = changes
+            .and_then(|changes| changes.of(&item.tool).map(|tool| (changes, tool)))
+            .filter(|(_, tool)| tool.class == a2m_files::ChangeClass::Compatible)
+        {
+            let _ = write!(
+                out,
+                "<p>Changed since version {}, and nothing that breaks:</p>",
+                code(&changes.from.to_string())
+            );
+            out.push_str(&changes_list(&tool.changes));
+        }
         // Where it sends, first.
         match &item.reach {
             Reach::Partly { known, says } => {
@@ -1223,7 +1374,7 @@ pub(crate) mod review_shown {
         if !review.items.is_empty() {
             out.push_str("<h2>What each tool may do</h2><p>The most dangerous first.</p><ul>");
             for item in &review.items {
-                out.push_str(&tool_html(item));
+                out.push_str(&tool_html(item, review.changes.as_ref()));
             }
             out.push_str("</ul>");
         }
@@ -1648,7 +1799,14 @@ fn act_html(ask: &PersonActAsk) -> (String, String) {
         // there; then the sign-ins and the tools; then the kernel's own
         // lines and the checks' warnings (decisions 0264 and 0413).
         Some(review) => {
-            let mut details = version_shown::version_html(&ask.surfaces, &[]);
+            // What breaks an agent that calls a tool as it was, first of
+            // all (decision 0999).
+            let mut details = review
+                .changes
+                .as_ref()
+                .map(review_shown::breaking_html)
+                .unwrap_or_default();
+            details.push_str(&version_shown::version_html(&ask.surfaces, &[]));
             details.push_str(&review_shown::review_html(review));
             details.push_str(&lines("<h2>Before you publish</h2>"));
             details.push_str(&version_shown::version_html(&[], &ask.warnings));

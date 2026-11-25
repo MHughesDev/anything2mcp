@@ -385,7 +385,37 @@ fn needs_person(ask: &PersonActAsk, link: &SurfaceLink, asked: &Map<String, Json
         "expires_at".to_owned(),
         json!(ask.expires_at.as_unix_millis()),
     );
-    Output::ok(Json::Object(result))
+    // A publish compared with the version in force names each tool whose
+    // change breaks its callers, as the page does first (decision 0439).
+    // The publish is not refused: the person decides on the page.
+    let mut warnings = Vec::new();
+    if let Some(changes) = ask
+        .review
+        .as_ref()
+        .and_then(|review| review.changes.as_ref())
+    {
+        let breaking: Vec<&a2m_files::ToolChange> = changes.breaking().collect();
+        result.insert("compared_with".to_owned(), json!(changes.from.to_string()));
+        result.insert(
+            "breaking".to_owned(),
+            serde_json::to_value(&breaking).unwrap_or_else(|_| json!([])),
+        );
+        if !breaking.is_empty() {
+            warnings.push(format!(
+                "This publish breaks {} of version `{}`'s tools for an agent that calls them as they were: {}. Each is under `breaking`, with why; the person sees them first on the page, and may still publish.",
+                breaking.len(),
+                changes.from,
+                breaking
+                    .iter()
+                    .map(|tool| format!("`{}`", tool.tool))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    let mut output = Output::ok(Json::Object(result));
+    output.warnings = warnings;
+    output
         .exit(ExitClass::PersonNeeded)
         .then(Next::new(
             ask.action.as_str(),
@@ -752,7 +782,14 @@ impl Kernel {
         // also as lines: a page prints them once (decision 0199). What each
         // tool and each sign-in does is the typed review (decision 0264).
         let mut shown = publish_shown(self, &compiled, &unregistered);
-        shown.review = Some(self.review_shown(&target, &compiled)?);
+        let mut review = self.review_shown(&target, &compiled)?;
+        // What changed in each tool since the version in force, the
+        // breaking first (decision 0439). A first version has nothing to
+        // compare with.
+        if let Some(published) = self.current_compiled_target(&target).await? {
+            review.compare_with(&published, &compiled.compiled_target);
+        }
+        shown.review = Some(review);
         if implied_production
             && compiled
                 .compiled_target

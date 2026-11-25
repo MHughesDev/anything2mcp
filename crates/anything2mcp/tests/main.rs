@@ -19,6 +19,7 @@ mod common;
 
 mod approval_surface;
 mod asserted_publish;
+mod breaking_publish;
 mod capture;
 mod capture_use;
 mod command;

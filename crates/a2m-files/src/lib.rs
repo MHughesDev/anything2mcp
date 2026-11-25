@@ -14,6 +14,7 @@
 //! `docs/reference/technical-reference.md`: `a2m-core` and `a2m-expr`.
 
 mod addressed;
+mod changes;
 pub mod codes;
 mod compile;
 mod diag;
@@ -32,6 +33,7 @@ pub use types::UNTRUSTED_TEXT;
 mod view;
 mod yaml;
 
+pub use changes::{Change, ChangeClass, ToolChange, VersionChanges, changes_between};
 pub use compile::{
     COMPILER_VERSION, Compiled, DRAFT_VERSION, MINIMUM_ENGINE, compile, left_out_sentence,
     lint_one, names_a_secret,
@@ -75,6 +77,7 @@ pub use yaml::{normalize_text, parse as parse_yaml};
 
 #[cfg(test)]
 mod tests {
+    mod changes;
     mod drafter;
     mod example;
     mod held;

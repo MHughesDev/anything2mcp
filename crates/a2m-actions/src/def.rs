@@ -535,7 +535,25 @@ pub(crate) fn person_act_output() -> JsonSchema {
         .optional("link", JsonSchema::text())
         .required("person", JsonSchema::text())
         .required("expires_at", JsonSchema::int())
+        .optional("compared_with", JsonSchema::text())
+        .optional("breaking", JsonSchema::list(tool_change_schema()))
         .optional("next", next_schema())
+}
+
+/// One tool's change between two versions of a target, as
+/// `a2m_files::ToolChange` is shown (decision 0439): the tool, its class,
+/// and each change, tagged by `change`, the breaking first.
+pub(crate) fn tool_change_schema() -> JsonSchema {
+    JsonSchema::object()
+        .required("tool", JsonSchema::text())
+        .required(
+            "class",
+            JsonSchema::words(&["breaking", "compatible", "unchanged"]),
+        )
+        .required(
+            "changes",
+            JsonSchema::list(JsonSchema::map_of(JsonSchema::any())),
+        )
 }
 
 impl Def {

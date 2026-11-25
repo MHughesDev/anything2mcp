@@ -70,6 +70,7 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "run.cancel" => tools::run_cancel,
         "trace.show" => tools::trace_show,
         "target.show" => tools::target_show,
+        "version.diff" => tools::version_diff,
         "target.add" => build::target_add,
         "target.list" => drafts::target_list,
         "target.status" => drafts::target_status,

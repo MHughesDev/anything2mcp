@@ -1914,6 +1914,72 @@ handler!(
     }
 );
 
+handler!(
+    /// `version.diff`: what changed in each tool between two published
+    /// versions of a target, each change classified by the closed list of
+    /// decision 0439. The breaking tools come first, then the compatible,
+    /// then the unchanged; within a tool, the breaking changes first.
+    version_diff,
+    |kernel, call| {
+        let target = a2m_core::TargetName::new(call.required("target")?)?;
+        let parsed = |field: &str| -> Result<a2m_core::Version, Failure> {
+            call.required(field)?.parse::<a2m_core::Version>().map_err(|_| {
+                codes::input(
+                    codes::SCHEMA_INVALID,
+                    format!("`{field}` is not three numbers joined by dots."),
+                    "Write a version as, for example, `2.0.0`; `target.status` lists the published ones.",
+                )
+            })
+        };
+        let (from, to) = (parsed("from")?, parsed("to")?);
+        let workspace = kernel.installation()?.workspace;
+        let listed = target.clone();
+        let versions = kernel
+            .store()?
+            .read(move |tx| tx.versions().list(&workspace, &listed))
+            .await?;
+        let hash_of = |version: a2m_core::Version| {
+            versions
+                .iter()
+                .find(|row| row.version == version)
+                .map(|row| row.compiled_target_hash)
+                .ok_or_else(|| {
+                    codes::input(
+                        codes::NOT_FOUND,
+                        format!("The target `{target}` has no published version `{version}`."),
+                        "Name two published versions; `target.status` lists them.",
+                    )
+                })
+        };
+        let (before_hash, after_hash) = (hash_of(from)?, hash_of(to)?);
+        let before = kernel
+            .compiled_target_by_hash(&target, &before_hash)
+            .await?;
+        let after = kernel.compiled_target_by_hash(&target, &after_hash).await?;
+        let changes = a2m_files::changes_between(&before, &after);
+        let breaking = changes.breaking().count();
+        let mut output = Output::ok(json!({
+            "target": target.as_str(),
+            "from": from.to_string(),
+            "to": to.to_string(),
+            "breaking": breaking,
+            "tools": serde_json::to_value(&changes.tools).map_err(|_| {
+                codes::input(
+                    codes::SCHEMA_INVALID,
+                    "The comparison could not be written as JSON.",
+                    "Report this as a fault of the engine.",
+                )
+            })?,
+        }));
+        if breaking > 0 {
+            output = output.warn(format!(
+                "{breaking} of the tools of `{from}` break from `{from}` to `{to}` for an agent that calls them as they were; each names why."
+            ));
+        }
+        Ok(output)
+    }
+);
+
 /// What a trial's answer says it is (decision 0306): fixed words, not the
 /// builder's.
 const TRIAL_NOTE: &str =
