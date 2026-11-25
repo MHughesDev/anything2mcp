@@ -17,7 +17,7 @@ Anything2MCP is a toolkit that wraps a system you are already entitled to use (a
 
 ## Status
 
-**Pre-alpha. Not yet published to PyPI or npm**: those names are not held yet, so `pip install anything2mcp` does not work today. You build it from source.
+**Preview, before version 0.1. Not yet published to PyPI or npm**: those names are not held yet, so `pip install anything2mcp` does not work today. You build it from source, or, on Windows, download the tester kit CI builds and follow [trying the preview on Windows](docs/plan/trying-the-preview-on-windows.md). Version 0.1 is to be a preview ([decision 0476](docs/decisions/0476-version-0-1-is-a-preview-and-the-checks-a-person-makes-move-to-before-1-0.md)): the presence prompt and the approval page have been passed by a person on Linux only, the first hour is measured as machine time and not with a person, and no copy test has been run from a Windows or a macOS machine.
 
 What exists and is tested in CI on Windows, macOS, and Linux: the kernel, nine packs, the local engine with its command line and stdio proxy, the tool-building flow (scout, drafts, recorded fixtures, gates, promotion, publish on a page by a person), and verified writes with reconciliation, all against the built-in test stands. Separate CI jobs run the data pack against a real PostgreSQL server, the stream pack against a real NATS server, the desktop pack on Linux against its stand, the Linux presence prompt against a real polkit, and the wheel and npm packages on the three systems.
 
