@@ -262,7 +262,9 @@ async fn a_person_signs_in_on_the_engines_page_by_form_once_and_a_ui_read_then_w
         ("password", "vault://example/app/password"),
     ] {
         assert!(
-            text.contains(&format!("name=\"secret.{role}\" type=\"text\" class=\"secret\"")),
+            text.contains(&format!(
+                "name=\"secret.{role}\" type=\"text\" class=\"secret\""
+            )),
             "{text}"
         );
         assert!(text.contains(reference), "{text}");
