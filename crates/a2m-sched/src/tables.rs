@@ -46,13 +46,13 @@ pub(crate) fn plus(moment: Timestamp, duration: Duration) -> Timestamp {
 /// stay moments of the store's clock.
 #[derive(Clone)]
 pub(crate) struct LeaseClock {
-    clock: std::sync::Arc<dyn a2m_telemetry::Clock>,
+    clock: std::sync::Arc<dyn a2m_logs::Clock>,
     wall: i64,
     steady: Duration,
 }
 
 impl LeaseClock {
-    pub(crate) fn new(clock: std::sync::Arc<dyn a2m_telemetry::Clock>) -> Self {
+    pub(crate) fn new(clock: std::sync::Arc<dyn a2m_logs::Clock>) -> Self {
         let wall = clock.now().as_unix_millis();
         let steady = clock.elapsed();
         Self {

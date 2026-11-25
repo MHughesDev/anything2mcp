@@ -12,9 +12,9 @@
 //! not known.
 
 use a2m_core::{Step, Value};
+use a2m_logs::Detail;
 use a2m_pack_web_browser::{BrowserError, Deadline, SiteTool};
 use a2m_provider::{Observed, StepFailure, StepInput, StepOutcome};
-use a2m_telemetry::Detail;
 
 use super::{Session, acting, browser_failure, codes, fail, until};
 use crate::codes::shown;

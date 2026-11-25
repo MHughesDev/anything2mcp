@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use a2m_core::{Digest, EvidenceLevel, Failure, Finding, Redact, Source};
 use a2m_engine::EngineEvent;
+use a2m_logs::SystemClock;
 use a2m_provider::decompiler::{
     Decompiler, DecompilerDescriber, DecompilerDiscoverer, DecompilerSpec, FILE_ARGUMENT,
 };
@@ -26,7 +27,6 @@ use a2m_provider::{
     DescribeForm, Describer, Pack, PackContext, ProgramTrust, Registrar, Supervisor,
     SupervisorLimits,
 };
-use a2m_telemetry::SystemClock;
 use common::{ORDER_GET, Scene, completed};
 
 const MANIFEST: &str = r#"manifest_format = 1

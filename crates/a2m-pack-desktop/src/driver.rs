@@ -685,10 +685,10 @@ impl Held {
         }
         Ok(Observed {
             captures: vec![acting(vec![
-                a2m_telemetry::Detail::new("step", "set"),
-                a2m_telemetry::Detail::new("screen", name),
-                a2m_telemetry::Detail::new("field", payload.field),
-                a2m_telemetry::Detail::new("strategy", STRATEGY),
+                a2m_logs::Detail::new("step", "set"),
+                a2m_logs::Detail::new("screen", name),
+                a2m_logs::Detail::new("field", payload.field),
+                a2m_logs::Detail::new("strategy", STRATEGY),
             ])],
             ..Observed::default()
         })
@@ -843,9 +843,9 @@ impl Held {
                 (true, None) => {
                     return Ok(Observed {
                         captures: vec![acting(vec![
-                            a2m_telemetry::Detail::new("step", "invoke"),
-                            a2m_telemetry::Detail::new("screen", name),
-                            a2m_telemetry::Detail::new("action", payload.action.as_str()),
+                            a2m_logs::Detail::new("step", "invoke"),
+                            a2m_logs::Detail::new("screen", name),
+                            a2m_logs::Detail::new("action", payload.action.as_str()),
                         ])],
                         ..Observed::default()
                     });
@@ -1141,8 +1141,8 @@ fn value_text(value: Option<&Value>) -> Option<String> {
 
 /// How a step was done, for its trace.
 #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
-fn acting(means: Vec<a2m_telemetry::Detail>) -> a2m_provider::Capture {
-    a2m_provider::Capture::acting(&a2m_telemetry::Acting {
+fn acting(means: Vec<a2m_logs::Detail>) -> a2m_provider::Capture {
+    a2m_provider::Capture::acting(&a2m_logs::Acting {
         means,
         measured: Vec::new(),
     })

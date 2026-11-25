@@ -14,7 +14,7 @@ use a2m_core::{
     Secret, TargetName, Timestamp, WorkspaceId,
 };
 use a2m_ledger::{Store, StoreConfig};
-use a2m_telemetry::{Clock, LogLevel, ManualClock, Telemetry};
+use a2m_logs::{Clock, LogLevel, LogsAndTraces, ManualClock};
 use a2m_vault::{
     Binding, BoxFuture, KeyMaterial, KeyStore, MemoryKeyStore, StoreDescription, StoreHealth,
     Vault, Wrapped,
@@ -623,7 +623,7 @@ pub(super) struct World {
     pub(super) worker: Arc<KeeperWorker>,
     pub(super) relay: Arc<Relay>,
     pub(super) keeper: Keeper,
-    pub(super) telemetry: Telemetry,
+    pub(super) logs_and_traces: LogsAndTraces,
 }
 
 impl World {
@@ -707,16 +707,16 @@ impl World {
             probe.clone(),
         )));
         let work = Arc::clone(&relay) as Arc<dyn KeeperWork>;
-        // The telemetry is given a redactor that knows no secret, so that a
+        // The logs and traces are given a redactor that knows no secret, so that a
         // secret the keeper logged would be seen by the test.
-        let telemetry = Telemetry::in_memory(
+        let logs_and_traces = LogsAndTraces::in_memory(
             LogLevel::Trace,
             Arc::new(NoSecrets) as Arc<dyn Redact>,
             clock.clone() as Arc<dyn Clock>,
         );
         let keeper = Keeper::builder(store.clone(), providers, work, clock.clone())
             .local_worker(Arc::clone(&worker))
-            .telemetry(telemetry.clone())
+            .logs_and_traces(logs_and_traces.clone())
             .build();
         Self {
             clock,
@@ -732,7 +732,7 @@ impl World {
             worker,
             relay,
             keeper,
-            telemetry,
+            logs_and_traces,
         }
     }
 
@@ -832,14 +832,14 @@ pub(super) fn block<T>(work: impl Future<Output = T>) -> T {
         .block_on(work)
 }
 
-/// Runs `work` on a one-thread runtime with the telemetry receiving every
+/// Runs `work` on a one-thread runtime with the logs and traces receiving every
 /// log line the keeper writes.
-pub(super) fn logged<T>(telemetry: &Telemetry, work: impl Future<Output = T>) -> T {
+pub(super) fn logged<T>(logs_and_traces: &LogsAndTraces, work: impl Future<Output = T>) -> T {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-    telemetry.scoped(|| runtime.block_on(work))
+    logs_and_traces.scoped(|| runtime.block_on(work))
 }
 
 /// Fails if any text holds a planted value.

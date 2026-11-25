@@ -14,17 +14,18 @@ use std::time::Duration;
 use a2m_core::{
     Digest, EffectClass, FailureClass, Mode, NoSecrets, OperationName, StepKind, Timestamp,
 };
-use a2m_telemetry::{
+use a2m_logs::{
     Attr, CALL_COUNT, CALL_DURATION, CALL_RETRIES, CallOutcome, CaptureLevel, LogDestination,
-    LogLevel, ManualClock, McpMethod, SPAN_BUFFER, STEP_SPAN, Telemetry, TraceContext,
+    LogLevel, LogsAndTraces, ManualClock, McpMethod, SPAN_BUFFER, STEP_SPAN, TraceContext,
 };
 
-fn telemetry() -> (Telemetry, Arc<ManualClock>) {
+fn logs_and_traces() -> (LogsAndTraces, Arc<ManualClock>) {
     let clock = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(
         1_700_000_000_000,
     )));
-    let telemetry = Telemetry::in_memory(LogLevel::Info, Arc::new(NoSecrets), clock.clone());
-    (telemetry, clock)
+    let logs_and_traces =
+        LogsAndTraces::in_memory(LogLevel::Info, Arc::new(NoSecrets), clock.clone());
+    (logs_and_traces, clock)
 }
 
 fn tool() -> OperationName {
@@ -33,14 +34,14 @@ fn tool() -> OperationName {
 
 #[test]
 fn a_call_and_its_steps_are_one_trace_with_exact_timings() {
-    let (telemetry, clock) = telemetry();
+    let (logs_and_traces, clock) = logs_and_traces();
     let caller =
         TraceContext::parse("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01").unwrap();
 
-    let mut call = telemetry.call_span(McpMethod::ToolsCall, Some(&tool()), Some(&caller));
+    let mut call = logs_and_traces.call_span(McpMethod::ToolsCall, Some(&tool()), Some(&caller));
     clock.advance(Duration::from_millis(2));
     {
-        let _step = telemetry.step_span(
+        let _step = logs_and_traces.step_span(
             &StepKind::new("request").unwrap(),
             Some(&call.context()),
             &[Attr::Mode(Mode::new("http").unwrap())],
@@ -53,7 +54,7 @@ fn a_call_and_its_steps_are_one_trace_with_exact_timings() {
     drop(call);
 
     // Spans are listed in the order they ended: the step, then the call.
-    let spans = telemetry.spans();
+    let spans = logs_and_traces.spans();
     assert_eq!(spans.len(), 2);
     let (step, call) = (&spans[0], &spans[1]);
 
@@ -83,9 +84,9 @@ fn a_call_and_its_steps_are_one_trace_with_exact_timings() {
 
 #[test]
 fn a_span_with_no_parent_starts_its_own_trace() {
-    let (telemetry, _clock) = telemetry();
-    let first = telemetry.span("a2m.compile", None, &[Attr::Count(3)]);
-    let second = telemetry.span("a2m.compile", None, &[]);
+    let (logs_and_traces, _clock) = logs_and_traces();
+    let first = logs_and_traces.span("a2m.compile", None, &[Attr::Count(3)]);
+    let second = logs_and_traces.span("a2m.compile", None, &[]);
     assert_ne!(first.context().trace_id(), 0);
     assert_ne!(first.context().trace_id(), second.context().trace_id());
     assert_ne!(first.context().span_id(), second.context().span_id());
@@ -96,7 +97,7 @@ fn a_span_with_no_parent_starts_its_own_trace() {
 
 #[test]
 fn counters_and_histograms_are_read_back_exactly() {
-    let (telemetry, _clock) = telemetry();
+    let (logs_and_traces, _clock) = logs_and_traces();
     let read = [
         Attr::Effect(EffectClass::Read),
         Attr::Level(CaptureLevel::Minimal),
@@ -107,15 +108,15 @@ fn counters_and_histograms_are_read_back_exactly() {
     ];
     let write = [Attr::Effect(EffectClass::Write)];
 
-    telemetry.count("a2m.records", &read, 2);
+    logs_and_traces.count("a2m.records", &read, 2);
     // The order attributes are given in does not make a second series.
-    telemetry.count("a2m.records", &flipped, 3);
-    telemetry.count("a2m.records", &write, 1);
+    logs_and_traces.count("a2m.records", &flipped, 3);
+    logs_and_traces.count("a2m.records", &write, 1);
     for micros in [80, 100, 101, 7_000, 90_000_000] {
-        telemetry.observe("a2m.step.duration", &read, Duration::from_micros(micros));
+        logs_and_traces.observe("a2m.step.duration", &read, Duration::from_micros(micros));
     }
 
-    let metrics = telemetry.metrics();
+    let metrics = logs_and_traces.metrics();
     assert_eq!(metrics.counter("a2m.records", &read), 5);
     assert_eq!(metrics.counter("a2m.records", &write), 1);
     assert_eq!(metrics.counter("a2m.records", &[]), 0);
@@ -142,40 +143,40 @@ fn counters_and_histograms_are_read_back_exactly() {
 
     // The same calls give the same reading: nothing depends on the order of
     // a map or on a clock.
-    assert_eq!(telemetry.metrics(), metrics);
+    assert_eq!(logs_and_traces.metrics(), metrics);
 }
 
 #[test]
 fn calls_are_measured_per_tool_version() {
-    let (telemetry, _clock) = telemetry();
+    let (logs_and_traces, _clock) = logs_and_traces();
     let (first, second) = (Digest::of(b"plan 1"), Digest::of(b"plan 2"));
-    telemetry.record_call(
+    logs_and_traces.record_call(
         &tool(),
         &first,
         CallOutcome::Success,
         Duration::from_millis(4),
     );
-    telemetry.record_call(
+    logs_and_traces.record_call(
         &tool(),
         &first,
         CallOutcome::Success,
         Duration::from_millis(6),
     );
-    telemetry.record_call(
+    logs_and_traces.record_call(
         &tool(),
         &first,
         CallOutcome::Failed(FailureClass::Drift),
         Duration::from_millis(9),
     );
-    telemetry.record_call(
+    logs_and_traces.record_call(
         &tool(),
         &second,
         CallOutcome::Success,
         Duration::from_millis(1),
     );
-    telemetry.record_retry(&tool(), &first);
+    logs_and_traces.record_retry(&tool(), &first);
 
-    let metrics = telemetry.metrics();
+    let metrics = logs_and_traces.metrics();
     let version =
         |compiled_target: Digest| [Attr::Tool(tool()), Attr::CompiledTarget(compiled_target)];
     assert_eq!(metrics.counter(CALL_COUNT, &version(first)), 2);
@@ -194,32 +195,32 @@ fn calls_are_measured_per_tool_version() {
 
 #[test]
 fn the_span_buffer_is_bounded() {
-    let (telemetry, _clock) = telemetry();
+    let (logs_and_traces, _clock) = logs_and_traces();
     for _ in 0..SPAN_BUFFER + 10 {
-        drop(telemetry.span("a2m.tick", None, &[]));
+        drop(logs_and_traces.span("a2m.tick", None, &[]));
     }
-    assert_eq!(telemetry.spans().len(), SPAN_BUFFER);
-    assert_eq!(telemetry.metrics().spans_dropped, 10);
+    assert_eq!(logs_and_traces.spans().len(), SPAN_BUFFER);
+    assert_eq!(logs_and_traces.metrics().spans_dropped, 10);
 }
 
 #[test]
 fn an_unknown_method_is_not_kept_by_name() {
-    let (telemetry, _clock) = telemetry();
+    let (logs_and_traces, _clock) = logs_and_traces();
     assert_eq!(McpMethod::from_name("tools/call"), McpMethod::ToolsCall);
     let method = McpMethod::from_name("secret/hunter2");
     assert_eq!(method, McpMethod::Other);
-    drop(telemetry.call_span(method, None, None));
-    assert_eq!(telemetry.spans()[0].name, "other");
+    drop(logs_and_traces.call_span(method, None, None));
+    assert_eq!(logs_and_traces.spans()[0].name, "other");
 }
 
 #[test]
-fn a_telemetry_in_memory_touches_no_file_and_is_not_the_process_logger() {
-    let (telemetry, _clock) = telemetry();
-    assert_eq!(telemetry.log_destination(), LogDestination::Memory);
-    assert!(!telemetry.receives_process_logs());
+fn an_in_memory_logs_and_traces_touches_no_file_and_is_not_the_process_logger() {
+    let (logs_and_traces, _clock) = logs_and_traces();
+    assert_eq!(logs_and_traces.log_destination(), LogDestination::Memory);
+    assert!(!logs_and_traces.receives_process_logs());
     tracing::info!("written outside the scope, so not received");
-    telemetry.scoped(|| tracing::info!(records = 2_u64, "received"));
-    let lines = telemetry.log_lines();
+    logs_and_traces.scoped(|| tracing::info!(records = 2_u64, "received"));
+    let lines = logs_and_traces.log_lines();
     assert_eq!(
         lines,
         [

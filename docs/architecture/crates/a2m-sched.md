@@ -9,7 +9,7 @@ Decides when and where work may run. It admits or refuses a run, queues its jobs
 | Side | Kernel |
 | Layer | 6, Engine |
 | May depend on | Layers 1 to 5. Never `a2m-engine` |
-| Depends on | `a2m-core`; `a2m-ledger` for the store, its transactions, the run rows, and its lock calls; `a2m-telemetry` for the clock trait and metrics. Outside: `tokio`, `serde`, `serde_json` |
+| Depends on | `a2m-core`; `a2m-ledger` for the store, its transactions, the run rows, and its lock calls; `a2m-logs` for the clock trait and metrics. Outside: `tokio`, `serde`, `serde_json` |
 | Roadmap packages | Phase 3 (admission, dedupe, leases, lock waiting, and quarantine with slice 3.7); Phase 7 (slices 7.1 and 7.2, the runner link and lost leases); slice 9.4 (the cluster profile) |
 | Carries out | Spec sections [211](../../spec/2-kernel/211-concurrency.md), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md) for rule 6 and waiting for locks, [223](../../spec/2-kernel/223-the-runner-protocol.md) for leases, matching, and rate budgets, [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) for bounded queues, [225](../../spec/2-kernel/225-performance.md) for the scheduling budget; the [ledger schema](../../reference/ledger-schema.md) |
 
@@ -37,7 +37,7 @@ As built ([decision 0093](../../decisions/0093-the-schedulers-interface-as-build
 pub struct Scheduler { /* the store, its clock, the settings, and who waits */ }
 
 impl Scheduler {
-    pub fn new(store: Store, settings: SchedSettings, telemetry: Option<Telemetry>) -> Self;   // time is the store's clock
+    pub fn new(store: Store, settings: SchedSettings, logs_and_traces: Option<LogsAndTraces>) -> Self;   // time is the store's clock
 
     // Admission. Called by `a2m-actions` after policy has allowed the call.
     pub async fn submit(&self, s: Submission) -> Result<Admitted, Failure>;
@@ -258,7 +258,7 @@ Whether a hold may be set or released is the policy engine's question. `a2m-acti
 | `a2m-actions` | `submit`, `enqueue`, `cancel`, `hold`, `release_hold`, `set_budget`; `hello`, `claim`, `heartbeat`, `finish` from its in-process runner loop; `acquire`, `release`, `lock_ticket`, `wait_lock`, `lock_freed`, `rate` inside its `Control`; `sweep`, `next_due`, and `due_watch` from one background task |
 | The control plane's side of the runner link, in a role crate | `hello`, `claim`, `heartbeat`, `finish`, `acquire`, `release`, `wait_lock`, `rate`, `drain`, `bye`, answering a runner's calls and `need`s |
 
-It calls: `a2m-ledger` for every read and write of its tables, inside its transactions, and for the run rows (`open_run`, `new_epoch`, `set_state`, `quarantine_locks`, `run`, `in_doubt`); `a2m-telemetry` for the counts of admitted, refused, leased, and lost, and the time a job waited.
+It calls: `a2m-ledger` for every read and write of its tables, inside its transactions, and for the run rows (`open_run`, `new_epoch`, `set_state`, `quarantine_locks`, `run`, `in_doubt`); `a2m-logs` for the counts of admitted, refused, leased, and lost, and the time a job waited.
 
 ## State
 

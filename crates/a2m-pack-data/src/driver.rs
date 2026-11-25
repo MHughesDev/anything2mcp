@@ -25,12 +25,12 @@ use std::time::Duration;
 
 use a2m_auth::SessionLease;
 use a2m_core::{CodeEntry, Failure, RecordKey, Redact, Step, Value, Values};
+use a2m_logs::{Acting, Detail};
 use a2m_provider::{
     BoxFuture, Capture, CheckedPath, Cleanup, Deadline, Driver, DriverHealth, FileIdentity,
     Observed, Posture, PrepareContext, Prepared, RootName, Roots, StepFailure, StepInput,
     StepOutcome, SurfaceRef,
 };
-use a2m_telemetry::{Acting, Detail};
 
 use crate::model::{
     Access, Column, Does, FOUND, Returns, Section, Statement, StepDetail, Stored, SurfaceFields,

@@ -15,7 +15,7 @@ anything2mcp/
     a2m-files/            # schemas, loader, linter, compiled target compiler
     a2m-expr/             # CEL evaluation; host functions for units, numbers, dates
     a2m-vault/            # envelope encryption, key-store back ends, redactor
-    a2m-telemetry/        # traces, metrics, OpenTelemetry export
+    a2m-logs/        # traces, metrics, OpenTelemetry export
     a2m-netstate/         # this machine's own network state, read from the system; sends nothing
     a2m-ledger/           # run store, ledger, reconcile, audit chain (SQLite, Postgres)
     a2m-policy/           # grants, effect classes, approvals, limits
@@ -74,7 +74,7 @@ The folders that are not crates (`targets/`, `bindings/`, `web/console/`, `plugi
 | Spreadsheets, decimals | A pure-Rust xlsx reader; a decimal arithmetic crate | Exact comparison needs decimals, never floats |
 | Key store | A cross-platform keyring crate over DPAPI, Keychain, and Secret Service | Outside secret managers on servers |
 | OAuth and OpenID Connect | Standards-based crates; no official MSAL for Rust exists | Broker sign-in handled on user devices |
-| Telemetry | OpenTelemetry | Traces and metrics in one format |
+| Logs and traces | OpenTelemetry | Traces and metrics in one format |
 
 ## Languages: Rust first, others where they fit
 

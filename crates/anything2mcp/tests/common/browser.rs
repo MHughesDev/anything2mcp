@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use a2m_core::{AccountName, Environment, Failure, Identity, NoSecrets, TargetName};
+use a2m_logs::{LogLevel, LogsAndTraces, SystemClock};
 use a2m_pack_web_browser::{
     Address, Browsers, By, Deadline, Input, Look, Origins, PROFILE_ROOT, PageEnvironment,
     Primitive, ProfileKey, Query, RawValue, ReadWhat, TextMatch, Visibility, test_support,
@@ -19,7 +20,6 @@ use a2m_provider::{
     Access, HostServices, Pack, PackContext, ProviderSettings, Registrar, RegistryBuilder,
     RootName, Roots, Supervisor, SupervisorLimits,
 };
-use a2m_telemetry::{LogLevel, SystemClock, Telemetry};
 
 use super::Folder;
 
@@ -85,7 +85,7 @@ impl Person {
             supervisor: Supervisor::new(SupervisorLimits::default()),
             roots,
             redact: Arc::new(NoSecrets),
-            telemetry: Telemetry::in_memory(
+            logs_and_traces: LogsAndTraces::in_memory(
                 LogLevel::Error,
                 Arc::new(NoSecrets),
                 Arc::new(SystemClock::new()),

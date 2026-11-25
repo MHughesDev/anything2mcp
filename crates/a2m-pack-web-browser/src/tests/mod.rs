@@ -18,11 +18,11 @@ use a2m_core::{
     AccountName, Digest, Environment, Failure, FailureClass, Identity, NoSecrets, Redact,
     TargetName,
 };
+use a2m_logs::LogSettings;
 use a2m_provider::{
     Access, HostServices, Pack, PackContext, ProviderSettings, Registrar, RegistryBuilder,
     RootName, Roots, Supervisor, SupervisorLimits,
 };
-use a2m_telemetry::TelemetrySettings;
 use example_app::harness::TestApp;
 
 use crate::{
@@ -132,7 +132,7 @@ impl Stand {
             supervisor: supervisor.clone(),
             roots,
             redact: Arc::clone(&redact),
-            telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
+            logs_and_traces: a2m_logs::start(&LogSettings::default(), redact, &logs).unwrap(),
         };
         let processes: Vec<String> = also
             .iter()

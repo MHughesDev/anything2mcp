@@ -1907,12 +1907,12 @@ handler!(
             // with a line missing, added, or moved is shown as broken, and
             // its signature is not passed on as if it stood.
             if let Ok(opened) = kernel.store()?.blobs().get(&trace).await
-                && let Ok(lines) = a2m_telemetry::read_trace(opened.expose())
+                && let Ok(lines) = a2m_logs::read_trace(opened.expose())
             {
-                let check = a2m_telemetry::check_trace(&lines);
+                let check = a2m_logs::check_trace(&lines);
                 map.insert("trace_check".to_owned(), json!(check.as_str()));
-                if check != a2m_telemetry::TraceCheck::Broken
-                    && let Some(a2m_telemetry::TraceLine::End(end)) = lines.last()
+                if check != a2m_logs::TraceCheck::Broken
+                    && let Some(a2m_logs::TraceLine::End(end)) = lines.last()
                 {
                     map.insert("signature".to_owned(), json!(end.signature.to_string()));
                     map.insert("records".to_owned(), json!(end.records));

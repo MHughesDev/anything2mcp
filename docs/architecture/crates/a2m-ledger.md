@@ -9,7 +9,7 @@ The store: one schema on SQLite and Postgres, its migrations and transactions, a
 | Side | Kernel |
 | Layer | 3, Stores |
 | May depend on | Layers 1 and 2 |
-| Depends on | `a2m-core`; `a2m-expr` to load a watch's condition and answer it on a check's result ([decision 0291](../../decisions/0291-a-watch-ends-when-its-condition-holds-on-a-checks-own-result.md)); `a2m-vault` to seal blobs, for its `RandomSource`, and to implement its `KeyRecords`; `a2m-telemetry` for its `Clock` and for spans. Outside: `rusqlite` with SQLite built in ([decision 0067](../../decisions/0067-the-kernel-is-built-layer-by-layer-in-parallel-and-the-first-driver-is-the-http-packs.md)), `serde_json`, and `tokio` for the channel an answer comes back on. Identifiers and SHA-256 come from `a2m-core` |
+| Depends on | `a2m-core`; `a2m-expr` to load a watch's condition and answer it on a check's result ([decision 0291](../../decisions/0291-a-watch-ends-when-its-condition-holds-on-a-checks-own-result.md)); `a2m-vault` to seal blobs, for its `RandomSource`, and to implement its `KeyRecords`; `a2m-logs` for its `Clock` and for spans. Outside: `rusqlite` with SQLite built in ([decision 0067](../../decisions/0067-the-kernel-is-built-layer-by-layer-in-parallel-and-the-first-driver-is-the-http-packs.md)), `serde_json`, and `tokio` for the channel an answer comes back on. Identifiers and SHA-256 come from `a2m-core` |
 | Roadmap packages | Phase 1, group H: runs, events, blobs, migrations, on SQLite. Phase 3, group A and slice 3.1: record rows, locks, the nine rules. Stage E, package E1: findings and open questions. Phase 6: Postgres |
 | Carries out | Spec sections [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md), [209](../../spec/2-kernel/209-record-identity-and-dependent-records.md) (assigned keys and stored outputs), [217](../../spec/2-kernel/217-traces-evidence-and-repair.md) (where evidence is kept), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) (no ledger, no write), [218](../../spec/2-kernel/218-discovery-and-findings.md) (the findings store and the unknowns ledger); the [ledger schema](../../reference/ledger-schema.md) |
 
@@ -61,13 +61,13 @@ The database crate blocks, so no database call is made on an async thread. One t
 
 ```rust
 // Opening. Called once by Kernel::open in a2m-actions.
-pub struct StoreConfig { /* data directory or memory; clock; random source; telemetry */ }
+pub struct StoreConfig { /* data directory or memory; clock; random source; the logs and traces */ }
 impl StoreConfig {
     pub fn in_dir(data_dir: impl Into<PathBuf>) -> Self;   // store.sqlite3 and blobs/ inside it
     pub fn in_memory() -> Self;                            // for tests
     pub fn with_clock(self, clock: Arc<dyn Clock>) -> Self;
     pub fn with_random(self, random: Arc<dyn RandomSource>) -> Self;
-    pub fn with_telemetry(self, telemetry: Telemetry) -> Self;   // a span per commit
+    pub fn with_logs_and_traces(self, logs_and_traces: LogsAndTraces) -> Self;   // a span per commit
 }
 #[derive(Clone)] pub struct Store { /* the writing thread, the reading threads, what is attached */ }
 impl Store {
@@ -137,7 +137,7 @@ pub fn migrations() -> Result<&'static [Migration], Failure>;   // number, name,
 pub fn table_owner(table: &str) -> Option<Owner>;
 
 // Defined elsewhere, used here: `Vault`, `KeyRecords`, `RandomSource`, `Opened` in a2m-vault; `KeyedDigest` and
-// `Redact` in a2m-core; `Clock` in a2m-telemetry.
+// `Redact` in a2m-core; `Clock` in a2m-logs.
 pub struct StoreKeyRecords { /* the store, held weakly */ }
 impl KeyRecords for StoreKeyRecords { /* get, newest, insert, replace */ }
 
@@ -380,7 +380,7 @@ Contracts that the signatures do not show:
 | `a2m-provider` | `IntentToken`, which the driver's handle checks on every step that commits |
 | `a2m-vault` | `StoreKeyRecords`, through its own `KeyRecords` trait |
 
-It uses `a2m-vault` through `Vault::seal` and `Vault::open`, the `Redact` and `KeyedDigest` of `a2m-core` as implemented by the vault, and `a2m-telemetry` for its clock and for a span on each commit.
+It uses `a2m-vault` through `Vault::seal` and `Vault::open`, the `Redact` and `KeyedDigest` of `a2m-core` as implemented by the vault, and `a2m-logs` for its clock and for a span on each commit.
 
 ## State
 

@@ -402,7 +402,7 @@ Every crate uses it. It uses nothing in the workspace.
 | `a2m-files` | Names and checked names, `Value`, `ValueType`, `EffectClass`, `Hazard`, `BindingStatus`, `IdentityStrategy`, `Failure`; builds and encodes the `CompiledTarget` |
 | `a2m-expr` | `Value`, `ValueType`, `Decimal`, `Rounding`, `Date`, `Failure`; converts its compiled form to and from `CompiledExpr` |
 | `a2m-ledger` | States, the identifiers, `RecordKey`, `Digest`, `Finding`, `Redact`, `KeyedDigest` for blob names and record keys; stores compiled target bytes without decoding them |
-| `a2m-telemetry` | `Redact`, `KeyedDigest` for restricted values, `Sensitivity`, `StepKind`, identifiers |
+| `a2m-logs` | `Redact`, `KeyedDigest` for restricted values, `Sensitivity`, `StepKind`, identifiers |
 | `a2m-policy` | `EffectClass`, `Hazard`, `Identity`, `Sensitivity`, the identifiers, `Failure` |
 | `a2m-auth` | `SessionState`, `Identity`, `SessionId`, `WorkspaceId`, `Secret`, `AuthProviderName`, `CredentialRef`; `a2m-actions` builds the keeper's entry from an `CompiledAuth` |
 | `a2m-sched` | `RunId`, `JobId`, `RunnerId`, `Epoch`, `Mode`, `Identity`, `FailureClass`, `FailureCode` |
@@ -487,7 +487,7 @@ It produces no other class. The codes are declared in this crate's own `failure_
 
 - The compiled target's shape changed once more for decision 0161: a binding's `prefer_response` is now its `evidence`, and the sample's pinned hash moved with it. The format number stays 1, because no release has carried a compiled target: a compiled target stored before the change does not load and is compiled again.
 - The compiled target's parts have met the compiler and not yet an engine. The engine's slice confirms each one or changes it. The format number is still 1 because no release has carried a compiled target; from the first release on, a change that stored compiled targets cannot be read under raises it.
-- `CaptureLevel` and `ApproveWrites` are here because the compiled target carries them. `a2m-telemetry` and `a2m-policy` each have a list of their own with the same names, which should become these.
+- `CaptureLevel` and `ApproveWrites` are here because the compiled target carries them. `a2m-logs` and `a2m-policy` each have a list of their own with the same names, which should become these.
 - A decision point is a name and a question, which is all the file formats say. The engine's design of `needs_input` may add what a person chooses between.
 - `Mode` and `FindingKind` are written by hand and have no `fixed`. They can be declared with `checked_name!` when a pack wants a constant of one.
 - The long form of `identity` for `stamped` and `find` is not fixed in the file formats. The compiled target carries a `lookup` step list and a settle time per binding for it; slice 3.8 confirms.

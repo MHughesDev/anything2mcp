@@ -30,13 +30,13 @@ use a2m_core::{
     RunId, Step, SurfaceKind, Values,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, DraftReport, Drafter, TargetRoot};
+use a2m_logs::LogSettings;
 use a2m_provider::{
     Authority, CheckedPaths, Deadline, Destinations, DiscoveryScope, DriverHandle, FindingSink,
     HostServices, PrepareContext, Prepared, ProviderSettings, ReadOnlyPort, Registry,
     RegistryBuilder, Roots, StepFailure, StepInput, StepOutcome, Supervisor, SupervisorLimits,
     SurfaceDescription, SurfaceRef,
 };
-use a2m_telemetry::TelemetrySettings;
 use example_desk::{Desk, Order, Session};
 
 pub mod typelib;
@@ -84,7 +84,7 @@ pub fn registry(folder: &Path, bus: Option<&str>) -> Registry {
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots: Roots::none(),
         redact: Arc::clone(&redact),
-        telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
+        logs_and_traces: a2m_logs::start(&LogSettings::default(), redact, &logs).unwrap(),
     };
     let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
     match bus {
@@ -606,7 +606,7 @@ fn counted() -> Arc<Counted> {
 }
 
 async fn store() -> a2m_ledger::Store {
-    let clock = Arc::new(a2m_telemetry::ManualClock::starting_at(
+    let clock = Arc::new(a2m_logs::ManualClock::starting_at(
         a2m_core::Timestamp::from_unix_millis(1_800_000_000_000),
     ));
     let config = a2m_ledger::StoreConfig::in_memory()

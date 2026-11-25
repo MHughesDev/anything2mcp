@@ -1027,7 +1027,7 @@ pub const SCHEMA: &[SettingDef] = &[
         "What a capture sees is held by its discoverer's own bounds; nothing counts exchanges across captures.",
         "a limit of the installation's on every capture",
     ),
-    // Evidence and telemetry.
+    // Evidence and the logs and traces (the keys keep the word telemetry, decision 0402).
     def(
         "evidence.capture",
         Kind::Word(&["minimal", "standard", "full"]),

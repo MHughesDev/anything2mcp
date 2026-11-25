@@ -13,7 +13,7 @@ a2m-auth = { path = "../a2m-auth" }
 a2m-core = { path = "../a2m-core" }
 a2m-files = { path = "../a2m-files" }
 a2m-policy = { path = "../a2m-policy" }
-a2m-telemetry = { path = "../a2m-telemetry" }
+a2m-logs = { path = "../a2m-logs" }
 a2m-vault = { path = "../a2m-vault" }
 axum.workspace = true
 hyper.workspace = true

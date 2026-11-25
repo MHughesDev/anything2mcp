@@ -1,8 +1,8 @@
 //! The kernel handle: every service below, joined once.
 //!
 //! Opening takes two calls, because the provider registry needs the
-//! redactor and telemetry before it can be built, and the kernel needs the
-//! registry. [`Kernel::prepare`] opens the store, the vault, and telemetry;
+//! redactor and logs and traces before it can be built, and the kernel needs the
+//! registry. [`Kernel::prepare`] opens the store, the vault, and logs and traces;
 //! the product crate builds the provider registry with what
 //! [`Prepared::host_services`] gives; [`Kernel::open`] loads policy and
 //! starts the keeper and the scheduler.
@@ -23,10 +23,10 @@ use a2m_core::{
     Redact, Secret, TargetName, WorkspaceId,
 };
 use a2m_ledger::{AuditEntry, Durability, Owner, SqlValue, Store, StoreConfig, Tx};
+use a2m_logs::{Clock, LogLevel, LogSettings, LogsAndTraces};
 use a2m_policy::{ActingFor, BuiltIn, Policy, PolicyHealth, PrincipalRef};
 use a2m_provider::{HostServices, RegistryProblem, Roots, Supervisor};
 use a2m_sched::{SchedSettings, Scheduler};
-use a2m_telemetry::{Clock, LogLevel, Telemetry, TelemetrySettings};
 use a2m_vault::{KeyStore, RandomSource, Redactor, StoreHealth as KeyStoreHealth, Vault};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -81,7 +81,7 @@ impl std::fmt::Debug for KernelParts {
 }
 
 /// The first half of an open kernel: the store, the vault, the redactor,
-/// and telemetry. The provider registry is built from it.
+/// and logs and traces. The provider registry is built from it.
 pub struct Prepared {
     settings: Settings,
     paths: Paths,
@@ -91,7 +91,7 @@ pub struct Prepared {
     store: Option<Store>,
     vault: Option<Arc<Vault>>,
     redact: Arc<dyn Redact>,
-    telemetry: Telemetry,
+    logs_and_traces: LogsAndTraces,
     impaired: Vec<Impaired>,
     /// Whether the store is kept on disk, and so outlives the engine.
     store_on_disk: bool,
@@ -114,10 +114,10 @@ impl Prepared {
         Arc::clone(&self.redact)
     }
 
-    /// Telemetry.
+    /// LogsAndTraces.
     #[must_use]
-    pub fn telemetry(&self) -> Telemetry {
-        self.telemetry.clone()
+    pub fn logs_and_traces(&self) -> LogsAndTraces {
+        self.logs_and_traces.clone()
     }
 
     /// The settings the kernel was prepared with.
@@ -134,14 +134,14 @@ impl Prepared {
 
     /// What the provider registry hands on to packs: the supervisor and the
     /// named roots the product crate made, with this kernel's redactor and
-    /// telemetry.
+    /// handle.
     #[must_use]
     pub fn host_services(&self, supervisor: Supervisor, roots: Roots) -> HostServices {
         HostServices {
             supervisor,
             roots,
             redact: self.redact(),
-            telemetry: self.telemetry(),
+            logs_and_traces: self.logs_and_traces(),
         }
     }
 }
@@ -195,7 +195,7 @@ pub(crate) struct Inner {
     pub(crate) store: Option<Store>,
     pub(crate) vault: Option<Arc<Vault>>,
     redact: Arc<dyn Redact>,
-    pub(crate) telemetry: Telemetry,
+    pub(crate) logs_and_traces: LogsAndTraces,
     pub(crate) policy: Option<Policy>,
     /// How the approval desk reaches the store, emptied at close so that a
     /// person surface that keeps the desk holds no clone of the store.
@@ -270,7 +270,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 impl Kernel {
     /// Opens the store and runs its migrations, opens the vault over the
-    /// key store given and joins it to the store, and starts telemetry.
+    /// key store given and joins it to the store, and starts logs and traces.
     /// Never fails: a part that cannot be opened is noted, and the kernel
     /// opens in the health state that part brings.
     pub async fn prepare(parts: KernelParts) -> Prepared {
@@ -322,13 +322,13 @@ impl Kernel {
             _ => LogLevel::Info,
         };
         let in_memory =
-            || Telemetry::in_memory(level, Arc::clone(&redact), Arc::clone(&parts.clock));
-        let telemetry = match parts.place {
+            || LogsAndTraces::in_memory(level, Arc::clone(&redact), Arc::clone(&parts.clock));
+        let logs_and_traces = match parts.place {
             StorePlace::Memory => in_memory(),
-            StorePlace::Disk => a2m_telemetry::start_with_clock(
-                &TelemetrySettings {
+            StorePlace::Disk => a2m_logs::start_with_clock(
+                &LogSettings {
                     log_level: level,
-                    ..TelemetrySettings::default()
+                    ..LogSettings::default()
                 },
                 Arc::clone(&redact),
                 &parts.paths.logs,
@@ -346,7 +346,7 @@ impl Kernel {
             store,
             vault,
             redact,
-            telemetry,
+            logs_and_traces,
             impaired,
             store_on_disk,
         }
@@ -455,7 +455,7 @@ impl Kernel {
             sched = Some(Scheduler::new(
                 store.clone(),
                 settings,
-                Some(prepared.telemetry.clone()),
+                Some(prepared.logs_and_traces.clone()),
             ));
 
             if let Some(vault) = &prepared.vault {
@@ -526,7 +526,7 @@ impl Kernel {
                     Keeper::builder(sessions, set, work, Arc::clone(&prepared.clock))
                         .local_worker(Arc::clone(&held))
                         .settings(keeper_settings)
-                        .telemetry(prepared.telemetry.clone())
+                        .logs_and_traces(prepared.logs_and_traces.clone())
                         .random(Arc::clone(&prepared.random))
                         .build(),
                 );
@@ -543,7 +543,7 @@ impl Kernel {
                 store: prepared.store,
                 vault: prepared.vault,
                 redact: prepared.redact,
-                telemetry: prepared.telemetry,
+                logs_and_traces: prepared.logs_and_traces,
                 policy,
                 desk_reach,
                 keeper,
@@ -841,10 +841,10 @@ impl Kernel {
         Arc::clone(&self.inner.redact)
     }
 
-    /// Telemetry.
+    /// LogsAndTraces.
     #[must_use]
-    pub fn telemetry(&self) -> &Telemetry {
-        &self.inner.telemetry
+    pub fn logs_and_traces(&self) -> &LogsAndTraces {
+        &self.inner.logs_and_traces
     }
 
     /// The registry of actions, for generating faces.

@@ -16,11 +16,11 @@ use a2m_actions::{
 };
 use a2m_core::{Failure, Timestamp};
 use a2m_files::testing;
+use a2m_logs::{Clock, ManualClock};
 use a2m_provider::{
     CompilerRegistrations, Pack, PackContext, Registrar, RegistryBuilder, Roots, Supervisor,
     SupervisorLimits,
 };
-use a2m_telemetry::{Clock, ManualClock};
 use a2m_vault::MemoryKeyStore;
 use provider::{Behaviour, StubDriver};
 use reqwest::StatusCode;

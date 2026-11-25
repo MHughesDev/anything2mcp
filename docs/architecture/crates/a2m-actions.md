@@ -103,7 +103,7 @@ pub struct KernelParts {
 }
 pub struct Kernel { /* Arc of every service below; cheap to clone */ }
 impl Kernel {
-    /// The store with its migrations, the vault joined to it, telemetry. Never fails.
+    /// The store with its migrations, the vault joined to it, the logs and traces. Never fails.
     pub async fn prepare(parts: KernelParts) -> Prepared;
     /// Policy, the keeper, the scheduler, the action registry, the tending task. Never
     /// fails. Hands the approval desk to `person` and keeps no copy.
@@ -123,7 +123,7 @@ impl Kernel {
     pub fn settings(&self) -> &Settings;
     pub fn paths(&self) -> &Paths;
     pub fn redact(&self) -> Arc<dyn Redact>;
-    pub fn telemetry(&self) -> &Telemetry;
+    pub fn logs_and_traces(&self) -> &LogsAndTraces;
     /// A page of a run's events after a sequence number, at most EVENTS_PAGE (200),
     /// redacted. Only for a run the caller started. Not an action.
     pub async fn events(&self, caller: &Principal, run: RunId, after: u64, limit: u32)
@@ -159,7 +159,7 @@ pub struct RunEventView { pub seq: u64, pub lease: u64, pub at: Timestamp, pub k
                           pub detail: serde_json::Value }
 impl Prepared {
     pub fn redact(&self) -> Arc<dyn Redact>;
-    pub fn telemetry(&self) -> Telemetry;
+    pub fn logs_and_traces(&self) -> LogsAndTraces;
     pub fn settings(&self) -> &Settings;
     pub fn host_services(&self, supervisor: Supervisor, roots: Roots) -> HostServices;
 }
@@ -397,7 +397,7 @@ The `Response` is the same structure for every face: `ok`, `action`, `result`, `
 
 | Part | Opened by | If it cannot be opened | State |
 | --- | --- | --- | --- |
-| Telemetry | `a2m-telemetry` | Logs to standard error only | `ok` |
+| Logs and traces | `a2m-logs` | Logs to standard error only | `ok` |
 | Store and migrations | `a2m-ledger` | Half-migrated, corrupt, or unreachable | `stopped` |
 | Vault | `a2m-vault` | No session can be restored or saved; no evidence can be sealed, so nothing can be marked verified. On a local profile the key the local person's runs are sealed under is opened at `Kernel::open` and held for the life of the process, so a key store that stops after the start leaves that person's reads their sealed evidence; a failure to open it is a reason with this part ([decision 0417](../../decisions/0417-the-key-a-local-persons-runs-are-sealed-under-is-opened-at-the-start-and-held-for-the-life-of-the-process.md)) | `degraded` |
 | Evidence space | `a2m-actions` (`space.rs`) | Fewer bytes free on the disk that holds the evidence blobs than `store.free_space_floor`, measured at every `recheck` through a `FreeSpace` (the volume's own count on Linux and macOS; not measured on Windows yet). Writes stop and a run's capture level is `minimal`, whatever the settings say; the reason's code is the store's `storage_full` | `degraded` |
@@ -407,7 +407,7 @@ The `Response` is the same structure for every face: `ok`, `action`, `result`, `
 
 The places a person registered for each target (decision 0413, `src/origins.rs`): the place of the address given to `target.add`, and every place of every version a person published, kept among the installation's facts. `version.publish` compares the places of the compiled target with them; one not registered is published only from the publish page, whose kernel lines name it first, and a publish from a command is refused `policy`/`address_unregistered`. Each `ActSurface` of the publish says in which environments its address is at such a place (`new_in`, and `new_here` for its default address), from the same comparison, so that the page marks each where it lists the surfaces in the fixed words `NEW_PLACE` ([decision 0418](../../decisions/0418-the-publish-page-lists-the-surfaces-first-and-marks-each-new-address-where-it-lists-it.md)).
 
-The kernel is always returned, so that the front door can answer `engine.status` and `doctor.run` with the reason instead of failing to start. Opening is two calls, `prepare` and `open`, because the provider registry is built between them from the redactor and telemetry the first one makes. The state is re-evaluated whenever a part reports a change, and a move to a lower state is an event in the audit log.
+The kernel is always returned, so that the front door can answer `engine.status` and `doctor.run` with the reason instead of failing to start. Opening is two calls, `prepare` and `open`, because the provider registry is built between them from the redactor and the logs and traces the first one makes. The state is re-evaluated whenever a part reports a change, and a move to a lower state is an event in the audit log.
 
 Before anything else on open, the store's runs left `running` under a lease nobody holds are set to `stopped` with `possible_commit` / `runner_lost` ([spec section 222](../../spec/2-kernel/222-front-doors-and-the-local-engine.md)). Their reconcile is a job like any other. As built, this is done at the first start of the runner loop, before `hello` and before anything is claimed: the installation's one runner, whose process is the only one that holds the store's lock on its data folder, says through `Scheduler::runner_ended` that it holds nothing, and every lease it held from before is lost at once, its run stopped as `possible_commit` / `runner_lost` and its reconcile handed out after the job's longest step ([decision 0416](../../decisions/0416-a-runner-that-starts-again-holds-nothing-and-its-earlier-leases-are-lost-at-once.md)). A kernel that is degraded starts no runner loop, and such a run waits for the next start that does.
 

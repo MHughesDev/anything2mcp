@@ -21,7 +21,7 @@ use a2m_ledger::{
     DATABASE_FILE_NAME, Durability, Fence, NewRun, Opened, PlannedRecord, PolicyKey, RecordRef,
     RetentionClass, Store, StoreConfig, Tables, ToolKind, Tx, WriteClearance,
 };
-use a2m_telemetry::ManualClock;
+use a2m_logs::ManualClock;
 use a2m_vault::{KeyStore, MemoryKeyStore, RandomSource, Vault};
 
 /// Random bytes that are the same on every run: a counter, hashed.

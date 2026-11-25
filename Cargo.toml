@@ -64,7 +64,7 @@ tokio = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread", "s
 # Unicode NFC for text normalization in a2m-expr (decision 0073). Its tables
 # fix the Unicode version, so the version is part of the expression library.
 unicode-normalization = { version = "0.1.26", default-features = false }
-# Logging macros and the subscriber interface only; a2m-telemetry writes the
+# Logging macros and the subscriber interface only; a2m-logs writes the
 # subscriber itself (decision 0077). No attribute macros, so no proc-macro tree.
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 # The vault's outside crates, each verified in decision 0074: the cipher, the

@@ -18,7 +18,7 @@ Every crate described here exists, and each is built in part or in full, except 
   │ 5 Contract     a2m-provider   registry, manifests, extension points, supervisor           │
   │ 4 Services     a2m-policy     a2m-auth     a2m-sources                                     │
   │ 3 Stores       a2m-files      target files to a compiled target     a2m-ledger   the store            │
-  │ 2 Foundations  a2m-expr       a2m-vault    a2m-telemetry                                   │
+  │ 2 Foundations  a2m-expr       a2m-vault    a2m-logs                                   │
   │ 1 Types        a2m-core                                                                    │
   └──────────────▲────────────────────────────────────────────────────────────────────────────┘
                  │ registers through the contract, and is called back
@@ -36,7 +36,7 @@ The binding table is in the [technical reference](../reference/technical-referen
 | Layer | Crates | Why it sits here |
 | --- | --- | --- |
 | 1. Types | `a2m-core` | The words everyone shares, and nothing that does anything |
-| 2. Foundations | `a2m-expr`, `a2m-vault`, `a2m-telemetry`, `a2m-netstate` | Each stands alone: evaluating an expression, sealing a secret, emitting a span, reading what the machine knows of its own networks |
+| 2. Foundations | `a2m-expr`, `a2m-vault`, `a2m-logs`, `a2m-netstate` | Each stands alone: evaluating an expression, sealing a secret, emitting a span, reading what the machine knows of its own networks |
 | 3. Stores | `a2m-files`, `a2m-ledger` | The two durable forms of knowledge: what a target is (files compiled into a compiled target) and what happened (the store). The compiler type-checks expressions, so it sits above `a2m-expr`. Everything that persists goes through `a2m-ledger`, so it sits below every service |
 | 4. Services | `a2m-policy`, `a2m-auth`, `a2m-sources` | Each answers one question: may this happen, who is signed in, what records does this input hold |
 | 5. Contract | `a2m-provider` | The one doorway between the kernel and everything that knows a kind of system. It sits above the services because the extension points speak in their terms: a session lease, a source reader, a compiled target step |
@@ -55,11 +55,11 @@ A dependency may only point down, so an interface is defined in the lowest crate
 | --- | --- | --- | --- | --- |
 | Vocabulary, `Failure`, `Secret`, identifiers, `Value`, `Finding` and its `Subject` | `a2m-core` | Not applicable | Every crate | Not applicable |
 | The `CompiledTarget` and its steps, as data, with the check of a compiled target's hash | `a2m-core` | Produced only by the compiler in `a2m-files` | `a2m-engine`, `a2m-provider`, packs | Not applicable |
-| `Redact`: text in, text with every registered secret removed; and a keyed digest for naming things without revealing them | `a2m-core` | `a2m-vault` | `a2m-telemetry`, `a2m-ledger`, every front door | `a2m-actions` |
+| `Redact`: text in, text with every registered secret removed; and a keyed digest for naming things without revealing them | `a2m-core` | `a2m-vault` | `a2m-logs`, `a2m-ledger`, every front door | `a2m-actions` |
 | Expressions: compile once, evaluate many times; host functions for units, numbers, dates | `a2m-expr` | `a2m-expr` | `a2m-files` to type-check; `a2m-engine`, `a2m-sources`, `a2m-policy` to evaluate | Not applicable |
 | Sealing and opening, as methods of the `Vault` itself, with no trait between; key-store back ends | `a2m-vault` | `a2m-vault`; an outside key service through a back end that a plug-in may supply | `a2m-ledger`, which is handed the vault whole through `Store::attach`; `a2m-auth`, which is handed the same vault | `a2m-actions` |
 | `KeyRecords`: where the vault's wrapped keys are kept, one row per key and generation | `a2m-vault` | `a2m-ledger`, which gives it out through `Store::key_records` and holds the store weakly | `a2m-vault` | `a2m-actions` |
-| Spans, metrics, the step trace | `a2m-telemetry` | `a2m-telemetry` | Every crate above it. The finished trace goes back to the engine as redacted bytes, and the engine sends it to the store | `a2m-actions` |
+| Spans, metrics, the step trace | `a2m-logs` | `a2m-logs` | Every crate above it. The finished trace goes back to the engine as redacted bytes, and the engine sends it to the store | `a2m-actions` |
 | Target files: schemas, loader, linter, compiler; the drafter | `a2m-files` | `a2m-files` | `a2m-actions` to lint, compile, draft. Never the engine | Not applicable |
 | What a pack registers with the compiler: file kinds, verb lowerings, lint rules, drafting rules | `a2m-files` | Packs | `a2m-files` | `a2m-provider` gathers them into one set; `a2m-actions` passes the set to the compiler |
 | The store: runs, the ledger with its record locks, events, evidence blobs, findings, the audit chain; migrations | `a2m-ledger` | `a2m-ledger`, on SQLite and Postgres | Layers 4 to 8 | `a2m-actions` |
@@ -92,7 +92,7 @@ Nine consequences are worth stating, because each closes a question an implement
 - **A table has one owner.** The store owns the connection, the transactions, and the migrations; each crate owns the meaning of its own tables, and no crate's SQL names another's. A transaction is a closure run on the store's own thread, `store.write(durability, |tx| ...)`, and a crate above reaches its own tables through `tx.tables(Owner::X)` ([decision 0080](../decisions/0080-the-store-is-one-sqlite-file-and-a-crate-reaches-its-own-tables-through-the-transaction.md)). The one declared exception: when writes begin, the ledger checks the approval that policy recorded, in the same transaction.
 - **Words that arrive with packs are registered names, not enums.** A mode, a surface kind, a step kind, a file kind, a lint code, a finding kind, a control name, and a failure code are checked names that a provider registers or a crate defines. A step kind is a name within its mode. The kernel's enums are the words that are the same for every kind of system.
 - **Packs share data shapes and never code.** A file kind or a finding kind has one owning pack, which registers its schema for a surface kind. Another pack may declare that it reads the kind, and the compiler hands it the validated entries as data ([decision 0062](../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)).
-- **A pack is handed a context when it registers:** a supervisor scoped to what it may start, its folders as checked paths, the redactor, and telemetry. The product crate joins a pack's own crates where there are several, as it does for the web pack's shared browser handle, and does nothing else with a pack.
+- **A pack is handed a context when it registers:** a supervisor scoped to what it may start, its folders as checked paths, the redactor, and the logs and traces. The product crate joins a pack's own crates where there are several, as it does for the web pack's shared browser handle, and does nothing else with a pack.
 
 ## Five flows
 

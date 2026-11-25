@@ -18,7 +18,7 @@ use a2m_core::{
     Values, Version,
 };
 use a2m_ledger::{IntentToken, RecordRef};
-use a2m_telemetry::Acting;
+use a2m_logs::Acting;
 
 use crate::BoxFuture;
 use crate::codes;

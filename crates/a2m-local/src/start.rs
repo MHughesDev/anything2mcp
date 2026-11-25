@@ -41,7 +41,7 @@ pub const START_LOCK_NAME: &str = "start.lock";
 
 /// The name of the file in the log directory that an engine started on
 /// demand writes its standard output and error to. It is not the
-/// engine's own redacted log, `engine.log`, which telemetry writes and
+/// engine's own redacted log, `engine.log`, which logs and traces writes and
 /// rotates: what a process writes to its standard error is not redacted,
 /// and a file renamed under an open handle would take the output with it
 /// (decision 0181).

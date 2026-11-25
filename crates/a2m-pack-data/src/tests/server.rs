@@ -90,7 +90,7 @@ struct Signed {
 impl Signed {
     async fn new(user: &str, password: &str) -> Self {
         let config = a2m_ledger::StoreConfig::in_memory()
-            .with_clock(Arc::new(a2m_telemetry::ManualClock::starting_at(
+            .with_clock(Arc::new(a2m_logs::ManualClock::starting_at(
                 a2m_core::Timestamp::from_unix_millis(1_800_000_000_000),
             )))
             .with_random(super::counted());
@@ -101,7 +101,7 @@ impl Signed {
             super::counted(),
         ));
         store.attach(Arc::clone(&vault)).await.unwrap();
-        let clock = Arc::new(a2m_telemetry::ManualClock::starting_at(
+        let clock = Arc::new(a2m_logs::ManualClock::starting_at(
             a2m_core::Timestamp::from_unix_millis(1_800_000_000_000),
         ));
         let sessions = SessionStore::new(store.clone());

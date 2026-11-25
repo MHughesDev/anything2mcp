@@ -17,7 +17,7 @@ use a2m_core::{
     Digest, Environment, Failure, FailureClass, Identity, PrincipalId, SessionId, SessionState,
     TargetName, Timestamp, WorkspaceId,
 };
-use a2m_telemetry::{Clock, Telemetry};
+use a2m_logs::{Clock, LogsAndTraces};
 use a2m_vault::{OsRandom, RandomSource};
 use tokio::sync::watch;
 
@@ -322,7 +322,7 @@ struct Inner {
     random: Arc<dyn RandomSource>,
     local: Option<Arc<KeeperWorker>>,
     settings: KeeperSettings,
-    telemetry: Option<Telemetry>,
+    logs_and_traces: Option<LogsAndTraces>,
     /// Moves on every change of any session and on every tick, so that a
     /// waiting call looks again.
     changed: watch::Sender<u64>,
@@ -392,7 +392,7 @@ impl Drop for Waiting<'_> {
 }
 
 /// Builds a [`Keeper`]. What is not set takes its default: the operating
-/// system's random source, the settings of spec section 215, no telemetry,
+/// system's random source, the settings of spec section 215, no logs and traces,
 /// and no worker in this process.
 pub struct KeeperBuilder {
     inner: Inner,
@@ -415,10 +415,10 @@ impl KeeperBuilder {
         self
     }
 
-    /// A telemetry handle, for the keeper's metrics.
+    /// A logs-and-traces handle, for the keeper's metrics.
     #[must_use]
-    pub fn telemetry(mut self, telemetry: Telemetry) -> Self {
-        self.inner.telemetry = Some(telemetry);
+    pub fn logs_and_traces(mut self, logs_and_traces: LogsAndTraces) -> Self {
+        self.inner.logs_and_traces = Some(logs_and_traces);
         self
     }
 
@@ -463,7 +463,7 @@ impl Keeper {
                 random: Arc::new(OsRandom),
                 local: None,
                 settings: KeeperSettings::default(),
-                telemetry: None,
+                logs_and_traces: None,
                 changed: watch::Sender::new(0),
                 entries: Mutex::new(BTreeMap::new()),
                 allowed: Mutex::new(BTreeMap::new()),
@@ -932,8 +932,8 @@ impl Inner {
     }
 
     fn counted_metric(&self, name: &'static str) {
-        if let Some(telemetry) = &self.telemetry {
-            telemetry.count(name, &[], 1);
+        if let Some(logs_and_traces) = &self.logs_and_traces {
+            logs_and_traces.count(name, &[], 1);
         }
     }
 
@@ -1756,9 +1756,9 @@ impl Inner {
         let made = if fresh { Made::Again } else { Made::Kept };
         self.held(row, held, EventKind::Renewed, cause, automatic, made)
             .await?;
-        if let Some(telemetry) = &self.telemetry {
-            telemetry.count(RENEWALS, &[], 1);
-            telemetry.observe(
+        if let Some(logs_and_traces) = &self.logs_and_traces {
+            logs_and_traces.count(RENEWALS, &[], 1);
+            logs_and_traces.observe(
                 RENEWAL_DURATION,
                 &[],
                 self.clock.elapsed().saturating_sub(started),

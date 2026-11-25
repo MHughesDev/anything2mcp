@@ -17,8 +17,8 @@ use a2m_core::{
     SurfaceKind, Values, Version,
 };
 use a2m_files::CompilerSet;
+use a2m_logs::LogsAndTraces;
 use a2m_sources::{ReaderName, SourceReader};
-use a2m_telemetry::Telemetry;
 
 use crate::action::ProviderAction;
 use crate::capture::CaptureHandle;
@@ -41,8 +41,8 @@ pub struct HostServices {
     pub roots: Roots,
     /// The redactor.
     pub redact: Arc<dyn Redact>,
-    /// Telemetry.
-    pub telemetry: Telemetry,
+    /// LogsAndTraces.
+    pub logs_and_traces: LogsAndTraces,
 }
 
 impl fmt::Debug for HostServices {
@@ -307,7 +307,7 @@ impl RegistryBuilder {
             supervisor: supervisor.clone(),
             roots: roots.clone(),
             redact: Arc::clone(&self.host.redact),
-            telemetry: self.host.telemetry.clone(),
+            logs_and_traces: self.host.logs_and_traces.clone(),
             settings: settings.clone(),
         };
         let mut registrar = Registrar::new(&manifest);

@@ -12,7 +12,7 @@ a2m-auth = { path = "../a2m-auth" }
 a2m-core = { path = "../a2m-core" }
 a2m-files = { path = "../a2m-files" }
 a2m-provider = { path = "../a2m-provider" }
-a2m-telemetry = { path = "../a2m-telemetry" }
+a2m-logs = { path = "../a2m-logs" }
 serde.workspace = true
 serde_json.workspace = true
 # `io-util` is the only feature this crate adds: reading and writing whole frames.

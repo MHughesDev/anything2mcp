@@ -33,9 +33,9 @@ use a2m_ledger::{
     NewBlob, ReadBack, Reconciled, RecordIntent, RecordRef, RetentionClass, RunRow, Settled,
     ShadowComparison,
 };
+use a2m_logs::Phase;
 use a2m_policy::{Context, LimitCheck, ModuleName, Outcome, Question, Resource, ToolRef};
 use a2m_sched::{BudgetKey, LeaseRef, RateLimit, ResourceKey};
-use a2m_telemetry::Phase;
 use a2m_vault::OwnerRef;
 use serde_json::json;
 

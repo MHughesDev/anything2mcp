@@ -12,14 +12,14 @@ use a2m_core::{
     Step, SurfaceIndex, Value, Values,
 };
 use a2m_ledger::{IntentToken, RecordRef};
+use a2m_logs::{
+    ArtifactKind, ArtifactOutcome, ArtifactRef, CapturePoint, ChoiceReason, OfferedArtifact,
+    PassStart, Phase, StepRecord, TraceBuilder, TraceOutcome, TracedValue,
+};
 use a2m_provider::{
     Access, Authority, CheckedPaths, Deadline, Destinations, DriverHandle, DriverHealth, Observed,
     Posture, PrepareContext, Prepared, ProgramRef, RootName, Roots, Sent, StepFailure, StepInput,
     StepOutcome, SurfaceRef,
-};
-use a2m_telemetry::{
-    ArtifactKind, ArtifactOutcome, ArtifactRef, CapturePoint, ChoiceReason, OfferedArtifact,
-    PassStart, Phase, StepRecord, TraceBuilder, TraceOutcome, TracedValue,
 };
 
 use crate::codes;

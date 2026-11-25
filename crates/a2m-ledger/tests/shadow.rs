@@ -23,7 +23,7 @@ use a2m_ledger::{
     Promotable, ShadowComparison, ShadowOutcome, ShadowPromotion, ShadowSubject, ShadowThreshold,
     Store, StoreConfig, codes,
 };
-use a2m_telemetry::ManualClock;
+use a2m_logs::ManualClock;
 use a2m_vault::Vault;
 use common::*;
 

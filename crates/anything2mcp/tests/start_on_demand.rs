@@ -621,7 +621,7 @@ async fn killed_with_a_write_in_flight(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_started_engine_killed_with_no_warning_is_replaced_by_the_next_command_and_its_write_is_made_once()
  {
-    use a2m_telemetry::{Clock, ManualClock, SystemClock};
+    use a2m_logs::{Clock, ManualClock, SystemClock};
     let app = TestApp::start().await.unwrap();
     let (_proxy, machine, run, killed) = killed_with_a_write_in_flight(&app).await;
 

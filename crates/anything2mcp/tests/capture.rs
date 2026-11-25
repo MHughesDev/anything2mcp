@@ -38,13 +38,13 @@ use a2m_local::{
     Availability, FAILURE_CODE_HEADER, LocalSurface, PresencePrompt, PromptAnswer, PromptName,
     PromptText, SurfaceParts,
 };
+use a2m_logs::{Clock, SystemClock};
 use a2m_provider::{
     CaptureEnd, CaptureSource, CapturedTraffic, CompilerRegistrations, Deadline, DescribeForm,
     Describer, Description, Discoverer, DiscovererName, DiscoveryReport, DiscoveryScope,
     FindingSink, Pack, PackContext, Registrar, RegistryBuilder, Roots, SandboxPort, Supervisor,
     SupervisorLimits, SurfaceDescription, SurfaceRef, TrafficCapture,
 };
-use a2m_telemetry::{Clock, SystemClock};
 use a2m_vault::{MemoryKeyStore, OsRandom};
 use common::{Folder, USER};
 use serde_json::{Value as Json, json};

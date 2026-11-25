@@ -130,11 +130,11 @@ mod tests {
     use a2m_ledger::{
         Durability, Fence, NewRun, Opened, RetentionClass, Store, StoreConfig, ToolKind,
     };
+    use a2m_logs::ManualClock;
     use a2m_policy::{
         ApprovalSurface, Approved, BuiltIn, Channel, Context, LimitCheck, ModuleName, Outcome,
         Policy, PresenceCheck, PrincipalRef, Question, Request, Resource, ToolRef,
     };
-    use a2m_telemetry::ManualClock;
     use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
 
     use super::carried;
@@ -187,7 +187,7 @@ mod tests {
         let clock = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(START)));
         let store = Store::open(
             StoreConfig::in_memory()
-                .with_clock(Arc::clone(&clock) as Arc<dyn a2m_telemetry::Clock>)
+                .with_clock(Arc::clone(&clock) as Arc<dyn a2m_logs::Clock>)
                 .with_random(counted()),
         )
         .await

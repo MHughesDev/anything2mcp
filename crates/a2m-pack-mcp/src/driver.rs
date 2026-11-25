@@ -11,11 +11,11 @@ use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
 use a2m_core::{Digest, RecordKey, Redact, Secret, Step, Value, Values};
+use a2m_logs::{Acting, Detail};
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Deadline, Driver, DriverHealth, Observed, PrepareContext,
     Prepared, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
-use a2m_telemetry::{Acting, Detail};
 use serde_json::{Value as Json, json};
 
 use crate::client::{Client, HttpLink, Limits, Link, Revision, ToolResult};

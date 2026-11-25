@@ -15,12 +15,12 @@ use a2m_core::{
     Address, Coverage, EvidenceLevel, FailsAs, Failure, Finding, FindingKind, LimitationCode,
     PackPayload, ProducedBy, Redact, Source, Step, Subject, Value, Values,
 };
+use a2m_logs::Clock;
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
     DiscoveryScope, FindingSink, ProviderName, SandboxPort, StepInput, StepOutcome,
     SurfaceDescription,
 };
-use a2m_telemetry::Clock;
 
 use crate::codes;
 use crate::driver::Origin;

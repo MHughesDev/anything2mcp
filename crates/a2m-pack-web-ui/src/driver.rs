@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
 use a2m_core::{AccountName, Digest, EffectClass, Failure, Identity, Secret, Step, Value, Values};
+use a2m_logs::{Acting, Detail};
 use a2m_pack_web_browser::{
     ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, DialogAnswer, Dispatch,
     Element, Input, Key, Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey,
@@ -31,7 +32,6 @@ use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
-use a2m_telemetry::{Acting, Detail};
 
 use crate::codes::{self, shown};
 use crate::lower::{CALL_TOOL, GOTO, INVOKE, REACH_ARG, READ, ROW_ARG, SET, VALUE_ARG, WAIT};

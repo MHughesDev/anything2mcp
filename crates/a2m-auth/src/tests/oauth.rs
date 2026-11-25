@@ -153,7 +153,7 @@ fn client_credentials_are_exchanged_once_renewed_once_and_shown_nowhere() {
     let key = account_key("robot");
     let mut texts = Vec::new();
 
-    logged(&world.telemetry, async {
+    logged(&world.logs_and_traces, async {
         let entry = client_credentials(&serve(&service).await);
         world
             .store_credential(&key, "client/secret", CLIENT_SECRET)
@@ -247,7 +247,7 @@ fn client_credentials_are_exchanged_once_renewed_once_and_shown_nowhere() {
     ] {
         assert!(world.is_registered(secret), "{secret}");
     }
-    texts.extend(world.telemetry.log_lines());
+    texts.extend(world.logs_and_traces.log_lines());
     assert_clean(&texts, &["PLANTED"]);
 }
 
@@ -258,7 +258,7 @@ fn an_authorization_code_comes_from_a_link_the_person_opens_and_the_refresh_toke
     let key = person_key(1);
     let mut texts = Vec::new();
 
-    logged(&world.telemetry, async {
+    logged(&world.logs_and_traces, async {
         let address = serve(&service).await;
         let entry = Arc::new(declared(
             AuthEntry::new(ProviderName::new("oauth_authorization_code").unwrap())
@@ -424,7 +424,7 @@ fn an_authorization_code_comes_from_a_link_the_person_opens_and_the_refresh_toke
     ] {
         assert!(world.vault.redactor().contains_secret(secret), "{secret}");
     }
-    texts.extend(world.telemetry.log_lines());
+    texts.extend(world.logs_and_traces.log_lines());
     assert_clean(&texts, &["PLANTED"]);
 }
 
@@ -435,7 +435,7 @@ fn an_authorization_code_comes_from_a_link_the_person_opens_and_the_refresh_toke
 fn an_https_endpoint_is_named_when_tls_is_off_and_tried_when_it_is_on() {
     let world = block(World::new(STORED_HELD));
     let key = account_key("robot");
-    let failure = logged(&world.telemetry, async {
+    let failure = logged(&world.logs_and_traces, async {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move {
@@ -550,7 +550,7 @@ fn a_proxied_child_exchanges_with_the_service_it_names() {
     let world = block(World::new(STORED_HELD));
     let service = Shared::default();
     let key = account_key("robot");
-    logged(&world.telemetry, async {
+    logged(&world.logs_and_traces, async {
         let address = serve(&service).await;
         assert!(address.starts_with("http://127.0.0.1:"));
         let entry = client_credentials(&address);

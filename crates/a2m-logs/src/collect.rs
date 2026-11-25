@@ -129,7 +129,7 @@ struct Histogram {
     buckets: [u64; BUCKET_BOUNDS_MICROS.len() + 1],
 }
 
-/// The store behind a `Telemetry` handle.
+/// The store behind a `LogsAndTraces` handle.
 #[derive(Debug, Default)]
 pub(crate) struct Collector {
     spans: VecDeque<FinishedSpan>,

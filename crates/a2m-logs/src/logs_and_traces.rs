@@ -10,7 +10,7 @@ use a2m_core::{Digest, Failure, FailureClass, OperationName, Redact, StepKind, T
 
 use crate::attr::{Attr, CallOutcome, McpMethod};
 use crate::clock::{Clock, SystemClock};
-use crate::codes::TELEMETRY_SETTINGS_INVALID;
+use crate::codes::LOG_SETTINGS_INVALID;
 use crate::collect::{Collector, FinishedSpan, Metrics};
 use crate::context::TraceContext;
 use crate::log::{self, LogCore, LogDestination, LogLevel};
@@ -27,7 +27,7 @@ pub const STEP_SPAN: &str = "a2m.step";
 
 /// What `start` needs to know. The defaults are those of a local machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TelemetrySettings {
+pub struct LogSettings {
     /// How much is logged.
     pub log_level: LogLevel,
     /// The size, in bytes, a log file is rotated at.
@@ -36,7 +36,7 @@ pub struct TelemetrySettings {
     pub log_files_kept: u32,
 }
 
-impl Default for TelemetrySettings {
+impl Default for LogSettings {
     fn default() -> Self {
         Self {
             log_level: LogLevel::Info,
@@ -56,34 +56,34 @@ struct Inner {
 }
 
 /// Logs, spans, and metrics. Cheap to clone; every clone is the same
-/// telemetry.
+/// handle.
 ///
 /// Nothing is sent off the machine. Spans and metrics are kept in memory and
-/// read back with [`Telemetry::spans`] and [`Telemetry::metrics`]. Export to
+/// read back with [`LogsAndTraces::spans`] and [`LogsAndTraces::metrics`]. Export to
 /// an outside collector is not built.
 #[derive(Clone)]
-pub struct Telemetry {
+pub struct LogsAndTraces {
     inner: Arc<Inner>,
 }
 
-/// Starts telemetry for a process: opens `engine.log` in the folder `logs`,
+/// Starts the logs and traces for a process: opens `engine.log` in the folder `logs`,
 /// and makes it the destination of every log line the process writes with the
 /// `tracing` macros. Started once by the role; a second `start` in the same
 /// process takes the process's logs over from the first.
 ///
 /// A log folder that cannot be written is not an error: the engine keeps
 /// running, logs go to standard error, redacted, and
-/// [`Telemetry::log_destination`] carries the failure.
+/// [`LogsAndTraces::log_destination`] carries the failure.
 ///
 /// # Errors
 ///
-/// Class `input`, code `telemetry_settings_invalid`, when the settings name a
+/// Class `input`, code `log_settings_invalid`, when the settings name a
 /// log file size of zero.
 pub fn start(
-    settings: &TelemetrySettings,
+    settings: &LogSettings,
     redact: Arc<dyn Redact>,
     logs: &Path,
-) -> Result<Telemetry, Failure> {
+) -> Result<LogsAndTraces, Failure> {
     start_with_clock(settings, redact, logs, Arc::new(SystemClock::new()))
 }
 
@@ -93,15 +93,15 @@ pub fn start(
 ///
 /// As [`start`].
 pub fn start_with_clock(
-    settings: &TelemetrySettings,
+    settings: &LogSettings,
     redact: Arc<dyn Redact>,
     logs: &Path,
     clock: Arc<dyn Clock>,
-) -> Result<Telemetry, Failure> {
+) -> Result<LogsAndTraces, Failure> {
     if settings.log_file_bytes == 0 {
         return Err(Failure::new(
             FailureClass::Input,
-            TELEMETRY_SETTINGS_INVALID,
+            LOG_SETTINGS_INVALID,
             "The size at which a log file is rotated is zero.",
             "Set the log file size to at least one byte.",
         ));
@@ -118,14 +118,14 @@ pub fn start_with_clock(
         Arc::clone(&clock),
     ));
     let receives_process_logs = log::install_for_process(Arc::clone(&log));
-    Ok(Telemetry::with(clock, log, receives_process_logs))
+    Ok(LogsAndTraces::with(clock, log, receives_process_logs))
 }
 
-impl Telemetry {
-    /// A telemetry that touches no file and is not installed for the
+impl LogsAndTraces {
+    /// A handle that touches no file and is not installed for the
     /// process: its log lines are kept in memory, beside its spans and
     /// metrics. For tests and the benchmark harness. Log lines reach it from
-    /// inside [`Telemetry::scoped`].
+    /// inside [`LogsAndTraces::scoped`].
     #[must_use]
     pub fn in_memory(level: LogLevel, redact: Arc<dyn Redact>, clock: Arc<dyn Clock>) -> Self {
         let log = Arc::new(LogCore::in_memory(level, redact, Arc::clone(&clock)));
@@ -144,20 +144,20 @@ impl Telemetry {
         }
     }
 
-    /// The clock this telemetry measures with.
+    /// The clock this logs-and-traces handle measures with.
     #[must_use]
     pub fn clock(&self) -> Arc<dyn Clock> {
         Arc::clone(&self.inner.clock)
     }
 
-    /// Where this telemetry's log lines go.
+    /// Where this logs-and-traces handle's log lines go.
     #[must_use]
     pub fn log_destination(&self) -> LogDestination {
         self.inner.log.destination()
     }
 
     /// Whether log lines written anywhere in the process reach this
-    /// telemetry. False for one made with [`Telemetry::in_memory`], and for
+    /// handle. False for one made with [`LogsAndTraces::in_memory`], and for
     /// one started in a process where another subscriber of the `tracing`
     /// crate was installed first.
     #[must_use]
@@ -172,7 +172,7 @@ impl Telemetry {
         self.inner.log.memory_lines()
     }
 
-    /// Runs `work` with this telemetry receiving the log lines written on
+    /// Runs `work` with this logs-and-traces handle receiving the log lines written on
     /// this thread, whatever is installed for the process.
     pub fn scoped<T>(&self, work: impl FnOnce() -> T) -> T {
         log::scoped(Arc::clone(&self.inner.log), work)
@@ -235,7 +235,7 @@ impl Telemetry {
             TraceContext::trace_id,
         );
         SpanGuard {
-            telemetry: self.clone(),
+            logs_and_traces: self.clone(),
             name,
             trace_id,
             span_id,
@@ -326,9 +326,9 @@ impl Telemetry {
     }
 }
 
-impl fmt::Debug for Telemetry {
+impl fmt::Debug for LogsAndTraces {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Telemetry")
+        f.debug_struct("LogsAndTraces")
             .field("log_destination", &self.log_destination())
             .field("receives_process_logs", &self.inner.receives_process_logs)
             .finish_non_exhaustive()
@@ -338,7 +338,7 @@ impl fmt::Debug for Telemetry {
 /// A span that is running. Dropping the guard ends it.
 #[must_use = "a span ends when its guard is dropped"]
 pub struct SpanGuard {
-    telemetry: Telemetry,
+    logs_and_traces: LogsAndTraces,
     name: String,
     trace_id: u128,
     span_id: u64,
@@ -376,7 +376,7 @@ impl SpanGuard {
 impl Drop for SpanGuard {
     fn drop(&mut self) {
         let took = self
-            .telemetry
+            .logs_and_traces
             .inner
             .clock
             .elapsed()
@@ -390,6 +390,6 @@ impl Drop for SpanGuard {
             started: self.started,
             took,
         };
-        self.telemetry.collector().finish_span(span);
+        self.logs_and_traces.collector().finish_span(span);
     }
 }

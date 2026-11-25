@@ -23,9 +23,9 @@ use a2m_actions::{
 };
 use a2m_auth::PersonAnswer;
 use a2m_core::{Failure, FailureClass, Timestamp};
+use a2m_logs::{Clock, ManualClock};
 use a2m_policy::{Channel, PresenceCheck, PrincipalRef};
 use a2m_provider::{RegistryBuilder, Roots, Supervisor, SupervisorLimits};
-use a2m_telemetry::{Clock, ManualClock};
 use a2m_vault::{BoxFuture as VaultFuture, KeyStore, MemoryKeyStore};
 use engine::{AppPack, Counted, Folder, ITEM_UPSERT, ORDER_GET, START};
 use example_app::harness::TestApp;

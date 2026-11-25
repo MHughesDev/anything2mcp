@@ -32,7 +32,7 @@ use a2m_local::{
     Availability, EngineLock, FAILURE_CODE_HEADER, PresencePrompt, PromptAnswer, PromptName,
     PromptText, StopReason,
 };
-use a2m_telemetry::{Clock, SystemClock};
+use a2m_logs::{Clock, SystemClock};
 use anything2mcp::cli::{Finished, Host, run_with};
 use anything2mcp::{EngineOptions, LocalEngine};
 use common::served::{Bridge, PATIENCE, stateless};

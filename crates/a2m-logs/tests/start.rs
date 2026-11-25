@@ -1,4 +1,4 @@
-//! Starting telemetry for a process. `start` installs the process's logger,
+//! Starting logs and traces for a process. `start` installs the process's logger,
 //! which can be done once, so everything that needs it is one test.
 
 #![allow(
@@ -16,9 +16,9 @@ use a2m_core::{
     Decimal, Digest, FailureClass, OperationName, RecordKey, RunId, Sensitivity, StepKind,
     Timestamp, Value, Version, WorkspaceId,
 };
-use a2m_telemetry::{
-    Attr, CaptureLevel, LOG_FILE_NAME, LogDestination, LogLevel, ManualClock, McpMethod, Phase,
-    StepRecord, TelemetrySettings, TraceBuilder, TraceIdentity, TraceOutcome, TracedValue, start,
+use a2m_logs::{
+    Attr, CaptureLevel, LOG_FILE_NAME, LogDestination, LogLevel, LogSettings, ManualClock,
+    McpMethod, Phase, StepRecord, TraceBuilder, TraceIdentity, TraceOutcome, TracedValue, start,
     start_with_clock,
 };
 
@@ -28,36 +28,37 @@ const SECRET: &str = "hunter2-session-token";
 const VALUE: &str = "a value from the system 4711";
 
 #[test]
-fn a_started_telemetry_logs_to_its_file_and_nothing_carries_a_planted_secret() {
+fn a_started_logs_and_traces_writes_to_its_file_and_nothing_carries_a_planted_secret() {
     let folder = TempFolder::new("start");
     let logs = folder.path().join("logs");
     let clock = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(
         1_700_000_000_000,
     )));
     let redact = Arc::new(Planted::secrets(&[SECRET]));
-    let settings = TelemetrySettings {
+    let settings = LogSettings {
         log_level: LogLevel::Debug,
         log_file_bytes: 600,
         log_files_kept: 3,
     };
 
     // A size of zero is refused before anything is touched.
-    let zero = TelemetrySettings {
+    let zero = LogSettings {
         log_file_bytes: 0,
         ..settings
     };
     let failure = start(&zero, redact.clone(), &logs).err().unwrap();
     assert_eq!(failure.class(), FailureClass::Input);
-    assert_eq!(failure.code().as_str(), "telemetry_settings_invalid");
+    assert_eq!(failure.code().as_str(), "log_settings_invalid");
     assert!(!logs.exists());
 
-    let telemetry = start_with_clock(&settings, redact.clone(), &logs, clock.clone()).unwrap();
+    let logs_and_traces =
+        start_with_clock(&settings, redact.clone(), &logs, clock.clone()).unwrap();
     let path = logs.join(LOG_FILE_NAME);
     assert_eq!(
-        telemetry.log_destination(),
+        logs_and_traces.log_destination(),
         LogDestination::File(path.clone())
     );
-    assert!(telemetry.receives_process_logs());
+    assert!(logs_and_traces.receives_process_logs());
 
     // A simulated run: a call span, a step span, a metric, a trace, and log
     // lines from this thread and another, all handed the planted secret and
@@ -80,8 +81,8 @@ fn a_started_telemetry_logs_to_its_file_and_nothing_carries_a_planted_secret() {
         Arc::new(TestKey(b"a key for tests only")),
     );
     {
-        let call = telemetry.call_span(McpMethod::ToolsCall, Some(&tool), None);
-        let _step = telemetry.step_span(&kind, Some(&call.context()), &[Attr::Count(1)]);
+        let call = logs_and_traces.call_span(McpMethod::ToolsCall, Some(&tool), None);
+        let _step = logs_and_traces.step_span(&kind, Some(&call.context()), &[Attr::Count(1)]);
         clock.advance(Duration::from_millis(3));
         tracing::info!(cookie = SECRET, "signed in with {SECRET}");
         tracing::debug!(seen = VALUE, "a detail");
@@ -113,10 +114,10 @@ fn a_started_telemetry_logs_to_its_file_and_nothing_carries_a_planted_secret() {
             artifacts: Vec::new(),
         });
     }
-    telemetry.record_call(
+    logs_and_traces.record_call(
         &tool,
         &compiled_target,
-        a2m_telemetry::CallOutcome::Success,
+        a2m_logs::CallOutcome::Success,
         Duration::from_millis(3),
     );
     std::thread::spawn(|| tracing::warn!("from another thread, with {SECRET}"))
@@ -129,8 +130,8 @@ fn a_started_telemetry_logs_to_its_file_and_nothing_carries_a_planted_secret() {
 
     // The planted secret is in no trace, span, metric, or log line. The
     // restricted value is in no trace, and no span or metric has any value.
-    let spans = format!("{:?}", telemetry.spans());
-    let metrics = format!("{:?}", telemetry.metrics());
+    let spans = format!("{:?}", logs_and_traces.spans());
+    let metrics = format!("{:?}", logs_and_traces.metrics());
     let trace_text = String::from_utf8(trace.bytes).unwrap();
     let mut log_text = String::new();
     let mut log_files = 0;
@@ -158,7 +159,7 @@ fn a_started_telemetry_logs_to_its_file_and_nothing_carries_a_planted_secret() {
         assert!(!text.contains(VALUE), "{what}");
         assert!(!text.contains("4711"), "{what}");
     }
-    assert_eq!(telemetry.spans().len(), 2);
+    assert_eq!(logs_and_traces.spans().len(), 2);
 
     // The log is one JSON object per line, from every thread, rotated.
     assert!((2..=4).contains(&log_files), "{log_files}");
@@ -181,15 +182,15 @@ fn a_started_telemetry_logs_to_its_file_and_nothing_carries_a_planted_secret() {
 
     // A second start takes the process's logs over from the first.
     let second_logs = folder.path().join("second");
-    let second = start(&TelemetrySettings::default(), redact, &second_logs).unwrap();
+    let second = start(&LogSettings::default(), redact, &second_logs).unwrap();
     assert!(second.receives_process_logs());
-    tracing::info!("to the second telemetry");
+    tracing::info!("to the second handle");
     let second_text = fs::read_to_string(second_logs.join(LOG_FILE_NAME)).unwrap();
-    assert!(second_text.contains("to the second telemetry"));
+    assert!(second_text.contains("to the second handle"));
     assert!(
         !fs::read_to_string(&path)
             .unwrap()
-            .contains("to the second telemetry")
+            .contains("to the second handle")
     );
 }
 

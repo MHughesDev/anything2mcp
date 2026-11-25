@@ -28,12 +28,12 @@ use a2m_ledger::{
     Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
     RetentionClass, Store, StoreConfig, ToolKind,
 };
+use a2m_logs::{LogSettings, ManualClock};
 use a2m_provider::{
     Authority, BoxFuture, Capture, CheckedPaths, Deadline, Destinations, DriverHandle,
     HostServices, Posture, PrepareContext, Prepared, ProviderSettings, Registry, RegistryBuilder,
     Roots, StepFailure, StepInput, StepOutcome, Supervisor, SupervisorLimits, SurfaceRef,
 };
-use a2m_telemetry::{ManualClock, TelemetrySettings};
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
 
 /// A folder under the system's temporary folder, removed when dropped.
@@ -71,7 +71,7 @@ pub fn registry(folder: &Folder, redact: Arc<dyn Redact>) -> Registry {
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots: Roots::none(),
         redact: Arc::clone(&redact),
-        telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
+        logs_and_traces: a2m_logs::start(&LogSettings::default(), redact, &logs).unwrap(),
     };
     let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
     a2m_pack_http::add_to(&mut builder);

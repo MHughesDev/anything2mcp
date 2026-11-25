@@ -26,12 +26,12 @@ use a2m_ledger::{
     Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
     RetentionClass, Store, StoreConfig, ToolKind,
 };
+use a2m_logs::{LogSettings, ManualClock};
 use a2m_provider::{
     Authority, Capture, CheckedPaths, Deadline, Destinations, DriverHandle, HostServices, Posture,
     PrepareContext, Prepared, ProviderName, ProviderSettings, Registry, RegistryBuilder, Roots,
     StepFailure, StepInput, StepOutcome, Supervisor, SupervisorLimits, SurfaceRef,
 };
-use a2m_telemetry::{ManualClock, TelemetrySettings};
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
 use example_device::TestDevice;
 
@@ -90,7 +90,7 @@ pub fn registry_set(
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots: Roots::none(),
         redact: Arc::clone(&redact),
-        telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
+        logs_and_traces: a2m_logs::start(&LogSettings::default(), redact, &logs).unwrap(),
     };
     let mut provider = ProviderSettings::default();
     if let Some(settings) = settings {
@@ -115,7 +115,7 @@ pub fn registry_inspecting(folder: &Folder) -> Registry {
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots: Roots::none(),
         redact: Arc::clone(&redact),
-        telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
+        logs_and_traces: a2m_logs::start(&LogSettings::default(), redact, &logs).unwrap(),
     };
     let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
     a2m_pack_device::add_to(&mut builder);
@@ -357,7 +357,7 @@ pub struct Ran {
     pub captures: Vec<Capture>,
     pub kinds: Vec<String>,
     /// How each step was done, from its `acting` capture, in order.
-    pub acting: Vec<a2m_telemetry::Acting>,
+    pub acting: Vec<a2m_logs::Acting>,
 }
 
 /// The right to write one record, as the engine holds it.

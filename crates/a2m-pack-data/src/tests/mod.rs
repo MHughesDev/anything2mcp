@@ -34,12 +34,12 @@ use a2m_ledger::{
     Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
     RetentionClass, Store, StoreConfig, ToolKind,
 };
+use a2m_logs::{LogSettings, ManualClock};
 use a2m_provider::{
     Access, Authority, CheckedPaths, Deadline, Destinations, DriverHandle, HostServices, Posture,
     PrepareContext, Prepared, ProviderSettings, Registry, RegistryBuilder, RootName, Roots, Sent,
     StepFailure, StepInput, StepOutcome, Supervisor, SupervisorLimits, SurfaceRef,
 };
-use a2m_telemetry::{ManualClock, TelemetrySettings};
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
 use example_db::harness::TestDb;
 
@@ -89,7 +89,7 @@ pub(crate) fn registry_of(pack: &DataPack, folder: &Folder, redact: Arc<dyn Reda
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots: Roots::none(),
         redact: Arc::clone(&redact),
-        telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
+        logs_and_traces: a2m_logs::start(&LogSettings::default(), redact, &logs).unwrap(),
     };
     let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
     builder.add_pack(pack);
@@ -502,7 +502,7 @@ pub(crate) struct Run<'a> {
     pub(crate) wait: Duration,
     /// How each step was done, as the trace takes it: from the step's
     /// `acting` capture, in order.
-    pub(crate) acted: Vec<a2m_telemetry::Acting>,
+    pub(crate) acted: Vec<a2m_logs::Acting>,
     /// What earlier steps of the record returned in `for_reconcile`, as the
     /// engine hands it on, within a pass and on a resume.
     pub(crate) recorded: Values,
@@ -568,7 +568,7 @@ impl Run<'_> {
     }
 
     /// What the driver noted of each step, for the step trace.
-    pub(crate) fn acting(&self) -> Vec<a2m_telemetry::Acting> {
+    pub(crate) fn acting(&self) -> Vec<a2m_logs::Acting> {
         self.acted.clone()
     }
 

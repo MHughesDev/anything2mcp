@@ -13,10 +13,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use a2m_core::{CompiledTarget, NoSecrets, REDACTED, Redact, Version};
 use a2m_files::{CompileMode, Compiled, Diagnostics, TargetRoot};
+use a2m_logs::LogSettings;
 use a2m_provider::{
     HostServices, ProviderSettings, Registry, RegistryBuilder, Roots, Supervisor, SupervisorLimits,
 };
-use a2m_telemetry::TelemetrySettings;
 
 /// A folder under the system's temporary folder, removed when dropped.
 pub struct Folder(PathBuf);
@@ -65,7 +65,7 @@ fn host(folder: &Folder, redact: Arc<dyn Redact>) -> HostServices {
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots: Roots::none(),
         redact: Arc::clone(&redact),
-        telemetry: a2m_telemetry::start(&TelemetrySettings::default(), Arc::new(NoSecrets), &logs)
+        logs_and_traces: a2m_logs::start(&LogSettings::default(), Arc::new(NoSecrets), &logs)
             .unwrap(),
     }
 }
@@ -152,13 +152,13 @@ use a2m_ledger::{
     Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
     RetentionClass, Store, StoreConfig, ToolKind,
 };
+use a2m_logs::{
+    CaptureLevel, ManualClock, Phase, StepRecord, TraceBuilder, TraceIdentity, TraceOutcome,
+    TracedValue,
+};
 use a2m_provider::{
     Authority, CheckedPaths, Deadline, Destinations, DriverHandle, Posture, PrepareContext,
     Prepared, StepFailure, StepInput, StepOutcome, SurfaceRef,
-};
-use a2m_telemetry::{
-    CaptureLevel, ManualClock, Phase, StepRecord, TraceBuilder, TraceIdentity, TraceOutcome,
-    TracedValue,
 };
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
 use example_broker::harness::TestBroker;
@@ -586,7 +586,7 @@ pub fn signature_of(kind: &a2m_core::StepKind, values: &Values) -> Digest {
 pub fn signature_with(
     kind: &a2m_core::StepKind,
     values: &Values,
-    acting: Option<a2m_telemetry::Acting>,
+    acting: Option<a2m_logs::Acting>,
 ) -> Digest {
     let mut trace = TraceBuilder::new(
         TraceIdentity {

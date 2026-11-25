@@ -39,11 +39,11 @@ use a2m_core::{
 use a2m_files::{
     DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath, UNTRUSTED_TEXT, names_a_secret,
 };
+use a2m_logs::Clock;
 use a2m_provider::{
     BoxFuture, CheckedPath, DescribeForm, Describer, Description, Discoverer, DiscovererName,
     DiscoveryReport, DiscoveryScope, FindingSink, SandboxPort, SurfaceDescription,
 };
-use a2m_telemetry::Clock;
 use serde::{Deserialize, Serialize};
 
 use crate::codes;

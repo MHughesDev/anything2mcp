@@ -60,7 +60,7 @@ A session signed in as a person may be used only by that person or an agent acti
 
 ## Naming without revealing
 
-Evidence is named by a keyed digest of its content, not a plain hash, so that someone who can read the store cannot confirm a guessed value by hashing it. The vault keeps one digest key per installation, wrapped by the root, and derives each workspace's key from it, so nothing can be matched across workspaces ([decision 0075](../../decisions/0075-the-vaults-interface-as-building-it-settled-it.md)). The digest is offered through the same interface in `a2m-core` as the redactor, so the ledger and telemetry can ask for one without depending on each other or on the vault.
+Evidence is named by a keyed digest of its content, not a plain hash, so that someone who can read the store cannot confirm a guessed value by hashing it. The vault keeps one digest key per installation, wrapped by the root, and derives each workspace's key from it, so nothing can be matched across workspaces ([decision 0075](../../decisions/0075-the-vaults-interface-as-building-it-settled-it.md)). The digest is offered through the same interface in `a2m-core` as the redactor, so the ledger and the logs and traces can ask for one without depending on each other or on the vault.
 
 ## Rotation
 

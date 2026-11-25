@@ -13,12 +13,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use a2m_auth::SessionLease;
 use a2m_core::{CompiledFieldType, CompiledTarget, Digest, FieldTypeIndex, Step, Value, Values};
 use a2m_expr::Normalizer;
+use a2m_logs::{Acting, Detail};
 use a2m_provider::{
     Access, BoxFuture, Capture, CheckedPaths, Cleanup, Driver, DriverHealth, Observed, Posture,
     PrepareContext, Prepared, RootName, Roots, StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
 use a2m_sources::{FieldTyper, Limits};
-use a2m_telemetry::{Acting, Detail};
 use serde::Deserialize;
 
 use crate::codes::{self, compiled_target_unreadable, stop, unsupported};

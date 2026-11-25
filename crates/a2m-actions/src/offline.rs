@@ -41,8 +41,8 @@ use a2m_ledger::{
     NewRun, Opened, ReadBack, Reconciled, RecordIntent, RecordRef, RetentionClass, Settled, Store,
     StoreConfig, ToolKind, WriteClearance,
 };
+use a2m_logs::CaptureLevel;
 use a2m_provider::{CheckedPath, EntryKind, Recorded, RecordedAnswer, Replay};
-use a2m_telemetry::CaptureLevel;
 use a2m_vault::{OwnerRef, Vault};
 use serde_json::{Value as Json, json};
 

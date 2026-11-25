@@ -225,7 +225,7 @@ The order of bindings is not a setting. It is the operation's, or each mode's ra
 | `authoring.capture.values` (not built) | Boolean: keep values, not only shapes | Off | P | yes |
 | `authoring.capture.limits.seconds`, `authoring.capture.limits.bytes`, `authoring.capture.limits.exchanges` (not built) | Time, bytes, exchanges | A draft | P | no |
 
-**Evidence and telemetry.**
+**Evidence, logs, and traces.**
 
 | Key | Values | Default | Scope | Protected |
 | --- | --- | --- | --- | --- |

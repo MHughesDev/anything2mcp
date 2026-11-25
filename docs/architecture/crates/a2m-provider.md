@@ -9,7 +9,7 @@ The one doorway between the kernel and everything that knows a kind of system. I
 | Side | Kernel |
 | Layer | 5, Contract |
 | May depend on | Layers 1 to 4 |
-| Depends on | `a2m-core`, including `CompiledTarget` and `Step` as data; `a2m-files` for the compiler registration traits and its schema type; `a2m-auth` for `SessionLease` and `AuthProvider`; `a2m-sources` for `SourceReader`; `a2m-ledger` for `IntentToken` and `RecordRef`; `a2m-telemetry` for the handle a pack is given; `a2m-netstate` for the machine's own interfaces, read to derive a place ([decision 0313](../../decisions/0313-the-place-of-an-address-is-derived-from-its-scope-and-the-machines-subnets.md)). Outside ([decision 0088](../../decisions/0088-the-provider-contracts-outside-crates.md)): `serde`, `toml`, `sha2`, `getrandom`, Tokio; `command-fds` and `rustix` on Linux and macOS; `windows-sys` on Windows. No JSON Schema validator. `rustix` also with its file-system calls, and `windows-sys` also with its thread snapshot ([decision 0148](../../decisions/0148-the-provider-contract-and-the-scheduler-after-their-safety-audit.md)) |
+| Depends on | `a2m-core`, including `CompiledTarget` and `Step` as data; `a2m-files` for the compiler registration traits and its schema type; `a2m-auth` for `SessionLease` and `AuthProvider`; `a2m-sources` for `SourceReader`; `a2m-ledger` for `IntentToken` and `RecordRef`; `a2m-logs` for the handle a pack is given; `a2m-netstate` for the machine's own interfaces, read to derive a place ([decision 0313](../../decisions/0313-the-place-of-an-address-is-derived-from-its-scope-and-the-machines-subnets.md)). Outside ([decision 0088](../../decisions/0088-the-provider-contracts-outside-crates.md)): `serde`, `toml`, `sha2`, `getrandom`, Tokio; `command-fds` and `rustix` on Linux and macOS; `windows-sys` on Windows. No JSON Schema validator. `rustix` also with its file-system calls, and `windows-sys` also with its thread snapshot ([decision 0148](../../decisions/0148-the-provider-contract-and-the-scheduler-after-their-safety-audit.md)) |
 | Roadmap packages | Stage B, package B3 (manifest, registry); slice 1.1 (`Driver`); slice 1.3 (compiler registrations); Stage E, package E1 (`Discoverer`, `Describer`); package F3 and Phase 8 (plug-in host) |
 | Carries out | Spec sections [202](../../spec/2-kernel/202-kernel-and-packs.md), [203](../../spec/2-kernel/203-the-provider-contract.md), [204](../../spec/2-kernel/204-supervising-subsystems.md), [218](../../spec/2-kernel/218-discovery-and-findings.md) for the discoverer's side, [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) for effects; the [driver interface](../../reference/technical-reference.md#driver-interface) and the [plug-in protocol](../../reference/technical-reference.md#plug-in-protocol) |
 
@@ -200,7 +200,7 @@ This is the interface as it is built ([decision 0089](../../decisions/0089-the-p
 
 ```rust
 // The registry. Built once at start by the product crate; replaced whole when a provider is enabled or disabled.
-pub struct HostServices { pub supervisor: Supervisor, pub roots: Roots, pub redact: Arc<dyn Redact>, pub telemetry: Telemetry }
+pub struct HostServices { pub supervisor: Supervisor, pub roots: Roots, pub redact: Arc<dyn Redact>, pub logs_and_traces: LogsAndTraces }
 pub struct ProviderSettings {
     pub disabled: BTreeSet<ProviderName>,                 // a compiled-in pack is enabled unless listed
     pub mode_providers: BTreeMap<Mode, ProviderName>,     // which provider drives a contested mode
@@ -231,7 +231,7 @@ impl PackContext {
     pub fn roots(&self) -> &Roots;                             // only the roots the manifest declares
     pub fn folder(&self, root: &RootName, access: Access) -> Result<CheckedPath, Failure>;
     pub fn redact(&self) -> &Arc<dyn Redact>;
-    pub fn telemetry(&self) -> &Telemetry;
+    pub fn logs_and_traces(&self) -> &LogsAndTraces;
     pub fn settings(&self) -> &Values;                         // `packs.<pack>`, validated, defaults filled in
 }
 

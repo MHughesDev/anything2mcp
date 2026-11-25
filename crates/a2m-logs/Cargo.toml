@@ -1,5 +1,5 @@
 [package]
-name = "a2m-telemetry"
+name = "a2m-logs"
 description = "The step trace and its signature, capture, logs, spans, and metrics, all redacted before they are emitted."
 version.workspace = true
 edition.workspace = true

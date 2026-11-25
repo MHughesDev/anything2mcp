@@ -9,7 +9,7 @@ The device pack: the `device` driver over a device's link. It sends one frame at
 | Side | Pack: device |
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
-| Depends on | `a2m-core` (`CompiledTarget`, `Step`, `Value`, `Decimal`, `Finding`, `Hazard`), `a2m-files` (file kind, lowering, lint, and drafting registration), `a2m-auth` (the lease type in the driver's signature), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`), `a2m-telemetry` (the clock a finding is dated with). Outside: `serde`, `serde_json`, and `tokio` with its `io-util` feature. No protocol library ([decision 0106](../../decisions/0106-the-device-pack-speaks-its-first-protocol-itself-and-checks-a-range-before-a-frame-is-built.md)) |
+| Depends on | `a2m-core` (`CompiledTarget`, `Step`, `Value`, `Decimal`, `Finding`, `Hazard`), `a2m-files` (file kind, lowering, lint, and drafting registration), `a2m-auth` (the lease type in the driver's signature), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`), `a2m-logs` (the clock a finding is dated with). Outside: `serde`, `serde_json`, and `tokio` with its `io-util` feature. No protocol library ([decision 0106](../../decisions/0106-the-device-pack-speaks-its-first-protocol-itself-and-checks-a-range-before-a-frame-is-built.md)) |
 | Roadmap packages | Packages K2, K3, K4 of the [roadmap](../../plan/roadmap.md) |
 | Carries out | Spec section [310](../../spec/3-packs/310-the-device-pack.md); [201](../../spec/2-kernel/201-archetypes-and-modes.md) (the device archetype); [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (hazards); the entry bar of section [202](../../spec/2-kernel/202-kernel-and-packs.md) |
 

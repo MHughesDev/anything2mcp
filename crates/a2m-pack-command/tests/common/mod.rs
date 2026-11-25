@@ -15,11 +15,11 @@ use a2m_core::{CompiledTarget, Redact};
 use a2m_files::{
     CompileMode, Compiled, CompilerSet, Diagnostics, RelPath, SourceFile, Sources, TargetRoot,
 };
+use a2m_logs::LogSettings;
 use a2m_provider::{
     Access, HostServices, ProviderSettings, Registry, RegistryBuilder, RootName, Roots, Supervisor,
     SupervisorLimits, current_platform,
 };
-use a2m_telemetry::TelemetrySettings;
 use example_cli::harness::Stand;
 
 /// A folder under the system's temporary folder, removed when dropped.
@@ -72,7 +72,7 @@ pub fn registry(folder: &Folder, redact: Arc<dyn Redact>) -> Registry {
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots,
         redact: Arc::clone(&redact),
-        telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
+        logs_and_traces: a2m_logs::start(&LogSettings::default(), redact, &logs).unwrap(),
     };
     let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
     a2m_pack_command::register(&mut builder);

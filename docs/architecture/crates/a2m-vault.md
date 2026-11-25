@@ -10,7 +10,7 @@ Sealing and opening: envelope encryption in four key layers, the key-store back 
 | Layer | 2, Foundations |
 | May depend on | `a2m-core` |
 | Depends on | `a2m-core`. Outside, each verified in [decision 0074](../../decisions/0074-the-vaults-cipher-key-stores-and-other-outside-crates.md): `chacha20poly1305` for the cipher; `argon2` for the passphrase route; `getrandom` for keys and nonces; `zeroize` for wiping memory; `aho-corasick` for the redactor's matcher; `keyring-core` with one store crate per desktop system; `tokio` for blocking calls to synchronous key stores |
-| Roadmap packages | Roadmap package 2.1, the redactor; package 2.2, sealing with the operating system's key store. The planted-secret test of 2.1 waits for `a2m-telemetry` and a front door. The key-service back ends with the server profile, Phase 6; `vault.rotate` in Phase 9 |
+| Roadmap packages | Roadmap package 2.1, the redactor; package 2.2, sealing with the operating system's key store. The planted-secret test of 2.1 waits for `a2m-logs` and a front door. The key-service back ends with the server profile, Phase 6; `vault.rotate` in Phase 9 |
 | Carries out | Spec sections [216](../../spec/2-kernel/216-the-vault-and-its-keys.md) and the redaction steps of [217](../../spec/2-kernel/217-traces-evidence-and-repair.md); [decision 0038](../../decisions/0038-vault-keys-in-four-layers-with-the-root-in-the-os-store-or-a-key-service.md), [decision 0030](../../decisions/0030-where-session-secrets-live.md), [decision 0075](../../decisions/0075-the-vaults-interface-as-building-it-settled-it.md), and [decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md), which records what a safety audit changed; the engine-fault rows for the key store in [section 224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) |
 
 ## Owns
@@ -132,7 +132,7 @@ impl Vault {
     pub fn register_chosen(&self, cx: &SealContext, secret: &Secret) -> Result<(), Failure>; // input/secret_too_short under 8 bytes (decision 0338)
 
     pub fn redactor(&self) -> Arc<Redactor>;          // handed to everything that emits text
-    pub async fn keyed_digest(&self) -> Result<Arc<VaultDigest>, Failure>;   // handed to the ledger and telemetry
+    pub async fn keyed_digest(&self) -> Result<Arc<VaultDigest>, Failure>;   // handed to the ledger and the logs and traces
     pub async fn health(&self) -> VaultHealth;        // for the kernel's health state and `doctor`
 }
 
@@ -209,7 +209,7 @@ Contracts that the signatures do not show:
 | --- | --- |
 | `a2m-ledger` | `seal` and `open` for blobs and ledger values; `Sealed::to_bytes` and `from_bytes`; implements `KeyRecords`; the `VaultDigest`, as a `KeyedDigest`, for blob names |
 | `a2m-auth` | `seal` and `open_secret` for saved session state and stored credentials; `register` for a secret a sign-in returns; `OwnerRef::of` an identity; the `Redactor` on a provider's failure |
-| `a2m-telemetry` | The `Redactor`, as a `Redact`, for every record, artifact, span, and log line; `contains_secret` for the check on the way out; the `VaultDigest` for restricted values |
+| `a2m-logs` | The `Redactor`, as a `Redact`, for every record, artifact, span, and log line; `contains_secret` for the check on the way out; the `VaultDigest` for restricted values |
 | Every front door | The `Redactor`, as a `Redact`, on every result and error |
 | `a2m-actions` | A back end and `Vault::with_random` at start, with the engine's random source; `keyed_digest` and `redactor` to hand on; `seal` for `secret.set`; `health` for `doctor` and the kernel's health state; later `rotate` for `vault.rotate` |
 | `a2m-provider` | A `KeyStore` adapter for a key-service back end that a plug-in supplies, joined by `a2m-actions` |
@@ -253,7 +253,7 @@ A failure from this crate never names a key, a value, or a byte of either, and n
 
 | Must always hold | Proven by |
 | --- | --- |
-| A planted secret appears in no result, log, trace, or artifact | The planted-secret test of package 2.1, against the test application. Not written yet: it needs `a2m-telemetry` and a front door |
+| A planted secret appears in no result, log, trace, or artifact | The planted-secret test of package 2.1, against the test application. Not written yet: it needs `a2m-logs` and a front door |
 | A registered secret never survives `redact` in any encoded form | `tests/redactor.rs`: sixteen forms of one secret, and a secret inside a larger base64 value at every alignment; `a_secret_in_base64_broken_into_lines_is_masked`, `a_secret_written_with_character_references_is_masked`, `a_secret_written_out_in_hexadecimal_is_masked` |
 | A secret whose form is case-insensitive is masked in any letter case | `a_hexadecimal_secret_is_masked_in_any_letter_case` |
 | A secret divided between the pieces of a stream is masked, and a stream lets out what `redact` gives for the whole text | `a_secret_split_across_the_pieces_of_a_stream_is_masked`: twenty-three forms, each divided in two at every place and into pieces of eight sizes; `a_stream_lets_text_out_as_it_goes_and_changes_nothing_without_a_secret` |
@@ -281,7 +281,7 @@ A failure from this crate never names a key, a value, or a byte of either, and n
 
 ## Build order
 
-1. Done: the `Redactor`: registration, the encoded forms, `contains_secret`, the rule for short secrets. The planted-secret test of package 2.1 is not written; it belongs with `a2m-telemetry` and a front door.
+1. Done: the `Redactor`: registration, the encoded forms, `contains_secret`, the rule for short secrets. The planted-secret test of package 2.1 is not written; it belongs with `a2m-logs` and a front door.
 2. Done: the cipher crate, the key-store crates, the memory-wiping crate, and the rest verified and recorded in [decision 0074](../../decisions/0074-the-vaults-cipher-key-stores-and-other-outside-crates.md).
 3. Done: `KeyStore` with the operating-system back end and the in-memory one; `KeyRecords` with an in-memory implementation; `seal`, `open`, `open_secret`; `keyed_digest`. The operating-system back end is proven against the outside crates' in-memory credential store on every machine. Against a real key store it is one ignored test, which has not been run on any of the three systems: this build machine has none. The Windows and macOS code is type-checked from Linux and has never run.
 4. Done here: the restart test, over the in-memory records. Not done: `KeyRecords` in `a2m-ledger`.

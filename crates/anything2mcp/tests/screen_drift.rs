@@ -28,8 +28,8 @@ use a2m_actions::{
 };
 use a2m_auth::PersonAnswer;
 use a2m_core::{Failure, RunId};
+use a2m_logs::{Clock, ManualClock, SystemClock};
 use a2m_policy::{Channel, PresenceCheck};
-use a2m_telemetry::{Clock, ManualClock, SystemClock};
 use anything2mcp::{Engine, EngineOptions};
 use common::tending::{CHECK_WAIT, PASS_STEP, may_step, next_due_after};
 use common::{Machine, World};

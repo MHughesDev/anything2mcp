@@ -21,6 +21,7 @@ use a2m_ledger::{
     DATABASE_FILE_NAME, Durability, Fence, NewRun, Opened, RetentionClass, Store, StoreConfig,
     ToolKind, WriteClearance,
 };
+use a2m_logs::ManualClock;
 use a2m_policy::{
     APPROVAL_MISSING, APPROVAL_REFUSED, APPROVAL_STALE, ActionName, ActionRef, Answer,
     ApprovalSurface, ApproveWrites, Approved, BuiltIn, Channel, Context, Decision, Declined, Grant,
@@ -31,7 +32,6 @@ use a2m_policy::{
     RoleBinding, RoleGrant, RuleKind, SECOND_ADMIN_REQUIRED, Scope, Subject, ToolRef, Toolset,
     ToolsetName,
 };
-use a2m_telemetry::ManualClock;
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
 
 const START: i64 = 1_800_000_000_000;
@@ -108,7 +108,7 @@ async fn open_store(
     random: Arc<Counted>,
 ) -> Store {
     let config = StoreConfig::in_dir(folder.path())
-        .with_clock(Arc::clone(clock) as Arc<dyn a2m_telemetry::Clock>)
+        .with_clock(Arc::clone(clock) as Arc<dyn a2m_logs::Clock>)
         .with_random(random);
     let store = Store::open(config).await.unwrap();
     let vault = Arc::new(Vault::with_random(

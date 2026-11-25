@@ -28,6 +28,7 @@ use a2m_ledger::{
     Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
     RetentionClass, Store, StoreConfig, ToolKind,
 };
+use a2m_logs::{LogSettings, ManualClock};
 use a2m_pack_web_browser::{PROFILE_ROOT, test_support};
 use a2m_pack_web_ui::SharedBrowsers;
 use a2m_provider::{
@@ -36,7 +37,6 @@ use a2m_provider::{
     RegistryBuilder, RootName, Roots, StepFailure, StepInput, StepOutcome, Supervisor,
     SupervisorLimits, SurfaceRef,
 };
-use a2m_telemetry::{ManualClock, TelemetrySettings};
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
 
 /// A folder under the system's temporary folder, removed when dropped.
@@ -157,7 +157,7 @@ impl Stand {
             supervisor: supervisor.clone(),
             roots,
             redact: Arc::clone(&redact),
-            telemetry: a2m_telemetry::start(&TelemetrySettings::default(), redact, &logs).unwrap(),
+            logs_and_traces: a2m_logs::start(&LogSettings::default(), redact, &logs).unwrap(),
         };
         let browsers = SharedBrowsers::default();
         let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
@@ -335,11 +335,11 @@ impl Ran {
 
     /// What every step did, in order: the part of the trace two runs that
     /// did the same thing share.
-    pub fn means(&self) -> Vec<Vec<a2m_telemetry::Detail>> {
+    pub fn means(&self) -> Vec<Vec<a2m_logs::Detail>> {
         self.captures("acting")
             .iter()
             .map(|acting| {
-                serde_json::from_str::<a2m_telemetry::Acting>(acting)
+                serde_json::from_str::<a2m_logs::Acting>(acting)
                     .unwrap()
                     .means
             })

@@ -42,7 +42,7 @@ a2m-pack-web-probe = { path = "../a2m-pack-web-probe" }
 a2m-pack-web-ui = { path = "../a2m-pack-web-ui" }
 a2m-policy = { path = "../a2m-policy" }
 a2m-provider = { path = "../a2m-provider" }
-a2m-telemetry = { path = "../a2m-telemetry" }
+a2m-logs = { path = "../a2m-logs" }
 a2m-vault = { path = "../a2m-vault" }
 # The routers of the front doors are joined here, and the bridge keeps a
 # connection for as long as the body of its answer is read.
@@ -53,7 +53,7 @@ serde_json.workspace = true
 # input and output.
 tokio = { workspace = true, features = ["io-std", "io-util", "signal"] }
 # The engine's log lines of its own start and stop, through the subscriber
-# the kernel's telemetry installs.
+# the kernel's logs and traces installs.
 tracing.workspace = true
 
 [dev-dependencies]

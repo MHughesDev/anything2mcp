@@ -18,12 +18,12 @@ use a2m_core::{
     Coverage, Digest, EvidenceLevel, FailsAs, Failure, Finding, LimitationCode, PackPayload,
     ProducedBy, Redact, Source, Step, Subject, Value, Values,
 };
+use a2m_logs::Clock;
 use a2m_provider::{
     BoxFuture, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
     DiscoveryScope, FindingSink, SandboxPort, StepInput, StepOutcome, SurfaceDescription,
     current_platform,
 };
-use a2m_telemetry::Clock;
 use serde::{Deserialize, Serialize};
 
 use crate::codes::{self, DISCOVERER, PACK, SPAWN, SURFACE_KIND};

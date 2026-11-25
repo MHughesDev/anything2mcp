@@ -123,7 +123,7 @@ impl Pack for FilePack {
         to.compiler(compiler)?;
         to.discoverer(
             Arc::new(discover::LayoutDiscoverer::new(
-                cx.telemetry().clock(),
+                cx.logs_and_traces().clock(),
                 limits,
                 cx.roots().clone(),
             )?),

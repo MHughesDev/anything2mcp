@@ -17,7 +17,7 @@ use std::sync::atomic::Ordering;
 
 use a2m_core::{Digest, FailureClass, RunState, SessionState, SurfaceName, Value, Values};
 use a2m_engine::{EngineEvent, JobKind, JobOutcome};
-use a2m_telemetry::ChoiceReason;
+use a2m_logs::ChoiceReason;
 use common::{
     FIRST_MODE, ITEM_UPSERT, ORDER_FILL, ORDER_GET, SECOND_MODE, SECURE_GET, STOCK_GET, Scene, expr,
 };

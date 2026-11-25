@@ -41,6 +41,7 @@ use a2m_ledger::{
     NewBlob, NewRun, Opened, ReadBack, Reconciled, RecordIntent, RecordRef, RecordRow,
     RetentionClass, RunRow, Settled, Store, StoreConfig, ToolKind, WriteClearance,
 };
+use a2m_logs::{CaptureLevel, FinishedTrace, LogSettings, ManualClock};
 use a2m_provider::{
     Cleanup, DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
     DiscoveryScope, Driver, DriverHealth, FindingSink, HostServices, Observed, Pack, PackContext,
@@ -51,7 +52,6 @@ use a2m_provider::{
 use a2m_sources::{
     HiddenRule, Locate, ReaderOptions, RowField, SourceInput, SourceSpec, Sources, TemplateVersion,
 };
-use a2m_telemetry::{CaptureLevel, FinishedTrace, ManualClock, TelemetrySettings};
 use a2m_vault::{MemoryKeyStore, OwnerRef, RandomSource, Vault};
 use example_app::harness::TestApp;
 
@@ -706,15 +706,12 @@ impl AppDriver {
                     let read = hooks.reads.fetch_add(1, Ordering::SeqCst);
                     let captures = if hooks.tells_acting.load(Ordering::SeqCst) {
                         vec![
-                            a2m_provider::Capture::acting(&a2m_telemetry::Acting {
+                            a2m_provider::Capture::acting(&a2m_logs::Acting {
                                 means: vec![
-                                    a2m_telemetry::Detail::new("step", "get_order"),
-                                    a2m_telemetry::Detail::new("path", "/api/orders/{order}"),
+                                    a2m_logs::Detail::new("step", "get_order"),
+                                    a2m_logs::Detail::new("path", "/api/orders/{order}"),
                                 ],
-                                measured: vec![a2m_telemetry::Detail::new(
-                                    "read",
-                                    read.to_string(),
-                                )],
+                                measured: vec![a2m_logs::Detail::new("read", read.to_string())],
                             }),
                             a2m_provider::Capture {
                                 name: "response".to_owned(),
@@ -3073,8 +3070,8 @@ pub struct Scene {
     pub environment: Mutex<Option<Environment>>,
     /// The vault whose redactor the engine and the registry were given.
     pub vault: Arc<Vault>,
-    /// The engine's telemetry, as the registry was given it.
-    pub telemetry: a2m_telemetry::Telemetry,
+    /// The engine's logs and traces, as the registry was given it.
+    pub logs_and_traces: a2m_logs::LogsAndTraces,
     logs: PathBuf,
     runs: AtomicU64,
     _folder: Folder,
@@ -3127,14 +3124,13 @@ impl Scene {
         std::fs::create_dir_all(&logs).unwrap();
         let (store, vault) = open_store(&folder).await;
         let redact: Arc<dyn a2m_core::Redact> = vault.redactor();
-        let telemetry =
-            a2m_telemetry::start(&TelemetrySettings::default(), Arc::clone(&redact), &logs)
-                .unwrap();
+        let logs_and_traces =
+            a2m_logs::start(&LogSettings::default(), Arc::clone(&redact), &logs).unwrap();
         let host = HostServices {
             supervisor: Supervisor::new(SupervisorLimits::default()),
             roots: Roots::none(),
             redact: Arc::clone(&redact),
-            telemetry: telemetry.clone(),
+            logs_and_traces: logs_and_traces.clone(),
         };
         let pack = AppPack {
             hooks: Arc::clone(&hooks),
@@ -3249,7 +3245,7 @@ impl Scene {
             source: Mutex::new(None),
             environment: Mutex::new(None),
             vault,
-            telemetry,
+            logs_and_traces,
             logs,
             runs: AtomicU64::new(0),
             _folder: folder,
@@ -3527,7 +3523,7 @@ impl Scene {
     /// Every line the engine logged to file, and every line it holds in
     /// memory, as one text.
     pub fn logged(&self) -> String {
-        let mut text = self.telemetry.log_lines().join("\n");
+        let mut text = self.logs_and_traces.log_lines().join("\n");
         for entry in std::fs::read_dir(&self.logs).unwrap().flatten() {
             text.push('\n');
             text.push_str(&String::from_utf8_lossy(

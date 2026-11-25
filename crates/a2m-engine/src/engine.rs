@@ -8,9 +8,9 @@ use a2m_core::{
     CompiledTarget, Digest, Failure, FailureClass, KeyedDigest, OperationName, Redact, RunState,
     SurfaceName, ToolRuns, Version,
 };
+use a2m_logs::{Clock, TraceBuilder, TraceIdentity};
 use a2m_provider::{Exclusive, Posture, Registry};
 use a2m_sources::Limits;
-use a2m_telemetry::{Clock, TraceBuilder, TraceIdentity};
 
 use crate::codes;
 use crate::control::{Control, EngineEvent};

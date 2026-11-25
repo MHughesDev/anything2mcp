@@ -336,7 +336,7 @@ impl TraceBuilder {
                 "An artifact still held a registered secret after redaction, and was dropped.",
             );
             tracing::error!(
-                target: "a2m_telemetry",
+                target: "a2m_logs",
                 run = %self.identity.run,
                 "an artifact held a registered secret after redaction and was dropped"
             );
@@ -381,7 +381,7 @@ impl TraceBuilder {
 
         if self.holds_secret() {
             tracing::error!(
-                target: "a2m_telemetry",
+                target: "a2m_logs",
                 run = %self.identity.run,
                 records,
                 "a finished trace held a registered secret and was dropped"

@@ -12,7 +12,7 @@ impl TempFolder {
     pub(crate) fn new(label: &str) -> Self {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let name = format!(
-            "a2m-telemetry-{label}-{}-{}",
+            "a2m-logs-{label}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::SeqCst)
         );

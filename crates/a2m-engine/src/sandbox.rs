@@ -15,12 +15,12 @@ use std::time::Duration;
 use a2m_core::{
     EffectClass, Failure, Finding, Hazard, OperationName, Redact, RunState, Step, SurfaceIndex,
 };
+use a2m_logs::ChoiceReason;
 use a2m_provider::{
     Access, BoxFuture, CheckedPaths, Deadline, DiscoveryScope, EntryKind, FindingSink, Posture,
     ReadOnlyPort, RootName, Roots, SandboxPort, StepFailure, StepInput, StepOutcome,
     SurfaceDescription,
 };
-use a2m_telemetry::ChoiceReason;
 
 use crate::codes;
 use crate::control::{Control, EngineEvent, GuardQuestion};

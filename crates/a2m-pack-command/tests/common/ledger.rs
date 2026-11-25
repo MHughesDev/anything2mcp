@@ -12,7 +12,7 @@ use a2m_ledger::{
     Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
     RetentionClass, Store, StoreConfig, ToolKind,
 };
-use a2m_telemetry::ManualClock;
+use a2m_logs::ManualClock;
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
 
 struct Counted(AtomicU64);

@@ -25,8 +25,8 @@ use std::time::Duration;
 
 use a2m_actions::{Paths, PresenceProof};
 use a2m_core::{RunId, Timestamp};
+use a2m_logs::{Clock, ManualClock, SystemClock};
 use a2m_policy::{Channel, PresenceCheck};
-use a2m_telemetry::{Clock, ManualClock, SystemClock};
 use common::{Folder, Machine, World, open_under};
 use example_app::harness::TestApp;
 use serde_json::Value as Json;

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use a2m_core::{Failure, JobId, RunId, RunnerId, Timestamp};
 use a2m_ledger::{Durability, Store, Tx};
-use a2m_telemetry::{Attr, Clock, Telemetry};
+use a2m_logs::{Attr, Clock, LogsAndTraces};
 use tokio::sync::{Notify, oneshot, watch};
 
 use crate::budget::{self, Take};
@@ -42,7 +42,7 @@ struct Inner {
     /// time of day this scheduler was made.
     leases: LeaseClock,
     settings: SchedSettings,
-    telemetry: Option<Telemetry>,
+    logs_and_traces: Option<LogsAndTraces>,
     /// Woken when a waiting claim may find work it did not find before.
     work: Notify,
     /// Held around every change to who holds an exclusive resource, so that
@@ -130,7 +130,11 @@ impl Scheduler {
     /// deadline it keeps is a moment of that clock, so a restart finds them
     /// again.
     #[must_use]
-    pub fn new(store: Store, settings: SchedSettings, telemetry: Option<Telemetry>) -> Self {
+    pub fn new(
+        store: Store,
+        settings: SchedSettings,
+        logs_and_traces: Option<LogsAndTraces>,
+    ) -> Self {
         let clock = store.clock();
         let leases = LeaseClock::new(Arc::clone(&clock));
         let (due, _) = watch::channel(0);
@@ -140,7 +144,7 @@ impl Scheduler {
                 clock,
                 leases,
                 settings,
-                telemetry,
+                logs_and_traces,
                 work: Notify::new(),
                 gate: tokio::sync::Mutex::new(()),
                 waits: Mutex::new(Waits::default()),
@@ -180,10 +184,10 @@ impl Scheduler {
     }
 
     fn count(&self, name: &'static str, attrs: &[Attr], by: usize) {
-        if let Some(telemetry) = &self.inner.telemetry
+        if let Some(logs_and_traces) = &self.inner.logs_and_traces
             && by > 0
         {
-            telemetry.count(name, attrs, u64::try_from(by).unwrap_or(u64::MAX));
+            logs_and_traces.count(name, attrs, u64::try_from(by).unwrap_or(u64::MAX));
         }
     }
 
@@ -431,9 +435,9 @@ impl Scheduler {
             };
             if !leased.is_empty() {
                 self.count(LEASED_COUNT, &[], leased.len());
-                if let Some(telemetry) = &self.inner.telemetry {
+                if let Some(logs_and_traces) = &self.inner.logs_and_traces {
                     for one in &leased {
-                        telemetry.observe(QUEUE_WAIT, &[], one.waited);
+                        logs_and_traces.observe(QUEUE_WAIT, &[], one.waited);
                     }
                 }
                 self.inner

@@ -1,4 +1,4 @@
-# `a2m-telemetry`
+# `a2m-logs`
 
 Emitting what the engine did: the step trace and its signature, the capture of artifacts at the level a run asks for, spans and metrics, and the engine's own logs. Everything it emits has passed a `Redact` first. It stores nothing durable: what must be kept, it hands back as redacted bytes for `a2m-ledger` to store.
 
@@ -28,7 +28,7 @@ It must never: store evidence, own a table, or write a blob (`a2m-ledger` does);
 
 ## The split with `a2m-ledger`
 
-| Concern | `a2m-telemetry` | `a2m-ledger` |
+| Concern | `a2m-logs` | `a2m-ledger` |
 | --- | --- | --- |
 | Run events | Nothing. They are the ledger's history | Writes them |
 | Step trace | Builds each record, redacts it, computes the signature, and returns a finished trace as bytes | Seals and stores the bytes as a blob of kind `trace`, with the schema's version, and records the signature on the run |
@@ -36,7 +36,7 @@ It must never: store evidence, own a table, or write a blob (`a2m-ledger` does);
 | Logs | Writes them to the log files in the data directory | Nothing |
 | Spans and metrics | Keeps them in memory | Nothing |
 
-The engine is the caller that joins the two: it asks this crate for a finished piece of evidence and gives it to the ledger. An `EvidenceSink` trait here, implemented by the ledger, was weighed and refused for now: it would add a join to the spine for a call the engine can make itself, and it would let telemetry decide when evidence is written. If streaming a long trace to the store proves necessary, the trait is the answer, with a decision record.
+The engine is the caller that joins the two: it asks this crate for a finished piece of evidence and gives it to the ledger. An `EvidenceSink` trait here, implemented by the ledger, was weighed and refused for now: it would add a join to the spine for a call the engine can make itself, and it would let the logs crate decide when evidence is written. If streaming a long trace to the store proves necessary, the trait is the answer, with a decision record.
 
 ## Interface
 
@@ -126,15 +126,15 @@ pub fn clean_text(text: &str) -> String;
 pub fn limit_text(text: &str, limit: usize) -> String;
 
 /// Logs, spans, and metrics. Cheap to clone. The engine holds one in its dependencies.
-pub struct Telemetry { /* ... */ }
-pub fn start(settings: &TelemetrySettings, redact: Arc<dyn Redact>, logs: &Path) -> Result<Telemetry, Failure>;
-pub fn start_with_clock(settings: &TelemetrySettings, redact: Arc<dyn Redact>, logs: &Path, clock: Arc<dyn Clock>) -> Result<Telemetry, Failure>;
-pub struct TelemetrySettings { pub log_level: LogLevel, pub log_file_bytes: u64, pub log_files_kept: u32 }
-impl Telemetry {
+pub struct LogsAndTraces { /* ... */ }
+pub fn start(settings: &LogSettings, redact: Arc<dyn Redact>, logs: &Path) -> Result<LogsAndTraces, Failure>;
+pub fn start_with_clock(settings: &LogSettings, redact: Arc<dyn Redact>, logs: &Path, clock: Arc<dyn Clock>) -> Result<LogsAndTraces, Failure>;
+pub struct LogSettings { pub log_level: LogLevel, pub log_file_bytes: u64, pub log_files_kept: u32 }
+impl LogsAndTraces {
     pub fn in_memory(level: LogLevel, redact: Arc<dyn Redact>, clock: Arc<dyn Clock>) -> Self;   // no file; for tests and benchmarks
     pub fn scoped<T>(&self, work: impl FnOnce() -> T) -> T;      // this thread's log lines come here
     pub fn log_destination(&self) -> LogDestination;            // File(path), StandardError(failure), or Memory
-    pub fn log_lines(&self) -> Vec<String>;                     // what a telemetry in memory kept
+    pub fn log_lines(&self) -> Vec<String>;                     // what a handle in memory kept
     pub fn receives_process_logs(&self) -> bool;
     pub fn clock(&self) -> Arc<dyn Clock>;
 
@@ -262,15 +262,15 @@ One JSON object per line: `ts` (milliseconds since the start of 1970 in UTC), `l
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-engine` | `TraceBuilder` for every run attempt; `Telemetry` for spans and `record_call`; hands `FinishedTrace` and kept artifacts to `a2m-ledger` |
+| `a2m-engine` | `TraceBuilder` for every run attempt; `LogsAndTraces` for spans and `record_call`; hands `FinishedTrace` and kept artifacts to `a2m-ledger` |
 | `a2m-ledger` | Nothing at run time; `TRACE_SCHEMA`, to store with each trace blob |
-| `a2m-provider` | `ArtifactKind`, `CapturePoint`, and `MaskReport` in what a driver returns; `Telemetry` for spans |
+| `a2m-provider` | `ArtifactKind`, `CapturePoint`, and `MaskReport` in what a driver returns; `LogsAndTraces` for spans |
 | Packs | `record_headers` when they build an exchange; `MaskReport` when they take an image. The engine offers what they return |
-| The front doors | `Telemetry::call_span` with the caller's `TraceContext`; the redactor is the vault's, not this crate's |
+| The front doors | `LogsAndTraces::call_span` with the caller's `TraceContext`; the redactor is the vault's, not this crate's |
 | `a2m-actions` | `start` at `Kernel::open`; `read_trace` and the line types for `trace.show` and `trace.export`; `LOG_FILE_NAME` for `engine.logs` |
 | `anything2mcp` | `recent_lines` and `LOG_FILE_NAME` for `engine logs`, read by the command line |
 | Every crate above it | Logging, through the `tracing` macros and the subscriber this crate installs |
-| `bench` | `Telemetry::in_memory` with a `ManualClock`, and `metrics` |
+| `bench` | `LogsAndTraces::in_memory` with a `ManualClock`, and `metrics` |
 
 It calls only `a2m-core`, and the `Redact` and `KeyedDigest` it was given.
 
@@ -281,15 +281,15 @@ It calls only `a2m-core`, and the `Redact` and `KeyedDigest` it was given.
 | A trace being built | Memory, per run attempt: the bytes so far and one digest | Dropped after `finish` returns |
 | Logs | `logs/` in the data directory | Rotated by size; redacted on write |
 | Spans and metrics | Memory | Never written to disk by this crate |
-| The process's log writer | One per process | The last telemetry started |
+| The process's log writer | One per process | The last handle started |
 
 ## Failures
 
 | Class | Code | When |
 | --- | --- | --- |
-| `busy` | `storage_full` | The log folder cannot be written. Not returned by `start`: the engine keeps running, logs go to standard error, redacted, and `Telemetry::log_destination` carries the failure. It does not pass by itself |
+| `busy` | `storage_full` | The log folder cannot be written. Not returned by `start`: the engine keeps running, logs go to standard error, redacted, and `LogsAndTraces::log_destination` carries the failure. It does not pass by itself |
 | `input` | `trace_holds_secret` | A finished trace still held a registered secret at the check on the way out. The trace is dropped; `TraceRefused` converts to this |
-| `input` | `telemetry_settings_invalid` | The settings given to `start` name a log file size of zero |
+| `input` | `log_settings_invalid` | The settings given to `start` name a log file size of zero |
 | `busy` | `log_unreadable` | `recent_lines` found a file of the log that is there and cannot be read. It does not pass by itself |
 | `input` | `schema_invalid` | `read_trace` met a line that is not a line of a step trace |
 
@@ -305,13 +305,13 @@ A failure to capture evidence never fails a read. For a write, the engine decide
 | The signature is blind to the level, the compiled target's hash, and why a binding was chosen | `the_signature_is_blind_to_what_legitimately_varies` |
 | A changed step, value, order, binding, locator, or outcome changes the signature | `a_changed_step_value_or_order_changes_the_signature`, sixteen changes |
 | The same input gives the same bytes, in the schema's order | `the_same_input_gives_the_same_bytes`, against a trace written out in the test |
-| A planted secret appears in no record, span, metric, or log line | `a_planted_secret_appears_in_no_trace`, `a_secret_split_by_markup_is_still_masked`, `a_planted_secret_appears_in_no_log_line`, and the run in `a_started_telemetry_logs_to_its_file_and_nothing_carries_a_planted_secret`. All against a test redactor; the same tests against the vault's, and against the test application's traffic, are package 2.1's |
+| A planted secret appears in no record, span, metric, or log line | `a_planted_secret_appears_in_no_trace`, `a_secret_split_by_markup_is_still_masked`, `a_planted_secret_appears_in_no_log_line`, and the run in `a_started_logs_and_traces_writes_to_its_file_and_nothing_carries_a_planted_secret`. All against a test redactor; the same tests against the vault's, and against the test application's traffic, are package 2.1's |
 | A trace that holds a registered secret is refused, not written | `a_trace_that_still_holds_a_secret_is_refused` |
 | An artifact is redacted and checked, or dropped | `an_artifact_is_redacted_and_checked_or_it_is_dropped`, `artifacts_are_kept_as_the_level_says` |
 | A text artifact whose secret is split by markup, by a hidden character, or written with a character reference is dropped | `an_artifact_whose_secret_is_split_by_markup_or_written_with_a_reference_is_dropped` |
 | A trace with a line missing, added, moved, or repeated reads back as broken; a debug print of a step record shows no value | `a_trace_is_checked_against_its_own_chain` |
 | A log file is its owner's alone | `a_log_file_is_its_owners_alone_and_a_wider_one_is_narrowed`, on Linux and macOS |
-| No span or metric can carry a value | The `Attr` type and `&'static str` names; the run in `a_started_telemetry…` searches spans and metrics for planted values |
+| No span or metric can carry a value | The `Attr` type and `&'static str` names; the run in `a_started_logs_and_traces…` searches spans and metrics for planted values |
 | A restricted value never appears in a trace | `a_value_is_held_as_its_label_allows` |
 | A header off the list is recorded without its value | `a_header_off_the_list_is_recorded_as_present_and_masked` |
 | Nothing is sent | There is no exporter. `the_crate_depends_on_nothing_that_could_send_anything` holds the outside crates to four. The test against a listening socket comes with the exporter |

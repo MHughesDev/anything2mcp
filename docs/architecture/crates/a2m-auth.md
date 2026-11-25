@@ -9,7 +9,7 @@ The session keeper and the auth providers. The keeper is the only code that sign
 | Side | Kernel |
 | Layer | 4, Services |
 | May depend on | Layers 1 to 3 |
-| Depends on | `a2m-core`; `a2m-vault` to seal saved state and for the redactor; `a2m-ledger` for its tables; `a2m-telemetry` for the clock, logs, and metrics. Outside: `reqwest` for identity services' token endpoints; `sha1` and `sha2` for one-time codes and proof keys; `serde`, `serde_json`, `tokio`, `tracing`, `zeroize`; and, behind the feature `tls`, `rustls` with the ring provider ([record 0084](../../decisions/0084-the-session-keepers-outside-crates-and-tls-for-identity-services.md)), `rustls-platform-verifier`, and `webpki-roots` ([record 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)). The OAuth exchanges and the encodings are this crate's own code |
+| Depends on | `a2m-core`; `a2m-vault` to seal saved state and for the redactor; `a2m-ledger` for its tables; `a2m-logs` for the clock, logs, and metrics. Outside: `reqwest` for identity services' token endpoints; `sha1` and `sha2` for one-time codes and proof keys; `serde`, `serde_json`, `tokio`, `tracing`, `zeroize`; and, behind the feature `tls`, `rustls` with the ring provider ([record 0084](../../decisions/0084-the-session-keepers-outside-crates-and-tls-for-identity-services.md)), `rustls-platform-verifier`, and `webpki-roots` ([record 0157](../../decisions/0157-tls-is-switched-on-with-the-provider-stated-in-each-client.md)). The OAuth exchanges and the encodings are this crate's own code |
 | Roadmap packages | Phase 2: slices 2.3 to 2.6, groups C, D, E, H. Phase 7: moving sessions between runners, the operating system's broker, hosted sign-in |
 | Carries out | Spec sections [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md), [602](../../spec/6-running-it/602-identity-on-a-shared-server.md), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md), [503](../../spec/5-security/503-approval-and-sign-in-surfaces.md) (sign-in), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md) (the key store unreachable); the [auth provider interface](../../reference/technical-reference.md#auth-provider-interface); decisions 0030, 0032, and 0035; [decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md), which records what a safety audit changed |
 
@@ -100,7 +100,7 @@ impl Keeper {
     pub fn sign_in_addresses(&self, target: &TargetName, entry: &AuthEntry) -> Result<Vec<SignInAddress>, Failure>; // checked first
     pub fn allows(&self, session: SessionId, entry: &AuthEntry) -> bool; // a drafts' entry sends only where its person allowed
 }
-impl KeeperBuilder {   // local_worker(Arc<KeeperWorker>), settings(KeeperSettings), telemetry(Telemetry), random(Arc<dyn RandomSource>), build()
+impl KeeperBuilder {   // local_worker(Arc<KeeperWorker>), settings(KeeperSettings), logs_and_traces(LogsAndTraces), random(Arc<dyn RandomSource>), build()
 }
 pub struct SessionStore { /* the keeper's tables in the store */ }
 impl SessionStore { pub fn new(store: Store) -> SessionStore; }   // the Store of a2m-ledger
@@ -284,13 +284,13 @@ A token endpoint and an authorization endpoint must be addresses the target decl
 | `a2m-runner`, and the in-process runner in `a2m-actions` | `KeeperWorker::run`, `KeeperWorker::bind` |
 | Packs | Implement `AuthProvider` and `CredentialSink`; receive `SessionLease`; build `Material` |
 
-It uses `a2m-ledger` for its tables, `a2m-vault` to seal and open saved state and credentials under the owner's key and to register secrets with the redactor, and `a2m-telemetry` for the clock, the log, and the timeline's metrics.
+It uses `a2m-ledger` for its tables, `a2m-vault` to seal and open saved state and credentials under the owner's key and to register secrets with the redactor, and `a2m-logs` for the clock, the log, and the timeline's metrics.
 
 ## State
 
 Tables, through `a2m-ledger`, made by its migration `0006`, with `sessions.attempted_with` added by `0024`: `sessions`; `session_events`, the timeline; `session_state`, the sealed saved state; `session_credentials`, the stored credentials, sealed. The statements are plain functions over the store's transaction in `src/tables.rs`. In memory on the control-plane half: the entry each session was last used under, the sessions with work in flight, and the failure of each session's last work. On the home runner: `Material` for live sessions, in memory only.
 
-Metrics, through the telemetry handle: `a2m.session.renewals`, `a2m.session.forced_sign_ins`, `a2m.session.checks_failed`, and the histogram `a2m.session.renewal.duration`.
+Metrics, through the logs-and-traces handle: `a2m.session.renewals`, `a2m.session.forced_sign_ins`, `a2m.session.checks_failed`, and the histogram `a2m.session.renewal.duration`.
 
 ## Failures
 

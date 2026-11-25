@@ -27,12 +27,12 @@ use a2m_actions::{
 use a2m_auth::PersonAnswer;
 use a2m_core::{Failure, Timestamp};
 use a2m_files::testing;
+use a2m_logs::ManualClock;
 use a2m_policy::PresenceCheck;
 use a2m_provider::{
     CompilerRegistrations, Pack, PackContext, Registrar, RegistryBuilder, Roots, Supervisor,
     SupervisorLimits,
 };
-use a2m_telemetry::ManualClock;
 use a2m_vault::MemoryKeyStore;
 use provider::{Behaviour, Folder, StubDriver};
 use serde_json::{Value as Json, json};
@@ -1199,7 +1199,7 @@ fn proof_for(world: &World, act: PersonActId) -> PresenceProof {
     PresenceProof::new(
         PresenceCheck::OsPrompt,
         world.person.principal.principal().id,
-        a2m_telemetry::Clock::now(world.clock.as_ref()),
+        a2m_logs::Clock::now(world.clock.as_ref()),
     )
     .for_act(act)
 }
@@ -1282,7 +1282,7 @@ async fn a_publish_an_agent_asks_for_is_carried_out_once_on_its_page_by_the_pers
     let bare = PresenceProof::new(
         PresenceCheck::OsPrompt,
         world.person.principal.principal().id,
-        a2m_telemetry::Clock::now(world.clock.as_ref()),
+        a2m_logs::Clock::now(world.clock.as_ref()),
     );
     let other = PersonActId::from_bytes([7; 16]);
     let someone = a2m_core::PrincipalId::from_bytes([9; 16]);
@@ -1294,7 +1294,7 @@ async fn a_publish_an_agent_asks_for_is_carried_out_once_on_its_page_by_the_pers
             PresenceProof::new(
                 PresenceCheck::OsPrompt,
                 someone,
-                a2m_telemetry::Clock::now(world.clock.as_ref()),
+                a2m_logs::Clock::now(world.clock.as_ref()),
             )
             .for_act(act),
         )

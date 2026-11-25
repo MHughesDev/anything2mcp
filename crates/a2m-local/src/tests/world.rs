@@ -14,8 +14,8 @@ use a2m_actions::{
     PersonSurface, Request, Response, Settings, StorePlace,
 };
 use a2m_core::{Timestamp, Version};
+use a2m_logs::{Clock, ManualClock};
 use a2m_provider::{RegistryBuilder, Roots, Supervisor, SupervisorLimits};
-use a2m_telemetry::{Clock, ManualClock};
 use a2m_vault::MemoryKeyStore;
 use engine::{AppPack, Counted, Folder, START};
 use example_app::harness::TestApp;

@@ -18,7 +18,7 @@ use std::sync::atomic::Ordering;
 
 use a2m_core::{EffectClass, FailureClass, RecordState, Value, Values, WriteEvidence};
 use a2m_engine::{Diff, JobKind, JobOutcome};
-use a2m_telemetry::CaptureLevel;
+use a2m_logs::CaptureLevel;
 use common::{
     ITEM_UPSERT, KIT_ENTER, ORDER_GET, SLOT_ADD, Scene, approved, completed, failed_as, item,
     sheet, slot, waits,

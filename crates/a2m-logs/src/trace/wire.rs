@@ -8,7 +8,7 @@
 //!
 //! The schema's version is the header's `schema`. A change that a reader of
 //! version 1 would misread raises it; an added optional entry does not.
-//! `docs/architecture/crates/a2m-telemetry.md` describes every entry.
+//! `docs/architecture/crates/a2m-logs.md` describes every entry.
 
 use a2m_core::{
     Digest, Failure, FailureClass, FailureCode, Limitation, Mode, OperationName, RunId,

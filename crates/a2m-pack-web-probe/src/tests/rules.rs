@@ -88,8 +88,7 @@ fn the_manifest_declares_every_known_place_of_a_browser_and_the_profile_root() {
             supervisor: Supervisor::new(SupervisorLimits::default()),
             roots: Roots::none(),
             redact: no_secrets(),
-            telemetry: a2m_telemetry::start(&TelemetrySettings::default(), no_secrets(), &logs)
-                .unwrap(),
+            logs_and_traces: a2m_logs::start(&LogSettings::default(), no_secrets(), &logs).unwrap(),
         };
         let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
         crate::add_to(&mut builder, SharedBrowsers::default());

@@ -44,6 +44,7 @@ use a2m_files::{
     Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering, Place, Possible,
     ResolvedBinding, Stage, Statement, StepChanges, StepCommits,
 };
+use a2m_logs::Detail;
 use a2m_pack_web_browser::{
     ActTab, Address, AntiForgery, BodyEncoding, BrowserError, Browsers, Deadline, Dispatch,
     FieldValue, Look, ObserveTab, Origins, PageAnswer, PageEnvironment, PagePath, PageWrite,
@@ -54,7 +55,6 @@ use a2m_provider::{
     BoxFuture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
     StepFailure, StepInput, StepOutcome, SurfaceRef,
 };
-use a2m_telemetry::Detail;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 

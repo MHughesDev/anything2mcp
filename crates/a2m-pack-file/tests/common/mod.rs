@@ -26,12 +26,12 @@ use a2m_ledger::{
     Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
     RetentionClass, Store, StoreConfig, ToolKind,
 };
+use a2m_logs::{LogLevel, LogsAndTraces, ManualClock};
 use a2m_provider::{
     Access, Authority, CheckedPaths, Deadline, Destinations, DriverHandle, HostServices, Posture,
     PrepareContext, Prepared, ProviderSettings, Registry, RegistryBuilder, RootName, Roots,
     StepFailure, StepInput, StepOutcome, Supervisor, SupervisorLimits, SurfaceRef,
 };
-use a2m_telemetry::{LogLevel, ManualClock, Telemetry};
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
 use example_files::harness::FileStand;
 
@@ -53,7 +53,7 @@ pub fn registry(roots: Roots) -> Registry {
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots,
         redact: Arc::new(NoSecrets),
-        telemetry: Telemetry::in_memory(LogLevel::Info, Arc::new(NoSecrets), clock),
+        logs_and_traces: LogsAndTraces::in_memory(LogLevel::Info, Arc::new(NoSecrets), clock),
     };
     let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
     builder.add_pack(&a2m_pack_file::pack());

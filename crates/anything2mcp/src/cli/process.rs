@@ -8,9 +8,9 @@ use std::sync::Arc;
 use a2m_actions::{BuiltInToolset, ExitClass, PROGRAM, Paths, Response, codes};
 use a2m_core::{Failure, FailureClass};
 use a2m_local::{ClientLabel, Connector, StopReason};
+use a2m_logs::SystemClock;
 use a2m_mcp::stdio_proxy;
 use a2m_policy::ToolsetName;
-use a2m_telemetry::SystemClock;
 use serde_json::json;
 
 use super::parse::{COMPLETION_COMMAND, Globals, Tree};
@@ -258,7 +258,7 @@ async fn serve(
         environment,
         Arc::new(TerminalSurface::new(
             Arc::new(ProcessTerminal),
-            Arc::clone(&clock) as Arc<dyn a2m_telemetry::Clock>,
+            Arc::clone(&clock) as Arc<dyn a2m_logs::Clock>,
         )),
     );
     options.clock = clock;
@@ -266,7 +266,7 @@ async fn serve(
         project_of(globals, host).map_err(|failure| (failure, ExitClass::Malformed))?;
     options.key_store.clone_from(&host.key_store);
     let local = LocalEngine::start(options, prompt).await.map_err(failed)?;
-    // The kernel's telemetry now receives the process's log lines; the
+    // The kernel's logs and traces now receives the process's log lines; the
     // engine's log says that it started, and how (decision 0266).
     tracing::info!(
         pid = std::process::id(),

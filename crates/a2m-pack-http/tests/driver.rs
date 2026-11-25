@@ -105,7 +105,7 @@ async fn five_runs_of_one_read_do_the_same_thing() {
             .read(&handle, &mut prepared, "example_order_get", &order)
             .await
             .unwrap();
-        let acting: a2m_telemetry::Acting = serde_json::from_str(&read.capture("acting")).unwrap();
+        let acting: a2m_logs::Acting = serde_json::from_str(&read.capture("acting")).unwrap();
         // What was done names the template, never the value that filled it.
         assert!(
             acting

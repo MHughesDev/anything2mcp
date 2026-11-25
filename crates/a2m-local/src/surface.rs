@@ -31,8 +31,8 @@ use a2m_actions::{
 };
 use a2m_auth::{PersonAnswer, PersonAsk};
 use a2m_core::{Digest, Failure, FailureCode, Identity, PrincipalId, RunId};
+use a2m_logs::Clock;
 use a2m_policy::{Channel as ApprovalChannel, PresenceCheck, PrincipalRef};
-use a2m_telemetry::Clock;
 use a2m_vault::RandomSource;
 use axum::Router;
 use axum::body::Bytes;

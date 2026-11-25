@@ -32,7 +32,7 @@ use std::sync::Arc;
 use a2m_actions::{Env, ExitClass, FrontDoor, OsFamily, PROGRAM, Paths, PersonSurface, codes};
 use a2m_core::{Failure, FailureClass};
 use a2m_local::{ClientLabel, Kept, kept_by};
-use a2m_telemetry::SystemClock;
+use a2m_logs::SystemClock;
 use a2m_vault::KeyStore;
 
 use crate::engine::{Engine, EngineOptions, action_registry};
@@ -497,7 +497,7 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
         Some(person) => Arc::clone(person),
         None => Arc::new(TerminalSurface::new(
             Arc::new(ProcessTerminal),
-            Arc::clone(&clock) as Arc<dyn a2m_telemetry::Clock>,
+            Arc::clone(&clock) as Arc<dyn a2m_logs::Clock>,
         )),
     };
     let mut options = EngineOptions::of_machine(paths, host.environment.clone(), person);
@@ -624,8 +624,8 @@ fn engine_logs(tree: &Tree, paths: &Paths, input: &Json, json: bool) -> Finished
             json,
         );
     };
-    let file = paths.logs.join(a2m_telemetry::LOG_FILE_NAME);
-    match a2m_telemetry::recent_lines(&paths.logs, count) {
+    let file = paths.logs.join(a2m_logs::LOG_FILE_NAME);
+    match a2m_logs::recent_lines(&paths.logs, count) {
         Ok(read) => {
             let lines: Vec<Json> = read
                 .into_iter()

@@ -20,8 +20,8 @@ use a2m_ledger::{
     Acted, ActedToken, BlobKind, BlobRef, IntentToken, LockHeld, PlannedRecord, ReadBack,
     Reconciled, RecordIntent, RecordRef, RetentionClass, Settled, ShadowOutcome,
 };
+use a2m_logs::{ChoiceReason, FinishedTrace, Phase};
 use a2m_provider::{BoxFuture, DiscoveryReport};
-use a2m_telemetry::{ChoiceReason, FinishedTrace, Phase};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;

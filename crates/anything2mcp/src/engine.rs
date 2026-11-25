@@ -5,7 +5,7 @@
 //! one-shot command opens, and what the local engine serves. The order is
 //! fixed: settings, the store and
 //! the vault ([`Kernel::prepare`]), the provider registry (built from the
-//! redactor and telemetry the first step made), the rest of the kernel
+//! redactor and logs and traces the first step made), the rest of the kernel
 //! ([`Kernel::open`]), and the runner loop.
 
 use std::collections::BTreeMap;
@@ -19,11 +19,11 @@ use a2m_actions::{
 };
 use a2m_core::{Digest, Failure, FailureClass, NoSecrets, Secret};
 use a2m_local::EngineLock;
+use a2m_logs::{Clock, LogLevel, LogsAndTraces, SystemClock};
 use a2m_provider::{
     Access, HostServices, ProviderSettings, RegistryBuilder, RootName, Roots, Supervisor,
     SupervisorLimits,
 };
-use a2m_telemetry::{Clock, LogLevel, SystemClock, Telemetry};
 use a2m_vault::{
     Binding, BoxFuture as VaultFuture, InstallationName, KeyMaterial, KeyStore, OsKeyStore,
     OsRandom, PassphraseKeyStore, PassphraseRoute, PassphraseSalt, RandomSource, StoreDescription,
@@ -651,7 +651,7 @@ pub fn action_registry() -> Result<ActionRegistry, Failure> {
         supervisor: Supervisor::new(SupervisorLimits::default()),
         roots: Roots::none(),
         redact: Arc::new(NoSecrets),
-        telemetry: Telemetry::in_memory(LogLevel::Error, Arc::new(NoSecrets), clock),
+        logs_and_traces: LogsAndTraces::in_memory(LogLevel::Error, Arc::new(NoSecrets), clock),
     };
     let mut builder = RegistryBuilder::new(ProviderSettings::default(), host);
     packs::fill(&mut builder);

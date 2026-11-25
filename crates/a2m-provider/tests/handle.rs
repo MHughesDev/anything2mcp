@@ -23,12 +23,12 @@ use a2m_ledger::{
     Durability, Fence, IntentToken, NewRun, Opened, PlannedRecord, RecordIntent, RecordRef,
     RetentionClass, Store, StoreConfig, ToolKind,
 };
+use a2m_logs::ManualClock;
 use a2m_provider::{
     Authority, CheckedPaths, Deadline, Destinations, DriverHandle, Posture, PrepareContext,
     Prepared, ProviderSettings, ReadOnlyPort, Registry, RegistryBuilder, Roots, Sent, StepFailure,
     StepInput, StepOutcome, SurfaceRef, codes,
 };
-use a2m_telemetry::ManualClock;
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
 use common::{
     Behaviour, Folder, OneSecret, TestPack, failure, host_with, manifest, mode, step_kind,
@@ -1049,9 +1049,9 @@ async fn how_a_step_was_done_and_what_the_system_said_pass_the_handle() {
     let args = Values::new();
     let read = input(&args, None, None);
     let fetch = scene.step("fetch", false, false);
-    let acting = a2m_telemetry::Acting {
-        means: vec![a2m_telemetry::Detail::new("step", "fetch")],
-        measured: vec![a2m_telemetry::Detail::new("bytes", "120")],
+    let acting = a2m_logs::Acting {
+        means: vec![a2m_logs::Detail::new("step", "fetch")],
+        measured: vec![a2m_logs::Detail::new("bytes", "120")],
     };
     scene.behave(Behaviour::Saw(a2m_provider::Observed {
         captures: vec![a2m_provider::Capture::acting(&acting)],

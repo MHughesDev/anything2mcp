@@ -105,7 +105,7 @@ impl Pack for CommandPack {
         )?;
         to.discoverer(
             Arc::new(discover::HelpDiscoverer {
-                clock: cx.telemetry().clock(),
+                clock: cx.logs_and_traces().clock(),
             }),
             Arc::new(discover::HelpDescriber {
                 redact: Arc::clone(cx.redact()),
@@ -113,7 +113,7 @@ impl Pack for CommandPack {
         )?;
         to.discoverer(
             Arc::new(binary::BinaryDiscoverer {
-                clock: cx.telemetry().clock(),
+                clock: cx.logs_and_traces().clock(),
             }),
             Arc::new(binary::BinaryDescriber {
                 redact: Arc::clone(cx.redact()),

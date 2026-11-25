@@ -17,9 +17,9 @@ use a2m_engine::{
     KernelHealth, LeaseClock, Parallelism, RecordSnapshot, RunSnapshot, ToolRef, decode_values,
 };
 use a2m_ledger::{BlobRef, Durability, EventKind, Owner, RunRow, SqlValue, Tx};
+use a2m_logs::CaptureLevel;
 use a2m_policy::{ActingFor, GroupName, PrincipalKind, PrincipalRef, ToolsetName};
 use a2m_sched::{BudgetKey, JobEnd, JobLease, RunnerOffer, RunnerTerms, Slots};
-use a2m_telemetry::CaptureLevel;
 use serde_json::{Value as Json, json};
 use tokio::sync::{Semaphore, watch};
 use tokio::task::JoinHandle;

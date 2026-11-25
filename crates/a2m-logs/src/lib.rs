@@ -19,9 +19,9 @@ mod collect;
 mod context;
 mod headers;
 mod log;
+mod logs_and_traces;
 mod recent;
 mod rotate;
-mod telemetry;
 #[cfg(test)]
 mod testing;
 mod text;
@@ -29,7 +29,7 @@ mod trace;
 
 pub use attr::{Attr, CallOutcome, McpMethod};
 pub use clock::{Clock, ManualClock, SystemClock};
-pub use codes::{LOG_UNREADABLE, STORAGE_FULL, TELEMETRY_SETTINGS_INVALID, TRACE_HOLDS_SECRET};
+pub use codes::{LOG_SETTINGS_INVALID, LOG_UNREADABLE, STORAGE_FULL, TRACE_HOLDS_SECRET};
 pub use collect::{Bucket, CounterSample, FinishedSpan, HistogramSample, Metrics, SPAN_BUFFER};
 pub use context::TraceContext;
 pub use headers::{
@@ -37,11 +37,11 @@ pub use headers::{
     record_headers,
 };
 pub use log::{LOG_FILE_NAME, LOG_MEMORY_LINES, LOG_TEXT_LIMIT, LogDestination, LogLevel};
-pub use recent::recent_lines;
-pub use telemetry::{
-    CALL_COUNT, CALL_DURATION, CALL_RETRIES, STEP_SPAN, SpanGuard, Telemetry, TelemetrySettings,
+pub use logs_and_traces::{
+    CALL_COUNT, CALL_DURATION, CALL_RETRIES, LogSettings, LogsAndTraces, STEP_SPAN, SpanGuard,
     start, start_with_clock,
 };
+pub use recent::recent_lines;
 pub use text::{
     FREE_TEXT_LIMIT, LABEL_LIMIT, clean_text, decode_references, limit_text, strip_hidden,
 };

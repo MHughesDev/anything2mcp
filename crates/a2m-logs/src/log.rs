@@ -4,7 +4,7 @@
 //! Every crate logs through the macros of the `tracing` crate. This module is
 //! the subscriber behind them. It keeps events and ignores the spans those
 //! macros can make: a span that is kept is made through
-//! [`Telemetry`](crate::Telemetry), whose attributes cannot carry a value.
+//! [`LogsAndTraces`](crate::LogsAndTraces), whose attributes cannot carry a value.
 //!
 //! Logs say what the engine did as a program. They are never the record of a
 //! run; that is the ledger and the trace.
@@ -35,7 +35,7 @@ pub const LOG_FILE_NAME: &str = "engine.log";
 /// The most characters of a log message, or of one field of a log line.
 pub const LOG_TEXT_LIMIT: usize = 4096;
 
-/// How many lines a telemetry that keeps its logs in memory holds.
+/// How many lines a logs-and-traces handle that keeps its logs in memory holds.
 pub const LOG_MEMORY_LINES: usize = 1024;
 
 /// The line written in place of one that still held a registered secret
@@ -92,7 +92,7 @@ impl fmt::Display for LogLevel {
     }
 }
 
-/// Where a telemetry's log lines go.
+/// Where a logs-and-traces handle's log lines go.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogDestination {
     /// The log file, rotated by size.
@@ -100,7 +100,7 @@ pub enum LogDestination {
     /// Standard error, because the log folder could not be written. The
     /// failure says so; its class is `busy` and its code `storage_full`.
     StandardError(Failure),
-    /// A bounded buffer in memory, read with `Telemetry::log_lines`.
+    /// A bounded buffer in memory, read with `LogsAndTraces::log_lines`.
     Memory,
 }
 
@@ -149,7 +149,7 @@ enum Sink {
     Memory(VecDeque<String>),
 }
 
-/// The writer behind one telemetry: it redacts, formats, checks, and writes.
+/// The writer behind one logs-and-traces handle: it redacts, formats, checks, and writes.
 pub(crate) struct LogCore {
     level: LogLevel,
     redact: Arc<dyn Redact>,
@@ -379,7 +379,7 @@ impl Visit for Collect {
 }
 
 /// The writer the whole process logs to, once `start` has installed one. The
-/// last telemetry started is the one that receives the process's logs.
+/// last logs-and-traces handle started is the one that receives the process's logs.
 static PROCESS: RwLock<Option<Arc<LogCore>>> = RwLock::new(None);
 
 /// Whether this crate's subscriber is the process's default.
@@ -435,7 +435,7 @@ impl LogSubscriber {
 impl Subscriber for LogSubscriber {
     fn register_callsite(&self, _metadata: &'static Metadata<'static>) -> Interest {
         // Asked every time, never cached: the process's writer, and so its
-        // level, can change when a new telemetry is started.
+        // level, can change when a new logs-and-traces handle is started.
         Interest::sometimes()
     }
 
@@ -455,7 +455,7 @@ impl Subscriber for LogSubscriber {
             core.write(
                 LogLevel::Debug,
                 env!("CARGO_PKG_NAME"),
-                "spans made with the tracing macros are not kept; make spans through Telemetry",
+                "spans made with the tracing macros are not kept; make spans through LogsAndTraces",
                 &[],
             );
         }

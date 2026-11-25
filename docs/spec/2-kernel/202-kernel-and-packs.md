@@ -35,7 +35,7 @@ A pack is a provider ([section 203](203-the-provider-contract.md)) that lives in
 
 Its manifest also declares the file kinds and finding kinds it reads from other packs. Packs share data shapes and never code: a kind has one owning pack, and a pack that reads it receives the validated entries from the compiler as data ([decision 0062](../../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)).
 
-**A pack is handed a context when it registers:** a supervisor scoped to what it may start, its folders as checked paths, the redactor, and telemetry. It starts a process only through that supervisor and opens a file only by a checked path ([section 204](204-supervising-subsystems.md)). The product crate joins a pack's own crates where there are several, as it does for the web pack's shared browser handle, and does nothing else with a pack.
+**A pack is handed a context when it registers:** a supervisor scoped to what it may start, its folders as checked paths, the redactor, and the logs and traces. It starts a process only through that supervisor and opens a file only by a checked path ([section 204](204-supervising-subsystems.md)). The product crate joins a pack's own crates where there are several, as it does for the web pack's shared browser handle, and does nothing else with a pack.
 
 So the compiler stays neutral: it parses, validates against whatever schemas are registered, resolves names, type-checks expressions, counts commit points, lowers through whatever lowerings are registered, and emits. "Knowledge lives in one place" becomes: knowledge about a kind of system lives in its pack.
 

@@ -75,6 +75,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Handed Files | The files in the project's `sources` folder: what a person gives a scout or a pipeline. Named from the project folder and never compiled. |
 | Field harness | A program of the workspace under `tools/field-harness/`, built from the product crate's library: the product's own `serve` with the field prompt. Runs only in a container network with no route out, beside the copies a field test starts, and is never packaged ([decision 0310](../decisions/0310-the-field-harness-runs-in-a-closed-network-and-says-in-the-ledger-what-it-is.md)). |
 | Field prompt | The presence prompt of the field harness. It answers on a pipe the field test's runner holds, passes only the short hash the runner sends, refuses an irreversible operation, and is recorded in the ledger as `field_harness`. |
+| Telemetry | The old name of logs and traces ([decision 0330](../decisions/0330-every-name-says-what-the-part-is-in-plain-words.md)). The settings keys `telemetry.export` and `telemetry.crash_reports` keep the word, as keys a person writes in a settings file. Package N0b renamed it in the code and the documents in force; what is stored keeps it, as [decision 0402](../decisions/0402-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md) says |
 | Waiting read | A drafted read that was not sent because its endpoint takes a session's credential and no one has signed in. Reported apart from a proven and a failed read ([decision 0303](../decisions/0303-a-declared-sign-in-is-kept-and-a-read-that-waits-for-one-is-reported-as-waiting.md)). |
 | Home runner | The runner holding a session's live state |
 | Health state | `ok`, `degraded`, or `stopped`: what the engine can currently do |
@@ -93,6 +94,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Lease | Time-limited permission for one runner to work on one job, with a number that only increases |
 | Local channel | The per-user socket or named pipe between clients and the engine on one machine |
 | Lock ticket | What a run takes from the scheduler before it asks the ledger for a record lock. A wait that starts from it returns at once if the lock was freed since, so no release is missed |
+| Logs and traces | What the engine writes about itself on this machine: its logs, spans, and metrics, and the step trace and its captures, each passed through the redactor first. Written by the crate `a2m-logs`; nothing is sent anywhere |
 | Managed component | An outside program a provider needs, detected and identified by digest, never bundled and never fetched during a run |
 | Manifest | A provider's declaration of what it supplies, reaches, needs, and may do |
 | Matched screen | One screen found from several pages whose paths differ in one segment and whose snapshots agree; its address holds a placeholder for that segment ([decision 0187](../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)) |

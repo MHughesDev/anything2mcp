@@ -221,7 +221,7 @@ impl Pack for DesktopPack {
                 name: DiscovererName::new(SNAPSHOT_DISCOVERER)?,
                 kind: window.clone(),
                 version: version(),
-                clock: cx.telemetry().clock(),
+                clock: cx.logs_and_traces().clock(),
             }),
             Arc::new(discover::DesktopDescriber { kind: window }),
         )?;
@@ -230,7 +230,7 @@ impl Pack for DesktopPack {
                 name: DiscovererName::new(SERVICE_DISCOVERER)?,
                 kind: service_kind.clone(),
                 version: version(),
-                clock: cx.telemetry().clock(),
+                clock: cx.logs_and_traces().clock(),
             }),
             Arc::new(service::ServiceDescriber { kind: service_kind }),
         )?;
@@ -239,7 +239,7 @@ impl Pack for DesktopPack {
                 name: DiscovererName::new(BUNDLE_DISCOVERER)?,
                 kind: bundle_kind.clone(),
                 version: version(),
-                clock: cx.telemetry().clock(),
+                clock: cx.logs_and_traces().clock(),
             }),
             Arc::new(bundle::BundleDescriber { kind: bundle_kind }),
         )?;
@@ -248,7 +248,7 @@ impl Pack for DesktopPack {
                 name: DiscovererName::new(MANAGEMENT_DISCOVERER)?,
                 kind: management_kind.clone(),
                 version: version(),
-                clock: cx.telemetry().clock(),
+                clock: cx.logs_and_traces().clock(),
             }),
             Arc::new(windows_kinds::WindowsDescriber {
                 kind: management_kind,
@@ -259,7 +259,7 @@ impl Pack for DesktopPack {
                 name: DiscovererName::new(COM_DISCOVERER)?,
                 kind: typelib_kind.clone(),
                 version: version(),
-                clock: cx.telemetry().clock(),
+                clock: cx.logs_and_traces().clock(),
             }),
             Arc::new(windows_kinds::WindowsDescriber { kind: typelib_kind }),
         )

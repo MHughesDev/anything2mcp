@@ -9,7 +9,7 @@ The engine loop: one job in, one outcome out. It carries out a compiled target t
 | Side | Kernel |
 | Layer | 6, Engine |
 | May depend on | Layers 1 to 5, except `a2m-files` and `a2m-policy`, which the audit refuses. Never `a2m-sched`, never a pack |
-| Depends on | `a2m-core`, including `CompiledTarget` and `Step` as data and the check of a compiled target's hash; `a2m-expr` to evaluate compiled expressions and field-type normalizers; `a2m-telemetry` for spans and the step trace; `a2m-ledger` for the types `IntentToken` and `RecordLock` only, never to open a store; `a2m-auth` for `SessionLease`; `a2m-sources` for `SourceReader`; `a2m-provider` for the registry, `DriverHandle`, and `SandboxPort`. Outside: `tokio` |
+| Depends on | `a2m-core`, including `CompiledTarget` and `Step` as data and the check of a compiled target's hash; `a2m-expr` to evaluate compiled expressions and field-type normalizers; `a2m-logs` for spans and the step trace; `a2m-ledger` for the types `IntentToken` and `RecordLock` only, never to open a store; `a2m-auth` for `SessionLease`; `a2m-sources` for `SourceReader`; `a2m-provider` for the registry, `DriverHandle`, and `SandboxPort`. Outside: `tokio` |
 | Roadmap packages | Phase 1 (slices 1.1 to 1.3, reads), Phase 2 (slice 2.4, sessions), Phase 3 (slices 3.3 to 3.10, writes, preview, resume, identity, pipelines, faults), package E1 (the sandbox for discovery), Phase 4 (shadow) |
 | Carries out | Spec sections [207](../../spec/2-kernel/207-the-engine-loop.md), [201](../../spec/2-kernel/201-archetypes-and-modes.md) for choosing, [208](../../spec/2-kernel/208-runs-the-ledger-and-resume.md) for the write path and resume, [209](../../spec/2-kernel/209-record-identity-and-dependent-records.md), [224](../../spec/2-kernel/224-when-the-engine-itself-fails.md), [201](../../spec/2-kernel/201-archetypes-and-modes.md), [401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md) and [218](../../spec/2-kernel/218-discovery-and-findings.md) for the sandbox; the [diffs](../../reference/steps-snapshots-and-diffs.md#diffs) |
 
@@ -35,7 +35,7 @@ pub struct EngineDeps {
     pub registry: Arc<Registry>,               // from `a2m-provider`
     pub redact: Arc<dyn Redact>,               // from `a2m-core`, implemented by `a2m-vault`
     pub keyed: Arc<dyn KeyedDigest>,           // the vault's keyed digest, for the trace
-    pub clock: Arc<dyn Clock>,                 // from `a2m-telemetry`: durations, the freshness window, a run's time limit
+    pub clock: Arc<dyn Clock>,                 // from `a2m-logs`: durations, the freshness window, a run's time limit
     pub settings: EngineSettings,              // retries, the freshness window, time limits, source limits
 }
 
@@ -228,7 +228,7 @@ An `Execute` job for a write first calls `approval`, which consumes the approval
 
 ## What is stored and shown
 
-Every value the engine hands to `Control` passes the redactor first, whatever passed it before: the diff's current, raw, and proposed values; the intended values; the values seen before the write and after it; the evidence of every read, raw and normalized; the values recorded before a commit point; the outputs stored with `acted`; a key the system assigned; and the tool's result. The trace is redacted by `a2m-telemetry`, and a failure by the handle or by `Control`. A finding that still holds a registered secret is not passed on, and is counted as dropped. A record's own key is the caller's input and is stored as the ledger needs it.
+Every value the engine hands to `Control` passes the redactor first, whatever passed it before: the diff's current, raw, and proposed values; the intended values; the values seen before the write and after it; the evidence of every read, raw and normalized; the values recorded before a commit point; the outputs stored with `acted`; a key the system assigned; and the tool's result. The trace is redacted by `a2m-logs`, and a failure by the handle or by `Control`. A finding that still holds a registered secret is not passed on, and is counted as dropped. A record's own key is the caller's input and is stored as the ledger needs it.
 
 - **Comparing.** The values seen before a write are held as they are stored, in the job and on resume, and every later read is compared with them in that form. Two values that differ only inside a registered secret compare equal, at the freshness check and at reconcile. The handle redacts what a driver returns before the engine sees it, so the engine could not compare more closely if it tried.
 - **A write that carries a registered secret is refused,** with `input`, `input_invalid`, when its records are worked out. What is read back is masked, so such a value could never be compared with what the system holds, and rule 4 keeps secrets out of tool inputs.
@@ -312,7 +312,7 @@ The kernel's half of "cannot write" is the token. The other half, what a step th
 | `a2m-actions` | `Engine::new`; `run_job` and `discover` from its in-process runner loop, for every job kind including `Try` and `Discover`; implements `Control` |
 | `a2m-runner` | `run_job` and `discover`; implements `Control` over the link |
 
-It calls: `Registry::driver` and `DriverHandle`; `Registry::discoverers_for` and `Discoverer::discover` in a `Discover` job; `SourceReader::read`, with bytes the runner fetched; `a2m-expr` to evaluate; `a2m-telemetry` for spans; `Control` for everything else. It never calls `a2m-files`, `a2m-policy`, or a store.
+It calls: `Registry::driver` and `DriverHandle`; `Registry::discoverers_for` and `Discoverer::discover` in a `Discover` job; `SourceReader::read`, with bytes the runner fetched; `a2m-expr` to evaluate; `a2m-logs` for spans; `Control` for everything else. It never calls `a2m-files`, `a2m-policy`, or a store.
 
 ## State
 

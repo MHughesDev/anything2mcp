@@ -15,11 +15,11 @@ use a2m_core::{
     Finding, FindingKind, PackPayload, ProducedBy, Source, Step, Subject, Values,
 };
 use a2m_files::{DraftContext, DraftDoc, DraftValue, DraftingRule, RelPath};
+use a2m_logs::Clock;
 use a2m_provider::{
     DescribeForm, Describer, Description, Discoverer, DiscovererName, DiscoveryReport,
     DiscoveryScope, FindingSink, SandboxPort, StepInput, StepOutcome, SurfaceDescription,
 };
-use a2m_telemetry::Clock;
 use serde_json::{Value as Json, json};
 
 use crate::codes;

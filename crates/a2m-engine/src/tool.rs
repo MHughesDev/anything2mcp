@@ -15,9 +15,9 @@ use a2m_ledger::{
     Acted, ActedToken, BlobKind, BlobRef, PlannedRecord, ReadBack, Reconciled, RecordIntent,
     RecordRef, RetentionClass, Settled,
 };
+use a2m_logs::Phase;
 use a2m_provider::{Observed, Posture, Sent, StepFailure, StepOutcome};
 use a2m_sources::{LoadedSource, OPERATION_READER, Sources};
-use a2m_telemetry::Phase;
 
 use crate::codes;
 use crate::compare::{self, Field};

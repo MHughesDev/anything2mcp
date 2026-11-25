@@ -29,7 +29,7 @@ libc.workspace = true
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [dev-dependencies]
-a2m-telemetry = { path = "../a2m-telemetry" }
+a2m-logs = { path = "../a2m-logs" }
 example-app = { path = "../../targets/example-app" }
 tokio = { workspace = true, features = ["test-util"] }
 

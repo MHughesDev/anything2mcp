@@ -107,7 +107,7 @@ fn a_held_credential_reaches_only_the_drivers_client_and_appears_nowhere_else() 
     let mut texts = Vec::new();
     let mut planted = vec!["PLANTED".to_owned()];
 
-    logged(&world.telemetry, async {
+    logged(&world.logs_and_traces, async {
         for case in cases() {
             let key = account_key(case.provider);
             let entry = Arc::new(entry_of(&case));
@@ -176,7 +176,7 @@ fn a_held_credential_reaches_only_the_drivers_client_and_appears_nowhere_else() 
         texts.push(format!("{:?} {:?}", world.keeper, world.worker));
     });
 
-    let lines = world.telemetry.log_lines();
+    let lines = world.logs_and_traces.log_lines();
     assert!(
         lines
             .iter()
@@ -217,7 +217,7 @@ fn an_entry_a_provider_cannot_use_is_refused_before_anything_is_opened() {
 
     // A provider nobody registered is a failure of its own, by name.
     let unknown = Arc::new(AuthEntry::new(ProviderName::new("carrier_pigeon").unwrap()));
-    let failure = logged(&world.telemetry, async {
+    let failure = logged(&world.logs_and_traces, async {
         world
             .keeper
             .lease(request(&account_key("robot"), &unknown, Wait::NoWait))

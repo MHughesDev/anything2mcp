@@ -13,7 +13,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use a2m_core::{Failure, Redact, SessionId, Timestamp};
-use a2m_telemetry::Clock;
+use a2m_logs::Clock;
 use a2m_vault::{
     BoxFuture, ItemId, OsRandom, OwnerRef, RandomSource, SealContext, Sealed, SealedKind, Vault,
 };

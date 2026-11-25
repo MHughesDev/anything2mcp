@@ -24,8 +24,8 @@ use a2m_actions::{
 use a2m_api::{ApiSettings, OPENAPI_PATH, RUN_EVENTS_PATH, openapi, router, served_routes};
 use a2m_auth::PersonAnswer;
 use a2m_core::{Failure, FailureClass, Timestamp};
+use a2m_logs::{Clock, ManualClock};
 use a2m_provider::{RegistryBuilder, Roots, Supervisor, SupervisorLimits};
-use a2m_telemetry::{Clock, ManualClock};
 use a2m_vault::MemoryKeyStore;
 use engine::{AppPack, Counted, Folder, ITEM_UPSERT, ORDER_GET, START};
 use example_app::harness::TestApp;

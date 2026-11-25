@@ -22,11 +22,11 @@ use a2m_ledger::{
     DATABASE_FILE_NAME, Durability, Fence, NewRun, PlannedRecord, RecordIntent, RecordRef,
     RetentionClass, Store, StoreConfig, ToolKind, Tx, WriteClearance,
 };
+use a2m_logs::{Clock, ManualClock};
 use a2m_sched::{
     Admitted, HealthState, JobKind, JobLease, JobRequirements, Priority, RunnerOffer,
     SchedSettings, Scheduler, SessionLimits, Slots, Submission,
 };
-use a2m_telemetry::{Clock, ManualClock};
 use a2m_vault::{MemoryKeyStore, RandomSource, Vault};
 
 /// Random bytes that are the same on every run: a counter, hashed. A second

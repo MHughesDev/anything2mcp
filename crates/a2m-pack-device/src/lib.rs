@@ -146,7 +146,7 @@ impl Pack for DevicePack {
         to.discoverer(
             Arc::new(discover::IdentityDiscoverer::new(
                 Arc::clone(&names),
-                cx.telemetry().clock(),
+                cx.logs_and_traces().clock(),
                 version.clone(),
             )?),
             Arc::new(discover::IdentityDescriber),
@@ -154,7 +154,7 @@ impl Pack for DevicePack {
         to.discoverer(
             Arc::new(published::PublishedMapDiscoverer::new(
                 Arc::clone(&names),
-                cx.telemetry().clock(),
+                cx.logs_and_traces().clock(),
                 version,
             )?),
             Arc::new(published::PublishedMapDescriber),

@@ -14,13 +14,13 @@ use a2m_core::{
     AccountName, Coverage, EvidenceLevel, Failure, FailureClass, FailureCode, Finding, FindingKind,
     Identity, LimitationCode, ProducedBy, Redact, Source, Subject, Value,
 };
+use a2m_logs::Clock;
 use a2m_pack_web_browser::{
     Address, BrowserError, By, Deadline, Look, ObserveTab, Observer, Origins, PageEnvironment,
     ProfileKey, Query, RawValue, ReadWhat, SafeRequests, WatchStart, WatchTab, is_plain_name,
     path_by_structure,
 };
 use a2m_provider::{DiscoveryScope, ProviderName};
-use a2m_telemetry::Clock;
 use serde_json::Value as Json;
 
 use crate::codes;

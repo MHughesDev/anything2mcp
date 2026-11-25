@@ -31,7 +31,7 @@ use a2m_core::{
     Coverage, Digest, EvidenceLevel, Failure, Finding, FindingKind, LimitationCode, ProducedBy,
     Redact, Source, Subject, Values,
 };
-use a2m_telemetry::Clock;
+use a2m_logs::Clock;
 
 use crate::codes;
 use crate::discover::{

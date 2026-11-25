@@ -21,13 +21,13 @@ use a2m_core::{
     Coverage, Digest, EvidenceLevel, Failure, Finding, FindingKind, LimitationCode, PackPayload,
     ProducedBy, Source, Subject, Value, Values,
 };
+use a2m_logs::Clock;
 use a2m_provider::{
     BoxFuture, CheckedPath, DescribeForm, Describer, Description, Discoverer, DiscovererName,
     DiscoveryReport, DiscoveryScope, FindingSink, Roots, SandboxPort, SurfaceDescription,
 };
 use a2m_sources::RawCell;
 use a2m_sources::json::JsonValue;
-use a2m_telemetry::Clock;
 use serde::{Deserialize, Serialize};
 
 use crate::driver::{FileLimits, surface_folder};

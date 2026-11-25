@@ -13,8 +13,8 @@ a2m_core::failure_codes! {
     TRACE_HOLDS_SECRET = Input, "trace_holds_secret",
         meaning "A finished trace still held a registered secret at the check on the way out. The trace is dropped and never reaches the store.",
         next "Register every secret with the vault before the run uses it, then run again.";
-    TELEMETRY_SETTINGS_INVALID = Input, "telemetry_settings_invalid",
-        meaning "The settings telemetry was started with cannot be used, such as a log file size of zero.",
+    LOG_SETTINGS_INVALID = Input, "log_settings_invalid",
+        meaning "The settings the logs and traces were started with cannot be used, such as a log file size of zero.",
         next "Set the log file size to at least one byte, then start the engine again.";
     LOG_UNREADABLE = Busy, "log_unreadable",
         meaning "A file of the engine's log is there and cannot be read.",

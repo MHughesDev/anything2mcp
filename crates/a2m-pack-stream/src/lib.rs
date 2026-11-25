@@ -181,7 +181,7 @@ impl Pack for StreamPack {
                 names.clone(),
                 sample,
                 version,
-                cx.telemetry().clock(),
+                cx.logs_and_traces().clock(),
             )),
             Arc::new(discover::BrokerDescriber::new(names)),
         )?;

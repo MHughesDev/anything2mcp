@@ -108,7 +108,7 @@ async fn ten_runs_meet_an_expired_session_and_exactly_one_renewal_happens() {
     // The count is made by the renewal's own task after its last write, so
     // it is read once that task has ended.
     world.keeper.idle().await;
-    assert_eq!(world.telemetry.metrics().counter(RENEWALS, &[]), 1);
+    assert_eq!(world.logs_and_traces.metrics().counter(RENEWALS, &[]), 1);
 
     // The lease from before the renewal is stale, and says so.
     let mut sink = super::support::Sink::default();
@@ -179,10 +179,10 @@ async fn two_engines_over_one_store_make_one_renewal() {
     world.fake.release_renewals();
     // Which engine won the compare-and-set is the scheduler's choice. The
     // renewal's task ends after its last write, and only the first engine
-    // has telemetry, which counts the renewal when that engine made it.
+    // has logs and traces, which counts the renewal when that engine made it.
     world.keeper.idle().await;
     other.idle().await;
-    let first_renewed = match world.telemetry.metrics().counter(RENEWALS, &[]) {
+    let first_renewed = match world.logs_and_traces.metrics().counter(RENEWALS, &[]) {
         1 => true,
         0 => false,
         counted => panic!("the first engine counted {counted} renewals"),
@@ -1668,7 +1668,7 @@ impl crate::AskPerson for Nobody {
 /// engine lets go of it; held strongly, the cycle keeps it.
 async fn engine_with_probe(weakly: bool) -> crate::WeakKeeper {
     use a2m_ledger::{Store, StoreConfig};
-    use a2m_telemetry::ManualClock;
+    use a2m_logs::ManualClock;
     use a2m_vault::{MemoryKeyStore, Vault};
 
     let clock = Arc::new(ManualClock::starting_at(

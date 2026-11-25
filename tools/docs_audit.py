@@ -155,8 +155,14 @@ def main():
     layering = set(re.findall(r"`(a2m-[a-z-]+)`", layer_text))
     for c in sorted(layout ^ layering):
         note("crates", f"{c} is in only one of the layout in spec section 605 and the layering table")
+    # A crate renamed by decision 0330 keeps its old name in history, which is never rewritten;
+    # anywhere else the old name is a finding like any other.
+    renamed = {"a2m-telemetry", "a2m-field-harness"}
+    kept_as_history = history + ("docs/research/", "docs/reviews/", "docs/hypotheses/H-")
     for k, v in md.items():
         for c in set(re.findall(r"`(a2m-[a-z]+(?:-[a-z]+)*)`", v)) - layout:
+            if c in renamed and k.startswith(kept_as_history):
+                continue
             note("crates", f"{k}: {c} is not in the layout in spec section 605")
 
     # 5. Failure classes agree between the engine section and the reference.

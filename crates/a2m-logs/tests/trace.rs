@@ -20,10 +20,10 @@ use a2m_core::{
     OperationName, RecordKey, Redact, RunId, Sensitivity, StepKind, Timestamp, Value, Values,
     Version, WorkspaceId,
 };
-use a2m_telemetry::{
+use a2m_logs::{
     Acting, ArtifactKind, ArtifactOutcome, ArtifactRef, CaptureLevel, CapturePoint, ChoiceReason,
-    Detail, DropReason, FREE_TEXT_LIMIT, FinishedTrace, Held, Locating, LogLevel, ManualClock,
-    MaskReport, OfferedArtifact, PassStart, Phase, StepLine, StepRecord, TRACE_SCHEMA, Telemetry,
+    Detail, DropReason, FREE_TEXT_LIMIT, FinishedTrace, Held, Locating, LogLevel, LogsAndTraces,
+    ManualClock, MaskReport, OfferedArtifact, PassStart, Phase, StepLine, StepRecord, TRACE_SCHEMA,
     TraceBuilder, TraceIdentity, TraceLine, TraceOutcome, TracedValue, read_trace,
 };
 
@@ -508,9 +508,9 @@ fn a_secret_split_by_markup_is_still_masked() {
 fn a_trace_that_still_holds_a_secret_is_refused() {
     let clock = Arc::new(ManualClock::starting_at(Timestamp::from_unix_millis(0)));
     let redact = Arc::new(Planted::default());
-    let telemetry = Telemetry::in_memory(LogLevel::Info, redact.clone(), clock);
+    let logs_and_traces = LogsAndTraces::in_memory(LogLevel::Info, redact.clone(), clock);
 
-    let refused = telemetry.scoped(|| {
+    let refused = logs_and_traces.scoped(|| {
         let mut builder = builder(1, CaptureLevel::Standard, redact.clone());
         for step in steps(1) {
             builder.record(step);
@@ -529,7 +529,7 @@ fn a_trace_that_still_holds_a_secret_is_refused() {
     assert!(!failure.to_string().contains("call before"));
 
     // The alert is a log line, and it does not repeat the secret.
-    let lines = telemetry.log_lines();
+    let lines = logs_and_traces.log_lines();
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].contains("\"level\":\"error\""), "{}", lines[0]);
     assert!(
@@ -796,7 +796,7 @@ fn an_artifact_whose_secret_is_split_by_markup_or_written_with_a_reference_is_dr
 
 #[test]
 fn a_trace_is_checked_against_its_own_chain() {
-    use a2m_telemetry::{TraceCheck, check_trace};
+    use a2m_logs::{TraceCheck, check_trace};
     let mut builder = builder(1, CaptureLevel::Minimal, Arc::new(NoSecrets));
     for number in 0..4 {
         builder.record(step(0, Phase::Act, number, "fill", 1));

@@ -10,7 +10,7 @@ use a2m_core::{
 use a2m_ledger::RecordRef;
 
 use crate::diff::Diff;
-use a2m_telemetry::CaptureLevel;
+use a2m_logs::CaptureLevel;
 use tokio::time::Instant;
 
 /// What a job is for.
