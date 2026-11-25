@@ -30,8 +30,8 @@ use crate::protocol::{
     FailRequest, FetchEnable, GetFrameTree, GetFullAxTree, GetProperties, GetResponseBody,
     GetTargetInfo, HandleDialog, InsertText, MediaFeature, Navigate, NetworkEnable,
     NodeDescription, PageEnable, RequestPattern, RequestPaused, RunIfWaiting, RuntimeEnable,
-    SetAcceptLanguage, SetAutoAttach, SetDeviceMetrics, SetEmulatedMedia, SetFileInputFiles,
-    SetLifecycleEvents, SetLocale, SetTimezone, TerminateExecution,
+    SetAcceptLanguage, SetAutoAttach, SetDeviceMetrics, SetDocumentContent, SetEmulatedMedia,
+    SetFileInputFiles, SetLifecycleEvents, SetLocale, SetTimezone, TerminateExecution,
 };
 use crate::safe::SafeRequests;
 use crate::snapshot::{Snapshot, SnapshotLimits};
@@ -1030,6 +1030,9 @@ pub(crate) struct Page {
     /// Whether the browser has been asked to close the page of a hung tab,
     /// and has answered or not by its deadline.
     pub(crate) hang_closed: watch::Sender<bool>,
+    /// Whether the task that hears the tab's events has ended: the browser
+    /// detached the tab, or the link closed.
+    ended: watch::Sender<bool>,
     browser: Arc<BrowserInner>,
 }
 
@@ -1304,20 +1307,38 @@ impl Page {
             .await;
         // The tab's events stop: this listener takes the session's place,
         // and its end is the browser's word that the session is detached,
-        // which it says once the page is gone.
+        // which it says once the page is gone. Until then it fails every
+        // request the page still makes: one left paused is sent when the
+        // session is detached (decision 0461).
         let mut session = self.client.subscribe(Some(&self.session));
         let mut closing = vec![self.target.clone()];
         closing.extend(self.browser.windows_of(&self.target));
-        for target in closing {
-            let _ = self
-                .client
-                .call(None, &CloseTarget { target_id: &target }, deadline)
-                .await;
-        }
-        let _ = tokio::time::timeout_at(deadline.at(), async {
-            while session.recv().await.is_some() {}
-        })
-        .await;
+        let close = async {
+            for target in closing {
+                let _ = self
+                    .client
+                    .call(None, &CloseTarget { target_id: &target }, deadline)
+                    .await;
+            }
+        };
+        let refuse = async {
+            while let Some(event) = session.recv().await {
+                if let EventKind::RequestPaused(paused) = event.kind {
+                    let _ = self
+                        .client
+                        .call(
+                            event.session.as_deref(),
+                            &FailRequest {
+                                request_id: &paused.request_id,
+                                error_reason: BLOCKED,
+                            },
+                            deadline,
+                        )
+                        .await;
+                }
+            }
+        };
+        let _ = tokio::time::timeout_at(deadline.at(), async { tokio::join!(close, refuse) }).await;
         self.client.unsubscribe(&self.session);
         self.hang_closed.send_replace(true);
     }
@@ -2835,7 +2856,11 @@ impl Page {
             EventKind::Attached(attached) => {
                 // Every child of a tab a tool runs in is locked before it
                 // runs, in both postures (decision 0292); a sign-in tab
-                // attaches none.
+                // attaches none. One that comes while the tab is being
+                // closed is left waiting, and never runs.
+                if self.released.load(Ordering::SeqCst) {
+                    return;
+                }
                 if !self.quiet {
                     self.guard_child(
                         &attached.session_id,
@@ -2855,7 +2880,10 @@ impl Page {
                 let deadline = Deadline::after(self.call_deadline);
                 let session = event.session.as_deref();
                 let document = paused.resource_type == "Document";
-                let verdict = if own && document && paused.frame_id == self.target {
+                let verdict = if self.released.load(Ordering::SeqCst) {
+                    // A tab being closed sends nothing more.
+                    Verdict::Refuse(None)
+                } else if own && document && paused.frame_id == self.target {
                     self.judge_move(&paused)
                 } else {
                     self.judge_request(&paused)
@@ -2884,9 +2912,9 @@ impl Page {
                         if let Some(word) = report {
                             self.block(&word, &paused.request.url);
                         }
-                        // Ended before it leaves the browser. If this call
-                        // is lost, the request stays paused: it is never
-                        // sent.
+                        // Ended before it leaves the browser. A request left
+                        // paused is sent when the tab is detached, so a tab
+                        // hears its events until then (`release`).
                         let _ = self
                             .client
                             .call(
@@ -3197,15 +3225,21 @@ impl Page {
             .unwrap_or_default()
     }
 
-    /// Ends the tab: its events stop, and the browser is asked to close
+    /// Ends the tab: it is done with, and the browser is asked to close
     /// its page. Safe to call more than once.
+    ///
+    /// A request the browser holds for the tab is sent as it was when the
+    /// tab's session is detached, unless it was answered first (measured,
+    /// decision 0461), and a page makes requests while it is closed: a
+    /// handler of its leaving, or a load that was on its way. So the tab
+    /// goes on hearing its events until the browser has detached it, and
+    /// from the release on fails every request of its page, its frames,
+    /// and its workers. Before the page is closed, its document is replaced
+    /// with an empty one the engine writes, with no request: that erases
+    /// every handler the page set on its window and its document, so its
+    /// leaving runs nothing of the page's.
     fn release(&self) {
-        // Ending the subscription ends the stream of the tab's events, and
-        // the task that hears them then marks the tab gone, on another
-        // thread and at once; so whether the tab is released yet is not
-        // read from its status.
         self.status.send_replace(Status::Gone);
-        self.client.unsubscribe(&self.session);
         if self.released.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -3215,17 +3249,42 @@ impl Page {
         // still there: with the page gone, nothing drives them.
         let mut closing = vec![self.target.clone()];
         closing.extend(self.browser.windows_of(&self.target));
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            let client = self.client.clone();
-            let deadline = Deadline::after(self.call_deadline);
-            runtime.spawn(async move {
-                for target in closing {
-                    let _ = client
-                        .call(None, &CloseTarget { target_id: &target }, deadline)
-                        .await;
-                }
-            });
-        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            // With no runtime, no task hears the tab either.
+            self.client.unsubscribe(&self.session);
+            return;
+        };
+        let client = self.client.clone();
+        let session = self.session.clone();
+        let target = self.target.clone();
+        let mut ended = self.ended.subscribe();
+        let browser = Arc::clone(&self.browser);
+        let call_deadline = self.call_deadline;
+        browser.closing.fetch_add(1, Ordering::SeqCst);
+        runtime.spawn(async move {
+            let deadline = Deadline::after(call_deadline);
+            let _ = client
+                .call(
+                    Some(&session),
+                    &SetDocumentContent {
+                        frame_id: &target,
+                        html: "",
+                    },
+                    deadline,
+                )
+                .await;
+            let deadline = Deadline::after(call_deadline);
+            for target in closing {
+                let _ = client
+                    .call(None, &CloseTarget { target_id: &target }, deadline)
+                    .await;
+            }
+            // The browser's word that the session is detached ends the task
+            // that hears the tab: until then it fails every request.
+            let _ = tokio::time::timeout_at(deadline.at(), ended.wait_for(|ended| *ended)).await;
+            client.unsubscribe(&session);
+            browser.closing.fetch_sub(1, Ordering::SeqCst);
+        });
     }
 }
 
@@ -3482,7 +3541,7 @@ async fn pump(page: Arc<Page>, mut events: mpsc::UnboundedReceiver<Event>) {
         }
         page.heard(event).await;
     }
-    // The subscription ended: the tab was released, or the link closed.
+    // The subscription ended: the tab was detached, or the link closed.
     page.status.send_if_modified(|status| {
         let open = !matches!(*status, Status::Gone | Status::Crashed | Status::Hung);
         if open {
@@ -3490,6 +3549,7 @@ async fn pump(page: Arc<Page>, mut events: mpsc::UnboundedReceiver<Event>) {
         }
         open
     });
+    page.ended.send_replace(true);
 }
 
 /// Opens a tab on `about:blank` in the browser, in the posture given, for
@@ -3593,6 +3653,7 @@ pub(crate) async fn open_page(
         probing: AtomicBool::new(false),
         hang_probe: settings.hang_probe,
         hang_closed: watch::Sender::new(false),
+        ended: watch::Sender::new(false),
         browser: Arc::clone(browser),
     });
     browser.tabs.fetch_add(1, Ordering::SeqCst);

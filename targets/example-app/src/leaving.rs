@@ -20,8 +20,9 @@
 //! - `/leaving/saved/...`: the form says "Saved." before anything is done.
 //! - `/leaving/loads/...`: the form loads an image and sends a `fetch` with
 //!   `GET` to the other name while it loads, as a page that loads from
-//!   another origin does (decision 0292). `/leaving/loads/orders/{order}` is
-//!   the order's page, with its table, that does the same.
+//!   another origin does (decision 0292), and sends one more, kept alive,
+//!   as it is left or closed (`loads-leave`). `/leaving/loads/orders/{order}`
+//!   is the order's page, with its table, that does the same.
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -82,9 +83,12 @@ fn added(how: &str) -> Option<String> {
         "saved" => "document.getElementById(\"status\").textContent = \"Saved.\";".to_owned(),
         "loads" => format!(
             "const logo = new Image();\nlogo.alt = \"Logo\";\nlogo.src = {};\n\
-             document.body.append(logo);\nfetch({}, {{mode: \"no-cors\"}}).catch(() => {{}});",
+             document.body.append(logo);\nfetch({}, {{mode: \"no-cors\"}}).catch(() => {{}});\n\
+             addEventListener(\"pagehide\", () => {{ fetch({}, \
+             {{mode: \"no-cors\", keepalive: true}}).catch(() => {{}}); }});",
             trap("loads-image"),
-            trap("loads-fetch")
+            trap("loads-fetch"),
+            trap("loads-leave")
         ),
         _ => return None,
     })

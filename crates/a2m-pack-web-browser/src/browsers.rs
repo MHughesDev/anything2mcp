@@ -328,6 +328,9 @@ pub struct OpenBrowser {
     pub verified: bool,
     /// How many tabs are open.
     pub tabs: usize,
+    /// How many tabs are being closed: released, and not yet detached by
+    /// the browser. Each fails every request of its page until then.
+    pub closing: usize,
     /// How many acting tabs it has opened since it started.
     pub runs: u64,
     /// How many of its tabs hung and were closed since it started.
@@ -344,6 +347,8 @@ pub(crate) struct BrowserInner {
     program_digest: Digest,
     verified: bool,
     pub(crate) tabs: AtomicUsize,
+    /// How many released tabs the browser has not yet detached.
+    pub(crate) closing: AtomicUsize,
     runs: AtomicU64,
     /// How many of its tabs hung and were closed: past the count the
     /// settings give, the browser is recycled between runs.
@@ -1347,6 +1352,7 @@ impl Browsers {
             program_digest: link.program_digest,
             verified: link.verified || reviewed,
             tabs: AtomicUsize::new(0),
+            closing: AtomicUsize::new(0),
             runs: AtomicU64::new(0),
             hangs: AtomicU64::new(0),
             pages: Mutex::new(BTreeMap::new()),
@@ -1413,6 +1419,7 @@ impl Browsers {
                 program_digest: browser.program_digest,
                 verified: browser.verified,
                 tabs: browser.tabs.load(Ordering::SeqCst),
+                closing: browser.closing.load(Ordering::SeqCst),
                 runs: browser.runs.load(Ordering::SeqCst),
                 hangs: browser.hangs.load(Ordering::SeqCst),
                 health: browser.health(),

@@ -452,3 +452,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0458 | [An answer that did its part and waits for a person is `ok`](0458-an-answer-that-did-its-part-and-waits-for-a-person-is-ok.md) | Accepted (design decision) |
 | 0459 | [The field test's box takes a desktop session, and one application the recipe names](0459-the-field-test-box-takes-a-desktop-session-and-one-application-the-recipe-names.md) | Accepted (design decision) |
 | 0460 | [A tool's digest is of its definition as published, and the untrusted mark sits on the output's own property](0460-a-tools-digest-is-of-its-definition-as-published-and-the-untrusted-mark-sits-on-the-output-field.md) | Accepted (design decision) |
+| 0461 | [A tab being closed fails every request until the browser detaches it, and its page's handlers are erased first](0461-a-tab-being-closed-fails-every-request-until-the-browser-detaches-it.md) | Accepted (design decision) |
