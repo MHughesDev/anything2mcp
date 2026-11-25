@@ -724,6 +724,22 @@ async fn the_other_name_is_reachable(app: &TestApp) {
     assert!(app.trap_writes().await.unwrap().is_empty());
 }
 
+/// Waits, within a bound, until every tab the stand's browsers were asked to
+/// close has been detached: a tab being closed fails every request of its
+/// page until then, and what would leak would arrive by then.
+async fn tabs_closed(scene: &Scene) {
+    let Some(browsers) = scene.stand.browsers.get() else {
+        return;
+    };
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while browsers.list().iter().any(|open| open.closing > 0) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
 /// Waits, within a bound, until the application has stored `count` writes
 /// of the line item: a save that left the page arrives in its own time.
 async fn stored_writes(app: &TestApp, count: usize) {
@@ -852,7 +868,8 @@ async fn a_state_the_page_showed_before_the_click_is_never_taken_for_its_answer(
 async fn a_page_that_loads_from_an_origin_the_tool_does_not_declare_stops_and_sends_nothing_there()
 {
     // The line item's form, on a page that loads an image and sends a
-    // `fetch` to the application's other name while it loads.
+    // `fetch` to the application's other name while it loads, and one more
+    // as it is left or closed.
     let (app, mut scene) = scene("loads").await;
     the_other_name_is_reachable(&app).await;
     let compiled_target = changed(&scene, "screens/line_item.yaml", |text| {
@@ -873,8 +890,10 @@ async fn a_page_that_loads_from_an_origin_the_tool_does_not_declare_stops_and_se
     let other = other.trim_end_matches('/');
     assert!(failure.failure.message().contains(other), "{failure}");
     assert_eq!(failure.sent, Sent::NotSent);
-    // Nothing reached the other name.
-    assert!(app.trap_writes().await.unwrap().is_empty());
+    // Nothing reached the other name, also once the tab has been closed.
+    tabs_closed(&scene).await;
+    let arrived = app.trap_writes().await.unwrap();
+    assert!(arrived.is_empty(), "{arrived:?}");
 
     // Declared as one of the operation's destinations, with its scheme,
     // the other name receives what the page loads, and the read is made.
@@ -891,16 +910,42 @@ async fn a_page_that_loads_from_an_origin_the_tool_does_not_declare_stops_and_se
         (FailureClass::Policy, "origin_not_declared"),
         "{failure}"
     );
-    assert!(app.trap_writes().await.unwrap().is_empty());
+    tabs_closed(&scene).await;
+    let arrived = app.trap_writes().await.unwrap();
+    assert!(arrived.is_empty(), "{arrived:?}");
     scene.destinations = Destinations::new([surface.to_owned(), other.to_owned()]);
-    let read = read_with(&mut scene, compiled_target).await.unwrap();
+    scene.compiled_target = compiled_target;
+    let (handle, mut prepared) = scene.reader().await;
+    let read = scene
+        .read(&handle, &mut prepared, GET, &item("A-100", "L-101"))
+        .await
+        .unwrap();
     let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
     assert_eq!(
         read.values.get("description"),
         Some(&Value::from(stored.description.as_str()))
     );
+    // What the page loads arrives while its tab is open, as the stand
+    // counts it: the read does not wait for an image.
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while !app
+            .trap_writes()
+            .await
+            .unwrap()
+            .contains_key("leaving/loads-image")
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    handle.release(prepared, false).await;
+    // A tab being closed sends nothing more, to a declared origin too: its
+    // page's handler of its leaving is never run.
+    tabs_closed(&scene).await;
     let arrived = app.trap_writes().await.unwrap();
     assert!(arrived.contains_key("leaving/loads-image"), "{arrived:?}");
+    assert!(!arrived.contains_key("leaving/loads-leave"), "{arrived:?}");
     scene.stand.end().await;
 }
 

@@ -450,3 +450,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0455 | [A release keeps only the settings it built and the failure codes something raises](0455-a-release-keeps-only-the-settings-it-built-and-the-failure-codes-something-raises.md) | Accepted (design decision) |
 | 0457 | [A publish of named tools compiles only their files](0457-a-publish-of-named-tools-compiles-only-their-files.md) | Accepted (design decision) |
 | 0458 | [An answer that did its part and waits for a person is `ok`](0458-an-answer-that-did-its-part-and-waits-for-a-person-is-ok.md) | Accepted (design decision) |
+| 0999 | [A tab being closed fails every request until the browser detaches it, and its page's handlers are erased first](0999-a-tab-being-closed-fails-every-request-until-the-browser-detaches-it.md) | Accepted (design decision) |
