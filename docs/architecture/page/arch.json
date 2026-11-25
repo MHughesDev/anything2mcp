@@ -34,7 +34,7 @@
   "bridge": {
    "name": "Stdio Proxy",
    "group": "Thin Client",
-   "where": "anything2mcp bridge",
+   "where": "anything2mcp stdio",
    "state": "b",
    "text": "A small program an MCP client starts. It carries MCP messages over standard input and output to the running engine and back. It holds no logic. If no engine is running it answers with a named failure until one is.",
    "rows": [
