@@ -151,7 +151,7 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
 /// build to the same value (package 1.3): the compiled target's bytes carry
 /// no line ending of a system, and no path or time of a machine.
 const PAGES_COMPILED_TARGET_HASH: &str =
-    "b7964c167c02b0501e690dd8083c2d794e4aba382193b9d8c3811416a51caf31";
+    "50d0af1a644b0d0210c24380298272f29b2e1f897a09a31ce36d42d707ef944d";
 
 #[test]
 fn the_pages_target_compiles_to_the_same_compiled_target_bytes_on_every_machine() {

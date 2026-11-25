@@ -1,0 +1,20 @@
+surface: orders_db
+records:
+  line_item:
+    table: order_lines
+    key: [order_id, item_code]
+    fields:
+      order_id: {column: order_id, type: identifier}
+      item_code: {column: item_code, type: identifier}
+      quantity: {column: quantity, type: integer}
+statements:
+  lines_of_order:
+    effect: read
+    record: line_item
+    text: |
+      SELECT order_id, item_code, quantity
+      FROM order_lines WHERE order_id = ? ORDER BY item_code
+    params: [{name: order_id, type: identifier}]
+    returns: many
+    max_rows: 500
+    time_limit: 5s

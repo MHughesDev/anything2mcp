@@ -1,0 +1,5 @@
+test: example_order_lines_list
+kind: offline
+fixture: order_lines_list
+inputs: {order_id: "A-100"}
+expect: {item_code: ["L-101", "L-102", "L-103"]}

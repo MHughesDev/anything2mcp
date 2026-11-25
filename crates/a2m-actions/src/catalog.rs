@@ -225,7 +225,12 @@ fn watch_output() -> JsonSchema {
         .required("compared", JsonSchema::words(&["whole", "records"]))
         .required("ignore", list_of(text()))
         .optional("condition", text())
+        .required("resource", text())
 }
+
+/// The URI of a watch's MCP resource, the template of `watch.changes`
+/// (decision 0478), with `{watch_id}` for the watch.
+pub(crate) const WATCH_RESOURCE: &str = "a2m://watches/{watch_id}/changes";
 
 /// A capture of a person's use, as `capture.start` and `capture.stop`
 /// return it: never a value it saw (decision 0392, point 2).
@@ -519,6 +524,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .opt("after", FieldType::Int { min: 0, max: 99_999_999_999_999 }, "The `seq` of the last change already seen; 0 or left out for the first.")
             .opt("wait_seconds", FieldType::Int { min: 0, max: 60 }, "How long to wait for a change after `after` when there is none yet.")
             .opt("limit", FieldType::Int { min: 1, max: 100 }, "The most changes to return: 100 when left out.")
+            .resource(WATCH_RESOURCE, &["after"], "A watch's changes")
             .output(JsonSchema::object()
                 .required("watch_id", text())
                 .required("state", JsonSchema::words(WATCH_STATES))

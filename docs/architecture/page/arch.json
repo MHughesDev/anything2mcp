@@ -2076,7 +2076,7 @@
    "group": "Kernel",
    "where": "a2m-engine, a2m-actions",
    "state": "p",
-   "text": "A watch repeats a published read at an interval a person confirmed and reports what changed. A canary is a small read that runs before real work to catch a system that has changed. Watches are partly built. Canaries on a schedule of their own, and the rest of watches (records compared by key, the MCP resource, the REST stream), wait until after the first release.",
+   "text": "A watch repeats a published read at an interval a person confirmed and reports what changed. A canary is a small read that runs before real work to catch a system that has changed. Watches are partly built: records are compared by key, and each watch is an MCP resource an agent subscribes to and a REST change stream. Canaries on a schedule of their own, and the retention of watches, which waits on the retention of runs, are not built.",
    "rows": [
     {
      "title": "Watch Creation",
@@ -2208,7 +2208,8 @@
    ],
    "stepsTitle": "Watch Lifecycle",
    "decided": [
-    "Canaries on a schedule of their own move after the first release: a canary nobody asked for sends requests nobody confirmed, and a stopped tool is shown by its mark. Not: build them before it, as 0390 first said (0397)."
+    "Canaries on a schedule of their own move after the first release: a canary nobody asked for sends requests nobody confirmed, and a stopped tool is shown by its mark. Not: build them before it, as 0390 first said (0397).",
+    "A watch is an MCP resource, the face of watch.changes, and an agent subscribes to it with subscriptions/listen; its changes are followed through the kernel with no decision for each wait. Not: a resource handler of the MCP door's own, or a subscription that calls watch.changes in a loop (0478)."
    ]
   },
   "contract": {

@@ -150,14 +150,27 @@ impl Watching {
 
     /// The same, with more arguments of `watch create`.
     async fn watched_with(&self, item_code: &str, lasts: Duration, more: &[&str]) -> String {
-        let input = json!({"order_id": "A-100", "item_code": item_code}).to_string();
+        let input = json!({"order_id": "A-100", "item_code": item_code});
+        self.watched_read(ITEM_GET, &input, lasts, more).await
+    }
+
+    /// An agent asks for a watch of the read `tool` with `input`, every
+    /// minute, ending `lasts` from now; its person confirms it on the page.
+    async fn watched_read(
+        &self,
+        tool: &str,
+        input: &Json,
+        lasts: Duration,
+        more: &[&str],
+    ) -> String {
+        let input = input.to_string();
         let ends_at = (self.clock.now().as_unix_millis()
             + i64::try_from(lasts.as_millis()).unwrap())
         .to_string();
         let mut args = vec![
             "watch",
             "create",
-            ITEM_GET,
+            tool,
             "--input",
             &input,
             "--interval-seconds",
@@ -537,5 +550,270 @@ async fn a_watch_past_its_end_lets_an_idle_engine_stop() {
     assert_eq!(ended["reason"], "end_reached", "{ended}");
     assert!(!kernel.watches_hold_the_engine().await.unwrap());
     assert_eq!(watching.watch(&paused).await["state"], "paused");
+    watching.world.close().await;
+}
+
+/// A stream of server-sent events as it arrives, one event at a time.
+struct Events {
+    body: axum::body::BodyDataStream,
+    held: String,
+}
+
+impl Events {
+    fn of(response: axum::http::Response<axum::body::Body>) -> Self {
+        assert_eq!(response.status().as_u16(), 200);
+        Self {
+            body: response.into_body().into_data_stream(),
+            held: String::new(),
+        }
+    }
+
+    /// The data of the next event, as JSON. Waits at most [`CHECK_WAIT`].
+    async fn next(&mut self) -> Json {
+        tokio::time::timeout(CHECK_WAIT, async {
+            loop {
+                if let Some(end) = self.held.find("\n\n") {
+                    let event: String = self.held.drain(..end + 2).collect();
+                    if let Some(data) = event.lines().find_map(|line| line.strip_prefix("data: ")) {
+                        return serde_json::from_str(data).unwrap();
+                    }
+                    continue;
+                }
+                let chunk = std::future::poll_fn(|cx| {
+                    futures_core::Stream::poll_next(std::pin::Pin::new(&mut self.body), cx)
+                })
+                .await
+                .expect("the stream stays open")
+                .unwrap();
+                self.held.push_str(std::str::from_utf8(&chunk).unwrap());
+            }
+        })
+        .await
+        .expect("an event came")
+    }
+}
+
+/// One message of the stateless revision to the `use` toolset's MCP
+/// endpoint, as an agent at this machine sends it.
+async fn mcp(
+    world: &World,
+    id: u64,
+    method: &str,
+    params: Json,
+) -> axum::http::Response<axum::body::Body> {
+    use a2m_mcp::{McpService, McpSettings};
+    let service = McpService::new(
+        world.engine.kernel().clone(),
+        a2m_policy::ToolsetName::new("use").unwrap(),
+        McpSettings::local(),
+    )
+    .unwrap();
+    let revision = "2026-07-28";
+    let mut params = params;
+    params["_meta"] = json!({
+        "io.modelcontextprotocol/protocolVersion": revision,
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": {"name": "watching", "version": "0"},
+    });
+    let message = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+    let mut request = axum::http::Request::post("/mcp/use")
+        .header("host", "localhost")
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-protocol-version", revision)
+        .header("mcp-method", method);
+    if method == "resources/read" {
+        request = request.header("mcp-name", params["uri"].as_str().unwrap());
+    }
+    let mut request = request
+        .body(axum::body::Body::from(message.to_string()))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(world.engine.caller(a2m_actions::FrontDoor::Mcp, true));
+    service.handle(request).await
+}
+
+/// The REST interface of the engine on a port of its own, as the local
+/// channel carries it, with the person's caller on every request.
+async fn rest(world: &World) -> (String, tokio::task::JoinHandle<()>) {
+    let api = a2m_api::router(
+        world.engine.kernel().clone(),
+        a2m_api::ApiSettings::default(),
+    )
+    .unwrap()
+    .layer(axum::Extension(
+        world.engine.caller(a2m_actions::FrontDoor::Rest, false),
+    ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, api).await.unwrap();
+    });
+    (base, server)
+}
+
+/// Package W2e (decision 0478), through the real command against the data
+/// stand: a watch of a list read whose records are keyed by item code. The
+/// stand's own client removes one line, outside the product; the next
+/// check reports it removed once, by its key and with no value, and later
+/// checks never again. The same change reaches an agent through the
+/// watch's MCP resource: a subscription is told the resource changed, and
+/// a read of the resource gives the change. The REST change stream gives
+/// it too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_line_the_stand_removes_is_reported_once_and_reaches_an_agent_through_the_resource() {
+    let stand = example_db::harness::TestDb::start().unwrap();
+    let folder = common::Folder::of_another(stand.path().parent().unwrap());
+    let file = stand
+        .path()
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let machine = Machine::in_folder("storelist", &[("example.db", &file)], folder);
+    let watching = open(&machine, now()).await;
+    let done = watching
+        .world
+        .person(&["version", "publish", "example"])
+        .await;
+    assert_eq!(done.finished.code, 0, "{:?}", done.finished);
+    let id = watching
+        .watched_read(
+            "example_order_lines_list",
+            &json!({"order_id": "A-100"}),
+            Duration::from_secs(3_600),
+            &[],
+        )
+        .await;
+    let watch = watching.watch(&id).await;
+    assert_eq!(watch["compared"], "records", "{watch}");
+    let uri = format!("a2m://watches/{id}/changes");
+    assert_eq!(watch["resource"], uri.as_str(), "{watch}");
+
+    // The first check is the baseline, and it held every line.
+    watching.checked(Duration::from_secs(10), &[&id], 1).await;
+    let confirmed = watching.changes(&id).await;
+    assert_eq!(kinds(&confirmed), ["confirmed"], "{confirmed:?}");
+    let seen = confirmed[0]["seq"].as_u64().unwrap();
+
+    // An agent listens for the resource, and the REST stream is opened
+    // after the last change seen.
+    let mut told = Events::of(
+        mcp(
+            &watching.world,
+            7,
+            "subscriptions/listen",
+            json!({"notifications": {"resourceSubscriptions": [uri], "toolsListChanged": true}}),
+        )
+        .await,
+    );
+    let acknowledged = told.next().await;
+    assert_eq!(
+        acknowledged["method"], "notifications/subscriptions/acknowledged",
+        "{acknowledged}"
+    );
+    assert_eq!(
+        acknowledged["params"]["notifications"],
+        json!({"resourceSubscriptions": [uri]}),
+        "only the resource is honoured: {acknowledged}"
+    );
+    assert_eq!(
+        acknowledged["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"],
+        7
+    );
+    let (base, server) = rest(&watching.world).await;
+    let http = a2m_auth::tls::client_builder(&a2m_auth::tls::Trust::system().unwrap())
+        .build()
+        .unwrap();
+    let mut streamed = http
+        .get(format!("{base}/api/v1/watches/{id}/changes"))
+        .header("accept", "text/event-stream")
+        .header("last-event-id", seen.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(streamed.status().as_u16(), 200);
+
+    // The stand's own client removes a line, outside the product.
+    let writes = stand.writes().unwrap().len();
+    let removed = stand
+        .someone_else(
+            "DELETE FROM order_lines WHERE order_id = 'A-100' AND item_code = 'L-103'",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(removed, 1);
+    watching.checked(Duration::from_secs(60), &[&id], 2).await;
+
+    // The agent is told that the resource changed, by its URI alone, and
+    // reads the change from it.
+    let updated = told.next().await;
+    assert_eq!(
+        updated["method"], "notifications/resources/updated",
+        "{updated}"
+    );
+    assert_eq!(updated["params"]["uri"], uri.as_str());
+    assert_eq!(
+        updated["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"],
+        7
+    );
+    let read = mcp(
+        &watching.world,
+        8,
+        "resources/read",
+        json!({"uri": format!("{uri}?after={seen}")}),
+    )
+    .await;
+    let read: Json = serde_json::from_slice(
+        &axum::body::to_bytes(read.into_body(), 1 << 24)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let contents = &read["result"]["contents"][0];
+    assert_eq!(contents["mimeType"], "application/json", "{read}");
+    let page: Json = serde_json::from_str(contents["text"].as_str().unwrap()).unwrap();
+    let through_mcp = page["changes"].as_array().unwrap();
+    assert_eq!(kinds(through_mcp), ["removed"], "{page}");
+    assert_eq!(through_mcp[0]["record"], json!(["L-103"]), "{page}");
+
+    // The REST stream gives the same change, under its number.
+    let mut text = String::new();
+    while !text.contains("\n\n") || !text.contains("data: ") {
+        let chunk = tokio::time::timeout(CHECK_WAIT, streamed.chunk())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        text.push_str(std::str::from_utf8(&chunk).unwrap());
+    }
+    let data = text
+        .lines()
+        .find_map(|line| line.strip_prefix("data: "))
+        .unwrap();
+    let change: Json = serde_json::from_str(data).unwrap();
+    assert_eq!(change["kind"], "removed", "{text}");
+    assert_eq!(change["record"], json!(["L-103"]), "{text}");
+    assert!(text.contains(&format!("id: {}", seen + 1)), "{text}");
+    drop(streamed);
+    server.abort();
+
+    // Through the command: one removal, by its key, holding no value; and
+    // later checks report it never again.
+    watching.checked(Duration::from_secs(60), &[&id], 3).await;
+    watching.checked(Duration::from_secs(60), &[&id], 4).await;
+    let changes = watching.changes(&id).await;
+    assert_eq!(kinds(&changes), ["confirmed", "removed"], "{changes:?}");
+    assert_eq!(changes[1]["record"], json!(["L-103"]), "{changes:?}");
+    assert!(
+        !changes[1].to_string().contains("Cross brace"),
+        "{changes:?}"
+    );
+    // The product wrote nothing: what the store's log holds beyond what it
+    // held is the stand's own removal.
+    assert!(stand.writes().unwrap().len() <= writes + 1);
+    drop(told);
     watching.world.close().await;
 }

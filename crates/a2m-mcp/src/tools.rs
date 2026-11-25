@@ -272,7 +272,7 @@ impl Following {
 }
 
 impl Core {
-    async fn dispatch(&self, action: &str, input: Json, asker: &Asker) -> Response {
+    pub(crate) async fn dispatch(&self, action: &str, input: Json, asker: &Asker) -> Response {
         self.dispatch_keyed(action, input, None, asker).await
     }
 

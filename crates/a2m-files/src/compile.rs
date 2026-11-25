@@ -48,7 +48,7 @@ use crate::view::{
 };
 
 /// The version of this compiler, which a compiled target's header names.
-pub const COMPILER_VERSION: Version = Version::new(0, 0, 1);
+pub const COMPILER_VERSION: Version = Version::new(0, 1, 0);
 /// The oldest engine that may run a compiled target this compiler makes.
 pub const MINIMUM_ENGINE: Version = Version::new(0, 0, 1);
 /// The version a draft is compiled as.

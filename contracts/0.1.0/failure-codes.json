@@ -1,0 +1,1730 @@
+{
+ "accessibility_off": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "ack_not_owned": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "acknowledgement_not_kept": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "action_not_built": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "action_registry_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "address_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "address_looks_like_an_action": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "address_unregistered": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "address_value_refused": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "ambiguous_match": {
+  "class": "possible_commit",
+  "passes_by_itself": false
+ },
+ "answer_holds_secret": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "answer_lost": {
+  "class": "possible_commit",
+  "passes_by_itself": false
+ },
+ "anti_forgery_not_found": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "anti_forgery_unreadable": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "app_validation_error": {
+  "class": "rejected",
+  "passes_by_itself": false
+ },
+ "application_ambiguous": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "application_not_owned": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "application_not_proven": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "application_not_running": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "application_not_started": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "approval_missing": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "approval_refused": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "approval_stale": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "argument_masked": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "argument_unsafe": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "arguments_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "assertion_changed": {
+  "class": "stale",
+  "passes_by_itself": false
+ },
+ "auth_provider_duplicate": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "auth_provider_unknown": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "auth_scheme_not_built": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "auth_settings_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "binary_cyclic": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "binary_kind_unknown": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "binary_malformed": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "binary_truncated": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "binding_changed": {
+  "class": "stale",
+  "passes_by_itself": false
+ },
+ "binding_drifted": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "binding_not_promotable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "blocked_by_parent": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "body_timed_out": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "body_too_large": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "broker_refused": {
+  "class": "rejected",
+  "passes_by_itself": false
+ },
+ "browser_not_owned": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "browser_stopped_at_start": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "browser_unavailable": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "caller_missing": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "caller_not_verified": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "caller_queue_full": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "cannot_reconcile": {
+  "class": "possible_commit",
+  "passes_by_itself": false
+ },
+ "capture_ended": {
+  "class": "stale",
+  "passes_by_itself": false
+ },
+ "capture_not_kept": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "capture_not_offered": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "catalog_too_large": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "certificate_expired": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "certificate_name_mismatch": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "certificate_not_verified": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "certificate_untrusted": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "challenge_page": {
+  "class": "edge_blocked",
+  "passes_by_itself": false
+ },
+ "change_not_shown_whole": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "changed_since_preview": {
+  "class": "stale",
+  "passes_by_itself": false
+ },
+ "channel_missing": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "channel_unavailable": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "cleanup_incomplete": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "client_action": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "client_config_refused": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "command_file_unreadable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "commit_not_redrawn": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "commit_skipped": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "compiled_expression_unloadable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "compiled_target_format_unsupported": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "compiled_target_hash_mismatch": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "compiled_target_unreadable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "compiled_target_unverified": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "condition_not_boolean": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "connection_leads_elsewhere": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "connection_lost": {
+  "class": "transient",
+  "passes_by_itself": true
+ },
+ "constraint_violated": {
+  "class": "rejected",
+  "passes_by_itself": false
+ },
+ "content_type_unsupported": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "contract_unsupported": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "control_unanswered": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "credential_missing": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "credential_not_carried": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "credential_of_another_target": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "credential_refused": {
+  "class": "session_expired",
+  "passes_by_itself": false
+ },
+ "credential_unreadable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "data_directory_gone": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "decision_not_found": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "decompiler_failed": {
+  "class": "rejected",
+  "passes_by_itself": false
+ },
+ "decompiler_not_installed": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "decompiler_not_pinned": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "decompiler_output_unknown": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "decompiler_spec_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "denied_by_store": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "description_changed": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "description_too_large": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "description_unreadable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "destination_not_declared": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "device_busy": {
+  "class": "transient",
+  "passes_by_itself": true
+ },
+ "device_identity_mismatch": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "device_not_returned": {
+  "class": "possible_commit",
+  "passes_by_itself": false
+ },
+ "device_refused": {
+  "class": "rejected",
+  "passes_by_itself": false
+ },
+ "device_required": {
+  "class": "session_expired",
+  "passes_by_itself": false
+ },
+ "device_serial_not_declared": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "dictionary_include_refused": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "discoverer_cannot_watch": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "discovery_file_not_taken": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "discovery_identifies_only": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "disk_full": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "document_type_refused": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "download_incomplete": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "download_not_offered": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "download_too_large": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "draft_conflict": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "drafts_changed": {
+  "class": "stale",
+  "passes_by_itself": false
+ },
+ "driver_panicked": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "edge_blocked": {
+  "class": "edge_blocked",
+  "passes_by_itself": false
+ },
+ "effect_not_declared": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "effect_too_high": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "engine_degraded": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "engine_fault": {
+  "class": "transient",
+  "passes_by_itself": true
+ },
+ "engine_running": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "engine_unreachable": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "engine_variable_refused": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "entry_digest_changed": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "evidence_not_stored": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "expect_failed": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "export_changed": {
+  "class": "stale",
+  "passes_by_itself": false
+ },
+ "expression_cost_exceeded": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "expression_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "expression_type_error": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "field_not_read_back": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "field_read_only": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "file_locked": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "file_missing": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "file_not_on_this_machine": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "file_not_staged": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "file_protected": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "file_too_large": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "file_type_mismatch": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "file_unavailable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "file_unreadable": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "finding_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "finding_not_declared": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "fingerprint_mismatch": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "fixture_no_answer": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "fixture_no_scrub_rule": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "fixture_not_replayed": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "fixture_read_failed": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "focus_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "folder_not_empty": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "forbidden_by_edge": {
+  "class": "edge_blocked",
+  "passes_by_itself": false
+ },
+ "formula_at_place": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "formula_without_value": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "frame_budget_exceeded": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "frame_corrupt": {
+  "class": "transient",
+  "passes_by_itself": true
+ },
+ "headroom_short": {
+  "class": "session_expired",
+  "passes_by_itself": false
+ },
+ "hello_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "idempotency_key_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "idempotency_key_reused": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "identity_is_administrator": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "identity_not_allowed": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "image_checksum_differs": {
+  "class": "mismatch",
+  "passes_by_itself": false
+ },
+ "image_not_accepted": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "image_protected": {
+  "class": "edge_blocked",
+  "passes_by_itself": false
+ },
+ "image_refused": {
+  "class": "rejected",
+  "passes_by_itself": false
+ },
+ "input_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "intent_missing": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "intent_token_missing": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "job_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "job_kind_not_built": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "key_not_unique": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "key_record_conflict": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "key_store_entry_missing": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "key_store_unreachable": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "keys_not_built": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "kill_switch_on": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "kind_owner_conflict": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "kind_owner_missing": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "launcher_not_in_table": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "lease_stale": {
+  "class": "session_expired",
+  "passes_by_itself": false
+ },
+ "lease_superseded": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "lease_too_short": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "ledger_state_unexpected": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "limit_exceeded": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "link_not_encrypted": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "lint_failed": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "local_api_mismatch": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "locator_ambiguous": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "locator_not_found": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "log_settings_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "log_unreadable": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "manifest_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "mcp_not_served": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "memory_short": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "message_may_be_held": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "message_too_large": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "metadata_not_kept": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "method_not_allowed": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "mode_conflict": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "mode_unknown": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "name_case_conflict": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "needs_login": {
+  "class": "session_expired",
+  "passes_by_itself": false
+ },
+ "needs_mfa": {
+  "class": "session_expired",
+  "passes_by_itself": false
+ },
+ "net_answer_unreadable": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "net_fact_refused": {
+  "class": "edge_blocked",
+  "passes_by_itself": false
+ },
+ "net_read_failed": {
+  "class": "transient",
+  "passes_by_itself": true
+ },
+ "net_reader_not_built": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "network_not_recognizable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "no_binding": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "no_binding_may_act": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "no_confirmation": {
+  "class": "possible_commit",
+  "passes_by_itself": false
+ },
+ "no_rate_budget": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "no_read_back": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "not_built": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "not_found": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "not_granted": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "not_made_ready_not_a_read": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "not_made_ready_untried": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "not_registered": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "nothing_arrived": {
+  "class": "transient",
+  "passes_by_itself": true
+ },
+ "nothing_asserted": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "nothing_recorded": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "offline_writes_nothing": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "origin_not_declared": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "output_unexpected": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "output_unparsed": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "pack_settings_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "package_runner_refused": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "page_not_found": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "page_not_loaded": {
+  "class": "transient",
+  "passes_by_itself": true
+ },
+ "page_unreadable": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "page_write_refused": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "password_read_refused": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "password_set_refused": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "path_denied": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "path_field_conflict": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "path_locked": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "path_missing": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "path_not_allowed": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "path_value_refused": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "payload_not_encodable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "payload_unreadable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "peer_not_allowed": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "person_required": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "physical_not_built": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "place_not_found": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "policy_evaluation_failed": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "policy_tests_failed": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "position_out_of_range": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "powershell_file_unreadable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "prepare_timed_out": {
+  "class": "transient",
+  "passes_by_itself": true
+ },
+ "presence_failed": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "presence_required": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "product_header_refused": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "program_busy": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "program_digest_changed": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "program_missing": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "program_not_found": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "program_path_unsafe": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "program_refused": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "program_version_unsupported": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "project_folder_missing": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "project_of_another_store": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "promotion_unproven": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "prompt_busy": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "property_not_text": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "protocol_unknown": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "provider_ambiguous": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "provider_duplicate": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "provider_unavailable": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "publish_gates_not_passed": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "query_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "queue_full": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "randomness_unavailable": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "rate_limited": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "rate_limited_by_edge": {
+  "class": "edge_blocked",
+  "passes_by_itself": false
+ },
+ "read_back_differs": {
+  "class": "mismatch",
+  "passes_by_itself": false
+ },
+ "read_not_by_key": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "read_only_posture": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "read_statement_wrote": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "read_too_large": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "reads_still_running": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "reconcile_required": {
+  "class": "possible_commit",
+  "passes_by_itself": false
+ },
+ "reconcile_too_late": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "record_absent": {
+  "class": "stale",
+  "passes_by_itself": false
+ },
+ "record_limit_exceeded": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "record_locked": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "registration_conflict": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "remote_namespace_refused": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "reply_changed": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "request_not_from_page": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "request_timed_out": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "resource_in_use": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "resource_order": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "response_schema_mismatch": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "response_too_large": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "result_too_large": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "round_trip_failed": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "route_conflict": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "route_not_found": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "run_call_unreadable": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "run_not_completed": {
+  "class": "rejected",
+  "passes_by_itself": false
+ },
+ "run_reconciling": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "run_time_exceeded": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "runner_lost": {
+  "class": "possible_commit",
+  "passes_by_itself": false
+ },
+ "runner_not_enrolled": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "runner_protocol_unsupported": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "runner_unavailable": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "sandbox_read_only": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "scan_inconclusive": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "scan_limit": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "scheduler_paused": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "schema_changed": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "schema_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "scout_off": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "sealed_format_unsupported": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "sealed_item_mismatch": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "second_admin_required": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "secret_too_short": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "service_not_running": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "session_in_use": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "session_move_illegal": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "setting_locked": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "setting_not_in_force": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "setting_protected": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "settings_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "shadow_not_counted": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "shadow_not_kept": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "shadow_not_promotable": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "shadow_time_exceeded": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "shadow_write_not_built": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "shape_changed": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "shape_unsupported": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "shutting_down": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "sign_in_blocked": {
+  "class": "edge_blocked",
+  "passes_by_itself": false
+ },
+ "sign_in_unrecognized": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "site_tool_changed": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "site_tool_not_offered": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "site_tools_unavailable": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "socket_path_too_long": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "source_definition_invalid": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "source_encoding_unsupported": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "source_key_not_unique": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "source_malformed": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "source_protected": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "source_reader_unknown": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "source_template_unknown": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "source_too_large": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "start_failed": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "start_not_built": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "statement_not_allowed": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "stdio_read_failed": {
+  "class": "transient",
+  "passes_by_itself": false
+ },
+ "step_kind_unknown": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "step_not_built": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "step_not_usable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "storage_full": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "store_corrupt": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "store_file_replaced": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "store_locked": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "store_unavailable": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "store_version_unsupported": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "subscription_in_use": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "subsystem_limit": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "surface_in_maintenance": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "surface_not_declared": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "surface_unavailable": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "system_job_not_carried": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "system_not_built": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "table_not_owned": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "take_too_large": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "target_elevated": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "target_unreadable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "timeout": {
+  "class": "transient",
+  "passes_by_itself": true
+ },
+ "tls_handshake_failed": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "tls_not_enabled": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "tls_setup_failed": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "token_not_read": {
+  "class": "stale",
+  "passes_by_itself": false
+ },
+ "tool_changed": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "trace_holds_secret": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "transport_refused": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "trust_roots_unreadable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "type_library_format_unknown": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "undeclared_code": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "unexpected_absent": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "unexpected_control": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "unexpected_dialog": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "unexpected_exit_status": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "unexpected_page": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "unexpected_prompt": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "unexpected_reply": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "unexpected_response": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "unexpected_status": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "unknown_control": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "update_precondition_unmet": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "upstream_tool_changed": {
+  "class": "drift",
+  "passes_by_itself": false
+ },
+ "upstream_unavailable": {
+  "class": "transient",
+  "passes_by_itself": true
+ },
+ "value_absent": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "value_begins_formula": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "value_kind_unsupported": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "value_not_bindable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "value_not_held": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "value_out_of_range": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "value_unparsable": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "value_unreadable": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "variable_refused": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "vault_passphrase_mismatch": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "vault_passphrase_missing": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "vault_passphrase_not_enabled": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "vault_passphrase_too_short": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "version_conflict": {
+  "class": "stale",
+  "passes_by_itself": false
+ },
+ "version_moved": {
+  "class": "stale",
+  "passes_by_itself": false
+ },
+ "version_not_read": {
+  "class": "stale",
+  "passes_by_itself": false
+ },
+ "watch_check_not_completed": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "watch_check_running": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "watch_check_unfinished": {
+  "class": "busy",
+  "passes_by_itself": true
+ },
+ "watch_condition_unanswered": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "watch_due_missed": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "watch_ended": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "watch_interval_too_short": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "watch_key_repeated": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "watch_needs_confirmation": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "watch_not_a_read": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "watch_not_confirmed": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "watch_not_yours": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "watch_over_budget_share": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "watch_paused": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "watch_result_not_its_shape": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "watch_run_not_its_own": {
+  "class": "policy",
+  "passes_by_itself": false
+ },
+ "watch_shapes_mixed": {
+  "class": "unknown_variant",
+  "passes_by_itself": false
+ },
+ "watch_too_long": {
+  "class": "input",
+  "passes_by_itself": false
+ },
+ "watch_too_many": {
+  "class": "busy",
+  "passes_by_itself": false
+ },
+ "writes_not_built": {
+  "class": "busy",
+  "passes_by_itself": false
+ }
+}

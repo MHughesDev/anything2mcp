@@ -6,10 +6,18 @@ The design's own history is in the [decision records](docs/decisions/README.md),
 
 ## [Unreleased]
 
-Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS, and Linux; nothing has been tried against a real system, and nothing is published to a package registry.
+## [0.1.0] - 2026-11-25
+
+The first published version, a **preview**, before version 1.0 ([decision 0476](docs/decisions/0476-version-0-1-is-a-preview-and-the-checks-a-person-makes-move-to-before-1-0.md)). Built and tested against the built-in test stands on Windows, macOS, and Linux. Until 1.0 a minor version may break. What this preview has not had yet:
+
+- The presence prompt and the approval page have been passed by a person on Linux only. On macOS and Windows they are built and tested in CI with a stand-in for the person, and fail closed: an act that needs a person is not done when no prompt can be shown.
+- The first hour, from an empty folder to a published tool an agent calls, is measured as machine time, not with a person at the keyboard.
+- No copy test has been run from a Windows or a macOS machine, and nothing has been tried against a real business application.
+- Not built: a shared server, plug-ins, MCP over HTTP, remote runners, ten of the twelve publish gates, and the drafting of writes.
 
 ### Added
 
+- An agent can now be told when a watch records a change. Each watch is an MCP resource, `a2m://watches/{watch_id}/changes`, named as `resource` in every `watch.*` result: `resources/read` gives its changes after the URI's `after`, and in revision 2026-07-28 `subscriptions/listen` with the URI in `resourceSubscriptions` sends `notifications/resources/updated` each time the watch records one. `resources/templates/list` lists the template. Over REST, `GET /api/v1/watches/{watch_id}/changes` gives a page, or a stream of server-sent events that resumes from `Last-Event-ID` and stays open while the watch lasts. A watch of a read of a data store's file now reads it: the project folder of the ask is kept for its checks, which before stopped as `project_folder_missing`. A removed record is named by its key.
 - A read whose page asks for its data by `POST`, which a person asserted with `read_asserted: true`, can now be tried, recorded, and made ready before its first publish. `anything2mcp assertion confirm example` (`assertion.confirm`) asks the person on the engine's page, past the computer's own prompt, to confirm each asserted request as the page shows it; after that, `draft try`, `fixture record`, and `draft ready` let that request through in an environment of kind `test`, and no other. An agent can only ask, and a change to the request's method, path, body, or address undoes the confirmation. No fixture or `status: verified` is written by hand any more on the way to a publish.
 - A watch can compare a list record by record. A read declares its records over its list outputs with `records: {key: [order_id, item_code]}` in its operation file: each list output is a column, and the key names the columns that make a record's key. A watch of it reports `added`, `changed` with the outputs that differ, `unseen` once when a record leaves the view, and now `removed`, only between two checks whose driver stated it returned every record, which the data pack's list reads do from the row they ask for past their limit. An empty answer after records were seen removes nothing. `watch get` shows `compared: records` for such a watch ([decision 0472](docs/decisions/0472-a-read-declares-its-records-over-its-list-outputs-and-a-driver-states-whether-it-returned-every-record.md)).
 - A capture of a person's use of pages drawn on the server now drafts more of what they show, each draft held with a question that says why: a list with no name whose items repeat one shape, read as its items; a record whose pages show their value as their one heading, read as that heading and the paragraphs below it in order; and a table with no name, by its headings, each read as a person reads it, without a table library's sort sentence. A request whose body only adds, on every visit after the first, what the page kept in the browser is counted in one shape, so its held page request is drafted. Screens gain a locator `heading: N` and `rows` read as `items: listitem` or `items: paragraph`; a list whose items differ in shape, and a heading with no words left once the sort words are off, are said by name as not drafted.
@@ -428,7 +436,8 @@ A safety review read each crate against its design and the ten rules, and every 
 
 ## [0.0.1]
 
-The first version of the pip package. It was a placeholder to hold the name; it now holds the pre-alpha software described above under Unreleased. Not yet published.
+The first version of the pip package. It was a placeholder to hold the name; the software it now holds is version 0.1.0, above. Never published.
 
-[Unreleased]: https://github.com/MHughesDev/anything2mcp/commits/main
+[Unreleased]: https://github.com/MHughesDev/anything2mcp/compare/v0.1.0...main
+[0.1.0]: https://github.com/MHughesDev/anything2mcp/releases/tag/v0.1.0
 [0.0.1]: https://github.com/MHughesDev/anything2mcp/tree/main/bindings/python

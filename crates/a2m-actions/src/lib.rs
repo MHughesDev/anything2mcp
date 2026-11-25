@@ -51,14 +51,15 @@ mod tools;
 
 /// An idempotency key, as the store keeps it (decision 0160).
 pub use a2m_files::ReviewSummary;
-pub use a2m_ledger::{CALLER_KEY_LONGEST, CallerKey};
+pub use a2m_ledger::{CALLER_KEY_LONGEST, CallerKey, WatchId, WatchState};
 pub use acts::{
     ACTS_KEPT, ACTS_WAITING, ActSurface, ActWarning, AskedSecret, NEW_PLACE, PersonActAsk,
     PersonActId, SHOWN_VALUE_CHARS, ShownField,
 };
 pub use def::{
     ActionDef, ActionName, BoxFuture, BuiltInToolset, Effect, Faces, Field, FieldType, Handler,
-    HandlerFn, HealthNeed, Input, Listed, PersonNeed, RestAlias, RunsIn, Shape, Who,
+    HandlerFn, HealthNeed, Input, Listed, PersonNeed, ResourceTemplate, RestAlias, RunsIn, Shape,
+    Who,
 };
 pub use dispatch::{
     Call, Caller, ErrorBody, ExitClass, FrontDoor, Next, Output, Principal, ProjectFolder, Request,
@@ -66,11 +67,13 @@ pub use dispatch::{
 };
 pub use events::{EVENTS_PAGE, Followed, RunEventView, RunEvents, RunsInHand};
 pub use faces::{
-    CommandArg, CommandFace, McpResultFace, McpToolFace, PROCESS_COMMANDS, PROGRAM, REST_PREFIX,
-    RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut, ShortcutOption, ShortcutStep, TOOL_PREFIX,
-    ToolAnnotationsFace, command_faces, command_faces_of, has_sdk_method, mcp_tool, mcp_tools,
+    CommandArg, CommandFace, McpResourceFace, McpResultFace, McpToolFace, PROCESS_COMMANDS,
+    PROGRAM, RESOURCE_MIME_TYPE, REST_PREFIX, RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut,
+    ShortcutOption, ShortcutStep, TOOL_PREFIX, ToolAnnotationsFace, command_faces,
+    command_faces_of, has_sdk_method, mcp_resource, mcp_resources, mcp_tool, mcp_tools,
     rest_routes, said_line, sdk_methods, shortcuts_offered, tool_name,
 };
+pub use handlers::watches::{WatchChanges, watch_resource};
 pub use health::{Health, HealthState, Impaired, Part};
 pub use kernel::{CallerCredential, CloseReason, Kernel, KernelParts, Prepared, StorePlace};
 pub use paths::{APP_FOLDER, Env, HOME_VARIABLE, OsFamily, PASSPHRASE_VARIABLE, Paths};

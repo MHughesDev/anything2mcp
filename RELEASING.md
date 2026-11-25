@@ -25,7 +25,7 @@ Every build is checked against every kept release: CI's documents job runs `pyth
 
 ## Publishing
 
-The first version to publish is 0.1.0, once the first hour works from a published package ([decision 0242](docs/decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)); the manifests carry 0.0.1 until then. Publishing cannot be undone. A published version can be yanked, and never replaced.
+The first version to publish is 0.1.0, once the first hour works from a published package ([decision 0242](docs/decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)); the manifests carry 0.1.0, set on the commit to release, and nothing is published yet. Publishing cannot be undone. A published version can be yanked, and never replaced.
 
 Only the release workflow publishes, with short-lived credentials that the registry issues to that one workflow file. No token is stored, and nobody publishes from their own machine.
 

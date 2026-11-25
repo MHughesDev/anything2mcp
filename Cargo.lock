@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "a2m-actions"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-auth",
  "a2m-core",
@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-api"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-actions",
  "a2m-auth",
@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-auth"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-core",
  "a2m-ledger",
@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-bench"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-actions",
  "a2m-auth",
@@ -95,7 +95,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-copy-test-harness"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-local",
  "anything2mcp",
@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "rust_decimal",
  "serde",
@@ -115,7 +115,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-engine"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-auth",
  "a2m-core",
@@ -135,7 +135,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-expr"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-core",
  "unicode-normalization",
@@ -143,7 +143,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-files"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-core",
  "a2m-expr",
@@ -154,7 +154,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-ledger"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-core",
  "a2m-expr",
@@ -167,7 +167,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-local"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-actions",
  "a2m-auth",
@@ -202,7 +202,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-logs"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-core",
  "serde",
@@ -212,7 +212,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-mcp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-actions",
  "a2m-auth",
@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-netstate"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-core",
  "libc",
@@ -248,7 +248,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-pack-command"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-auth",
  "a2m-core",
@@ -271,7 +271,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-pack-data"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-auth",
  "a2m-core",
@@ -293,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-pack-desktop"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-auth",
  "a2m-core",
@@ -320,7 +320,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-pack-device"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-auth",
  "a2m-core",
@@ -338,7 +338,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-pack-file"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-auth",
  "a2m-core",
@@ -358,7 +358,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-pack-http"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-auth",
  "a2m-core",
@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-pack-mcp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-auth",
  "a2m-core",
@@ -397,7 +397,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-pack-stream"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-auth",
  "a2m-core",
@@ -416,7 +416,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-pack-web-browser"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-core",
  "a2m-logs",
@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-pack-web-probe"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-core",
  "a2m-logs",
@@ -447,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-pack-web-ui"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-auth",
  "a2m-core",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-policy"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-core",
  "a2m-expr",
@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-provider"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-auth",
  "a2m-core",
@@ -508,11 +508,11 @@ dependencies = [
 
 [[package]]
 name = "a2m-runner"
-version = "0.0.1"
+version = "0.1.0"
 
 [[package]]
 name = "a2m-sched"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-core",
  "a2m-ledger",
@@ -526,7 +526,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-sources"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-core",
  "a2m-expr",
@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "a2m-vault"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-core",
  "aho-corasick",
@@ -581,7 +581,7 @@ dependencies = [
 
 [[package]]
 name = "anything2mcp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-actions",
  "a2m-api",
@@ -1064,7 +1064,7 @@ dependencies = [
 
 [[package]]
 name = "example-app"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "axum",
  "rcgen",
@@ -1078,7 +1078,7 @@ dependencies = [
 
 [[package]]
 name = "example-broker"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "a2m-pack-stream",
  "serde",
@@ -1089,7 +1089,7 @@ dependencies = [
 
 [[package]]
 name = "example-cli"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1097,21 +1097,21 @@ dependencies = [
 
 [[package]]
 name = "example-db"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "rusqlite",
 ]
 
 [[package]]
 name = "example-decompiler"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "example-desk"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "futures-core",
  "objc2",
@@ -1126,14 +1126,14 @@ dependencies = [
 
 [[package]]
 name = "example-device"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "example-files"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "sha2",
  "windows-sys 0.61.2",
@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "example-mcp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "axum",
  "example-app",
@@ -1153,7 +1153,7 @@ dependencies = [
 
 [[package]]
 name = "example-nats"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "tokio",

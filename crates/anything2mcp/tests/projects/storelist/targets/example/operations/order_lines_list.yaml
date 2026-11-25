@@ -1,0 +1,18 @@
+operation: example_order_lines_list
+title: List the lines of an order
+effect: read
+key: order_id
+inputs:
+  order_id: {type: identifier, description: "Order number"}
+outputs:
+  item_code: {type: identifier, list: true}
+  quantity: {type: integer, list: true}
+records: {key: [item_code]}
+bindings:
+  - mode: sql
+    verb: list
+    status: verified
+    statement: lines_of_order
+description: >
+  Lists the line items of one order from the store, up to five hundred,
+  each a record keyed by its item code.
