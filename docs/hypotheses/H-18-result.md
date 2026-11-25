@@ -69,6 +69,35 @@ The bet holds with a wide margin, about a fifth of the ten minutes. The time wen
 
 The discarded runs found one more fault, through their crossing. The engine chooses its store by the folder a command runs in, while `--project` chooses only the files. When the two differ, `tool search` lists a tool that `tool call` and `tool describe` answer `not_found`, with no error.
 
+## The second measurement, after 5.6b and S3
+
+**Tested:** 2026-11-25, on a release build of the staging branch at c1ddf58, which holds row 5.6b (decision 0445) and `draft.ready` (S3, decision 0443).
+
+The same brief, the same pinned setup as runs 4 to 6, and three new agents with no knowledge of the repository, started together at 03:22 UTC.
+
+| Run | First command | Published tool called | Time | Commands |
+| --- | --- | --- | --- | --- |
+| 7 | 03:22:16 | 03:23:35 | 1 min 19 s | 20 |
+| 8 | 03:22:12 | 03:23:25 | 1 min 13 s | 15 |
+| 9 | 03:22:13 | 03:23:21 | 1 min 08 s | 16 |
+
+Every run ended with the published read called on order A-101, and the answer matched the application's own page. The time fell by about two fifths, and the commands by about two fifths, from the first measurement's 26 to 28.
+
+All three agents took the short path: `init`, `add`, `ready`, the person's press, `ready` or `publish request` again, `tool search`, `tool call`. None wrote or deleted a draft by hand. The scout proved all three of its reads by itself in each run, five tries each. None met a fault that 5.6b fixed: no list refused, no read left untried, no promote skipped, no answer after publishing that read as pending.
+
+What the three met now:
+
+- **`ok: false` when only a person's press is left (all three).** `ready` answers `ok: false` with exit code 3 when the gates passed and the publish waits for its person. That is the documented answer for a person needed, but each agent first read it as a failure.
+- **Every proven read is published (two runs).** `ready` publishes each read it proved, so version 1.0.0 held all three tools when the agent wanted one. Deleting drafts first is the only way to publish fewer.
+- **A finding listed twice (all three).** The scout report lists the `GET /orders` finding twice under "not drafted", each with "the rule gave no reason".
+- **`next` names the wrong tool (run 7).** After `add`, `target status` pointed to `test.run` with hand-written tests, not to `ready`, though every read was proven. After `ready`, its `next` named the list read, not the read the agent was after.
+- **`tool describe` suggests an empty input (run 7)** for a read whose `order_id` is required.
+- **A part name refused (run 7).** `scout report --part tried` was refused, and the guidance does not list the part names (`tried.tools`).
+- **The person's page, as the press script printed it, began with raw style text (run 7).** This is the script's printing of the page, not a fault the person would see in a browser; it is noted, not a row.
+- **Still there from the first measurement:** the outputs are thin, with no order id; `init --help` says "No action is beneath it yet"; and the guidance says `init` has already been run.
+
+These are row 5.6c.
+
 ## What changes
 
 H-18 is marked supported in the register. Package 5.6a is done. No section changes because of the time.
