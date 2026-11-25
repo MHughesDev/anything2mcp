@@ -25,8 +25,9 @@
 //! by any process (an out-of-context hook, which loads nothing into
 //! another program), after which the list of top-level windows is read
 //! again, as at attach (decision 0480). On macOS nothing is started, as
-//! `busy`/`start_not_built`: its back end has no event that says a new
-//! application's window appeared, and a wait polls nothing.
+//! `busy`/`start_not_built`: no event heard off the main thread's run
+//! loop says that a just-started application has begun to answer the
+//! accessibility interface, and a wait polls nothing (decision 0490).
 
 use a2m_files::{EnvironmentVariable, ProgramRun, VariableValue};
 
