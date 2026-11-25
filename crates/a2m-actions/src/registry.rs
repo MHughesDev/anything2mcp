@@ -89,6 +89,7 @@ impl ActionRegistry {
                 runs_in: RunsIn::Engine,
                 faces: Faces::ALL,
                 rest_alias: None,
+                resource: None,
                 phase: "provider",
                 handler: Handler::Provider(name.clone()),
                 name: own,
@@ -403,5 +404,57 @@ mod faces_tests {
         assert!(refused.message().contains(&name), "{}", refused.message());
         defs[0].faces.sdk = false;
         assert!(ActionRegistry::from_definitions(defs).is_ok());
+    }
+
+    /// A resource's URI fills its action's fields from the template's
+    /// segments and query, and anything else is no resource (decision
+    /// 0478): nothing is decoded or guessed.
+    #[test]
+    fn a_resource_uri_fills_its_actions_fields_and_nothing_else() {
+        let registry = ActionRegistry::kernel_only();
+        let faces = crate::faces::mcp_resources(&registry);
+        assert_eq!(
+            faces
+                .iter()
+                .map(|face| (face.action.as_str(), face.uri_template.as_str()))
+                .collect::<Vec<_>>(),
+            [("watch.changes", "a2m://watches/{watch_id}/changes{?after}")]
+        );
+        let (def, input) = registry
+            .by_resource_uri("a2m://watches/watch_01/changes")
+            .unwrap();
+        assert_eq!(def.name.as_str(), "watch.changes");
+        assert_eq!(
+            serde_json::Value::Object(input),
+            serde_json::json!({"watch_id": "watch_01"})
+        );
+        let (_, input) = registry
+            .by_resource_uri("a2m://watches/watch_01/changes?after=12")
+            .unwrap();
+        assert_eq!(
+            serde_json::Value::Object(input),
+            serde_json::json!({"watch_id": "watch_01", "after": 12})
+        );
+        for uri in [
+            "a2m://watches/watch_01",
+            "a2m://watches/watch_01/changes/more",
+            "a2m://watches//changes",
+            "a2m://watches/a%2Fb/changes",
+            "a2m://watches/watch_01/changes?limit=3",
+            "a2m://watches/watch_01/changes?after=1&after=2",
+            "a2m://watches/watch_01/changes?watch_id=other",
+            "a2m://watches/watch_01/changes?after=ten",
+            "a2m://watches/watch_01/changes?after",
+            "file:///watches/watch_01/changes",
+        ] {
+            assert!(registry.by_resource_uri(uri).is_none(), "{uri}");
+        }
+        // The URI every `watch.*` result names is one the template matches.
+        let id = a2m_ledger::WatchId::from_bytes([3; 16]);
+        assert!(
+            registry
+                .by_resource_uri(&crate::watch_resource(id))
+                .is_some()
+        );
     }
 }

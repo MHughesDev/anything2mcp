@@ -250,6 +250,22 @@ impl Faces {
     };
 }
 
+/// An MCP resource an action reads, generated as a template beside its
+/// tool (decision 0478): `resources/read` of a URI the template matches is
+/// one dispatch of the action, with the fields the URI fills and nothing
+/// else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ResourceTemplate {
+    /// The URI with `{field}` for an input field filled from one segment,
+    /// such as `a2m://watches/{watch_id}/changes`.
+    pub uri: &'static str,
+    /// The input fields a URI may also give in its query, such as `after`,
+    /// as `{?after}` writes them in the template.
+    pub query: &'static [&'static str],
+    /// A short name for people.
+    pub title: &'static str,
+}
+
 /// A resource-shaped route generated beside `/actions/{name}`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RestAlias {
@@ -447,6 +463,8 @@ pub struct ActionDef {
     pub faces: Faces,
     /// A resource-shaped route beside the generated one.
     pub rest_alias: Option<RestAlias>,
+    /// The MCP resource it reads, when it has one.
+    pub resource: Option<ResourceTemplate>,
     /// The phase or stage of the compiled target that builds it, as the
     /// catalog says.
     pub phase: &'static str,
@@ -517,6 +535,7 @@ pub(crate) fn act(
             runs_in: RunsIn::Engine,
             faces: Faces::ALL,
             rest_alias: None,
+            resource: None,
             phase,
             handler: Handler::NotBuilt,
         },
@@ -675,6 +694,18 @@ impl Def {
 
     pub(crate) fn alias(mut self, method: &'static str, path: &'static str) -> Self {
         self.0.rest_alias = Some(RestAlias { method, path });
+        self
+    }
+
+    /// The MCP resource the action reads: `uri` with `{field}` for a field
+    /// of one segment, and `query` for the fields its query may give.
+    pub(crate) fn resource(
+        mut self,
+        uri: &'static str,
+        query: &'static [&'static str],
+        title: &'static str,
+    ) -> Self {
+        self.0.resource = Some(ResourceTemplate { uri, query, title });
         self
     }
 

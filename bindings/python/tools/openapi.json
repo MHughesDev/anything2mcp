@@ -31720,6 +31720,9 @@
               "requests_per_check": {
                "type": "integer"
               },
+              "resource": {
+               "type": "string"
+              },
               "state": {
                "enum": [
                 "asked",
@@ -31756,7 +31759,8 @@
               "surface",
               "requests_per_check",
               "compared",
-              "ignore"
+              "ignore",
+              "resource"
              ],
              "type": "object"
             },
@@ -31979,6 +31983,9 @@
               "requests_per_check": {
                "type": "integer"
               },
+              "resource": {
+               "type": "string"
+              },
               "state": {
                "enum": [
                 "asked",
@@ -32015,7 +32022,8 @@
               "surface",
               "requests_per_check",
               "compared",
-              "ignore"
+              "ignore",
+              "resource"
              ],
              "type": "object"
             },
@@ -32330,6 +32338,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -32366,7 +32377,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -32501,6 +32513,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -32537,7 +32552,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -32712,6 +32728,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -32748,7 +32767,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -32871,6 +32891,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -32907,7 +32930,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -33082,6 +33106,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -33118,7 +33145,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -33241,6 +33269,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -33277,7 +33308,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -33457,6 +33489,9 @@
                "requests_per_check": {
                 "type": "integer"
                },
+               "resource": {
+                "type": "string"
+               },
                "state": {
                 "enum": [
                  "asked",
@@ -33493,7 +33528,8 @@
                "surface",
                "requests_per_check",
                "compared",
-               "ignore"
+               "ignore",
+               "resource"
               ],
               "type": "object"
              },
@@ -33632,6 +33668,9 @@
                "requests_per_check": {
                 "type": "integer"
                },
+               "resource": {
+                "type": "string"
+               },
                "state": {
                 "enum": [
                  "asked",
@@ -33668,7 +33707,8 @@
                "surface",
                "requests_per_check",
                "compared",
-               "ignore"
+               "ignore",
+               "resource"
               ],
               "type": "object"
              },
@@ -33852,6 +33892,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -33888,7 +33931,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -34011,6 +34055,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -34047,7 +34094,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -34222,6 +34270,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -34258,7 +34309,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -34381,6 +34433,9 @@
             "requests_per_check": {
              "type": "integer"
             },
+            "resource": {
+             "type": "string"
+            },
             "state": {
              "enum": [
               "asked",
@@ -34417,7 +34472,8 @@
             "surface",
             "requests_per_check",
             "compared",
-            "ignore"
+            "ignore",
+            "resource"
            ],
            "type": "object"
           },
@@ -36441,6 +36497,235 @@
     "summary": "Find operations and pipelines of the published targets by words or module. Returns names, one-line descriptions, effects, and whether each can be called now; call tool.describe for a schema.",
     "x-action": "tool.search",
     "x-sdk": true
+   }
+  },
+  "/api/v1/watches/{watch_id}/changes": {
+   "get": {
+    "operationId": "watch_changes_stream",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "watch_id",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "description": "The `seq` of the last change seen. 0, the default, starts at the first.",
+      "in": "query",
+      "name": "after",
+      "required": false,
+      "schema": {
+       "minimum": 0,
+       "type": "integer"
+      }
+     },
+     {
+      "description": "The most changes in a page. A stream ignores it.",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "maximum": 100,
+       "minimum": 1,
+       "type": "integer"
+      }
+     },
+     {
+      "description": "What a reconnecting stream sends: the id of the last change it saw. It stands in place of `after`.",
+      "in": "header",
+      "name": "Last-Event-ID",
+      "required": false,
+      "schema": {
+       "minimum": 0,
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "$schema": "https://json-schema.org/draft/2020-12/schema",
+           "additionalProperties": false,
+           "properties": {
+            "after": {
+             "type": "integer"
+            },
+            "changes": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "at": {
+                "type": "integer"
+               },
+               "check": {
+                "type": "integer"
+               },
+               "failure": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "kind": {
+                "enum": [
+                 "confirmed",
+                 "added",
+                 "changed",
+                 "removed",
+                 "unseen",
+                 "gap",
+                 "paused",
+                 "resumed",
+                 "ended",
+                 "condition_met"
+                ]
+               },
+               "missed": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "older_check": {
+                "type": "integer"
+               },
+               "older_run_id": {
+                "type": "string"
+               },
+               "outputs": {
+                "items": {
+                 "type": "string"
+                },
+                "type": "array"
+               },
+               "reason": {
+                "type": "string"
+               },
+               "record": {},
+               "run_id": {
+                "type": "string"
+               },
+               "seq": {
+                "type": "integer"
+               }
+              },
+              "required": [
+               "seq",
+               "kind",
+               "at"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "complete": {
+             "type": "boolean"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "paused",
+              "ended"
+             ]
+            },
+            "watch_id": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "watch_id",
+            "state",
+            "changes",
+            "after",
+            "complete"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       },
+       "text/event-stream": {
+        "schema": {
+         "type": "string"
+        }
+       }
+      },
+      "description": "A page of changes; or a stream of them, each with its `seq` as its id, ended by one event named `ended` once the watch has ended."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "The changes a watch of the caller's person recorded, after a number: one page as JSON in the shape watch.changes returns, or, for a caller that accepts text/event-stream, a stream of them that stays open while the watch lasts and ends with one event named `ended`."
    }
   }
  },

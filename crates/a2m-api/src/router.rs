@@ -17,6 +17,7 @@ use axum::http::{Method, StatusCode, header, request::Parts};
 use axum::routing::{MethodFilter, MethodRouter, on};
 use serde_json::{Map, Value as Json};
 
+use crate::changes::{self, WATCH_CHANGES_PATH};
 use crate::codes;
 use crate::events::{self, RUN_EVENTS_PATH};
 use crate::openapi::{self, OPENAPI_PATH};
@@ -56,8 +57,8 @@ pub struct ServedRoute {
     pub method: &'static str,
     /// The path, with `{field}` for a field taken from the path.
     pub path: String,
-    /// The action it dispatches; empty for the two routes that dispatch
-    /// none: a run's events, and the document's own.
+    /// The action it dispatches; empty for the three routes that dispatch
+    /// none: a run's events, a watch's changes, and the document's own.
     pub action: String,
 }
 
@@ -111,6 +112,22 @@ pub fn router(kernel: Kernel, settings: ApiSettings) -> Result<Router, Failure> 
         None => on(MethodFilter::GET, events),
     };
     by_path.insert(RUN_EVENTS_PATH.to_owned(), methods);
+    // A watch's changes: likewise no action's route.
+    let changes_kernel = kernel.clone();
+    let changes = move |request: axum::extract::Request| {
+        let kernel = changes_kernel.clone();
+        async move {
+            let (parts, body) = request.into_parts();
+            drain(&settings, &parts, body).await;
+            let caller = caller_of(&parts.extensions);
+            changes::serve(kernel, caller, parts).await
+        }
+    };
+    let methods = match by_path.remove(WATCH_CHANGES_PATH) {
+        Some(existing) => existing.on(MethodFilter::GET, changes),
+        None => on(MethodFilter::GET, changes),
+    };
+    by_path.insert(WATCH_CHANGES_PATH.to_owned(), methods);
     let mut router = Router::new();
     for (path, methods) in by_path {
         router = router.route(&path, methods.fallback(not_allowed(settings)));
@@ -133,8 +150,8 @@ pub fn router(kernel: Kernel, settings: ApiSettings) -> Result<Router, Failure> 
 }
 
 /// Every route the router built from this registry serves: what the
-/// OpenAPI document must describe. The two routes that are no action's
-/// come last: a run's events, then the document's own.
+/// OpenAPI document must describe. The three routes that are no action's
+/// come last: a run's events, a watch's changes, then the document's own.
 #[must_use]
 pub fn served_routes(registry: &a2m_actions::ActionRegistry) -> Vec<ServedRoute> {
     let mut served: Vec<ServedRoute> = rest_routes(registry)
@@ -145,7 +162,7 @@ pub fn served_routes(registry: &a2m_actions::ActionRegistry) -> Vec<ServedRoute>
             action: face.action,
         })
         .collect();
-    for path in [RUN_EVENTS_PATH, OPENAPI_PATH] {
+    for path in [RUN_EVENTS_PATH, WATCH_CHANGES_PATH, OPENAPI_PATH] {
         served.push(ServedRoute {
             method: "GET",
             path: path.to_owned(),
@@ -694,7 +711,11 @@ fn check_routes(routes: &[RestRouteFace]) -> Result<(), Failure> {
             "Give each action's alias a path no other route has.",
         )
     };
-    let mut seen: Vec<(&str, &str)> = vec![("GET", OPENAPI_PATH), ("GET", RUN_EVENTS_PATH)];
+    let mut seen: Vec<(&str, &str)> = vec![
+        ("GET", OPENAPI_PATH),
+        ("GET", RUN_EVENTS_PATH),
+        ("GET", WATCH_CHANGES_PATH),
+    ];
     for route in routes {
         if !openapi::under_prefix(&route.path) || route.method != "GET" && route.method != "POST" {
             return Err(conflict(format!(

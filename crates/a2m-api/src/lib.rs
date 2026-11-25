@@ -9,10 +9,12 @@
 //! input, hands one request to `Kernel::dispatch`, and renders the
 //! response, choosing the status from [`status_of`] alone.
 //!
-//! Two routes are served that no action generates: the OpenAPI document,
-//! and a run's events, as a page or as a stream of server-sent events
-//! ([`RUN_EVENTS_PATH`]). Reading a run's events is not an action: the
-//! kernel shows a caller only a run the same caller started.
+//! Three routes are served that no action generates: the OpenAPI
+//! document; a run's events, as a page or as a stream of server-sent
+//! events ([`RUN_EVENTS_PATH`]); and a watch's changes, the same way
+//! ([`WATCH_CHANGES_PATH`]). Following either is not an action: the kernel
+//! shows a caller only a run the same caller started, and only a watch of
+//! the person it acts for.
 //!
 //! Not built yet: webhooks, the server's listener with its token checks,
 //! and the server's approval pages. See
@@ -21,6 +23,7 @@
 //! The crates this one may depend on are set by the layering table in
 //! `docs/reference/technical-reference.md`.
 
+mod changes;
 pub mod codes;
 mod events;
 mod openapi;
@@ -31,6 +34,7 @@ mod status;
 /// type every door reads: whoever mounts the router puts one on a request
 /// as an extension, beside the caller.
 pub use a2m_actions::ProjectFolder;
+pub use changes::WATCH_CHANGES_PATH;
 pub use events::{KEEP_ALIVE, READER_PATIENCE, RUN_EVENTS_PATH};
 pub use openapi::{OPENAPI_PATH, OPENAPI_VERSION, openapi, operation_id};
 pub use router::{
