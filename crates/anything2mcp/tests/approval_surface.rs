@@ -22,15 +22,17 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use a2m_actions::{BoxFuture, Paths, PersonSurface};
+use a2m_core::Timestamp;
 use a2m_local::{
     Availability, EngineLock, FAILURE_CODE_HEADER, PresencePrompt, PromptAnswer, PromptName,
     PromptText, StopReason,
 };
+use a2m_telemetry::{Clock, SystemClock};
 use anything2mcp::cli::{Finished, Host, run_with};
 use anything2mcp::{EngineOptions, LocalEngine};
 use common::served::{Bridge, PATIENCE, stateless};
@@ -109,6 +111,45 @@ impl PresencePrompt for AtPrompt {
     }
 }
 
+/// The engine's clock in these tests: the machine's, which a test may put
+/// ahead. An approval's window is read on the engine's clock, so a test
+/// that puts it past the window sees the window end without waiting for
+/// the time itself to pass; everything else the engine times runs on as
+/// it would.
+struct Ahead {
+    machine: SystemClock,
+    ahead_ms: AtomicU64,
+}
+
+impl Ahead {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            machine: SystemClock::new(),
+            ahead_ms: AtomicU64::new(0),
+        })
+    }
+
+    fn put_ahead(&self, by: Duration) {
+        let millis = u64::try_from(by.as_millis()).unwrap();
+        self.ahead_ms.fetch_add(millis, Ordering::SeqCst);
+    }
+
+    fn ahead(&self) -> Duration {
+        Duration::from_millis(self.ahead_ms.load(Ordering::SeqCst))
+    }
+}
+
+impl Clock for Ahead {
+    fn elapsed(&self) -> Duration {
+        self.machine.elapsed() + self.ahead()
+    }
+
+    fn now(&self) -> Timestamp {
+        let ahead = i64::try_from(self.ahead().as_millis()).unwrap();
+        Timestamp::from_unix_millis(self.machine.now().as_unix_millis() + ahead)
+    }
+}
+
 /// A machine whose store is on disk and holds the published `example`
 /// target. A person publishes on an engine in this process, which then
 /// closes. `settings` is added to the installation's settings file.
@@ -143,13 +184,18 @@ async fn lock_comes_free(machine: &Machine) {
 }
 
 /// The local engine as `serve` runs it, in this process, serving.
-async fn serve(machine: &Machine, prompt: &Arc<AtPrompt>) -> JoinHandle<StopReason> {
+async fn serve(
+    machine: &Machine,
+    prompt: &Arc<AtPrompt>,
+    clock: &Arc<Ahead>,
+) -> JoinHandle<StopReason> {
     let mut options = EngineOptions::of_machine(
         Paths::under(machine.home.path()),
         machine.environment(),
         Surface::new() as Arc<dyn PersonSurface>,
     );
     options.project = Some(machine.project.path().to_path_buf());
+    options.clock = Arc::clone(clock) as Arc<dyn Clock>;
     let local = LocalEngine::start(options, Arc::clone(prompt) as Arc<dyn PresencePrompt>)
         .await
         .unwrap();
@@ -351,7 +397,8 @@ async fn a_person_approves_on_the_page_and_no_program_on_the_machine_can() {
     let app = TestApp::start().await.unwrap();
     let machine = published(&app, "").await;
     let prompt = AtPrompt::new();
-    let serving = serve(&machine, &prompt).await;
+    let clock = Ahead::new();
+    let serving = serve(&machine, &prompt, &clock).await;
     let http = http();
     let rested = rest(&machine, "L-300").await;
     let run = rested.run.as_str();
@@ -551,7 +598,8 @@ async fn an_approval_is_for_one_run_and_one_diff_used_once_and_survives_a_restar
     // can be seen to end.
     let machine = published(&app, "\n[policy]\napproval_window_minutes = 1\n").await;
     let prompt = AtPrompt::new();
-    let serving = serve(&machine, &prompt).await;
+    let clock = Ahead::new();
+    let serving = serve(&machine, &prompt, &clock).await;
     let http = http();
 
     // Another run's approval. Two runs rest; the person approves the
@@ -653,7 +701,7 @@ async fn an_approval_is_for_one_run_and_one_diff_used_once_and_survives_a_restar
                 == "page_not_found"),
         "{gone:?}"
     );
-    let serving = serve(&machine, &prompt).await;
+    let serving = serve(&machine, &prompt, &clock).await;
     let (done, response) = resume(&machine, &kept.run).await;
     assert_eq!(done.code, 0, "{done:?}");
     assert_eq!(response["result"]["status"], "completed", "{response}");
@@ -663,13 +711,13 @@ async fn an_approval_is_for_one_run_and_one_diff_used_once_and_survives_a_restar
     assert_eq!(writes(&app, &kept).await, 1);
 
     // An approval made stale by time: approved, and resumed only after
-    // its window, one minute on this machine, has ended. The wait is for
-    // the time itself to pass: the engine keeps one clock, the machine's.
-    // The approval clears nothing; the run's events name the refusal, and
-    // the run asks for a person again, on a new page.
+    // its window, one minute on this machine, has ended: the engine's
+    // clock is put past it, which is the condition the window asks. The
+    // approval clears nothing; the run's events name the refusal, and the
+    // run asks for a person again, on a new page.
     let late = rest(&machine, "L-304").await;
     person_approves(&http, &prompt, &late).await;
-    tokio::time::sleep(Duration::from_secs(62)).await;
+    clock.put_ahead(Duration::from_secs(61));
     let again = asked_again(&machine, &late).await;
     assert_eq!(writes(&app, &late).await, 0);
     let trace = command(&machine, &["trace", "show", &late.run]).await.1;
