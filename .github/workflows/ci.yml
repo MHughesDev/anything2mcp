@@ -523,6 +523,29 @@ jobs:
           grep -q "^ok 1 - the client reaches a real engine through the program's channel command$" "$RUNNER_TEMP/nodepipe.log"
           grep -q "^# pass 1$" "$RUNNER_TEMP/nodepipe.log"
           if grep -q -e "# SKIP" -e "^# skipped [1-9]" "$RUNNER_TEMP/nodepipe.log"; then echo "the Node client's pipe test was skipped"; exit 1; fi
+      # The Windows tester kit (decision 0476): the program this job built
+      # and tested, the test application, the wheel, and the guide, for a
+      # person to try the preview on a Windows machine before 0.1 is
+      # published. Last, so that it is stored only when every step passed.
+      - name: Build the test application for the Windows tester kit
+        if: runner.os == 'Windows'
+        run: cargo build --release --locked -p example-app
+      - name: Gather the Windows tester kit
+        if: runner.os == 'Windows'
+        run: |
+          mkdir kit
+          cp target/release/anything2mcp.exe target/release/example-app.exe bindings/python/dist/*.whl THIRD-PARTY-NOTICES.txt kit/
+          cp docs/plan/trying-the-preview-on-windows.md kit/README.md
+          ls -l kit
+      # Pinned by commit; this is v7.0.2.
+      - name: Store the Windows tester kit
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-tester-kit
+          path: kit/
+          if-no-files-found: error
+          retention-days: 14
 
   presence:
     name: The Linux presence prompt against a real polkit
