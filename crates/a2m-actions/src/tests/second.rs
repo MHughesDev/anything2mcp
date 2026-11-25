@@ -527,11 +527,12 @@ async fn a_secret_comes_from_standard_input_and_only_a_shortcut_whose_steps_are_
         .iter()
         .filter(|shortcut| !shortcut.offered(registry))
         .collect();
-    assert_eq!(words(&withheld), ["bundle", "rollback", "migrate"]);
+    assert_eq!(words(&withheld), ["bundle", "migrate"]);
     // `add` registers the target, scouts it, and shows the report, which
     // asks for a sign-in only where a read waits for one (decision 0306);
     // `diff` is built (package YL1); `init` has no step and is offered.
-    for word in ["init", "add", "diff", "learn", "ready"] {
+    // `rollback` is built (decision 0999).
+    for word in ["init", "add", "diff", "rollback", "learn", "ready"] {
         assert!(words(&offered).contains(&word), "{word}");
     }
     // `learn` is `capture.start` alone: it asks for a capture, which waits

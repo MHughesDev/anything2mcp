@@ -101,6 +101,7 @@ mod tests {
     mod access;
     mod audit;
     mod authoring;
+    mod components;
     mod drift;
     mod guard;
     mod kernel;
@@ -113,6 +114,8 @@ mod tests {
     mod renewal;
     mod runs;
     mod second;
+    mod traces;
     mod unbuilt;
+    mod versions;
     mod watches;
 }

@@ -1263,7 +1263,7 @@ fn no_such_run() -> Failure {
     )
 }
 
-fn run_id(call: &Call) -> Result<RunId, Failure> {
+pub(super) fn run_id(call: &Call) -> Result<RunId, Failure> {
     call.required("run_id")?.parse::<RunId>().map_err(|_| {
         codes::input(
             codes::SCHEMA_INVALID,
@@ -1280,7 +1280,7 @@ impl Kernel {
     /// whatever role they hold: a run acts under its person's session, and
     /// a session is its person's alone. Another person's run is answered
     /// as no run at all.
-    async fn own_run(&self, call: &Call, run: RunId) -> Result<RunRow, Failure> {
+    pub(super) async fn own_run(&self, call: &Call, run: RunId) -> Result<RunRow, Failure> {
         let row = self.run_in_workspace(call, run).await?;
         if call.caller.principal.person() == Some(row.principal) {
             Ok(row)
@@ -1294,7 +1294,11 @@ impl Kernel {
     /// auditor's role is for, and the dispatcher's decision was that the
     /// caller holds the role the action needs. It shows what happened and
     /// can neither resume nor change the run.
-    async fn run_in_workspace(&self, call: &Call, run: RunId) -> Result<RunRow, Failure> {
+    pub(super) async fn run_in_workspace(
+        &self,
+        call: &Call,
+        run: RunId,
+    ) -> Result<RunRow, Failure> {
         let row = self.store()?.read(move |tx| tx.ledger().run(run)).await?;
         if row.workspace == call.caller.principal.workspace {
             Ok(row)
@@ -1873,30 +1877,35 @@ handler!(
     }
 );
 
+/// A run's events, in order, as `trace.show` and `trace.export` show them.
+pub(super) async fn shown_events(kernel: &Kernel, run: RunId) -> Result<Vec<Json>, Failure> {
+    let events = kernel
+        .store()?
+        .read(move |tx| tx.ledger().events(run, 0, 10_000))
+        .await?;
+    Ok(events
+        .iter()
+        .map(|event| {
+            json!({
+                "seq": event.seq,
+                "lease": event.epoch.get(),
+                "kind": event.kind.as_str(),
+                "detail": neutral_said(
+                    serde_json::from_str::<Json>(&event.payload).unwrap_or(Json::Null)
+                ),
+                "evidence": event.evidence.map(|blob| format!("blob:{blob}")),
+            })
+        })
+        .collect())
+}
+
 handler!(
     /// `trace.show`: one run's events, in order, and its trace reference.
     trace_show,
     |kernel, call| {
         let run = run_id(&call)?;
         let row = kernel.run_in_workspace(&call, run).await?;
-        let events = kernel
-            .store()?
-            .read(move |tx| tx.ledger().events(run, 0, 10_000))
-            .await?;
-        let shown: Vec<Json> = events
-            .iter()
-            .map(|event| {
-                json!({
-                    "seq": event.seq,
-                    "lease": event.epoch.get(),
-                    "kind": event.kind.as_str(),
-                    "detail": neutral_said(
-                        serde_json::from_str::<Json>(&event.payload).unwrap_or(Json::Null)
-                    ),
-                    "evidence": event.evidence.map(|blob| format!("blob:{blob}")),
-                })
-            })
-            .collect();
+        let shown = shown_events(kernel, run).await?;
         let mut out = json!({"run_id": run.to_string(), "events": shown});
         if let (Some(trace), Json::Object(map)) = (row.trace, &mut out) {
             map.insert("trace".to_owned(), json!(format!("blob:{trace}")));

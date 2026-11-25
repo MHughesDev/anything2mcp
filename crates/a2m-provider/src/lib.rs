@@ -78,8 +78,9 @@ pub use path::{
 pub use place::{MachineState, NetworkPlace, Placed};
 pub use reach::{GatewayName, PlacedInReach, Reach, ReachEntry};
 pub use registry::{
-    FoundManifest, HostServices, ProviderListing, ProviderSettings, RefusedProvider, Registry,
-    RegistryBuilder, RegistryProblem, SurfaceKindEntry, current_platform,
+    ComponentState, FoundManifest, HostServices, ProviderListing, ProviderSettings,
+    RefusedProvider, Registry, RegistryBuilder, RegistryProblem, SurfaceKindEntry, component_state,
+    current_platform,
 };
 pub use replay::{Recorded, RecordedAnswer, Replay, answer_name, answers_to};
 pub use supervisor::{

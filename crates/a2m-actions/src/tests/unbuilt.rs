@@ -8,111 +8,96 @@ use a2m_actions::ActionRegistry;
 
 /// The actions with no handler, in catalog order, each with where its reason
 /// is written. Decision 0456, point 6, is the list; decision 0397 gave the
-/// first 23 of it.
+/// first 23 of it; decision 0997 sorted it by what each waits on, after
+/// decision 0465 had the ones that serve one machine built.
 const UNBUILT: &[(&str, &str)] = &[
     (
         "run.undo",
-        "decision 0456, point 6: it builds a reverse write that a person approves, Phase 9",
-    ),
-    (
-        "run.trace",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; `trace.show` gives a run's evidence",
+        "decision 0456, point 6, and decision 0997: a reverse write that a person approves, a design of its own (Phase 9)",
     ),
     (
         "screen.snapshot",
-        "decision 0456, point 6: a look at one screen, for which the scout and `draft.try` stand on one machine",
+        "decision 0456, point 6, and decision 0997: a snapshot operation each pack would supply, which the provider contract does not have",
     ),
     (
         "endpoints.infer",
-        "decision 0456, points 2 and 6: running the inference again over stored findings, after the release; `capture.stop` scouts what a capture found",
+        "decision 0456, point 6, and decision 0997: running the inference again over stored findings, after the release (decision 0456, point 2)",
     ),
     (
         "provider.enable",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release",
+        "decision 0456, point 6, and decision 0997: it changes `providers.enabled` through the record `config.set` keeps, and the registry is built again while the engine runs",
     ),
     (
         "provider.disable",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release",
-    ),
-    (
-        "component.list",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release",
+        "decision 0456, point 6, and decision 0997: it changes `providers.enabled` through the record `config.set` keeps, and the registry is built again while the engine runs",
     ),
     (
         "unknown.settle",
-        "decision 0456, point 6: a held draft's question is settled by writing the draft with `draft.write`",
+        "decision 0456, point 6, and decision 0997: what evidence settles a question is not designed; a held draft's question is settled by writing the draft",
     ),
     (
         "version.activate",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; it moves a toolset through the candidate stage, Phase 6",
-    ),
-    (
-        "version.rollback",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; its shortcut is not offered (decision 0456, point 1)",
+        "decision 0456, point 6, and decision 0997: the candidate stage, with shadowed reads and a toolset pinned to an exact version",
     ),
     (
         "version.bundle",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; its shortcut is not offered (decision 0456, point 1)",
+        "decision 0456, point 6, and decision 0997: the bundle's format and the key that signs it are not designed",
     ),
     (
         "version.import",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; signed bundles come with `version.bundle`, Phase 6",
+        "decision 0456, point 6, and decision 0997: the bundle's format and the key that signs it are not designed",
     ),
     (
         "version.migrate",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; its shortcut is not offered (decision 0456, point 1)",
+        "decision 0456, point 6, and decision 0997: the store keeps compiled targets, not the sources a newer engine would compile again",
     ),
     (
         "runner.enroll",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; runners are for a shared server, Phase 7",
+        "decision 0456, point 6, and decision 0997: a shared server's only; a shared server comes after the first release",
     ),
     (
         "runner.list",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; runners are for a shared server, Phase 7",
+        "decision 0456, point 6, and decision 0997: a shared server's only; a shared server comes after the first release",
     ),
     (
         "runner.drain",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; runners are for a shared server, Phase 7",
+        "decision 0456, point 6, and decision 0997: a shared server's only; a shared server comes after the first release",
     ),
     (
         "runner.revoke",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; runners are for a shared server, Phase 7",
+        "decision 0456, point 6, and decision 0997: a shared server's only; a shared server comes after the first release",
     ),
     (
         "vault.rotate",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; rotating a key layer is Phase 9",
+        "decision 0456, point 6, and decision 0997: the vault's step 7 leaves open what rotating an owner's key means",
     ),
     (
         "delegation.grant",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; delegation is Phase 7",
+        "decision 0456, point 6, and decision 0997: a shared server's only: on one machine an agent acts for the person by reaching the engine as that user",
     ),
     (
         "delegation.revoke",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; delegation is Phase 7",
+        "decision 0456, point 6, and decision 0997: a shared server's only: on one machine an agent acts for the person by reaching the engine as that user",
     ),
     (
         "delegation.list",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; delegation is Phase 7",
+        "decision 0456, point 6, and decision 0997: a shared server's only: on one machine an agent acts for the person by reaching the engine as that user",
     ),
     (
         "config.set",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release",
+        "decision 0456, point 6, and decision 0997: a writer that keeps a settings file's comments, and the record a loosened protected value is kept as",
     ),
     (
         "browser.install",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release",
+        "decision 0456, point 6, and decision 0997: where a pinned browser is fetched from, and its digests on each system",
     ),
     (
         "plugin.install",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; plug-ins are Phase 8",
+        "decision 0456, point 6, and decision 0997: the plug-in host and its signature check (package F3)",
     ),
     (
         "plugin.list",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; plug-ins are Phase 8",
-    ),
-    (
-        "trace.export",
-        "one of decision 0397's 23, kept by decision 0456, point 6: no package builds it before the first release; `trace.show` gives a run's evidence",
+        "decision 0456, point 6, and decision 0997: the plug-in host (package F3), and where a search for installed plug-ins looks",
     ),
 ];
 
