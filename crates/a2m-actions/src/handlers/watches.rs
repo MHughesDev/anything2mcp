@@ -66,7 +66,7 @@ fn watch_id(call: &Call) -> Result<WatchId, Failure> {
 
 /// The person a caller acts for: the only person whose watches it may ask
 /// for, see, or change (decision 0283). Never taken from the input.
-fn person_of(caller: &Caller) -> Result<PrincipalId, Failure> {
+pub(crate) fn person_of(caller: &Caller) -> Result<PrincipalId, Failure> {
     caller.principal.person().ok_or_else(|| {
         codes::policy(
             codes::PERSON_REQUIRED,
@@ -92,11 +92,11 @@ fn run_left_to_cancel(
     tx.watches().run_left_to_cancel(run, stopping)
 }
 
-fn failure_json((class, code): &(FailureClass, FailureCode)) -> Json {
+pub(crate) fn failure_json((class, code): &(FailureClass, FailureCode)) -> Json {
     json!({"class": class.as_str(), "code": code.as_str()})
 }
 
-fn millis(at: Timestamp) -> Json {
+pub(crate) fn millis(at: Timestamp) -> Json {
     json!(at.as_unix_millis())
 }
 
@@ -168,10 +168,10 @@ pub(crate) fn watch_json(row: &WatchRow) -> Json {
 /// What a watch of `operation` reads, as the published compiled target states
 /// it: the surface of its first verified binding, the requests a check sends
 /// there, and how its result is compared. Nothing of it comes from a caller.
-struct Planned {
-    surface: a2m_core::SurfaceName,
-    requests_per_check: u32,
-    shape: WatchShape,
+pub(crate) struct Planned {
+    pub(crate) surface: a2m_core::SurfaceName,
+    pub(crate) requests_per_check: u32,
+    pub(crate) shape: WatchShape,
 }
 
 /// The surface, cost, and shape of a watch of `operation` in
@@ -179,7 +179,7 @@ struct Planned {
 ///
 /// The shape is the records the read declares over its list outputs, each
 /// compared by its key (decision 0472), or else the whole result.
-fn planned(
+pub(crate) fn planned(
     compiled_target: &CompiledTarget,
     operation: &CompiledOperation,
 ) -> Result<Planned, Failure> {
@@ -228,7 +228,7 @@ fn planned(
 }
 
 /// The operation a found tool runs, when it is an operation.
-fn operation_of(found: &FoundTool) -> Result<&CompiledOperation, Failure> {
+pub(crate) fn operation_of(found: &FoundTool) -> Result<&CompiledOperation, Failure> {
     match found.tool.runs {
         ToolRuns::Operation(index) => found.compiled_target.operation(index).ok_or_else(|| {
             codes::input(
@@ -251,7 +251,7 @@ fn operation_of(found: &FoundTool) -> Result<&CompiledOperation, Failure> {
 /// Checks a watch's input against the read's declared inputs: every name
 /// given is an input, and every input that must be given is. Its values are
 /// checked by type when each check runs, as for any call.
-fn checked_input(operation: &CompiledOperation, input: &Values) -> Result<(), Failure> {
+pub(crate) fn checked_input(operation: &CompiledOperation, input: &Values) -> Result<(), Failure> {
     let mut problems = Vec::new();
     for name in input.names() {
         if !operation
@@ -362,8 +362,8 @@ impl Kernel {
         Ok(declared.unwrap_or(self.sched()?.settings().default_rate))
     }
 
-    /// Whether a watch keeps a solo engine from stopping when it is idle:
-    /// while one is confirmed or running. A paused watch does not hold it,
+    /// Whether a watch or a canary keeps a solo engine from stopping when it
+    /// is idle: while one is confirmed or running. A paused watch does not hold it,
     /// and every watch ends at its end (decision 0262), so no hold lasts
     /// past it.
     ///
@@ -372,14 +372,17 @@ impl Kernel {
     /// The store's failures.
     pub async fn watches_hold_the_engine(&self) -> Result<bool, Failure> {
         let now = self.inner.clock.now();
-        self.store()?
+        let watches = self
+            .store()?
             .read(move |tx| {
                 Ok(tx.watches().open()?.iter().any(|watch| {
                     matches!(watch.state, WatchState::Confirmed | WatchState::Running)
                         && watch.ends_at > now
                 }))
             })
-            .await
+            .await?;
+        // A confirmed canary holds it the same (decision 0999).
+        Ok(watches || self.canaries_hold_the_engine().await?)
     }
 
     /// One pass over the watches, after the scheduler's sweep: ends every
@@ -764,7 +767,7 @@ impl Kernel {
 
 /// A value of the input as a page shows it: text as itself, anything else
 /// as compact JSON. The page redacts and cuts it.
-fn shown_value(value: &Value) -> String {
+pub(crate) fn shown_value(value: &Value) -> String {
     match value {
         Value::Text(text) => text.clone(),
         other => serde_json::to_string(other).unwrap_or_default(),

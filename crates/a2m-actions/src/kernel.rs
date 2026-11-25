@@ -999,6 +999,8 @@ impl Kernel {
         // The watches: ends, due checks, checks whose run ended, and
         // watches waiting for a sign-in (decision 0283).
         self.tend_watches().await;
+        // The canaries on their own schedule (decision 0999).
+        self.tend_canaries().await;
         if let Some(keeper) = &self.inner.keeper {
             keeper.tick().await;
         }
@@ -1024,7 +1026,13 @@ impl Kernel {
                 // be added or removed, or for the keeper's next round.
                 // The earlier of the scheduler's next deadline and the
                 // watches' next due time or end (decision 0262).
-                let next = match (sched.next_due().await, sched.next_watch_due().await) {
+                // The canaries' too (decision 0999).
+                let watch = match (sched.next_watch_due().await, sched.next_canary_due().await) {
+                    (Ok(Some(watch)), Ok(Some(canary))) => Ok(Some(watch.min(canary))),
+                    (Ok(None), canary) => canary,
+                    (watch, _) => watch,
+                };
+                let next = match (sched.next_due().await, watch) {
                     (Ok(Some(due)), Ok(Some(watch))) => Ok(Some(due.min(watch))),
                     (Ok(None), Ok(watch)) => Ok(watch),
                     (Ok(due), _) => Ok(due),

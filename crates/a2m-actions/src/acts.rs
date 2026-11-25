@@ -678,6 +678,13 @@ impl Kernel {
             let details = self.watch_confirmation_lines(caller, &input).await?;
             return Ok((input, details, PublishShown::default(), Vec::new()));
         }
+        if def.name.as_str() == "canary.confirm" {
+            // What the person confirms is shown from the canary as the
+            // scheduler holds it (decision 0999): what it sends, how often,
+            // until when, and what its drift stops.
+            let details = self.canary_confirmation_lines(caller, &input).await?;
+            return Ok((input, details, PublishShown::default(), Vec::new()));
+        }
         if def.name.as_str() == "assertion.confirm" {
             // What the person confirms is each asserted read of the drafts
             // as they are now, pinned by its digest (decision 0475).

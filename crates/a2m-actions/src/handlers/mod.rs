@@ -5,6 +5,7 @@ mod access;
 mod admin;
 pub(crate) mod assertions;
 pub(crate) mod build;
+pub(crate) mod canaries;
 pub(crate) mod captures;
 mod client;
 mod drafts;
@@ -124,6 +125,11 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "session.revoke" => sessions::session_revoke,
         "session.list" => sessions::session_list,
         "session.end" => sessions::session_end,
+        "canary.create" => canaries::canary_create,
+        "canary.confirm" => canaries::canary_confirm,
+        "canary.get" => canaries::canary_get,
+        "canary.list" => canaries::canary_list,
+        "canary.end" => canaries::canary_end,
         "watch.create" => watches::watch_create,
         "watch.confirm" => watches::watch_confirm,
         "assertion.confirm" => assertions::assertion_confirm,
