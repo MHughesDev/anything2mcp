@@ -11,7 +11,7 @@ Anything2MCP is a toolkit that wraps a system you are already entitled to use (a
 
 - **No model runs inside a tool call.** A tool is a compiled target. A step that cannot be done as written stops with a named failure.
 - **A write is recorded first, then read back and compared.** A run whose answer was lost is reconciled before anything is sent again.
-- **A person at the machine approves a write and publishes a tool.** An agent asks; it cannot approve or publish, and no command, tool, or route does it for them.
+- **A person at the machine approves a write and publishes a tool.** An agent asks; it cannot approve or publish, and no command, tool, or route does it for them. Each approval passes the operating system's own presence prompt. On one machine under one account this stops a mistaken, runaway, or steered agent; it does not stop a hostile program already running as you, which can change your files, and on Linux one that has your password can pass the prompt ([the limit](docs/spec/2-kernel/222-front-doors-and-the-local-engine.md#what-may-never-be-done-from-a-local-command)).
 - **Secrets never reach the caller.** Tokens and passwords stay in the engine's vault; the tests plant them and find them in no result, log, trace, or file.
 - **Nothing phones home.** Usage data, crash reports, and update checks are off unless a person switches them on.
 
@@ -25,7 +25,7 @@ Not built yet: plug-ins, MCP over HTTP for a shared server, remote runners, ten 
 
 ## Try it from source
 
-You need the Rust toolchain (`rustup` installs the pinned one) and a Unix shell. This builds the program and the test application, an imaginary order system, and turns one of its reads into a tool. The engine gets a home of its own beside the project, not inside it, on a short path: its socket lives there, and Unix limits a socket's path to about 100 bytes. On Linux this build has no operating-system key store, so the vault takes its root key from a passphrase by default: set it in the shell (16 bytes or more, and keep it), and a command hands it to the engine it starts.
+You need the Rust toolchain (`rustup` installs the pinned one) and a Unix shell. This builds the program and the test application, an imaginary order system, and turns one of its reads into a tool. The engine gets a home of its own beside the project, not inside it, on a short path: its socket lives there, and Unix limits a socket's path to about 100 bytes. On Linux this build has no operating-system key store, so the vault takes its root key from a passphrase by default: set it in the shell (16 bytes or more, and keep it), and a command hands it to the engine it starts. The passphrase opens every secret the vault holds, so type it at a prompt that writes nothing to your shell's history, as below, and start your agents from another terminal: a program started from this shell inherits it.
 
 ```sh
 git clone https://github.com/MHughesDev/anything2mcp && cd anything2mcp
@@ -35,7 +35,7 @@ example-app &                    # example-app is listening on http://127.0.0.1:
 
 mkdir ~/a2m-try && cd ~/a2m-try
 export A2M_HOME="$PWD/home"
-export A2M_VAULT_PASSPHRASE='a passphrase of your own'
+read -rs A2M_VAULT_PASSPHRASE && export A2M_VAULT_PASSPHRASE   # type it; it is not shown or kept
 mkdir first-project && cd first-project
 
 # Make a project, point it at the test application, and let the scout
