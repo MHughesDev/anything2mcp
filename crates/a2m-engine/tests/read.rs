@@ -130,6 +130,17 @@ async fn the_step_trace_is_sent_with_its_signature() {
     assert_eq!(lines[2]["type"], "end");
     assert_eq!(lines[2]["signature"], trace.signature.to_string());
     assert_eq!(trace.records, 1);
+    // The end line marks where the attempt's time went, part by part
+    // (decision 0999): one policy decision, one load of the compiled
+    // target, and the ledger's records; a read of a surface with no rate
+    // and no sign-in asks the scheduler and the keeper nothing.
+    let marks = &lines[2]["marks"];
+    assert!(marks["run_us"].is_u64(), "{text}");
+    assert_eq!(marks["policy"]["calls"], 1, "{text}");
+    assert_eq!(marks["loading"]["calls"], 1, "{text}");
+    assert!(marks["ledger"]["calls"].as_u64().unwrap() >= 1, "{text}");
+    assert!(marks.get("scheduling").is_none(), "{text}");
+    assert!(marks.get("session").is_none(), "{text}");
 }
 
 #[tokio::test]

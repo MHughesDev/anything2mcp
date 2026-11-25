@@ -143,7 +143,11 @@ impl Engine {
                 "A discovery job names a surface, and this one names a tool.",
             ));
         };
-        let timed = Timed::new(control, self.deps.settings.control_timeout);
+        let timed = Timed::new(
+            control,
+            self.deps.settings.control_timeout,
+            Arc::clone(&self.deps.clock),
+        );
         let control: &dyn ControlPort = &timed;
         let loaded = self.compiled_target(&job.compiled_target, control).await?;
         let position = Self::environment(&loaded, job)?;
