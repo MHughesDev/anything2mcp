@@ -1,13 +1,14 @@
 """Run the checks of CI's Linux job here, before a push (decision 0372).
 
-Usage: python3 tools/gate.py [--fast] [--shard K/N [--tests-only] [--record FILE]] [--cross]
+Usage: python3 tools/gate.py [--fast] [--shard K/N [--tests-only] [--record FILE]]
        python3 tools/gate.py --list-tests FILE
        python3 tools/gate.py --compare-tests FULL SHARD...
 
 Runs, in order, and goes on after a failure so that one run shows every one:
 the documentation audit, the failure codes check, the reading of every workflow
 file as YAML, the check against every kept release's contract (decision 0437),
-formatting, the lints of the whole workspace, and the tests of the whole
+formatting, the lints of the whole workspace, the lints of the whole workspace
+built for Windows and for macOS (decision 0452), and the tests of the whole
 workspace. `--fast` stops after the lints, for a check while work is in
 progress; a push waits for the full run.
 
@@ -15,11 +16,21 @@ progress; a push waits for the full run.
 formatting, the lints, and the doctests; every shard builds the tests of the
 whole workspace, with the features the whole workspace unifies as CI's run
 does, and runs its share of the test programs, shared out by how many tests
-each holds, so that N machines together run every test program once. `--cross` adds the lints of the whole
-workspace built for Windows and for macOS from this machine: nothing is
-linked, so the two C dependencies are given stand-ins (`tools/cross/`) that
-write empty objects, and the lints see the code each of those systems
-compiles and Linux never does. It runs no test of those systems.
+each holds, so that N machines together run every test program once.
+
+The lints for Windows (`x86_64-pc-windows-msvc`, the target CI's Windows job
+and the release build) and for macOS (`aarch64-apple-darwin`) run on a Linux
+machine as part of every run, the first shard's included, after
+`rustup target add` gives the two targets' standard libraries where they are
+missing: they see the code each of those systems compiles and Linux never does.
+Clippy links nothing, so the C dependencies' build scripts are given
+stand-ins (`tools/cross/`) that write empty objects. The stand-ins are for
+these lints alone: the gate gives them only to a `cargo clippy` step, and they
+refuse to run unless `A2M_LINT_ONLY_STUBS` is 1 and the cargo that runs them is
+running `cargo check`, so a build that links or ships cannot use them. On a
+machine that is not Linux the two lints are skipped, and the gate says so. They
+run no test of those systems; their tests stay in CI. `--cross` is still
+accepted and adds nothing.
 
 The build folder is the one CARGO_TARGET_DIR names, as for any cargo command.
 Where other copies of the repository build at the same time, give this run a
@@ -63,6 +74,8 @@ STEPS = [
 
 CROSS_TARGETS = ["x86_64-pc-windows-msvc", "aarch64-apple-darwin"]
 HERE = os.path.dirname(os.path.abspath(__file__))
+# The variable the lint-only stand-ins in tools/cross/ refuse to run without.
+LINT_ONLY = "A2M_LINT_ONLY_STUBS"
 
 
 def weights():
@@ -110,20 +123,7 @@ def shard_tests(k, n, env, verbose=False):
     )
     if built.returncode != 0:
         return False, round(time.monotonic() - started), built.stderr, [], []
-    programs = []
-    for line in built.stdout.splitlines():
-        try:
-            message = json.loads(line)
-        except ValueError:
-            continue
-        if message.get("reason") != "compiler-artifact" or not message.get("executable") or not message.get("profile", {}).get("test"):
-            continue
-        target = message["target"]
-        manifest = message["manifest_path"]
-        source = target["src_path"]
-        count = program_weight(target["kind"], source)
-        name = message["package_id"].split("#")[-1].split("@")[0].rsplit("/", 1)[-1]
-        programs.append((count, f"{name} {target['kind'][0]} {target['name']}", message["executable"], os.path.dirname(manifest), name))
+    programs = built_programs(built.stdout)
     bins = [[0, []] for _ in range(n)]
     for program in sorted(programs, key=lambda p: (-p[0], p[1])):
         lightest = min(range(n), key=lambda i: (bins[i][0], i))
@@ -166,6 +166,37 @@ def shard_tests(k, n, env, verbose=False):
                 print(doc.stdout + doc.stderr, flush=True)
             output.append(doc.stdout[-4000:] + doc.stderr[-2000:])
     return not failed, round(time.monotonic() - started), "\n".join(output), failed, ran
+
+
+def built_programs(stdout):
+    """Each test program a `cargo test --no-run --message-format=json...`
+    built, as (its weight, its label, its file, its package's folder, its
+    package's name)."""
+    programs = []
+    for line in stdout.splitlines():
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        if message.get("reason") != "compiler-artifact" or not message.get("executable") or not message.get("profile", {}).get("test"):
+            continue
+        target = message["target"]
+        manifest = message["manifest_path"]
+        source = target["src_path"]
+        count = program_weight(target["kind"], source)
+        name = package_name(message["package_id"])
+        programs.append((count, f"{name} {target['kind'][0]} {target['name']}", message["executable"], os.path.dirname(manifest), name))
+    return programs
+
+
+def package_name(package_id):
+    """The package a cargo package id names: `path+file:///w/alpha#0.1.0`
+    names `alpha`, the folder, and `path+file:///w/x#alpha@0.1.0` names
+    `alpha`, a name that is not its folder's."""
+    url, _, fragment = package_id.partition("#")
+    if "@" in fragment:
+        return fragment.split("@")[0]
+    return url.rstrip("/").rsplit("/", 1)[-1]
 
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -303,20 +334,41 @@ def weights_of_folder(folder):
 
 
 def cross_steps():
-    # The two targets' standard libraries, which a machine set up for Linux
-    # alone has not got.
+    """The lints of the whole workspace for Windows and for macOS, with the
+    standard libraries of the two targets added first where missing."""
     steps = [("cross targets", ["rustup", "target", "add"] + CROSS_TARGETS, {})]
     for target in CROSS_TARGETS:
         under = target.replace("-", "_")
         steps.append((
             f"lint for {target}",
             ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--keep-going", "--target", target, "--", "-D", "warnings"],
-            {f"CC_{under}": os.path.join(HERE, "cross", "nocc.py"), f"AR_{under}": os.path.join(HERE, "cross", "noar.py")},
+            {
+                f"CC_{under}": os.path.join(HERE, "cross", "nocc.py"),
+                f"AR_{under}": os.path.join(HERE, "cross", "noar.py"),
+                LINT_ONLY: "1",
+            },
         ))
     return steps
 
 
-def run(name, command, env):
+def gives_stand_ins(extra):
+    """Whether a step's own variables point a build at the lint-only stand-ins."""
+    folder = os.path.join(HERE, "cross")
+    return LINT_ONLY in extra or any(os.path.dirname(str(v)) == folder for v in extra.values())
+
+
+def refused(command, extra):
+    """Why the gate will not run a step, or None: the lint-only stand-ins go
+    to a `cargo clippy` alone, never to a build that links or ships."""
+    if gives_stand_ins(extra) and list(command[:2]) != ["cargo", "clippy"]:
+        return f"the lint-only stand-ins are given to `{' '.join(command[:2])}`, which is not `cargo clippy`"
+    return None
+
+
+def run(name, command, env, extra=None):
+    reason = refused(command, extra or {})
+    if reason:
+        return False, 0, reason, []
     started = time.monotonic()
     done = subprocess.run(command, env=env, capture_output=True, text=True)
     output = done.stdout + done.stderr
@@ -331,15 +383,17 @@ def run(name, command, env):
     return ok, seconds, output, failed
 
 
-def main(argv):
-    env = dict(os.environ)
-    env.setdefault("CARGO_TERM_COLOR", "never")
-    if "--list-tests" in argv:
-        return list_tests(argv[argv.index("--list-tests") + 1], env)
-    if "--compare-tests" in argv:
-        return compare_main(argv[argv.index("--compare-tests") + 1:])
-    before_tests = [step for step in STEPS if step[0] != "test"]
-    steps = [(name, command, {}) for name, command in (before_tests if "--fast" in argv else STEPS)]
+def plan(argv, platform=None):
+    """The steps a run of the gate with these arguments takes, in order, each
+    with its name, its command, and the variables it adds; or an exit code
+    when the arguments are wrong."""
+    platform = sys.platform if platform is None else platform
+    before_tests = [(name, command, {}) for name, command in STEPS if name != "test"]
+    if platform.startswith("linux"):
+        before_tests += cross_steps()
+    elif "--tests-only" not in argv:
+        print(f"skip the lints for {' and '.join(CROSS_TARGETS)}: their stand-ins run on Linux alone", flush=True)
+    steps = before_tests + ([] if "--fast" in argv else [("test", dict(STEPS)["test"], {})])
     if "--shard" in argv:
         k, n = (int(x) for x in argv[argv.index("--shard") + 1].split("/"))
         if not 1 <= k <= n:
@@ -349,9 +403,19 @@ def main(argv):
         # own, and its shards run the tests alone (decision 0449).
         first = k == 1 and "--tests-only" not in argv
         steps = [step for step in steps if step[0] != "test" and first] + ([("test", ("shard", k, n), {})] if "--fast" not in argv else [])
-    if "--cross" in argv:
-        steps += cross_steps()
-    steps = [(TOOLCHAIN[0], TOOLCHAIN[1], {})] + steps
+    return [(TOOLCHAIN[0], TOOLCHAIN[1], {})] + steps
+
+
+def main(argv):
+    env = dict(os.environ)
+    env.setdefault("CARGO_TERM_COLOR", "never")
+    if "--list-tests" in argv:
+        return list_tests(argv[argv.index("--list-tests") + 1], env)
+    if "--compare-tests" in argv:
+        return compare_main(argv[argv.index("--compare-tests") + 1:])
+    steps = plan(argv)
+    if isinstance(steps, int):
+        return steps
     results = []
     for name, command, extra in steps:
         if command[0] == "shard":
@@ -359,7 +423,7 @@ def main(argv):
             if "--record" in argv:
                 write_record(argv[argv.index("--record") + 1], ran)
         else:
-            ok, seconds, output, failed = run(name, command, {**env, **extra})
+            ok, seconds, output, failed = run(name, command, {**env, **extra}, extra)
         results.append((name, ok, seconds))
         print(f"{'ok  ' if ok else 'FAIL'} {name} ({seconds}s)", flush=True)
         if not ok:
