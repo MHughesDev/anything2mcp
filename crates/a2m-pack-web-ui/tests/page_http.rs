@@ -726,11 +726,52 @@ fn nothing_is_drafted_for_a_request_that_could_write_is_not_json_or_went_elsewhe
         ),
         ("another origin", summary_exchange("http://127.0.0.2:4010")),
     ];
-    for (why, one) in cases {
+    let reasons = [
+        "method that may write",
+        "other than JSON",
+        "not made by a page by itself",
+        "not exactly one `web` surface",
+    ];
+    for ((why, one), reason) in cases.into_iter().zip(reasons) {
         let folder = new_target("page-http-never", origin);
         let report = draft(&stand, &folder, &[one]);
         assert!(report.written.is_empty(), "{why}: {report:?}");
+        // Each rule that covers it says why, in the pack's own words.
+        assert_eq!(report.not_drafted.len(), 2, "{why}: {report:?}");
+        for left in &report.not_drafted {
+            assert!(left.reason.contains(reason), "{why}: {left:?}");
+        }
     }
+}
+
+/// The `GET /orders` finding as the scout gives it of the test
+/// application: the document the tab was sent to, which no page made by
+/// itself. Both rules of the web pack cover it and draft nothing; each
+/// gives the same reason, so the scout's report lists it once, with that
+/// reason, and never its own fallback sentence.
+#[test]
+fn the_page_the_tab_was_sent_to_is_not_drafted_and_says_why_once() {
+    let origin = "http://127.0.0.1:4010";
+    let stand = Stand::new("page-http-document", Arc::new(NoSecrets));
+    let folder = new_target("page-http-document", origin);
+    let orders = finding(origin, "exchange", "orders_document_exchange.json");
+    let report = draft(&stand, &folder, std::slice::from_ref(&orders));
+    assert!(report.written.is_empty(), "{report:?}");
+    assert_eq!(report.not_drafted.len(), 2, "{report:?}");
+    let mut reasons: Vec<&str> = Vec::new();
+    for left in &report.not_drafted {
+        assert_eq!(left.finding, orders.id(), "{left:?}");
+        assert_eq!(left.pack.as_str(), "web", "{left:?}");
+        if !reasons.contains(&left.reason.as_str()) {
+            reasons.push(&left.reason);
+        }
+    }
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].contains("not made by a page by itself")
+            && reasons[0].contains("a screen read over it covers what it shows"),
+        "{reasons:?}"
+    );
 }
 
 #[test]
