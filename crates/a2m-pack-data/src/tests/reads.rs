@@ -89,17 +89,27 @@ async fn a_record_is_read_by_its_key_and_an_unknown_key_is_absent() {
     assert_eq!(scene.db.stored_rows(Table::OrderLines).unwrap().len(), 4);
 }
 
+/// The coverage a step stated.
+fn coverage(outcome: &StepOutcome) -> a2m_core::Coverage {
+    match outcome {
+        StepOutcome::Done(observed) | StepOutcome::Absent(observed) => observed.coverage,
+    }
+}
+
 #[tokio::test]
 async fn a_list_stops_at_its_limit_and_says_that_more_exist() {
     let scene = Scene::new();
     let mut run = scene.prepare(Posture::Live).await;
     let order = inputs(&[("order_id", "A-100")]);
 
-    let all = values(
-        run.steps(&scene.binding("example_order_lines_list").act, &order, None)
-            .await
-            .unwrap(),
-    );
+    let listed = run
+        .steps(&scene.binding("example_order_lines_list").act, &order, None)
+        .await
+        .unwrap();
+    // The store gave no row past the list: every row is in it, which the
+    // driver states as the step's coverage (decision 0472).
+    assert_eq!(coverage(&listed), a2m_core::Coverage::Complete);
+    let all = values(listed);
     let rows = all.get("rows").and_then(Value::as_list).unwrap();
     let codes_of = |rows: &[Value]| -> Vec<String> {
         rows.iter()
@@ -109,15 +119,16 @@ async fn a_list_stops_at_its_limit_and_says_that_more_exist() {
     assert_eq!(codes_of(rows), ["L-101", "L-102", "L-103"]);
     assert_eq!(all.get("more"), Some(&Value::Bool(false)));
 
-    let first = values(
-        run.steps(
+    let cut = run
+        .steps(
             &scene.binding("example_order_lines_first").act,
             &order,
             None,
         )
         .await
-        .unwrap(),
-    );
+        .unwrap();
+    assert_eq!(coverage(&cut), a2m_core::Coverage::Partial);
+    let first = values(cut);
     assert_eq!(
         codes_of(first.get("rows").and_then(Value::as_list).unwrap()),
         ["L-101", "L-102"]

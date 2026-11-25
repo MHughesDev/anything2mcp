@@ -262,6 +262,10 @@ fn operation() -> JsonSchema {
                     .optional("may_be_absent", JsonSchema::bool()),
             ),
         )
+        .optional(
+            "records",
+            JsonSchema::object().required("key", JsonSchema::non_empty_list(JsonSchema::name())),
+        )
         .required(
             "bindings",
             JsonSchema::non_empty_list(JsonSchema::map_of(JsonSchema::any())),

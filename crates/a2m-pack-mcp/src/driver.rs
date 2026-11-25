@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
-use a2m_core::{Digest, RecordKey, Redact, Secret, Step, Value, Values};
+use a2m_core::{Coverage, Digest, RecordKey, Redact, Secret, Step, Value, Values};
 use a2m_logs::{Acting, Detail};
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Deadline, Driver, DriverHealth, Observed, PrepareContext,
@@ -834,6 +834,7 @@ impl McpDriver {
             assigned_key,
             for_reconcile: Values::new(),
             captures: vec![acting.clone(), capture.clone()],
+            coverage: Coverage::Unknown,
         };
         if result.is_error {
             let absent = step.lookup

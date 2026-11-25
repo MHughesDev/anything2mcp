@@ -312,6 +312,7 @@ The driver interface is settled here as follows, closing the two points the tech
 3. **Declared capabilities leave the trait.** The sketch's `mode()` and `capabilities()` repeat the manifest; knowledge lives in one place, so the registry answers both.
 4. **Every failure says whether anything was sent,** as the supervisor's rule asks of every subsystem.
 5. **A step can return what reconcile will need before the commit point.** A key a store assigned inside an open transaction, or the digest a file will have once it is replaced, is learned before the step that commits. A step not marked `commits` may return it as `Observed::for_reconcile`; the engine records it durably before the committing step is sent. The handle refuses `for_reconcile` on the committing step itself, as `unknown_variant`, `reconcile_too_late`.
+6. **A step says whether it returned every record, when it knows** ([decision 0472](../../decisions/0472-a-read-declares-its-records-over-its-list-outputs-and-a-driver-states-whether-it-returned-every-record.md)). `Observed::coverage` is `complete` only when the driver knows the system holds no record matching the step's input that it did not return, `partial` when it knows the system holds more, and `unknown`, the default, otherwise. The data pack's list read states it from the row it asks for past its limit; no other driver states it yet. A watch reports a record removed only between two runs whose steps that returned values all stated `complete`.
 
 ```rust
 pub trait Driver: Send + Sync {
@@ -373,6 +374,7 @@ pub struct Observed {
     pub values: Values, pub assigned_key: Option<RecordKey>,
     pub for_reconcile: Values,                                // learned before the commit point; recorded before the committing step
     pub captures: Vec<Capture>,                               // already redacted
+    pub coverage: Coverage,                                   // complete, partial, or unknown (the default): decision 0472
 }
 pub struct Capture { pub name: String, pub media_type: String, pub bytes: Vec<u8> }
 // Capture::acting(&Acting): the capture named `acting`, of `application/json`, says how the step was done; the engine puts it in

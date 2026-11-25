@@ -144,7 +144,7 @@ pub(crate) fn watch_json(row: &WatchRow) -> Json {
         "compared".to_owned(),
         json!(match row.shape {
             WatchShape::Whole => "whole",
-            WatchShape::List { .. } => "records",
+            WatchShape::List { .. } | WatchShape::Columns { .. } => "records",
         }),
     );
     map.insert(
@@ -169,10 +169,8 @@ struct Planned {
 /// The surface, cost, and shape of a watch of `operation` in
 /// `compiled_target`.
 ///
-/// The shape is the whole result. A compiled target declares no list of
-/// records with a key: an operation's output is a value of one field type or
-/// a list of them (decision 0283), so there are no records to compare one by
-/// one.
+/// The shape is the records the read declares over its list outputs, each
+/// compared by its key (decision 0472), or else the whole result.
 fn planned(
     compiled_target: &CompiledTarget,
     operation: &CompiledOperation,
@@ -203,10 +201,21 @@ fn planned(
     // not read back.
     let sends = binding.act.len().saturating_add(binding.confirm.len());
     let requests_per_check = u32::try_from(sends).unwrap_or(u32::MAX).max(1);
+    let shape = match &operation.records {
+        None => WatchShape::Whole,
+        Some(records) => WatchShape::Columns {
+            columns: operation
+                .list_outputs()
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            key: records.key.clone(),
+        },
+    };
     Ok(Planned {
         surface: surface.name.clone(),
         requests_per_check,
-        shape: WatchShape::Whole,
+        shape,
     })
 }
 
@@ -765,6 +774,53 @@ fn shown_value(value: &Value) -> String {
     }
 }
 
+/// The values of each record's key in a check's result, in the result's
+/// order: of each record of a list output, or of each row across the
+/// columns of a read that declares its records (decision 0472). A record
+/// whose key lacks a part is passed over.
+fn key_values(shape: &WatchShape, values: &Values) -> Vec<Vec<Value>> {
+    match shape {
+        WatchShape::Whole => Vec::new(),
+        WatchShape::List { list, key } => {
+            let Some(Value::List(items)) = values.get(list) else {
+                return Vec::new();
+            };
+            items
+                .iter()
+                .filter_map(|item| {
+                    let Value::Record(fields) = item else {
+                        return None;
+                    };
+                    key.iter()
+                        .map(|field| fields.get(field).cloned())
+                        .collect::<Option<Vec<Value>>>()
+                })
+                .collect()
+        }
+        WatchShape::Columns { key, .. } => {
+            let columns: Option<Vec<&Vec<Value>>> = key
+                .iter()
+                .map(|column| match values.get(column) {
+                    Some(Value::List(items)) => Some(items),
+                    _ => None,
+                })
+                .collect();
+            let Some(columns) = columns else {
+                return Vec::new();
+            };
+            let rows = columns.iter().map(|items| items.len()).min().unwrap_or(0);
+            (0..rows)
+                .filter_map(|row| {
+                    columns
+                        .iter()
+                        .map(|items| items.get(row).cloned())
+                        .collect::<Option<Vec<Value>>>()
+                })
+                .collect()
+        }
+    }
+}
+
 /// The record a change names, as values of its key, found in the result of
 /// the change's check run, and only when that run is one of the caller's
 /// own person's (decision 0262). `None` when the change names no record, the
@@ -776,11 +832,12 @@ async fn record_of(
     change: &ChangeRow,
     run: Option<RunId>,
 ) -> Option<Json> {
-    let (Some(WatchKey::Record(wanted)), Some(run), WatchShape::List { list, key }) =
-        (change.key, run, &row.shape)
-    else {
+    let (Some(WatchKey::Record(wanted)), Some(run)) = (change.key, run) else {
         return None;
     };
+    if !row.shape.keyed() {
+        return None;
+    }
     let store = kernel.store().ok()?;
     let found = store.read(move |tx| tx.ledger().run(run)).await.ok()?;
     if found.principal != person || found.workspace != row.workspace {
@@ -788,21 +845,8 @@ async fn record_of(
     }
     let opened = store.blobs().get(&found.result?).await.ok()?;
     let values = decode_values(opened.expose()).ok()?;
-    let Some(Value::List(items)) = values.get(list) else {
-        return None;
-    };
     let workspace = row.workspace;
-    for item in items {
-        let Value::Record(fields) = item else {
-            continue;
-        };
-        let Some(parts) = key
-            .iter()
-            .map(|field| fields.get(field).cloned())
-            .collect::<Option<Vec<Value>>>()
-        else {
-            continue;
-        };
+    for parts in key_values(&row.shape, &values) {
         let Ok(record_key) = RecordKey::new(parts.clone()) else {
             continue;
         };

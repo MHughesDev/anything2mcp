@@ -13,9 +13,9 @@ use std::time::Duration;
 
 use a2m_auth::SessionLease;
 use a2m_core::{
-    AccessKind, CompiledSurface, CompiledTarget, Digest, Environment, Epoch, Failure, FailureClass,
-    FailureCode, Mode, RecordKey, Redact, RunId, ScopedHost, Step, StepKind, TargetName, Value,
-    Values, Version,
+    AccessKind, CompiledSurface, CompiledTarget, Coverage, Digest, Environment, Epoch, Failure,
+    FailureClass, FailureCode, Mode, RecordKey, Redact, RunId, ScopedHost, Step, StepKind,
+    TargetName, Value, Values, Version,
 };
 use a2m_ledger::{IntentToken, RecordRef};
 use a2m_logs::Acting;
@@ -456,6 +456,15 @@ pub struct Observed {
     pub for_reconcile: Values,
     /// Evidence, already redacted.
     pub captures: Vec<Capture>,
+    /// Whether the values hold every record the system has that matches
+    /// the step's input (decision 0472): `complete` only when the driver
+    /// knows that the system holds no record it did not return, such as a
+    /// store asked for one row more than its limit that gave none more;
+    /// `partial` when it knows the system holds more; `unknown`, the
+    /// default, when it cannot tell, or the step returns no records. A
+    /// watch reports a record removed only between two runs whose every
+    /// step that returned values stated `complete`.
+    pub coverage: Coverage,
 }
 
 impl Observed {

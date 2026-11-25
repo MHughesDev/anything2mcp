@@ -173,7 +173,7 @@ async fn complete(
             let mut ledger = tx.ledger();
             ledger.set_state(&fence, RunState::Validating, None)?;
             ledger.set_state(&fence, RunState::Running, None)?;
-            ledger.store_result(&fence, stored)?;
+            ledger.store_result(&fence, stored, a2m_core::Coverage::Unknown)?;
             ledger.set_state(&fence, RunState::Completed, None)
         })
         .await

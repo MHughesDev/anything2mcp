@@ -373,7 +373,7 @@ impl ControlPort for OfflineControl {
     fn send<'a>(&'a self, event: EngineEvent) -> BoxFuture<'a, Result<(), Failure>> {
         Box::pin(async move {
             match event {
-                EngineEvent::Result(values) => {
+                EngineEvent::Result { values, .. } => {
                     *self.result.lock().unwrap_or_else(PoisonError::into_inner) = Some(values);
                     Ok(())
                 }
