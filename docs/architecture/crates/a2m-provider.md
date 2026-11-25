@@ -343,7 +343,11 @@ pub struct PrepareContext<'a> {
     pub paths: &'a CheckedPaths,                              // every file this run may touch, already checked; a driver resolves none;
                                                               // `paths.project()` / `project_folder()`: the project folder of the request that started the run
     pub supervisor: &'a ScopedSupervisor,                     // starts only what the manifest and the published compiled target declare
+    pub confirmed: ConfirmedReads,                            // the drafts' asserted reads their person confirmed, for a try (decision 0999); none otherwise
 }
+/// The asserted reads a person confirmed on the engine's page, each (file kind, surface, entry); the kernel names one only when the
+/// confirmation's digest covers the entry as the compiled target holds it. A pack that does not read it is unchanged (decision 0999).
+pub struct ConfirmedReads { /* a set */ }   // none(), of(entries), covers(kind, surface, entry), is_empty(), len()
 pub struct SurfaceRef { pub target: TargetName, pub environment: Environment, pub surface: CompiledSurface }   // at this environment's address
 pub enum Posture { Live, Sandbox { test_records: bool }, Discovery }   // the driver applies its own kind's read-only guard outside Live
 pub struct Deadline(/* a Tokio instant */);                   // Deadline::after(duration), at(), remaining(), passed()
