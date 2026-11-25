@@ -32,6 +32,13 @@
 //!   method, told apart by one field of its body (decision 0394).
 //!   `GET /__control/case-rows` reports the rows as stored and every body
 //!   the route was sent, by its `op`.
+//! - `POST /api/cases/rows/count`: a search that takes its filter in its
+//!   body, `{"status": "open", "op": "count"}`, and answers how many rows
+//!   are of that status, the first of them, and their keys; with
+//!   `op: "archive"` it archives the first row of that status. It hears
+//!   into the same list as the route above. `/cases/rows-count` is a page
+//!   on the same origin that sends nothing by itself, the page a read
+//!   from inside the page is made from (decision 0491).
 
 use axum::Router;
 use axum::extract::{Path, State};
@@ -57,6 +64,8 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/api/feed", get(feed))
         .route("/cases/rows-by-post", get(rows_by_post))
         .route("/api/cases/rows/search", post(rows_search))
+        .route("/cases/rows-count", get(rows_count_page))
+        .route("/api/cases/rows/count", post(rows_count))
         .route("/pictures/slow", get(slow_picture))
 }
 
@@ -374,6 +383,59 @@ async fn rows_search(State(state): State<AppState>, body: axum::body::Bytes) -> 
             }
             None => axum::Json(json!({"rows": []})).into_response(),
         },
+        _ => (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "unknown_op"})),
+        )
+            .into_response(),
+    }
+}
+
+/// A page on the cases' origin whose script sends nothing.
+async fn rows_count_page() -> Response {
+    page(
+        "Case counts",
+        "<h1>Case counts</h1>\n<p id=\"state\">Loaded.</p>",
+    )
+    .into_response()
+}
+
+/// `op: "count"` answers how many rows are of the body's status, the key of
+/// the first, empty when there is none, and every key; `op: "archive"`
+/// archives the first of them. Anything else is refused and changes
+/// nothing; every body is counted.
+async fn rows_count(State(state): State<AppState>, body: axum::body::Bytes) -> Response {
+    let mut inner = state.lock().await;
+    let Ok(asked) = serde_json::from_slice::<RowsAsked>(&body) else {
+        inner.case_rows.heard("unreadable");
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "bad_body"})),
+        )
+            .into_response();
+    };
+    inner.case_rows.heard(&asked.op);
+    let rows = &mut inner.case_rows.rows;
+    match asked.op.as_str() {
+        "count" => {
+            let cases: Vec<&str> = rows
+                .iter()
+                .filter(|row| row.status == asked.status)
+                .map(|row| row.case_id.as_str())
+                .collect();
+            axum::Json(json!({
+                "count": cases.len(),
+                "first": cases.first().copied().unwrap_or_default(),
+                "cases": cases,
+            }))
+            .into_response()
+        }
+        "archive" => {
+            if let Some(row) = rows.iter_mut().find(|row| row.status == asked.status) {
+                row.status = "archived".to_owned();
+            }
+            axum::Json(json!({"count": 0, "first": "", "cases": []})).into_response()
+        }
         _ => (
             axum::http::StatusCode::BAD_REQUEST,
             axum::Json(json!({"error": "unknown_op"})),

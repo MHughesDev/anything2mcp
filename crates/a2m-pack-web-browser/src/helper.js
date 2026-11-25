@@ -600,6 +600,47 @@
       redirect: "manual",
       cache: "no-store",
     });
+    return readAnswer(response, limit);
+  }
+
+  // A read from the page's own origin by a method that may write, which a
+  // person asserted changes nothing (decision 0491): the method, a body of
+  // plain fields or none, and no header but the body's own type. No token
+  // is read and nothing of the page is sent. The tab's guard judges it as
+  // any request of the page, and fails it unless an asserted read it was
+  // opened with matches it, body and all.
+  async function askFromPage(spec, limit) {
+    if (location.origin === "null") throw new Error("a2m-path-refused");
+    const path = spec.path;
+    if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
+      throw new Error("a2m-path-refused");
+    }
+    const address = new URL(path, location.origin);
+    if (address.origin !== location.origin) throw new Error("a2m-path-refused");
+    if (!["POST", "PUT", "PATCH", "DELETE"].includes(spec.method)) throw new Error("a2m-method-refused");
+    const fields = {};
+    for (const [name, value] of Object.entries(spec.fields || {})) fields[name] = value;
+    const asked = {
+      method: spec.method,
+      credentials: "same-origin",
+      redirect: "manual",
+      cache: "no-store",
+    };
+    if (spec.encoding === "json") {
+      asked.headers = { "Content-Type": "application/json" };
+      asked.body = JSON.stringify(fields);
+    } else if (spec.encoding === "form") {
+      asked.headers = { "Content-Type": "application/x-www-form-urlencoded" };
+      asked.body = new URLSearchParams(Object.entries(fields).map(([name, value]) => [name, String(value)])).toString();
+    } else if (spec.encoding !== "none" || Object.keys(fields).length > 0) {
+      throw new Error("a2m-encoding-refused");
+    }
+    const response = await fetch(address.href, asked);
+    return readAnswer(response, limit);
+  }
+
+  // An answer of a read, as text up to `limit`; a redirect is not followed.
+  async function readAnswer(response, limit) {
     if (response.type === "opaqueredirect") return { redirected: true };
     const type = (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
     let body = "";
@@ -777,7 +818,7 @@
 
   const page = () => ({ address: location.href, title: document.title });
 
-  const all = { locate, read, check, prepareFill, nativeSet, blur, gone, selectByValue, fileInput, until, request, readFromPage, writeFromPage, page, passwords };
+  const all = { locate, read, check, prepareFill, nativeSet, blur, gone, selectByValue, fileInput, until, request, readFromPage, askFromPage, writeFromPage, page, passwords };
   globalThis.__a2m = Object.freeze(
     Object.fromEntries(Object.entries(all).map(([name, fn]) => [name, guarded(fn)]))
   );

@@ -53,6 +53,7 @@ mod error;
 mod launch;
 mod memory;
 mod origin;
+mod page_ask;
 mod page_read;
 mod page_write;
 mod protocol;
@@ -82,6 +83,7 @@ pub use error::{
 };
 pub use launch::{FIXED_ARGUMENTS, KNOWN_PLACES, KnownPlace, known_places};
 pub use origin::Origins;
+pub use page_ask::PageAsk;
 pub use page_read::{MAX_SEGMENT_BYTES, PageAnswer, PagePath, plain_segment};
 pub use page_write::{
     AntiForgery, BodyEncoding, FieldValue, LONGEST_FIELD_TEXT, LONGEST_WRITE_NAME, MOST_FIELDS,

@@ -196,7 +196,13 @@ impl ObserveTab { pub async fn browser_answers(&self, deadline: Deadline) -> boo
 impl TrafficCapture for ObserveTab { /* start: record_exchanges; take_recorded: exchanges, as CapturedTraffic (decision 0391) */ }
 impl ObserveTab { pub fn record_exchanges(&self); pub async fn exchanges(&self, deadline: Deadline) -> PageExchanges;
     /// GET alone, to `path` on the page's own origin, with no header and no body; no redirect followed.
-    pub async fn read_from_page(&self, path: &PagePath, deadline: Deadline) -> Result<PageAnswer, BrowserError>; }
+    pub async fn read_from_page(&self, path: &PagePath, deadline: Deadline) -> Result<PageAnswer, BrowserError>;
+    /// By an asserted read's method, with a body of plain fields or none, no header but its type, no token;
+    /// judged by the tab's guard as the page's own requests are (decision 0491).
+    pub async fn ask_from_page(&self, ask: &PageAsk, deadline: Deadline) -> Result<PageAnswer, BrowserError>; }
+pub struct PageAsk;                                         // a WriteMethod, a PagePath, and Option<(BodyEncoding, fields)>
+impl PageAsk { pub fn new(method: WriteMethod, path: PagePath,
+    body: Option<(BodyEncoding, BTreeMap<String, FieldValue>)>) -> Result<Self, Failure>; } // names plain; a write's bounds
 pub fn plain_segment(text: &str) -> bool;                  // letters, digits, `-`, `.`, `_`, `~`; not dots only; at most 512 bytes
 pub const MAX_SEGMENT_BYTES: usize;                         // 512
 pub struct PagePath;                                        // a pattern with each `{placeholder}` one plain segment
@@ -435,6 +441,7 @@ A test finds its browser as the product does: in the known places. Two variables
 7. Not built, slice 1.6: declared frames; the check of a helper's match against the browser's own accessibility query; recycling by run count and age (recycling past a memory limit is built, [decision 0425](../../decisions/0425-a-browsers-memory-is-measured-from-its-own-list-of-its-processes-and-past-a-ceiling-no-new-browser-work-starts.md); recycling after repeated hangs is built, [decision 0422](../../decisions/0422-a-tab-that-answers-not-even-a-probe-is-closed-and-three-hangs-recycle-its-browser-between-runs.md)); the stable-position check before a click; `Input::Scroll`; one telemetry span per round trip group.
 8. Done in part ([decision 0245](../../decisions/0245-a-web-application-is-signed-in-to-through-its-own-sign-in-page-with-a-credential-stored-for-the-person.md)): the in-memory context, `export_state` and `import_state` of cookies. Done ([decision 0254](../../decisions/0254-a-person-signs-in-in-a-window-of-the-engines-own-browser-and-the-web-pack-stops-on-every-declared-sign-of-expiry.md)): `Visibility::Window` with its notice tab, the sign-in tab, the screen a window needs on Linux, `import_state` held to the run's origins, a test screen (`test_support::Screen`), run here on a virtual display. Done (package E2c, decision 0392, point 1): the watching tab, `Observer::watching_tab`, `WatchStart`, `WatchTab`, and its `TrafficCapture`. Not built: page storage in a session's state.
 9. Done in part: the page's own GET exchanges in an observing tab, by structure ([decision 0187](../../decisions/0187-the-web-pack-matches-a-screen-by-its-address-and-reads-by-key.md)); a read from inside the page, GET alone, in an observing tab ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)). A write from inside the page with the page's own token, in an acting tab alone ([decision 0206](../../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)). Not built, package E2 and later: platform profiles as data; the stream of every network exchange, of an acting tab, and the `Response` wait; pop-ups and downloads a step declares; uploads; virtualized scrolling; erasing a data directory; a browser installed by `browser.install`.
+10. Done (package E8, [decision 0491](../../decisions/0491-a-read-sends-a-declared-body-built-from-its-bindings-map-and-fitted-to-the-asserted-schema-before-it-leaves.md)): `ObserveTab::ask_from_page` and `PageAsk`, a read from inside the page by an asserted read's method with a body of plain fields or none, made from the helper's world and judged by the tab's guard as the page's own requests are. Test: `src/tests/observing.rs`, `a_read_asked_from_inside_the_page_by_post_leaves_only_as_an_asserted_read_the_tab_holds`.
 
 ## Open points
 

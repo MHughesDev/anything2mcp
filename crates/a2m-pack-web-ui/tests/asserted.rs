@@ -131,7 +131,8 @@ fn an_asserted_read_compiles_only_with_a_closed_body_and_a_method_that_may_write
         "{}",
         shown(&problems)
     );
-    // The `page_http` mode reads by `GET` alone, and never sends one.
+    // The `page_http` mode sends one only with the body its entry declares,
+    // every required field given (decision 0491).
     let problems = refused(&stand, "operations/rows_by_request.yaml", |_| {
         "operation: example_case_search\neffect: read\ninputs: {}\n\
          outputs:\n  rows: {type: untrusted_text}\n\
@@ -140,7 +141,7 @@ fn an_asserted_read_compiles_only_with_a_closed_body_and_a_method_that_may_write
             .to_owned()
     });
     assert!(
-        problems.find("web.request_method_not_built").is_some(),
+        problems.find("web.body_incomplete").is_some(),
         "{}",
         shown(&problems)
     );

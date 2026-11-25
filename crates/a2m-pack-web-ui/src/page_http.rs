@@ -47,8 +47,8 @@ use a2m_files::{
 use a2m_logs::Detail;
 use a2m_pack_web_browser::{
     ActTab, Address, AntiForgery, BodyEncoding, BrowserError, BrowserProfileKey, Browsers,
-    Deadline, Dispatch, FieldValue, Look, ObserveTab, Origins, PageAnswer, PageEnvironment,
-    PagePath, PageWrite, Primitive, TokenFrom, TokenTo, Visibility, WriteMethod,
+    Deadline, Dispatch, FieldValue, Look, ObserveTab, Origins, PageAnswer, PageAsk,
+    PageEnvironment, PagePath, PageWrite, Primitive, TokenFrom, TokenTo, Visibility, WriteMethod,
 };
 use a2m_provider::shape::{Misfit, MisfitKind, PathStep};
 use a2m_provider::{
@@ -283,9 +283,11 @@ fn read_steps(
     cx: &LowerContext<'_>,
     found: &Found,
     at: &Place,
+    body: Vec<(String, StepArg)>,
     problems: &mut Diagnostics,
 ) -> Vec<Step> {
-    let payload = outputs(cx, &found.entry, at, problems);
+    let mut payload = outputs(cx, &found.entry, at, problems);
+    payload.body = body.iter().map(|(field, _)| field.clone()).collect();
     let mut goto = step(
         cx,
         GOTO,
@@ -309,24 +311,26 @@ fn read_steps(
         FailsAs::from(&codes::row::RESPONSE_SCHEMA_MISMATCH),
     );
     request.args = holes_of(cx, &found.entry.path, PATH_ARG, at, problems);
+    request.args.extend(body.into_iter().map(|(_, arg)| arg));
     request.payload = encoded(&payload, at, problems);
     vec![goto, request]
 }
 
-/// The refusal of a `page_http` read of an asserted read: the mode reads by
-/// `GET` alone, and an asserted read is let through for the page's own use,
-/// never sent by the engine (decision 0394, point 2).
+/// The refusal of a write's read-back through an asserted read: a record a
+/// write changed is read back by `GET` alone. A `read` may name an asserted
+/// read (decision 0491); a read-back does not, since what it reads decides
+/// whether a write is called verified, and that rests on no person's word.
 fn asserted_not_sent(at: &Place, name: &str, asserted: &AssertedRead) -> a2m_files::Diagnostic {
     problem(
         "request_method_not_built",
         Stage::Analyze,
         at,
         format!(
-            "The page request `{}` is an asserted read by `{}`, and the `page_http` mode reads by `GET` alone: an asserted read is let through the tab when the page sends it, and the engine never sends it.",
+            "The page request `{}` is an asserted read by `{}`, and a write's record is read back by `GET` alone.",
             shown(name),
             shown(&asserted.method)
         ),
-        "Read the page that sends it in the `ui` mode, or name a page request by `GET`.",
+        "Name a page request by `GET` under `read_back`.",
     )
 }
 
@@ -351,24 +355,52 @@ impl PageHttpLowering {
                 "Bind a read to a page request with `method: GET` and `effect: read`.",
             ));
         }
-        if let Some(asserted) = &found.entry.asserted {
-            problems.push(asserted_not_sent(at, &found.name, asserted));
-        }
-        for key in ["body", "read_back"] {
+        // A read sends a body only to an asserted read that declares one,
+        // and only the fields its closed schema names (decision 0392,
+        // point 6).
+        let declared = found
+            .entry
+            .asserted
+            .as_ref()
+            .and_then(|asserted| asserted.body.as_ref());
+        let body = match declared {
+            Some(declared) => {
+                let kinds: BTreeMap<String, Kind> = declared
+                    .fields
+                    .iter()
+                    .map(|(name, field)| (name.clone(), field.kind))
+                    .collect();
+                body_of(
+                    cx,
+                    binding,
+                    &found.name,
+                    &kinds,
+                    &declared.required,
+                    &mut problems,
+                )
+            }
+            None => Vec::new(),
+        };
+        let strays: &[&str] = if declared.is_some() {
+            &["read_back"]
+        } else {
+            &["body", "read_back"]
+        };
+        for key in strays {
             if let Some(stray) = binding.field(key) {
                 problems.push(problem(
                     "read_acts",
                     Stage::Analyze,
                     &stray.at,
                     format!(
-                        "The verb `{}` reads, and the binding states `{key}`, which belongs to a write.",
+                        "The verb `{}` reads, and the binding states `{key}`, which belongs to a write, or to a read of a page request that asserts a body.",
                         binding.verb
                     ),
                     "Remove it, or bind a verb that writes.",
                 ));
             }
         }
-        let mut act = read_steps(cx, found, at, &mut problems);
+        let mut act = read_steps(cx, found, at, body, &mut problems);
         // A read of one record may find none, when the entry declares how
         // the application says so.
         if !found.entry.absent.is_empty() {
@@ -459,7 +491,14 @@ impl PageHttpLowering {
                 "Name a page request of the same surface.",
             ));
         }
-        let body_args = body_of(cx, binding, &found.name, write, &mut problems);
+        let body_args = body_of(
+            cx,
+            binding,
+            &found.name,
+            &write.fields,
+            &write.required,
+            &mut problems,
+        );
         let mut goto = step(
             cx,
             GOTO,
@@ -490,7 +529,7 @@ impl PageHttpLowering {
             .extend(body_args.into_iter().map(|(_, arg)| arg));
         // The one step that saves: the PUT, once the intent is stored.
         request.commits = true;
-        let mut back = read_steps(cx, &reader, &read_back.at, &mut problems);
+        let mut back = read_steps(cx, &reader, &read_back.at, Vec::new(), &mut problems);
         for step in &mut back {
             step.lookup = true;
         }
@@ -525,13 +564,15 @@ fn surface_of(entry: &PageRequest, at: &Place) -> Result<SurfaceName, Diagnostic
     })
 }
 
-/// The arguments of a write's body, each an expression of the binding's
-/// `body` for a field the entry declares, of a type its kind takes.
+/// The arguments of a body, a write's or an asserted read's, each an
+/// expression of the binding's `body` for a field the entry declares, of a
+/// type its kind takes, with every field the entry requires.
 fn body_of(
     cx: &LowerContext<'_>,
     binding: &ResolvedBinding<'_>,
     name: &str,
-    write: &WriteForm,
+    fields: &BTreeMap<String, Kind>,
+    required: &[String],
     problems: &mut Diagnostics,
 ) -> Vec<(String, StepArg)> {
     let mut args = Vec::new();
@@ -541,7 +582,7 @@ fn body_of(
         .unwrap_or_default();
     for entry in given {
         let field = &entry.key.value;
-        let Some(kind) = write.fields.get(field) else {
+        let Some(kind) = fields.get(field) else {
             problems.push(problem(
                 "body_undeclared",
                 Stage::Resolve,
@@ -587,7 +628,7 @@ fn body_of(
             Err(wrong) => problems.push(wrong),
         }
     }
-    for required in &write.required {
+    for required in required {
         if !given.iter().any(|entry| entry.key.value == *required) {
             problems.push(problem(
                 "body_incomplete",
@@ -1156,9 +1197,6 @@ impl Session {
             None if step.commits => Err(codes::not_usable(
                 "it is marked as a commit point, and its page request reads",
             )),
-            None if entry.asserted.is_some() => Err(codes::not_usable(
-                "its page request is an asserted read, which the engine never sends",
-            )),
             None => self.read(step, input, name, entry).await,
         }
     }
@@ -1177,12 +1215,18 @@ impl Session {
         let path = Self::path_of(entry, input)?;
         let what = format!("the request `{name}`");
         // A read runs in the observing tab, whichever tab the last `goto`
-        // chose (decision 0195).
-        let answer = self
-            .looking
-            .read_from_page(&path, until(step, input))
-            .await
-            .map_err(|error| browser_failure(&error, &what))?;
+        // chose (decision 0195). An asserted read is asked by its own
+        // method, with the body the step's arguments fill, only where the
+        // run hands the tab that entry; the tab's guard judges it again
+        // (decision 0491).
+        let answer = match &entry.asserted {
+            None => self.looking.read_from_page(&path, until(step, input)).await,
+            Some(asserted) => {
+                let ask = self.asked(name, asserted, &payload, path, input)?;
+                self.looking.ask_from_page(&ask, until(step, input)).await
+            }
+        }
+        .map_err(|error| browser_failure(&error, &what))?;
         let mut means = vec![
             Detail::new("step", "request"),
             Detail::new("request", name),
@@ -1246,6 +1290,103 @@ impl Session {
         means.push(Detail::new("outputs", payload.outputs.len().to_string()));
         observed.captures.push(acting(means, Vec::new()));
         Ok(StepOutcome::Done(observed))
+    }
+
+    /// The request of an asserted read, built only from the entry and the
+    /// step's arguments, and refused before it is asked unless the run
+    /// hands the observing tab this entry and the body fits the entry's
+    /// closed schema, its `enum` included. Nothing is sent when it is
+    /// refused.
+    fn asked(
+        &self,
+        name: &str,
+        asserted: &AssertedRead,
+        payload: &RequestStep,
+        path: PagePath,
+        input: &StepInput<'_>,
+    ) -> Result<PageAsk, StepFailure> {
+        let refused = |why: String, next: String| {
+            StepFailure::not_sent(fail(&codes::row::PAGE_WRITE_REFUSED, why, &next))
+        };
+        if !self.asserted.hands(name) {
+            return Err(refused(
+                format!(
+                    "The page request `{}` is a read by `{}` that a person asserted changes nothing, and this run does not hand it to the tab; nothing was sent.",
+                    shown(name),
+                    shown(&asserted.method)
+                ),
+                self.asserted.next_step_of(name).unwrap_or_default(),
+            ));
+        }
+        let method = WriteMethod::from_word(&asserted.method)
+            .ok_or_else(|| codes::not_usable("its method is not one this version sends"))?;
+        let body = match &asserted.body {
+            None if payload.body.is_empty() => None,
+            None => {
+                return Err(codes::not_usable(
+                    "it fills a body, and its page request asserts a read with none",
+                ));
+            }
+            Some(declared) => {
+                let mut fields = BTreeMap::new();
+                let mut misfit = None;
+                for field in &payload.body {
+                    let shape = declared.fields.get(field).ok_or_else(|| {
+                        codes::not_usable("it fills a body field its entry does not declare")
+                    })?;
+                    let value = match (shape.kind, input.args.get(&format!("{BODY_ARG}{field}"))) {
+                        (_, None | Some(Value::Null)) => continue,
+                        (Kind::String, Some(Value::Text(text))) => {
+                            if !shape.one_of.is_empty() && !shape.one_of.contains(text) {
+                                misfit.get_or_insert(format!(
+                                    "the body field `{}` holds a text its `enum` does not allow",
+                                    shown(field)
+                                ));
+                            }
+                            FieldValue::Text(text.clone())
+                        }
+                        (Kind::Integer, Some(Value::Int(number))) => FieldValue::Whole(*number),
+                        (Kind::Boolean, Some(Value::Bool(flag))) => FieldValue::Truth(*flag),
+                        _ => {
+                            misfit.get_or_insert(format!(
+                                "the body field `{}` is not of the kind `{}`",
+                                shown(field),
+                                shape.kind.word()
+                            ));
+                            continue;
+                        }
+                    };
+                    fields.insert(field.clone(), value);
+                }
+                if misfit.is_none()
+                    && let Some(missing) = declared
+                        .required
+                        .iter()
+                        .find(|field| !fields.contains_key(*field))
+                {
+                    misfit = Some(format!(
+                        "it lacks the body field `{}`, which the entry requires",
+                        shown(missing)
+                    ));
+                }
+                if let Some(why) = misfit {
+                    return Err(refused(
+                        format!(
+                            "The body built for the page request `{}` does not fit what a person asserted of it: {why}. Nothing was sent.",
+                            shown(name)
+                        ),
+                        "Give a value the entry's `request_schema` allows; widen its `enum` only once the system's owner confirms that the request with that value changes nothing.".to_owned(),
+                    ));
+                }
+                let encoding = if declared.encoding == "form" {
+                    BodyEncoding::Form
+                } else {
+                    BodyEncoding::Json
+                };
+                Some((encoding, fields))
+            }
+        };
+        PageAsk::new(method, path, body).map_err(StepFailure::not_sent)
     }
 
     /// The one request of a write: a PUT from inside the page in the

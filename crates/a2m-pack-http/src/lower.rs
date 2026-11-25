@@ -480,6 +480,62 @@ impl<'a> Lower<'a, '_> {
         }
     }
 
+    /// Whether a read's binding may write the body it gives, refusing it
+    /// where it may not (decision 0392, point 6). A read sends a body only
+    /// to an endpoint marked `read` that says `read_asserted: true`, by a
+    /// method that carries one, whose `request_schema` closes its top level
+    /// with `additionalProperties: false`: the person's assertion covers
+    /// that shape and no other, and no input may add a field to it. A
+    /// binding with no `body` for an endpoint whose schema requires fields
+    /// is refused too: the request it sent would fit no assertion.
+    fn read_body(&mut self, found: &Found<'_>, part: &Located<Doc>) -> bool {
+        let shape = found.template.request.as_ref();
+        let Some(body) = part.get("body") else {
+            if found.template.read_asserted
+                && let Some(required) = shape.and_then(|shape| shape.required.first())
+            {
+                self.refuse(
+                    "body_field_missing",
+                    Stage::Resolve,
+                    found.at,
+                    format!(
+                        "The endpoint `{}` requires the body field `{required}`, and the binding writes no body.",
+                        found.name
+                    ),
+                    "Add `body:` to the binding, with a value for each field the endpoint requires.",
+                );
+            }
+            return false;
+        };
+        if !found.template.read_asserted || !found.template.method.has_body() {
+            self.refuse(
+                "read_body_unasserted",
+                Stage::Analyze,
+                &body.at,
+                format!(
+                    "The binding reads through the endpoint `{}` and writes a body, which a read sends only to an endpoint that says `read_asserted: true` by `POST`, `PUT`, or `PATCH`.",
+                    found.name
+                ),
+                "Remove `body` and give the values in the query; or, once the system's owner confirms that the request changes nothing, assert the endpoint with `read_asserted: true`.",
+            );
+            return false;
+        }
+        if shape.is_some_and(|shape| !shape.closed) {
+            self.refuse(
+                "read_body_unasserted",
+                Stage::Analyze,
+                &body.at,
+                format!(
+                    "The binding reads through the endpoint `{}` and writes a body, and the endpoint's `request_schema` leaves its top level open, so the assertion would cover fields nobody named.",
+                    found.name
+                ),
+                "Close the endpoint's `request_schema` with `additionalProperties: false`, naming each field the read sends.",
+            );
+            return false;
+        }
+        true
+    }
+
     pub(crate) fn validate(&self, found: &Found<'_>) -> Step {
         self.step(
             VALIDATE,
@@ -813,7 +869,11 @@ impl Lowering for HttpLowering {
         } else {
             lower.version_reader(&found, reader.as_ref(), read_back.is_some())
         };
-        let mut act = lower.request(&found, binding.doc, !reads, version_from);
+        // A read sends a body only to an endpoint that asserts it reads,
+        // and only the fields its closed `request_schema` declares
+        // (decision 0392, point 6).
+        let read_body = reads && lower.read_body(&found, binding.doc);
+        let mut act = lower.request(&found, binding.doc, !reads || read_body, version_from);
         let mut lowered = Lowered {
             surface: SurfaceName::new(&found.template.surface).map_err(|_| {
                 Diagnostics::from(problem(
