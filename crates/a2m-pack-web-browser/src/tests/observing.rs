@@ -886,3 +886,116 @@ async fn an_observing_tab_lets_through_a_safe_request_only_on_method_origin_temp
     let changed = app.case_rows().await.unwrap();
     assert_eq!(changed.rows[0].status, "archived");
 }
+
+const COUNT_PAGE: &str = "/cases/rows-count";
+const ROWS_COUNT: &str = "/api/cases/rows/count";
+
+/// The count as a person asserts it: `POST`, the stand's origin, the path,
+/// and `{"status": "open" | "closed", "op": "count"}`.
+fn rows_count(app: &TestApp) -> SafeRequest {
+    let mut shape = closed_object(&[("status", Kind::String), ("op", Kind::String)]);
+    if let Some(status) = shape.properties.get_mut("status") {
+        status.one_of = vec!["open".to_owned(), "closed".to_owned()];
+    }
+    if let Some(op) = shape.properties.get_mut("op") {
+        op.one_of = vec!["count".to_owned()];
+    }
+    SafeRequest {
+        method: "POST".to_owned(),
+        origin: app.url(""),
+        path: ROWS_COUNT.to_owned(),
+        body: SafeBody::Shaped {
+            encoding: BodyEncoding::Json,
+            shape,
+        },
+    }
+}
+
+fn count_ask(status: &str, op: &str) -> crate::PageAsk {
+    let fields = [("status", status), ("op", op)]
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), crate::FieldValue::Text(value.to_owned())))
+        .collect();
+    crate::PageAsk::new(
+        crate::WriteMethod::Post,
+        crate::PagePath::fill(ROWS_COUNT, &BTreeMap::new()).unwrap(),
+        Some((BodyEncoding::Json, fields)),
+    )
+    .unwrap()
+}
+
+/// A read the engine asks from inside the page by `POST` goes through the
+/// tab's guard as the page's own requests do (decision 0999): a tab opened
+/// with no asserted read fails it before it leaves, and so does one whose
+/// asserted read the body does not fit; a tab opened with it sends it and
+/// reads the answer. The stand is asked what it heard and stored.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_read_asked_from_inside_the_page_by_post_leaves_only_as_an_asserted_read_the_tab_holds() {
+    let app = TestApp::start().await.unwrap();
+    let stand = Stand::with_browser("page-ask");
+    let clerk = profile("clerk");
+    let observer = stand.browsers.observer();
+    let page = Address::new(&app.url(COUNT_PAGE)).unwrap();
+    let seeded = app.case_rows().await.unwrap();
+
+    // No asserted read: failed before it leaves, and reported.
+    let tab = must(
+        observer
+            .observing_tab(
+                &clerk,
+                &environment(),
+                &SafeRequests::default(),
+                &origins(&app),
+            )
+            .await,
+    );
+    must(tab.goto(&page, soon()).await);
+    must(tab.wait(&state_is("Loaded."), soon()).await);
+    let failed = tab.ask_from_page(&count_ask("open", "count"), soon()).await;
+    assert!(
+        matches!(failed, Err(BrowserError::RequestFailed(_))),
+        "{failed:?}"
+    );
+    assert!(
+        tab.blocked()
+            .iter()
+            .any(|one| one.method == "POST" && one.address == app.url(ROWS_COUNT))
+    );
+    assert!(posts_heard(&app).await.is_empty());
+    drop(tab);
+
+    // The count asserted: it is sent, and its answer is the stand's.
+    let safe = SafeRequests {
+        allowed: vec![rows_count(&app)],
+    };
+    let tab = must(
+        observer
+            .observing_tab(&clerk, &environment(), &safe, &origins(&app))
+            .await,
+    );
+    must(tab.goto(&page, soon()).await);
+    must(tab.wait(&state_is("Loaded."), soon()).await);
+    let answer = must(tab.ask_from_page(&count_ask("open", "count"), soon()).await);
+    assert_eq!(answer.status, 200);
+    let body: serde_json::Value = serde_json::from_str(&answer.body).unwrap();
+    assert_eq!(body["count"], 2);
+    assert_eq!(body["first"], "C-1");
+    assert!(tab.blocked().is_empty());
+
+    // A body the assertion does not name never leaves, the tab's guard
+    // alone judging it.
+    for (status, op) in [("open", "archive"), ("archived", "count")] {
+        let failed = tab.ask_from_page(&count_ask(status, op), soon()).await;
+        assert!(
+            matches!(failed, Err(BrowserError::RequestFailed(_))),
+            "{op}: {failed:?}"
+        );
+        assert!(!tab.blocked().is_empty(), "{op}");
+    }
+    let after = app.case_rows().await.unwrap();
+    assert_eq!(after.rows, seeded.rows);
+    assert_eq!(after.received, ["count"]);
+    assert_eq!(posts_heard(&app).await, [format!("POST {ROWS_COUNT}")]);
+    drop(tab);
+    stand.end().await;
+}

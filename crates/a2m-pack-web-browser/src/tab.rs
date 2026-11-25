@@ -21,6 +21,7 @@ use crate::browsers::{Address, BrowserInner, Shared};
 use crate::client::{Client, ClientError};
 use crate::error::{BrowserError, Dispatch, REFUSED_WHEN_MADE, Reason, RequestShape};
 use crate::origin::{Origins, origin_of, path_of, shown_origin};
+use crate::page_ask::PageAsk;
 use crate::page_read::{PageAnswer, PagePath};
 use crate::page_write::{PageWrite, TokenProblem};
 use crate::protocol::{
@@ -2311,6 +2312,22 @@ impl Page {
         path: &PagePath,
         deadline: Deadline,
     ) -> Result<PageAnswer, BrowserError> {
+        self.read_by_helper(
+            "function (path, limit) { return __a2m.readFromPage(path, limit); }",
+            CallArgument::text(path.as_str()),
+            deadline,
+        )
+        .await
+    }
+
+    /// One read the helper makes from inside the page by `function`, given
+    /// `argument` and the tab's limit, and its answer.
+    async fn read_by_helper(
+        &self,
+        function: &str,
+        argument: CallArgument,
+        deadline: Deadline,
+    ) -> Result<PageAnswer, BrowserError> {
         #[derive(Deserialize, Default)]
         #[serde(default)]
         struct Answer {
@@ -2324,11 +2341,8 @@ impl Page {
         let outcome = self
             .evaluate(
                 On::World(world),
-                "function (path, limit) { return __a2m.readFromPage(path, limit); }",
-                vec![
-                    CallArgument::text(path.as_str()),
-                    CallArgument::number(self.max_read),
-                ],
+                function,
+                vec![argument, CallArgument::number(self.max_read)],
                 true,
                 true,
                 deadline,
@@ -2365,6 +2379,26 @@ impl Page {
             body: self.redact.redact(&answer.body),
             withheld: false,
         })
+    }
+
+    /// A read from inside the page by a method that may write, with a body
+    /// of plain fields or none (decision 0999). It goes through the tab's
+    /// guard as any request of the page does.
+    async fn ask_from_page(
+        &self,
+        ask: &PageAsk,
+        deadline: Deadline,
+    ) -> Result<PageAnswer, BrowserError> {
+        let shape =
+            || BrowserError::Unexpected("a helper argument could not be written".to_owned());
+        let spec = ask.spec();
+        let argument = CallArgument::of(&spec).ok_or_else(shape)?;
+        self.read_by_helper(
+            "function (spec, limit) { return __a2m.askFromPage(spec, limit); }",
+            argument,
+            deadline,
+        )
+        .await
     }
 
     /// A write from inside the page, with the page's own anti-forgery
@@ -4575,6 +4609,31 @@ impl ObserveTab {
         deadline: Deadline,
     ) -> Result<PageAnswer, BrowserError> {
         self.page.read_from_page(path, deadline).await
+    }
+
+    /// Reads from inside the page the tab is on, with the page's own
+    /// session, once, by a method that may write: the method, the path, and
+    /// the body of `ask`, to the page's own origin, which must be one of the
+    /// tab's, with no header a caller chose but the body's own type, and no
+    /// token of the page (decision 0999). A redirect is not followed, and
+    /// the answer is read as text up to the tab's limit and passes the
+    /// redactor, as a [`Self::read_from_page`] is.
+    ///
+    /// The tab's own guard judges the request as any request of its page:
+    /// it leaves only when it matches an asserted read the tab was opened
+    /// with, by method, origin, path, and body; otherwise it is failed
+    /// before it leaves, the refusal is among those the tab hands out, and
+    /// this answers [`BrowserError::RequestFailed`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_from_page`].
+    pub async fn ask_from_page(
+        &self,
+        ask: &PageAsk,
+        deadline: Deadline,
+    ) -> Result<PageAnswer, BrowserError> {
+        self.page.ask_from_page(ask, deadline).await
     }
 }
 
