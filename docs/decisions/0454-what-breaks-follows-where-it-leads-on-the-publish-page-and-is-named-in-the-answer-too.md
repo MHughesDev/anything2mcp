@@ -1,4 +1,4 @@
-# 0999. What breaks follows where it leads on the publish page, and is named in the answer too
+# 0454. What breaks follows where it leads on the publish page, and is named in the answer too
 
 **Status:** Accepted. Design decision, made by the worker who built package YL1, under the lead's brief. The owner had not read this record when it was written. It builds points 2 and 3 of [decision 0439](0439-a-tools-name-carries-no-version-and-a-breaking-change-is-named-at-publish.md) and settles what those points left to the builder. It changes a public contract by addition: the review summary gains a field, the answer of a person's act that waits gains two optional fields, and `version.diff` gains its handler and its output.
 

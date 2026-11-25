@@ -1157,7 +1157,7 @@ pub(crate) mod review_shown {
     /// Each tool whose change breaks an agent that calls it as it was,
     /// with why: on the page a person publishes from, right after where
     /// each surface leads and before the sign-ins (decisions 0439 and
-    /// 0999). The publish is not refused.
+    /// 0454). The publish is not refused.
     pub(crate) fn breaking_html(changes: &VersionChanges) -> String {
         let breaking: Vec<&ToolChange> = changes.breaking().collect();
         if breaking.is_empty() {
@@ -1802,7 +1802,7 @@ fn act_html(ask: &PersonActAsk) -> (String, String) {
         Some(review) => {
             // Where it can reach first, the page's safety question
             // (decision 0418); then what breaks an agent that calls a tool
-            // as it was, before the sign-ins (decision 0999).
+            // as it was, before the sign-ins (decision 0454).
             let mut details = version_shown::version_html(&ask.surfaces, &[]);
             if let Some(changes) = &review.changes {
                 details.push_str(&review_shown::breaking_html(changes));
