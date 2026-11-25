@@ -18,7 +18,7 @@
     reason = "a test file: a helper that cannot do its work stops the test"
 )]
 
-mod common;
+use crate::common;
 
 use std::process::{Command, Output};
 use std::sync::Arc;
