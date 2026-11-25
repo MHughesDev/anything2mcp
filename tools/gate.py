@@ -25,7 +25,7 @@ The build folder is the one CARGO_TARGET_DIR names, as for any cargo command.
 Where other copies of the repository build at the same time, give this run a
 folder of its own, so that no other copy's build is taken for this one's.
 
-CI's Rust jobs run the tests the same way (decision 0999): each system's
+CI's Rust jobs run the tests the same way (decision 0449): each system's
 tests are shared over three jobs, each running `--shard K/3 --tests-only
 --record FILE`, which builds and runs its share alone and writes, for every test
 program it ran, the tests that program holds. `--list-tests FILE` writes the
@@ -218,7 +218,7 @@ def read_record(path):
 
 def list_tests(path, env):
     """Write every test of the workspace, as one `cargo test --workspace`
-    names them (decision 0999), and say how many."""
+    names them (decision 0449), and say how many."""
     done = subprocess.run(
         ["cargo", "test", "--workspace", "--locked", "--no-fail-fast", "--", "--list", "--format", "terse"],
         env={**env, "CARGO_TERM_COLOR": "never"}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -346,7 +346,7 @@ def main(argv):
             print("--shard takes K/N with 1 <= K <= N")
             return 2
         # CI runs the steps before the tests once per system in a job of their
-        # own, and its shards run the tests alone (decision 0999).
+        # own, and its shards run the tests alone (decision 0449).
         first = k == 1 and "--tests-only" not in argv
         steps = [step for step in steps if step[0] != "test" and first] + ([("test", ("shard", k, n), {})] if "--fast" not in argv else [])
     if "--cross" in argv:

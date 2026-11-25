@@ -1,4 +1,4 @@
-# 0999. Each system's Rust tests run in three shards, proven to be one run
+# 0449. Each system's Rust tests run in three shards, proven to be one run
 
 **Status:** Accepted. Design decision, made at the lead's request that CI take much less time with every test still run on every system exactly once and no check weakened. The owner had not read this record when it was merged.
 

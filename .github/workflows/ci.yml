@@ -24,7 +24,7 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  # The Rust jobs of each operating system (decision 0999): one builds and
+  # The Rust jobs of each operating system (decision 0449): one builds and
   # lints the workspace, stores the compiled dependencies, lists every test,
   # and runs the steps that need the debug build; three run the workspace's
   # tests between them; one runs the benchmark; and the job named "Rust on"
@@ -201,7 +201,7 @@ jobs:
       # Every step here builds for release, which the stored dependencies,
       # compiled for the debug and test builds, do not serve; so nothing is
       # restored. The steps ran after the tests in one job before decision
-      # 0999 and keep their conditions; they no longer wait for the tests.
+      # 0449 and keep their conditions; they no longer wait for the tests.
       # The harness and its scenarios (spec section 225); the comparison below
       # gates once a baseline from a quiet runner is stored.
       # The scenarios that start the product's program find it beside the
@@ -263,7 +263,7 @@ jobs:
     # Today's name for each system's one Rust result, which the checks of a
     # pull request show: it passes only when the build job, the three shards,
     # and the benchmark of this system passed, and the shards ran every test
-    # of the workspace exactly once (decision 0999). Each of those jobs
+    # of the workspace exactly once (decision 0449). Each of those jobs
     # stores its record or result as its last step, so a record that is
     # missing is a job that did not pass; the other systems' results do not
     # decide this one.

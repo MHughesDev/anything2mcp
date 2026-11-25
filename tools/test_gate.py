@@ -5,7 +5,7 @@ whole folder (decision 0446), as a library does, and any other test target
 weighs the tests of its own file.
 
 And proves the check that CI's shards are one run of the workspace's tests
-(decision 0999): it reads cargo's lists, it names a test left out, run twice,
+(decision 0449): it reads cargo's lists, it names a test left out, run twice,
 or not in the full list, and, on a small workspace built here with cargo, the
 shards' records of a real run match the full list cargo gives."""
 import os
