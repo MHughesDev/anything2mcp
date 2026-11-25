@@ -83,8 +83,8 @@ impl Kernel {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
-            .find(|(kept, _)| *kept == key)
-            .map(|(_, compiled_target)| Arc::clone(compiled_target))
+            .find(|(kept, _, _)| *kept == key)
+            .map(|(_, compiled_target, _)| Arc::clone(compiled_target))
         {
             return Ok(compiled_target);
         }
@@ -117,6 +117,7 @@ impl Kernel {
         target: &TargetName,
         hash: Digest,
         compiled_target: Arc<CompiledTarget>,
+        confirmed: a2m_provider::ConfirmedReads,
     ) {
         let mut drafts = self
             .inner
@@ -124,11 +125,29 @@ impl Kernel {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let key = (target.clone(), hash);
-        drafts.retain(|(kept, _)| *kept != key);
+        drafts.retain(|(kept, _, _)| *kept != key);
         if drafts.len() >= crate::kernel::DRAFTS_KEPT {
             drafts.remove(0);
         }
-        drafts.push((key, compiled_target));
+        drafts.push((key, compiled_target, confirmed));
+    }
+
+    /// The asserted reads its person confirmed of the drafted compiled
+    /// target `hash` of `target` that a trial keeps; none for any other
+    /// compiled target (decision 0999).
+    pub(crate) fn confirmed_reads_kept(
+        &self,
+        target: &TargetName,
+        hash: &Digest,
+    ) -> a2m_provider::ConfirmedReads {
+        self.inner
+            .drafts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .find(|(kept, _, _)| kept.0 == *target && kept.1 == *hash)
+            .map(|(_, _, confirmed)| confirmed.clone())
+            .unwrap_or_default()
     }
 
     /// The current version of every published target, in order of target.

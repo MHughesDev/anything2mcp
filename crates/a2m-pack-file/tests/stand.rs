@@ -2740,6 +2740,7 @@ async fn the_driver_itself_refuses_a_save_where_nothing_may_be_written_or_that_i
             destinations: &a2m_provider::Destinations::default(),
             paths: &a2m_provider::CheckedPaths::none(),
             supervisor: &supervisor,
+            confirmed: a2m_provider::ConfirmedReads::none(),
         };
         let mut prepared = driver.prepare(&cx, None).await.unwrap();
         let mut last = None;

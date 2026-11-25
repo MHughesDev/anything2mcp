@@ -683,6 +683,19 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
                 .required("review", text()))
             .example(r#"{"target": "example", "tool": "example_order_get", "input": {"order_id": "A-100"}}"#)
             .done(),
+        // A person's confirmation of the drafts' asserted reads, for a try
+        // before a publish (decision 0999). Not listed: a person's act.
+        act("assertion.confirm", "Confirm the reads a target's drafts assert, as the person, so that a try of the drafts in an environment of kind `test` may let a page send them. A person's act, carried out on the engine's page, never an agent's.", Who::Person, No, "5", Change)
+            .pos("target", TEXT, TARGET)
+            .opt("assertions", LIST, "The digests of the asserted reads to confirm. A confirmation shown on a page carries the ones the person read; the drafts as they are when left out.")
+            .writes()
+            .person(PersonNeed::Presence)
+            .output(JsonSchema::object()
+                .required("target", text())
+                .required("state", text())
+                .required("confirmed", list_of(any_map())))
+            .example(r#"{"target": "example"}"#)
+            .done(),
         act("draft.ready", "Make every drafted read a trial in this project read a value through ready to publish: record its offline test and fixture, promote its first binding, run the publish gates, and ask a person to publish, each step by its own action. A write, a pipeline, and a read with no trial are left alone, each with its reason.", BUILDER, Build, "5", Change)
             .pos("target", TEXT, TARGET)
             .opt("tools", LIST, "The drafted reads to make ready and publish, by name; every drafted tool is looked at, and published, when left out. A named tool that cannot be made ready refuses the call, and nothing is done. Named, the publish holds only these, as `publish.request` with `tools` asks.")

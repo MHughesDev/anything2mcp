@@ -365,6 +365,9 @@ pub struct Scene {
     pub compiled_target: CompiledTarget,
     pub surface: SurfaceRef,
     pub destinations: Destinations,
+    /// What the kernel says its person confirmed (decision 0999); none
+    /// unless a test sets it.
+    pub confirmed: a2m_provider::ConfirmedReads,
 }
 
 impl Scene {
@@ -385,6 +388,7 @@ impl Scene {
                 surface,
             },
             destinations: Destinations::new([address.to_owned()]),
+            confirmed: a2m_provider::ConfirmedReads::none(),
             stand,
             compiled_target,
         }
@@ -442,6 +446,7 @@ impl Scene {
             destinations: &self.destinations,
             paths: &CheckedPaths::none(),
             supervisor: &supervisor,
+            confirmed: self.confirmed.clone(),
         };
         let prepared = handle.prepare(&cx, lease).await?;
         Ok((handle, prepared))

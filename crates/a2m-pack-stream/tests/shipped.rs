@@ -99,6 +99,7 @@ async fn the_ordinary_registration_offers_only_the_real_protocol_and_refuses_the
         destinations: &destinations,
         paths: &CheckedPaths::none(),
         supervisor: &supervisor,
+        confirmed: a2m_provider::ConfirmedReads::none(),
     };
     let failure = handle.prepare(&cx, None).await.unwrap_err();
     assert_eq!(failure.failure.code(), &codes::PROTOCOL_UNKNOWN);

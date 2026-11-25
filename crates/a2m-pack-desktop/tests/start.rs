@@ -134,6 +134,7 @@ impl Started {
             destinations: &destinations,
             paths: &CheckedPaths::none(),
             supervisor: &supervisor,
+            confirmed: a2m_provider::ConfirmedReads::none(),
         };
         let mut prepared = handle.prepare(&cx, None).await?;
         let steps = common::binding_of(&self.compiled_target, "example_order_get")

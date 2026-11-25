@@ -118,6 +118,7 @@ async fn run(registry: &Registry, compiled_target: &CompiledTarget) -> Result<()
         destinations: &Destinations::default(),
         paths: &paths,
         supervisor: &supervisor,
+        confirmed: a2m_provider::ConfirmedReads::none(),
     };
     let mut prepared = handle.prepare(&cx, None).await?;
     let args = Values::new();

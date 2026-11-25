@@ -24,6 +24,7 @@ ACTIONS = (
     "action.describe",
     "action.run",
     "action.search",
+    "assertion.confirm",
     "audit.query",
     "auth.detect",
     "binding.promote",
@@ -182,6 +183,28 @@ class Actions:
         The engine action is ``action.search``.
         """
         return self._action("action.search", {"query": query}, idempotency_key)
+
+    def assertion_confirm(
+        self,
+        *,
+        target: str,
+        assertions: Optional[List[str]] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Confirm the reads a target's drafts assert, as the person, so that a try
+        of the drafts in an environment of kind `test` may let a page send them.
+        A person's act, carried out on the engine's page, never an agent's.
+
+        The engine action is ``assertion.confirm``.
+        """
+        return self._action(
+            "assertion.confirm",
+            {
+                "target": target,
+                "assertions": assertions,
+            },
+            idempotency_key,
+        )
 
     def audit_query(
         self,

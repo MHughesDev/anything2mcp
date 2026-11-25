@@ -2057,6 +2057,15 @@ handler!(
                 return Err(super::build::noting_held(Failure::from(problems), &held));
             }
         };
+        // The asserted reads of the drafts their person confirmed, which
+        // the trial may let a page send (decision 0999).
+        let confirmed = kernel
+            .confirmed_reads_of(
+                &target,
+                &compiled.compiled_target,
+                &compiled.review.asserted,
+            )
+            .await;
         let compiled_target = std::sync::Arc::new(compiled.compiled_target);
         let Some(tool) = compiled_target.tool(&name).cloned() else {
             // A tool whose draft is held is refused by name, with its
@@ -2127,6 +2136,7 @@ handler!(
             &target,
             compiled.encoded.hash,
             std::sync::Arc::clone(&compiled_target),
+            confirmed,
         );
         let asked_at = kernel.inner.clock.now();
         let run = submit_trial(kernel, &call, &found, &input, environment, binding).await?;
@@ -2475,10 +2485,13 @@ pub(crate) async fn compiled_target_in(
         .await?;
         if let Some(compiled) = compiled {
             let compiled_target = std::sync::Arc::new(compiled.compiled_target);
+            // A discovery's compiled target lets no asserted read through
+            // (decision 0999).
             kernel.keep_draft(
                 target,
                 compiled.encoded.hash,
                 std::sync::Arc::clone(&compiled_target),
+                a2m_provider::ConfirmedReads::none(),
             );
             return Ok((compiled.encoded.hash, compiled_target));
         }
