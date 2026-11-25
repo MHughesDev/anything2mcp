@@ -70,7 +70,7 @@ pub struct TableFound {
     pub columns: Vec<ColumnFound>,
     /// Whether the rows are those under the header row of a whole sheet,
     /// which defines no table: the way a person's spreadsheet is saved by
-    /// most office programs (finding 25 of field test 4). `name` is then
+    /// most office programs (finding 25 of copy test 4). `name` is then
     /// the sheet's.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub on_sheet: bool,
@@ -139,7 +139,7 @@ fn columns_of(part: &a2m_sources::ParsedPart, range: a2m_sources::CellRange) -> 
 /// one kind every value that holds something is of (text, a number, or true
 /// or false), or `Mixed` for values of more than one kind, a list or a
 /// record inside, and a key that holds nothing anywhere, which no type
-/// reads (finding 26 of field test 4). A shape, never a value.
+/// reads (finding 26 of copy test 4). A shape, never a value.
 fn json_column(items: &[a2m_sources::json::JsonNode], key: &str) -> ColumnFound {
     let mut kind = None;
     for item in items {

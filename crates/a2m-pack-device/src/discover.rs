@@ -5,7 +5,7 @@
 //! a register and nothing scans addresses. The first protocol offers no
 //! listing of a device's own objects, so identification is all there is to
 //! observe. The drafting rule drafts no map from it: a map comes from the
-//! device's published register map (field test 8, finding 52).
+//! device's published register map (copy test 8, finding 52).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -196,7 +196,7 @@ impl Describer for IdentityDescriber {
 ///
 /// A device on the first protocol lists no register, so what it reported
 /// gives a map with no register: nothing to try, and a second map beside
-/// the one the device's documentation gives (field test 8, finding 52). The
+/// the one the device's documentation gives (copy test 8, finding 52). The
 /// rule drafts no file and says so; the identity stays in the finding, and
 /// the describer shows it.
 pub(crate) struct MapFromIdentity {

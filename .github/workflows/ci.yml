@@ -363,10 +363,10 @@ jobs:
         run: python3 tools/test_docs_audit.py
       - name: Prove the plan's counts are written from the rows, and a stale one fails
         run: python3 tools/test_progress.py
-      - name: Prove the field-test fault proxy
-        run: python3 tools/test_field_proxy.py
-      - name: Prove the field-test runner's closed network
-        run: python3 tools/test_field_test.py
+      - name: Prove the copy-test fault proxy
+        run: python3 tools/test_copy_test_proxy.py
+      - name: Prove the copy-test runner's closed network
+        run: python3 tools/test_copy_test.py
       - name: Prove the packaging check fails when a package holds another binary
         run: python3 tools/test_check_packages.py
       # A workflow file GitHub cannot parse fails every run at once and says

@@ -53,7 +53,7 @@ anything2mcp/
   bench/                  # performance suite and budgets
   docs/                   # the design, the architecture, the decisions, the research, the plan
   tools/                  # the documentation audit and its self-test
-    a2m-field-harness/    # at tools/field-harness/: the product's own `serve` with the field prompt; test equipment, never packaged (decision 0310)
+    a2m-copy-test-harness/    # at tools/copy-test-harness/: the product's own `serve` with the copy test prompt; test equipment, never packaged (decision 0310)
   xtask/                  # build, release, and code-generation tasks
 ```
 

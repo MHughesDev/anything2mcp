@@ -2,7 +2,7 @@
 
 What the product showed when it was run against existing software that the project runs itself ([decision 0293](../decisions/0293-software-we-run-ourselves-is-tested-against-during-the-build-and-may-be-written-to.md)). Each system is described by its kind and never named (rule 9). How a field test is run is in [decision 0295](../decisions/0295-a-field-test-is-run-from-a-recipe-kept-outside-the-repository.md). A finding stays here until a stand holds it as a case and CI passes with it. Since decision 0310 the runner runs the system and the product's binary in containers on a closed network (`--internal`, no published port); the field test 1 results below were got before that, with the system's port published on this machine.
 
-Every field test below ran on Linux. The runner needs Linux with docker, and no field test has met Windows or macOS; the [field harness's design](../architecture/crates/a2m-field-harness.md#where-it-runs) says why and what stands in for one there.
+Every field test below ran on Linux. The runner needs Linux with docker, and no field test has met Windows or macOS; the [field harness's design](../architecture/crates/a2m-copy-test-harness.md#where-it-runs) says why and what stands in for one there.
 
 ## Field test 1: an HTTP service with a published description, reads only (2026-11-23)
 

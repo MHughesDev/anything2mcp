@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Prove that tools/field_proxy.py does what its docstring says.
+"""Prove that tools/copy_test_proxy.py does what its docstring says.
 
 The tests start a tiny HTTP server of their own on a free port, put a FaultProxy in front
 of it, and talk to the proxy over sockets. Run from the repository root:
 
-    python3 tools/test_field_proxy.py
+    python3 tools/test_copy_test_proxy.py
 
 Standard library only; Python 3.11 or newer.
 """
@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from field_proxy import FaultProxy, render_record  # noqa: E402
+from copy_test_proxy import FaultProxy, render_record  # noqa: E402
 
 
 class Upstream(BaseHTTPRequestHandler):

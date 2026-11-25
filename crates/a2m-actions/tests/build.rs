@@ -2286,7 +2286,7 @@ async fn a_scout_drafts_reads_by_rule_tries_them_and_never_writes() {
     world.kernel.close(CloseReason::Asked).await;
 }
 
-/// Field test 9, finding 56: a scout whose only surface's discovery failed
+/// Copy test 9, finding 56: a scout whose only surface's discovery failed
 /// saw nothing, and does not answer `ok`. It answers with the failure the
 /// discovery stopped with, beside the report, which is stored and read
 /// again with `scout.report`, and names the surface under "not looked at".

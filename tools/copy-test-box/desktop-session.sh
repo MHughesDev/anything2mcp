@@ -1,6 +1,6 @@
 #!/bin/sh
-# The desktop session of the field test's box (decision 0459). The runner,
-# tools/field_test.py, mounts this file read-only in the box and runs it there as
+# The desktop session of the copy test's box (decision 0459). The runner,
+# tools/copy_test.py, mounts this file read-only in the box and runs it there as
 # the box's user, never as root. It names no application: the recipe gives the
 # program and its arguments.
 #

@@ -307,7 +307,7 @@ async fn a_try_runs_a_draft_read_that_may_not_act_live() {
     .await;
     // Live, a draft binding is never chosen, and the run is held to a
     // compiled target in which nothing else may act: it fails for good and
-    // offers no resume (field test 7, finding 47).
+    // offers no resume (copy test 7, finding 47).
     let outcome = scene.work(JobKind::Execute, ORDER_GET, order()).await;
     assert_eq!(
         failed_as(&outcome),

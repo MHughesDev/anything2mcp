@@ -409,7 +409,7 @@ impl<'a> Run<'a> {
                 // change: a binding passed over for its status alone never
                 // qualifies on this version. It is the reason given only
                 // where no binding was passed over for anything else, which
-                // may pass (field test 7, finding 47).
+                // may pass (copy test 7, finding 47).
                 let failure = codes::fail(
                     &codes::row::NO_BINDING_MAY_ACT,
                     format!(

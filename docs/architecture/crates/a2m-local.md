@@ -158,11 +158,11 @@ pub trait PresencePrompt: Send + Sync {
 }
 pub struct PromptText { pub title: String, pub detail: String, pub purpose: PromptFor }
 pub enum PromptFor { Act, Approval(Option<EffectClass>) }              // what the ask is for; None = effect not known
-// `FieldPrompt<R, W>` (decision 0310) answers on a reader and a writer a test runner holds; only the field
+// `CopyTestPrompt<R, W>` (decision 0310) answers on a reader and a writer a test runner holds; only the copy test
 // harness builds it. It passes Act and Approval(Some(not irreversible)) when the line read is the short
 // hash shown, and refuses Approval(Some(Irreversible)) and Approval(None) without asking.
 pub enum PresenceKind { OsPrompt, DialogOnly, NotAvailable }            // os_prompt, dialog_only, not_available
-pub enum PromptName { Polkit, LocalAuthentication, WindowsHello, FieldHarness }  // polkit, local_authentication, windows_hello, field_harness
+pub enum PromptName { Polkit, LocalAuthentication, WindowsHello, CopyTestHarness }  // polkit, local_authentication, windows_hello, field_harness
 pub enum PresenceReason {                                               // one word, for a report
     Ready, NotBuilt, NoSystemBus, NoPolkit, PolicyNotInstalled, SessionNotActive,
     NoAgent, GrantedWithoutAsking, NoWindowStation, SessionRemote, SessionLocked,

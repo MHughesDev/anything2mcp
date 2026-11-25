@@ -80,7 +80,7 @@ pub fn answers_to(name: &str, step: &Step) -> bool {
 /// cannot carry a whole entry such as `surface/tool`, so the name a test
 /// records a save's request under, the name the engine is said to have
 /// sent, and the name a refusal tells a person to write a file under are
-/// all this one (field test 6, finding 40).
+/// all this one (copy test 6, finding 40).
 #[must_use]
 pub fn answer_name(step: &Step) -> &str {
     step.refers_to.as_ref().map_or_else(
@@ -258,7 +258,7 @@ mod tests {
         }
     }
 
-    /// Field test 6, finding 40: a save whose entry is `surface/tool` is
+    /// Copy test 6, finding 40: a save whose entry is `surface/tool` is
     /// said to have been sent under the name a fixture's file carries, so
     /// the request recorded in `<tool>.request.json` is the one compared.
     #[tokio::test]

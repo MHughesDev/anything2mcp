@@ -21,7 +21,7 @@ Layers 1 to 8 are the kernel. Layers 9 and 10 are the packs ([spec section 202](
 | 9. Pack bases | `a2m-pack-web-browser` | Layers 1 to 5 |
 | 10. Packs | `a2m-pack-web-ui`, `a2m-pack-web-probe`, `a2m-pack-http`, `a2m-pack-mcp`, `a2m-pack-desktop`, `a2m-pack-command`, `a2m-pack-data`, `a2m-pack-file`, `a2m-pack-stream`, `a2m-pack-device` | Layers 1 to 5, and the base of its own pack |
 | 11. Product | `anything2mcp` | Everything |
-| 12. Field harness | `a2m-field-harness` | Everything |
+| 12. Copy test harness | `a2m-copy-test-harness` | Everything |
 
 Three rules follow from the table, and the audit states each one by name when it is broken:
 

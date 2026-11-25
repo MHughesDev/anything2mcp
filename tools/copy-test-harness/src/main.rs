@@ -1,8 +1,8 @@
-//! The field harness (decision 0310).
+//! The copy test harness (decision 0310).
 //!
 //! The product's own `serve`, with one difference: its presence prompt is
-//! the field prompt, which writes its question to standard output and takes
-//! its answer from one line of standard input, a pipe only a field test's
+//! the copy test prompt, which writes its question to standard output and takes
+//! its answer from one line of standard input, a pipe only a copy test's
 //! runner holds. The shipped program never has this prompt.
 //!
 //! It serves only inside a closed network. Before it does anything, it tries
@@ -18,7 +18,7 @@ use egress::{Egress, Tcp, WAIT};
 
 /// Why the harness stopped before it served.
 fn refuse(why: &str) -> ExitCode {
-    eprintln!("a2m-field-harness: {why}");
+    eprintln!("a2m-copy-test-harness: {why}");
     ExitCode::from(2)
 }
 
@@ -49,7 +49,7 @@ fn main() -> ExitCode {
         ));
     }
     let mut host = anything2mcp::cli::Host::of_process();
-    host.prompt = Some(Arc::new(a2m_local::FieldPrompt::new(
+    host.prompt = Some(Arc::new(a2m_local::CopyTestPrompt::new(
         tokio::io::BufReader::new(tokio::io::stdin()),
         tokio::io::stdout(),
     )));

@@ -151,7 +151,7 @@ async fn a_device_is_read_through_the_device_pack() {
     world.close().await;
 }
 
-/// Field test 8, finding 50: the offline test of a device's update is
+/// Copy test 8, finding 50: the offline test of a device's update is
 /// answered from one file named for the map, a list of twelve answers in
 /// the order the file formats reference gives: the write's own six steps,
 /// the acknowledgement's two, and the read-back's four, the last holding

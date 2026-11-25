@@ -91,7 +91,7 @@ class Records(unittest.TestCase):
 
     def test_a_package_is_named_from_its_id_with_or_without_a_name_in_it(self):
         self.assertEqual(gate.package_name("path+file:///w/crates/a2m-core#0.0.1"), "a2m-core")
-        self.assertEqual(gate.package_name("path+file:///w/tools/field-harness#a2m-field-harness@0.0.1"), "a2m-field-harness")
+        self.assertEqual(gate.package_name("path+file:///w/tools/copy-test-harness#a2m-copy-test-harness@0.0.1"), "a2m-copy-test-harness")
         self.assertEqual(gate.package_name("registry+https://github.com/rust-lang/crates.io-index#serde@1.0.0"), "serde")
 
     def test_a_program_is_known_by_its_file_name_on_every_system(self):

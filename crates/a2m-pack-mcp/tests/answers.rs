@@ -1,4 +1,4 @@
-//! What field test 6 found, each against the HTTP form of the test stand:
+//! What copy test 6 found, each against the HTTP form of the test stand:
 //! a read sends the key its mapping names, a server that answers with JSON
 //! as text is read one item a row and its write is read back, a save's
 //! offline request is recorded under the name its fixture file carries, and

@@ -1833,7 +1833,7 @@ async fn an_output_the_form_does_not_make_certain_is_flagged_and_still_reads_nul
     assert_eq!(item.values.get("ref"), Some(&Value::Null));
 }
 
-// ---- decision 0364: field test 5, findings 30 to 34 ----
+// ---- decision 0364: copy test 5, findings 30 to 34 ----
 
 /// The fixtures with one command's text changed in `commands/inventory.yaml`.
 fn inventory_changed(from: &'static str, to: &'static str) -> impl Fn(&mut Vec<(String, String)>) {

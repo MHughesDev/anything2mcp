@@ -3128,7 +3128,7 @@ async fn a_column_named_as_a_secret_is_never_drafted_as_a_field_or_an_output() {
 
 #[tokio::test]
 async fn a_drafted_list_of_delimited_text_ends_at_the_end_of_the_data_not_at_an_empty_cell() {
-    // Finding 24 of field test 4, decision 0342: a cell may be empty, in
+    // Finding 24 of copy test 4, decision 0342: a cell may be empty, in
     // any column, in the first column, in the last, and a row of empty
     // cells but one. The data is invented.
     const FILE: &str = "prices/gaps.csv";
@@ -3185,7 +3185,7 @@ async fn a_drafted_list_of_delimited_text_ends_at_the_end_of_the_data_not_at_an_
 
 #[tokio::test]
 async fn a_workbook_saved_with_no_table_is_drafted_as_the_rows_under_its_header_row() {
-    // Finding 25 of field test 4: a spreadsheet as an office suite saves
+    // Finding 25 of copy test 4: a spreadsheet as an office suite saves
     // it has rows under a header row on a sheet and no table object. The
     // package is built byte by byte, in the shape the suite writes, with
     // invented data.
@@ -3252,7 +3252,7 @@ async fn a_workbook_saved_with_no_table_is_drafted_as_the_rows_under_its_header_
 
 #[tokio::test]
 async fn the_fields_of_a_json_list_are_typed_by_their_json_type_and_only_the_untypable_is_asked() {
-    // Finding 26 of field test 4: the drafter gives a JSON field the type
+    // Finding 26 of copy test 4: the drafter gives a JSON field the type
     // its values have, as it does a field of delimited text. The data is
     // invented.
     const FILE: &str = "config/customers.json";
@@ -3314,7 +3314,7 @@ async fn the_fields_of_a_json_list_are_typed_by_their_json_type_and_only_the_unt
 
 #[test]
 fn the_committing_step_carries_the_key_and_the_values_it_writes_for_an_offline_test() {
-    // Finding 22 of field test 4: the arguments of the step that commits
+    // Finding 22 of copy test 4: the arguments of the step that commits
     // are what an offline test's `<step>.request.json` is compared with. A
     // `save` that carried none could only be answered by `{}`. The values
     // are those `set` was given, and the key; a delete has the key alone.

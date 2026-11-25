@@ -156,7 +156,7 @@ impl DraftingRule for ChannelDraft {
         } else if found.json.get("key_from_subject").and_then(Json::as_bool) == Some(true) {
             // The broker keys a message by the last token of its subject,
             // as the channel's configuration states: that is the key, and
-            // no field of the message is (finding 44 of the field tests).
+            // no field of the message is (finding 44 of the copy tests).
             body.push((
                 "key",
                 DraftValue::map(vec![(

@@ -2633,7 +2633,7 @@ impl<'a> Compiler<'a> {
         }
         // A binding that states no status is `draft`, and neither a draft
         // nor a retired binding acts in a published version: an operation
-        // with no other publishes a tool no call of can ever run (field
+        // with no other publishes a tool no call of can ever run (copy
         // test 7, finding 47). It is a warning in every compile, so `lint`
         // says it and the person publishing sees it; it is not an error,
         // because the offline tests that earn a draft binding its promotion

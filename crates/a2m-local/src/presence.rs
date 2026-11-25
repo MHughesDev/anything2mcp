@@ -26,7 +26,7 @@ use tokio::time::Instant;
 // The macOS and Windows prompts are compiled into the tests on every
 // system, so that their mapping is tested everywhere; their calls into the
 // system are compiled on their own system only.
-pub(crate) mod field;
+pub(crate) mod copy_test;
 #[cfg(any(target_os = "macos", test))]
 pub(crate) mod local_authentication;
 #[cfg(target_os = "linux")]
@@ -73,11 +73,11 @@ pub enum PromptName {
     LocalAuthentication,
     /// Windows Hello: a face, a fingerprint, or the Hello PIN.
     WindowsHello,
-    /// The field harness's prompt: a line read from a pipe only a test
+    /// The copy test harness's prompt: a line read from a pipe only a test
     /// runner holds. The shipped program never constructs a prompt that
     /// answers with it (decision 0310); a record that names it shows that
-    /// a field test, not a person at an operating system's prompt, passed.
-    FieldHarness,
+    /// a copy test, not a person at an operating system's prompt, passed.
+    CopyTestHarness,
 }
 
 impl PromptName {
@@ -88,7 +88,9 @@ impl PromptName {
             Self::Polkit => "polkit",
             Self::LocalAuthentication => "local_authentication",
             Self::WindowsHello => "windows_hello",
-            Self::FieldHarness => "field_harness",
+            // The old name, kept: it is the word stored in
+            // `approvals.presence_check` (decision 0402).
+            Self::CopyTestHarness => "field_harness",
         }
     }
 }

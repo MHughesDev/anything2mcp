@@ -948,7 +948,7 @@ fn test_rules_are_warnings_for_a_draft_and_errors_for_a_publish() {
     assert!(publish.has_errors());
 }
 
-/// Field test 7, finding 47: an operation whose bindings state no status
+/// Copy test 7, finding 47: an operation whose bindings state no status
 /// is all `draft`, and an operation of which no binding may act once
 /// published is warned of in every compile: by `lint`, and on the compile
 /// a publish and its offline tests run on, which must still run a draft

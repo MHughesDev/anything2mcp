@@ -386,7 +386,7 @@ async fn the_stands_tool_list_drafts_reads_that_read_what_it_stores() {
     assert_eq!(control.calls_to("orders_report").unwrap(), 1);
     assert_eq!(control.request_count("tools/call").unwrap(), 1);
 
-    // Field test 6, finding 41: every tool the read rule drafts nothing
+    // Copy test 6, finding 41: every tool the read rule drafts nothing
     // from is listed with the rule's own reason, never with none.
     let first = Drafter::new(registry.compiler_set(), &TargetRoot::new(&root))
         .draft(&kept.0)

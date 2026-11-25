@@ -210,6 +210,6 @@ A decision on a warm cache: under 100 microseconds. Loading a new policy version
 - Whether asking tool by tool is fast enough to list the tools a caller may use over a large catalog. One decision of the core takes about 0.07 microseconds; the two reads of the store beside it are not measured. Hypothesis H-11.
 - Whether administrators ever need a policy language. Today they write roles, grants, and pre-approval rules, whose conditions are expressions (decision 0082).
 - The exact claims to rely on for groups and roles from each identity provider.
-- The shape of the presence proof the local approval surface hands in. Settled in part by decision 0145: each operating system's prompt has its own word (`polkit`, `local_authentication`, `windows_hello`, and `field_harness`, which only a field test's harness records, decision 0310), and the proof's time and prompt name come with the approval.
+- The shape of the presence proof the local approval surface hands in. Settled in part by decision 0145: each operating system's prompt has its own word (`polkit`, `local_authentication`, `windows_hello`, and `field_harness`, which only a copy test's harness records, decision 0310), and the proof's time and prompt name come with the approval.
 - Consent records are kept by `a2m-policy`, because only the decider should ask whether one exists; whether they belong with the scout instead is open.
 - The approval and steering defenses rest on design judgment and the MCP specification; dedicated research on approval patterns in organizations is still to do.

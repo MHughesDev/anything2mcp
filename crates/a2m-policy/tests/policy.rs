@@ -1306,7 +1306,7 @@ async fn an_approval_is_refused_for_another_tool_version_or_a_proof_not_of_now()
         PresenceCheck::Polkit,
         PresenceCheck::LocalAuthentication,
         PresenceCheck::WindowsHello,
-        PresenceCheck::FieldHarness,
+        PresenceCheck::CopyTestHarness,
     ] {
         assert!(check.proves_presence(), "{check}");
     }

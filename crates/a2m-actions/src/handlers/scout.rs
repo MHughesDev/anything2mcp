@@ -2253,7 +2253,7 @@ async fn go_on(
     Ok(finished(&report))
 }
 
-/// A finished scout's report as `scout.run` answers it (field test 9,
+/// A finished scout's report as `scout.run` answers it (copy test 9,
 /// finding 56). A scout whose discovery of every surface it observed
 /// failed saw nothing, and answers with that failure beside the report:
 /// the class and code the first such surface stopped with, and the fix its
@@ -2581,7 +2581,7 @@ handler!(
 
 #[cfg(test)]
 mod tests {
-    /// Field test 9, finding 56: a scout that observed surfaces and whose
+    /// Copy test 9, finding 56: a scout that observed surfaces and whose
     /// discovery of every one failed answers with the first one's failure,
     /// beside the report; one where another surface found something
     /// answers `ok`, with a warning that names the surface that failed. A

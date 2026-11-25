@@ -350,7 +350,7 @@ fn a_column_or_a_control_named_as_a_secret_is_never_a_drafted_output() {
         .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)));
 }
 
-/// Field test 10's window, twice: windows of one record each, titled by
+/// Copy test 10's window, twice: windows of one record each, titled by
 /// the order they show, as a GTK 3 dialog program shows one (findings 57,
 /// 59, and 60; decision 0462). The two titles that differ in one word make
 /// one screen reached by a pattern; the table with no name and no rows is
@@ -564,7 +564,7 @@ fn every_window_finding_the_rules_draft_nothing_from_says_why() {
             .unwrap()
         };
     let program = "/opt/example/bin/example-desk";
-    // A table of cells with no rows and no column count, as field test 10
+    // A table of cells with no rows and no column count, as copy test 10
     // saw, and nothing else.
     let silent_table = serde_json::json!([
         {"depth": 0, "role": "panel"},

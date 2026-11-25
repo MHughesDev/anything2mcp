@@ -50,7 +50,7 @@ pub use os::{Kept, kept_by};
 pub fn keep_folder_private(dir: &std::path::Path) -> std::io::Result<()> {
     os::prepare_dir(dir)
 }
-pub use presence::field::FieldPrompt;
+pub use presence::copy_test::CopyTestPrompt;
 pub use presence::{
     Availability, NoPrompt, PresenceKind, PresencePrompt, PresenceReason, PromptAnswer, PromptFor,
     PromptName, PromptText, presence_available, system_prompt, system_prompt_for,
@@ -68,7 +68,7 @@ pub use surface::{FAILURE_CODE_HEADER, LocalSurface, SurfaceParts};
 )]
 mod tests {
     mod channel;
-    mod field;
+    mod copy_test;
     mod local_authentication;
     #[cfg(target_os = "linux")]
     mod polkit;

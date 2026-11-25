@@ -158,7 +158,7 @@ def main():
     # A crate renamed by decision 0330 keeps its old name in history, which is never rewritten;
     # anywhere else the old name is a finding like any other.
     renamed = {"a2m-telemetry", "a2m-field-harness"}
-    kept_as_history = history + ("docs/research/", "docs/reviews/", "docs/hypotheses/H-")
+    kept_as_history = history + ("docs/research/", "docs/reviews/", "docs/hypotheses/H-", "CHANGELOG.md")
     for k, v in md.items():
         for c in set(re.findall(r"`(a2m-[a-z]+(?:-[a-z]+)*)`", v)) - layout:
             if c in renamed and k.startswith(kept_as_history):
@@ -343,7 +343,7 @@ def main():
             stands.add(stand)
 
     on_disk = {}
-    places = {"a2m-field-harness": "tools/field-harness"}
+    places = {"a2m-copy-test-harness": "tools/copy-test-harness"}
     crates_dir = repo / "crates"
     for manifest_path in sorted(crates_dir.glob("*/Cargo.toml")) if crates_dir.is_dir() else []:
         folder = manifest_path.parent.name
@@ -359,7 +359,7 @@ def main():
         for stand in sorted(stands & internal_dependencies(manifest, ("dependencies", "build-dependencies"))):
             note("layering", f"{folder} depends on {stand} outside its tests; "
                              "a crate under targets/ is test equipment and may only be a dev-dependency")
-    # The field harness is the one program under tools/ that is built as part of the workspace:
+    # The copy test harness is the one program under tools/ that is built as part of the workspace:
     # it is named in the layout and the layering table like a crate, and sits in tools/<name>
     # as the package a2m-<name> (decision 0310).
     tools_dir = repo / "tools"

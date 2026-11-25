@@ -770,6 +770,7 @@ const PRESENCE_PROVED: [&str; 6] = [
     "polkit",
     "local_authentication",
     "windows_hello",
+    // The copy test harness, under the word it is stored as (decision 0402).
     "field_harness",
     "signed_in",
 ];

@@ -76,7 +76,7 @@ pub struct Host {
     pub program: Option<PathBuf>,
     /// The presence prompt `serve` asks a person's presence with. `None` is
     /// this machine's own, which the operating system gives. The shipped
-    /// program never sets it; only the field harness does (decision 0310).
+    /// program never sets it; only the copy test harness does (decision 0310).
     pub prompt: Option<Arc<dyn a2m_local::PresencePrompt>>,
 }
 
@@ -771,7 +771,7 @@ pub unsafe fn run(args: impl IntoIterator<Item = String>) -> ExitCode {
 }
 
 /// [`run`], in the surroundings `host` gives: a program that sets what the
-/// shipped one never does, such as the field harness's presence prompt,
+/// shipped one never does, such as the copy test harness's presence prompt,
 /// builds its own host from [`Host::of_process`] and starts here.
 ///
 /// # Safety

@@ -1,5 +1,5 @@
-//! The field prompt: a presence prompt that answers on a pipe a test
-//! runner holds, for the field harness of decision 0310.
+//! The copy test prompt: a presence prompt that answers on a pipe a test
+//! runner holds, for the copy test harness of decision 0310.
 //!
 //! The shipped program never constructs one: [`system_prompt`] and
 //! [`system_prompt_for`] have no arm that returns it, and a test holds
@@ -24,16 +24,16 @@ use tokio::time::{Instant, timeout_at};
 use super::{Availability, PresencePrompt, PromptAnswer, PromptFor, PromptName, PromptText};
 
 /// A presence prompt that asks on `writer` and is answered on `reader`.
-pub struct FieldPrompt<R, W> {
+pub struct CopyTestPrompt<R, W> {
     pipes: Mutex<(R, W)>,
 }
 
-impl<R, W> FieldPrompt<R, W>
+impl<R, W> CopyTestPrompt<R, W>
 where
     R: AsyncBufRead + Unpin + Send,
     W: AsyncWrite + Unpin + Send,
 {
-    /// A field prompt over the two ends of which the runner holds the
+    /// A copy test prompt over the two ends of which the runner holds the
     /// other sides.
     #[must_use]
     pub fn new(reader: R, writer: W) -> Self {
@@ -66,7 +66,7 @@ fn one_line(text: &str) -> String {
         .collect()
 }
 
-impl<R, W> PresencePrompt for FieldPrompt<R, W>
+impl<R, W> PresencePrompt for CopyTestPrompt<R, W>
 where
     R: AsyncBufRead + Unpin + Send,
     W: AsyncWrite + Unpin + Send,
@@ -74,8 +74,8 @@ where
     fn available(&self) -> BoxFuture<'_, Availability> {
         Box::pin(async {
             Availability::ready(
-                PromptName::FieldHarness,
-                "The field harness answers on a pipe that only the test runner holds.",
+                PromptName::CopyTestHarness,
+                "The copy test harness answers on a pipe that only the test runner holds.",
             )
         })
     }
@@ -102,7 +102,7 @@ where
                 Ok(Some(answer)) => {
                     let given = answer.trim_end_matches(['\n', '\r']);
                     if !short.is_empty() && given == short {
-                        PromptAnswer::Present(PromptName::FieldHarness)
+                        PromptAnswer::Present(PromptName::CopyTestHarness)
                     } else {
                         PromptAnswer::Denied
                     }

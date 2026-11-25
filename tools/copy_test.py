@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Run one field test of the product against existing software that we run ourselves.
+"""Run one copy test of the product against existing software that we run ourselves.
 
-A field test starts one system from a container image pinned by digest, loads
+A copy test starts one system from a container image pinned by digest, loads
 invented data into it, runs the product's commands against it, asks the
 system's own store what it holds, and writes a report. The steps and what each
 must show come from a recipe, a JSON file kept outside this repository
 (decision 0294): a recipe names the software it starts, and this repository
 names no real application (rule 9). This file names none.
 
-    python3 tools/field_test.py <recipe folder> [--binary <path>] [--home <path>] [--keep]
+    python3 tools/copy_test.py <recipe folder> [--binary <path>] [--home <path>] [--keep]
 
 The recipe folder holds `recipe.json` and any files its steps use. Each run
 gets a new folder under `<recipe folder>/runs/`, with the project, the
 engine's home, the system's data, and `report.json`.
 
 Exit code 0 when every step showed what the recipe expects, 1 when one did
-not, 2 when the field test could not be run.
+not, 2 when the copy test could not be run.
 
 Recipe, in short:
 
@@ -42,14 +42,14 @@ and `note`:
                                       the regular expression `path` meet `do`: pass,
                                       delay (`seconds`), refuse, drop_request,
                                       drop_response, or cut_response (`bytes`); see
-                                      tools/field_proxy.py. `"fault": "clear"` clears
+                                      tools/copy_test_proxy.py. `"fault": "clear"` clears
                                       the rules and the proxy's record
     "proxied": {}                     (needs the proxy) shows the proxy's record, one
                                       line per request: `METHOD path -> rule-or-none ->
                                       status-or-none`, so `contains` and `lacks` can
                                       expect that a request was or was not sent
     "person":  {"link", "approve", "send"}   the person's press on the engine's own page,
-                                      with the field harness's prompt answered: the
+                                      with the copy test harness's prompt answered: the
                                       runner opens `link` (an approval's or an act's
                                       page, from an earlier step's answer), presses
                                       Approve or Carry out, reads the prompt the harness
@@ -118,7 +118,7 @@ through its address on the network (`{direct}`): the steps `http`, `sqlite`, `ex
 `python` run on this machine and never carry the product's traffic.
 
 A recipe may say `"proxy": true` under `"system"`. The runner then starts a fault proxy
-(tools/field_proxy.py) in a third container on the same network, from a Python image pinned
+(tools/copy_test_proxy.py) in a third container on the same network, from a Python image pinned
 by digest, and `{base}` is the proxy's address in the steps that carry the product's own
 traffic (`a2m`, `replace`), so the product reaches the system through the proxy. Steps
 that talk straight to the system (`http`, `sqlite`, `exec`, `python`) have `{base}` filled
@@ -127,8 +127,8 @@ with the system's own address, so that seeding and checking never go through the
 control client inside the proxy's container. Without `"proxy": true` nothing changes and
 `{direct}` equals the system's own address.
 
-The field harness (decision 0310). The engine of every `a2m` step is the field harness,
-`a2m-field-harness serve`, not the product's own `serve`: the product's binary runs each
+The copy test harness (decision 0310). The engine of every `a2m` step is the copy test harness,
+`a2m-copy-test-harness serve`, not the product's own `serve`: the product's binary runs each
 command as a thin client of it. Before anything is started the runner builds the harness
 from this repository into a build folder of its own, under `--harness-build` (the system's
 temporary folder unless given), with a cargo target folder of its own, and deletes the
@@ -169,7 +169,7 @@ service:
   starts on its own machine. A path inside a container is absolute, and a file stays inside the
   recipe folder; a recipe that breaks either is refused before anything is started.
 - `"harness_features": ["<package>/<feature>", ...]`: features of workspace packages that the
-  field harness is built with, such as a store a pack speaks to only behind a feature. The
+  copy test harness is built with, such as a store a pack speaks to only behind a feature. The
   report states them, because a run with them is not a run of the product as it is shipped.
 
 The box's three options (decision 0447), for a browser in the box:
@@ -186,7 +186,7 @@ The box's three options (decision 0447), for a browser in the box:
   runner's user, as before, which is root on a machine where the runner is.
 - `"box_seccomp": "browser_sandbox"`: the box's system-call filter, by a name from the
   runner's own list, `BOX_FILTERS`. `browser_sandbox` is the container engine's default
-  filter, kept in `tools/field-box/seccomp-default.json` and checked against its hash, plus
+  filter, kept in `tools/copy-test-box/seccomp-default.json` and checked against its hash, plus
   two rules: `clone` may make a user, a process, and a network namespace, and `unshare` a
   user namespace, and neither any other. It is refused for a box whose user is root. No name
   means unconfined, and a recipe cannot give a filter of its own.
@@ -198,8 +198,8 @@ is started. The report states the box's image, user, and filter.
 The box's desktop session (decision 0459), for a desktop application in the box:
 
 - `"box_desktop": {"application": ["/absolute/program", "argument", ...]}`: with the box, at
-  the first `a2m` or `desktop` step and before the field harness starts, the runner starts in
-  the box, as the box's user, the session script kept in `tools/field-box/desktop-session.sh`
+  the first `a2m` or `desktop` step and before the copy test harness starts, the runner starts in
+  the box, as the box's user, the session script kept in `tools/copy-test-box/desktop-session.sh`
   (mounted read-only): a virtual display that listens on no TCP port, a session bus, and the
   accessibility bus, each a socket in a folder of the box's own, and then the application,
   which the recipe names and the script does not. The runner waits, at most `DESKTOP_WAIT`
@@ -247,7 +247,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-import field_proxy
+import copy_test_proxy
 
 # The two images a run adds to the system's own, each pinned by digest. The first holds the
 # product's binary; the second holds the fault proxy. A glibc at least as new as the
@@ -259,8 +259,8 @@ PUBLIC_ADDRESSES = (("1.1.1.1", 443), ("8.8.8.8", 53), ("2606:4700:4700::1111", 
 # A public name. From inside the closed network it must not resolve.
 PUBLIC_NAME = "one.one.one.one"
 BOX_BINARY = "/usr/local/bin/anything2mcp"
-BOX_HARNESS = "/usr/local/bin/a2m-field-harness"
-HARNESS_PACKAGE = "a2m-field-harness"
+BOX_HARNESS = "/usr/local/bin/a2m-copy-test-harness"
+HARNESS_PACKAGE = "a2m-copy-test-harness"
 # What the harness writes on its standard error once its engine serves.
 HARNESS_READY = "the local engine is ready"
 # How long the runner waits for the harness to serve, and for a prompt after a press.
@@ -270,9 +270,9 @@ PROMPT_WAIT = 60
 SHORT_HASH = 12
 PROXY_PORT = 8080
 CONTROL_PORT = 9099
-RUN_LABEL = "a2m-field-run"
+RUN_LABEL = "a2m-copy-test-run"
 
-# A feature a recipe may build the field harness with: a workspace package and its feature.
+# A feature a recipe may build the copy test harness with: a workspace package and its feature.
 FEATURE = re.compile(r"^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_-]*$")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -285,8 +285,8 @@ PINNED_IMAGE = re.compile(r"^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$")
 BOX_USER = re.compile(r"^([0-9]{1,9}):([0-9]{1,9})$")
 # The container engine's own default system-call filter, kept unchanged in the repository,
 # and its hash: a file that no longer has it is refused, so that the base cannot be widened
-# by an edit nobody sees. tools/field-box/NOTICE says where it came from.
-SECCOMP_DEFAULT = os.path.join(REPO, "tools", "field-box", "seccomp-default.json")
+# by an edit nobody sees. tools/copy-test-box/NOTICE says where it came from.
+SECCOMP_DEFAULT = os.path.join(REPO, "tools", "copy-test-box", "seccomp-default.json")
 SECCOMP_DEFAULT_SHA256 = "3320527d4568265ac97a077609b1bfd4cfd0d789eeb9239b7e094b1526675406"
 # The flags of clone and unshare that make a namespace, and the three the browser's sandbox
 # makes: a user namespace, and in it a process and a network namespace.
@@ -334,15 +334,15 @@ SANDBOX_OFF = (
 # The box's desktop session (decision 0459): the script kept here, the place it is mounted in
 # the box, what the harness and the product's commands are given of it, and how long the
 # runner waits for the application to be on the accessibility bus.
-DESKTOP_SESSION = os.path.join(REPO, "tools", "field-box", "desktop-session.sh")
-BOX_DESKTOP_SESSION = "/usr/local/lib/a2m-field/desktop-session.sh"
+DESKTOP_SESSION = os.path.join(REPO, "tools", "copy-test-box", "desktop-session.sh")
+BOX_DESKTOP_SESSION = "/usr/local/lib/a2m-copy-test/desktop-session.sh"
 DESKTOP_ENV = {"DISPLAY": ":99", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/a2m-desktop/bus"}
 DESKTOP_WAIT = 60
 NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class CannotRun(Exception):
-    """The field test could not be run at all."""
+    """The copy test could not be run at all."""
 
 
 def system_env(system, names):
@@ -589,14 +589,14 @@ def first_json(text):
 
 
 class Run:
-    """What one field test made on the container engine: a closed network and the
+    """What one copy test made on the container engine: a closed network and the
     containers on it. Everything carries the run's label, so that the end of the run can
     remove all of it and nothing else."""
 
     def __init__(self, recipe_name, token=None):
         self.token = token or secrets.token_hex(4)
         stem = re.sub(r"[^a-zA-Z0-9_.-]", "-", recipe_name)
-        self.network = f"field-{stem}-{self.token}"
+        self.network = f"copy-test-{stem}-{self.token}"
         self.system = f"{self.network}-system"
         self.box = f"{self.network}-box"
         self.proxy = f"{self.network}-proxy"
@@ -633,8 +633,8 @@ class Run:
         return argv + [system["image"], *system.get("command", [])]
 
     def box_argv(self, binary, home, project, user, harness=None):
-        """The container the product's binary runs in: the binary read-only, the field
-        harness read-only beside it when there is one, and the engine's home and the
+        """The container the product's binary runs in: the binary read-only, the copy
+        test harness read-only beside it when there is one, and the engine's home and the
         project folder at the paths they have on this machine."""
         mounts = ["-v", f"{binary}:{BOX_BINARY}:ro"]
         if harness:
@@ -652,11 +652,11 @@ class Run:
         ]
 
     def proxy_argv(self, system_port):
-        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "field_proxy.py")
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "copy_test_proxy.py")
         return [
             "docker", "run", "-d", "--name", self.proxy, "--network", self.network,
-            "--label", self.label, "-v", f"{script}:/field_proxy.py:ro", PROXY_IMAGE,
-            "python", "/field_proxy.py", "--upstream", f"{self.system}:{system_port}",
+            "--label", self.label, "-v", f"{script}:/copy_test_proxy.py:ro", PROXY_IMAGE,
+            "python", "/copy_test_proxy.py", "--upstream", f"{self.system}:{system_port}",
             "--listen", f"0.0.0.0:{PROXY_PORT}", "--control", f"127.0.0.1:{CONTROL_PORT}",
         ]
 
@@ -717,7 +717,7 @@ class Run:
         return ["docker", "exec", "-w", cwd, *flags, self.box, "sh", "-c", 'umask 022; exec "$0" "$@"', BOX_BINARY, *argv]
 
     def harness_argv(self, env, cwd):
-        """The field harness's `serve`, inside the binary's container, with its standard input
+        """The copy test harness's `serve`, inside the binary's container, with its standard input
         kept open (`-i`) for the runner alone. It is given no other argument: in particular
         not `--passphrase-from-stdin`, because its standard input carries prompt answers."""
         flags = []
@@ -823,7 +823,7 @@ class ProxyBox:
         self.name = name
 
     def _argv(self, message):
-        return ["docker", "exec", self.name, "python", "/field_proxy.py",
+        return ["docker", "exec", self.name, "python", "/copy_test_proxy.py",
                 "--control", f"127.0.0.1:{CONTROL_PORT}", "--send", json.dumps(message)]
 
     def send(self, message):
@@ -842,7 +842,7 @@ class ProxyBox:
 
 
 def harness_build(build_dir, features=()):
-    """The command that builds the field harness into `build_dir`, and its environment: a
+    """The command that builds the copy test harness into `build_dir`, and its environment: a
     cargo target folder of the run's own, so that the harness is never in the shared one,
     and no debug information or incremental state, which only cost disk. Each feature is
     `<package>/<feature>`; its package is selected beside the harness, so that cargo's one
@@ -865,10 +865,10 @@ def harness_build(build_dir, features=()):
 
 
 def build_harness(build_root, execute=None, features=()):
-    """Build the field harness into a new folder under `build_root`. Returns the folder,
+    """Build the copy test harness into a new folder under `build_root`. Returns the folder,
     which the caller deletes, and the binary."""
     execute = execute or (lambda argv, env: run(argv, env=env, cwd=REPO, seconds=3600))
-    build_dir = tempfile.mkdtemp(prefix="a2m-field-harness-", dir=build_root)
+    build_dir = tempfile.mkdtemp(prefix="a2m-copy-test-harness-", dir=build_root)
     try:
         argv, env, binary = harness_build(build_dir, features)
     except CannotRun:
@@ -877,12 +877,12 @@ def build_harness(build_root, execute=None, features=()):
     code, out, err = execute(argv, env)
     if code != 0 or not os.path.isfile(binary):
         shutil.rmtree(build_dir, ignore_errors=True)
-        raise CannotRun(f"The field harness did not build: {(out + err).strip()[-600:]}")
+        raise CannotRun(f"The copy test harness did not build: {(out + err).strip()[-600:]}")
     return build_dir, binary
 
 
 class Harness:
-    """The field harness serving in the box: its standard input held by the runner, its
+    """The copy test harness serving in the box: its standard input held by the runner, its
     standard output read line by line, where it writes each prompt, and its standard error
     kept in a file."""
 
@@ -906,9 +906,9 @@ class Harness:
             if HARNESS_READY in self.said():
                 return
             if self.process.poll() is not None:
-                raise CannotRun(f"field_harness_refused: the field harness stopped before it served: {self.said().strip()[-600:]}")
+                raise CannotRun(f"copy_test_harness_refused: the copy test harness stopped before it served: {self.said().strip()[-600:]}")
             time.sleep(0.2)
-        raise CannotRun(f"The field harness did not serve within {wait} seconds: {self.said().strip()[-400:]}")
+        raise CannotRun(f"The copy test harness did not serve within {wait} seconds: {self.said().strip()[-400:]}")
 
     def _read(self):
         with self.process.stdout:
@@ -1009,7 +1009,7 @@ def press(spec, active, harness, execute=None, wait=PROMPT_WAIT):
     answered."""
     execute = execute or (lambda argv, data: subprocess.run(argv, input=data, capture_output=True, timeout=wait + 30, check=False))
     if harness is None or not harness.alive():
-        raise CannotRun("A person step needs the field harness serving: run an `a2m` step first.")
+        raise CannotRun("A person step needs the copy test harness serving: run an `a2m` step first.")
     link = PAGE_LINK.match(spec.get("link", ""))
     if not link:
         raise CannotRun(f"A person step's `link` is not a page of the engine on the box: {spec.get('link')!r}")
@@ -1119,7 +1119,7 @@ def do_step(step, names, env, active, proxy=None, harness=None, secrets=None):
         if proxy is None:
             raise CannotRun('A fault or proxied step needs `"proxy": true` under `"system"`.')
         if "proxied" in step:
-            return {"ok": True, "output": field_proxy.render_record(proxy.send({"op": "record"})["record"])}
+            return {"ok": True, "output": copy_test_proxy.render_record(proxy.send({"op": "record"})["record"])}
         spec = step["fault"]
         if spec == "clear":
             proxy.send({"op": "reset"})
@@ -1180,7 +1180,7 @@ def do_step(step, names, env, active, proxy=None, harness=None, secrets=None):
     if "a2m" in step:
         if harness is not None and harness.alive() is False and harness.process is not None:
             raise CannotRun(
-                "field_harness_gone: the field harness no longer runs, and a command would start "
+                "copy_test_harness_gone: the copy test harness no longer runs, and a command would start "
                 f"the product's own engine in its place: {harness.said().strip()[-400:]}"
             )
         code, out, err = run(active.exec_argv(product_env(env), names["project"], step["a2m"]))
@@ -1260,7 +1260,7 @@ def wait_ready(base, path, seconds=90, container=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run one field test against software we run ourselves.")
+    parser = argparse.ArgumentParser(description="Run one copy test against software we run ourselves.")
     parser.add_argument("recipe", help="the recipe folder, outside this repository")
     parser.add_argument("--binary", default=os.path.join(REPO, "target", "debug", "anything2mcp"))
     parser.add_argument("--keep", action="store_true", help="leave the system running afterwards")
@@ -1272,7 +1272,7 @@ def main():
     parser.add_argument(
         "--harness-build",
         default=tempfile.gettempdir(),
-        help="the folder under which the field harness is built for this run, in a folder of "
+        help="the folder under which the copy test harness is built for this run, in a folder of "
         "its own that is deleted when the run ends",
     )
     args = parser.parse_args()
@@ -1287,7 +1287,7 @@ def main():
         print(f"No product binary at {args.binary}; build it first.")
         return 2
     if run(["docker", "info"])[0] != 0:
-        print("The container engine is not running; start it, then run the field test again.")
+        print("The container engine is not running; start it, then run the copy test again.")
         return 2
     system = recipe["system"]
     a_folder = system.get("kind") in ("folder", "desktop")
@@ -1310,12 +1310,12 @@ def main():
         off = sandbox_off_in(recipe, mounted_files(box_mounts))
         if off:
             raise CannotRun(
-                "The recipe holds a flag that switches a browser's sandbox off, which no field "
+                "The recipe holds a flag that switches a browser's sandbox off, which no copy "
                 "test may pass (rule 5): " + "; ".join(off)
             )
         profile = box_filter(box["filter"]) if box["filter"] else None
     except CannotRun as stop:
-        print(f"The field test could not be run: {stop}")
+        print(f"The copy test could not be run: {stop}")
         return 2
 
     run_dir = os.path.join(recipe_dir, "runs", time.strftime("%Y%m%d-%H%M%S"))
@@ -1353,7 +1353,7 @@ def main():
     env = dict(os.environ)
     env.update(
         A2M_HOME=home,
-        A2M_VAULT_PASSPHRASE="an invented passphrase for field tests",
+        A2M_VAULT_PASSPHRASE="an invented passphrase for copy tests",
         A2M_BINARY=os.path.abspath(args.binary),
     )
 
@@ -1361,7 +1361,7 @@ def main():
     harness = None
     build_dir = None
     report = {
-        "field_test": recipe["name"],
+        "copy_test": recipe["name"],
         "image": system.get("image", f"none: the system is a {system.get('kind')}"),
         "harness_features": system.get("harness_features", []),
         "box": {
@@ -1380,7 +1380,7 @@ def main():
     failed = 0
 
     def start_engine(harness_binary):
-        """The box, the closed-network check, and the field harness serving in the box."""
+        """The box, the closed-network check, and the copy test harness serving in the box."""
         active.ensure_box(
             env["A2M_BINARY"], home, names["project"], box["user"], harness=harness_binary
         )
@@ -1390,7 +1390,7 @@ def main():
         return started
 
     try:
-        print("building the field harness")
+        print("building the copy test harness")
         build_dir, harness_binary = build_harness(args.harness_build, features=system.get("harness_features", ()))
         code, _, err = run(active.network_argv())
         if code != 0:
@@ -1453,7 +1453,7 @@ def main():
             if why is not None:
                 failed += 1
     except CannotRun as stop:
-        print(f"The field test could not be run: {scrubbed(str(stop), secrets)}")
+        print(f"The copy test could not be run: {scrubbed(str(stop), secrets)}")
         report["could_not_run"] = str(stop)
         failed = -1
     finally:
@@ -1464,7 +1464,7 @@ def main():
         if build_dir is not None:
             shutil.rmtree(build_dir, ignore_errors=True)
             if os.path.exists(build_dir):
-                print(f"NOT REMOVED, remove by hand: the field harness's build folder {build_dir}")
+                print(f"NOT REMOVED, remove by hand: the copy test harness's build folder {build_dir}")
                 report.setdefault("not_removed", []).append(build_dir)
         if args.keep:
             print(f"left running: network {active.network}; containers {active.system}, {active.box}, {active.proxy}")

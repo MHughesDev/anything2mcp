@@ -9,7 +9,7 @@ A package holds a binary when any file in it begins with the signature of a
 program of the operating systems we ship for (ELF, Mach-O, or a Windows
 executable), or has the name of one. A wheel holds exactly one, the product's
 own program in the scripts folder of the wheel's data; a platform package of
-npm holds exactly one, in `bin/`; the launcher of npm holds none. The field
+npm holds exactly one, in `bin/`; the launcher of npm holds none. The copy test
 harness (decision 0310) and every other program of the workspace must never
 reach a package, so any other binary, and any file named for the harness, is a
 fault. Exit code 0 when every package is as expected, 1 when one is not.
@@ -28,7 +28,7 @@ SIGNATURES = (
     b"\xca\xfe\xba\xbe",  # a macOS universal binary
 )
 BINARY_NAMES = re.compile(r"\.(exe|dll|so|dylib|node|a|lib)$", re.I)
-HARNESS = re.compile(r"field[-_]?harness", re.I)
+HARNESS = re.compile(r"(copy[-_]?test|field)[-_]?harness", re.I)  # its name, and the name it had (decision 0330)
 
 
 def is_binary(name, head):
@@ -58,7 +58,7 @@ def check(kind, files):
     found, faults = [], []
     for name, head in files:
         if HARNESS.search(name):
-            faults.append(f"{name} is named for the field harness, which is never packaged")
+            faults.append(f"{name} is named for the copy test harness, which is never packaged")
         if is_binary(name, head):
             found.append(name)
     if kind == "wheel":

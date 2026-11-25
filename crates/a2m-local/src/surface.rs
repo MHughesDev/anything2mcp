@@ -326,7 +326,7 @@ pub(crate) const fn recorded_check(prompt: PromptName) -> PresenceCheck {
         PromptName::Polkit => PresenceCheck::Polkit,
         PromptName::LocalAuthentication => PresenceCheck::LocalAuthentication,
         PromptName::WindowsHello => PresenceCheck::WindowsHello,
-        PromptName::FieldHarness => PresenceCheck::FieldHarness,
+        PromptName::CopyTestHarness => PresenceCheck::CopyTestHarness,
     }
 }
 

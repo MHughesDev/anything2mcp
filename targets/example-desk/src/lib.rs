@@ -185,7 +185,7 @@ impl Order {
 /// The headings of the table of a [`RecordWindow`], in order.
 pub const RECORD_HEADINGS: [&str; 3] = ["Line", "Item", "Count"];
 
-/// A window of one record, as a GTK 3 dialog program shows one (field test
+/// A window of one record, as a GTK 3 dialog program shows one (copy test
 /// 10): its title, two labelled values, a labelled spin button, and a
 /// table with no name whose column headers and cells are its own
 /// children, with no row element between them.
@@ -533,7 +533,7 @@ impl Desk {
         }
     }
 
-    /// The control interface: opens a window of one record (field test 10's
+    /// The control interface: opens a window of one record (copy test 10's
     /// shape), as many as a test asks.
     ///
     /// # Errors

@@ -634,7 +634,7 @@ impl Lowering for FileLowering {
             // The `save` that commits carries every one of them again, so
             // that what the write sends is plain to an offline test, which
             // compares the committing step's arguments with the values its
-            // `<step>.request.json` states (finding 22 of field test 4).
+            // `<step>.request.json` states (finding 22 of copy test 4).
             // The driver reads none of them at `save`: it saves what
             // `set` built.
             let save_args: Vec<StepArg> = key.iter().cloned().chain(fields.clone()).collect();

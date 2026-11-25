@@ -45,7 +45,7 @@ The binding table is in the [technical reference](../reference/technical-referen
 | 8. Roles | `a2m-local`, `a2m-mcp`, `a2m-api`, `a2m-runner` | The shapes a process can take |
 | 9, 10. Packs | `a2m-pack-*` | Knowledge of one kind of system: the web, HTTP, MCP, and desktop packs, and the command, data, file, stream, and device packs, each with its own crates. They implement the contract and are called back |
 | 11. Product | `anything2mcp` | Names the packs, and nothing else |
-| 12. Field harness | `a2m-field-harness` | Test equipment in `tools/field-harness/`, never packaged: the product's own `serve` with a presence prompt only a field test's runner answers ([decision 0310](../decisions/0310-the-field-harness-runs-in-a-closed-network-and-says-in-the-ledger-what-it-is.md)) |
+| 12. Copy test harness | `a2m-copy-test-harness` | Test equipment in `tools/copy-test-harness/`, never packaged: the product's own `serve` with a presence prompt only a copy test's runner answers ([decision 0310](../decisions/0310-the-field-harness-runs-in-a-closed-network-and-says-in-the-ledger-what-it-is.md)) |
 
 ## Who defines, who implements, who wires
 

@@ -117,7 +117,7 @@ async fn discovery_identifies_the_device_and_changes_nothing() {
 
     // No draft: a device that lists no register gives no map, because a
     // map with no register is nothing to try and stands beside the map
-    // the device's documentation gives (field test 8, finding 52). The
+    // the device's documentation gives (copy test 8, finding 52). The
     // report says why, and the folder holds nothing new.
     let folder = Folder::new("draft");
     std::fs::copy(
@@ -354,7 +354,7 @@ async fn a_published_map_drafts_reads_that_read_the_stand_and_send_no_frame_to_d
     }
     // A scaled register's read states the places its scale gives, so two
     // reads of one map say the same of their precision: a tenth is one
-    // place, a hundredth two (field test 8, finding 51).
+    // place, a hundredth two (copy test 8, finding 51).
     let read_of = |name: &str| {
         std::fs::read_to_string(
             folder

@@ -288,7 +288,7 @@ impl Drafted {
     /// number is an exact decimal, and a raw number an integer.
     /// What a scaled number's read says of its precision: the places its
     /// scale gives, so that two reads of one map say the same of theirs
-    /// (field test 8, finding 51). Nothing for a number that is not scaled.
+    /// (copy test 8, finding 51). Nothing for a number that is not scaled.
     /// The places are said in the description, because a target's field
     /// type is not the drafter's to write (decision 0441).
     fn places_said(&self) -> String {

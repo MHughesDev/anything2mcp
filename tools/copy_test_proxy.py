@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A small TCP proxy that breaks one coming exchange on purpose.
 
-A field test (tools/field_test.py) puts this proxy between the product and a copy of
+A copy test (tools/copy_test.py) puts this proxy between the product and a copy of
 existing software, so that a recipe can make a fault happen at a chosen request: the
 connection refused, the request lost, the response lost after the software has acted, or
 the response cut short.
@@ -42,10 +42,10 @@ The proxy records every request it saw, in order: method, path without the query
 action of the rule that applied (or None), and the upstream status if a response was read.
 It records no headers and no bodies, because they can hold credentials.
 
-    python3 tools/field_proxy.py --upstream 127.0.0.1:3000 \\
+    python3 tools/copy_test_proxy.py --upstream 127.0.0.1:3000 \\
         --rule "POST ^/api/ drop_response 1"
 
-In a field test the proxy runs in a container on the run's closed network
+In a copy test the proxy runs in a container on the run's closed network
 (decision 0310): `--listen 0.0.0.0:PORT` makes it reachable by the product's container,
 `--control 127.0.0.1:PORT` opens a control port for one JSON line per connection
 (`add_rule`, `record`, `reset`), reachable only inside that container, and
@@ -397,7 +397,7 @@ def main():
     parser.add_argument(
         "--control",
         help="host:port. With --upstream: also listen there for one JSON line per connection that adds a rule, "
-        "reads the record, or resets (used by tools/field_test.py inside the proxy's container). "
+        "reads the record, or resets (used by tools/copy_test.py inside the proxy's container). "
         "With --send: the address of a running proxy's control port",
     )
     parser.add_argument("--send", help="send this JSON message to --control, print the answer, and exit")
