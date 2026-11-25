@@ -436,3 +436,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0442 | [A person's use is watched by `web_use`, and what it saw twice in one shape is drafted, held](0442-a-persons-use-is-watched-by-web-use-and-what-it-saw-twice-is-drafted-held.md) | Accepted (design decision) |
 | 0443 | [`draft.ready` asks for the publish, and takes the caller's own trial](0443-draft-ready-asks-for-the-publish-and-takes-the-callers-own-trial.md) | Accepted (design decision) |
 | 0444 | [A result's decimal is padded to the places its field type states](0444-a-results-decimal-is-padded-to-the-places-its-field-type-states.md) | Accepted (design decision) |
+| 0999 | [The field test's box takes a pinned image, a user that is not root, and a named filter for the browser's sandbox](0999-the-field-test-box-takes-a-pinned-image-a-user-that-is-not-root-and-a-named-filter-for-the-browsers-sandbox.md) | Accepted (design decision) |
