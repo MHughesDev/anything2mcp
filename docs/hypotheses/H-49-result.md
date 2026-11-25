@@ -1,8 +1,8 @@
 # H-49: a role-and-name locator with a test-id locator survives more releases than either alone, and a fixed-weight proposer's top candidate is right in nine breaks of ten
 
-**Status:** open. The first half is tested for content locators and fingerprints on one form; the test-id locator and the proposer are not.
+**Status:** open. The first half is tested for content locators and fingerprints on one form; the test-id locator is not. The second half is tested for a proposer of exact pairing, not for a weighted one, on three changes of one form.
 
-**Tested:** 2026-11-24, roadmap package 9.1, [decision 0384](../decisions/0384-a-screen-changed-on-purpose-is-caught-by-its-locators-or-its-fingerprint-and-a-named-section-is-a-region.md).
+**Tested:** 2026-11-24, roadmap package 9.1, [decision 0384](../decisions/0384-a-screen-changed-on-purpose-is-caught-by-its-locators-or-its-fingerprint-and-a-named-section-is-a-region.md); 2026-11-25, roadmap package 9.1c, [decision 0999](../decisions/0999-a-drift-yields-a-repair-bundle-and-a-person-accepts-a-repair-a-pack-proposed-by-rule.md), the proposer.
 
 ## What was assumed
 
@@ -31,4 +31,24 @@ The browser base's page helper gives a named `section` the role `region`, as the
 
 - Whether a test-id locator holds where the content locators broke: the stand's form has no test id. Adding one to the form, with a change that removes it, is the next case.
 - A framework upgrade, which needs pages built with a framework (Phase 8).
-- The proposer's score: decision 0323's proposer is not built, so its top candidate was not scored against the known right element. In these breaks the right element was the one the reword renamed and, for the wrap, the same element under a new section.
+- A weighted proposer's score: decision 0323's ranked candidates are not built. The proposer that is built (below) pairs two snapshots and has no second candidate to rank.
+
+## The proposer, 2026-11-25
+
+Decision 0999 built the web pack's first repair proposer, a rule of exact pairing over two `screen` findings of the page, one from before the change and one from now, rather than decision 0323's fixed-weight score over a failure snapshot. Each drift below was caught by a canary in a real browser, the page discovered before and after, and the bundle's proposal compared with the repair a person wrote by hand in package 9.1 (`crates/anything2mcp/tests/screen_drift.rs`).
+
+| Change | Broken | Proposed | Right | Nothing proposed, and why |
+| --- | --- | --- | --- | --- |
+| Reword ("Quantity" to "Qty", "Save" to "Save line item") | the quantity box, the button | both | both: the hand repair, line for line | |
+| Wrap (a named card takes the form's heading) | the fingerprints of the description and the quantity | both | both: the hand repair, line for line | The length's fingerprint text, "inches", is not an element's name in a snapshot, so whether it moved is not known, and it is left alone; it had not moved |
+| Relabel ("Description" to "Item" and "Quantity" to "Qty" at once) | the description box, the quantity box | neither | | Two text boxes of the form are gone and two are new, so which became which is not shown by the page |
+| Restyle, reorder | nothing | | | No drift |
+
+Of six broken elements, four were proposed and all four were right; two were proposed nothing, and that was right too, since no rule could tell them apart without guessing by order, which a reorder in the same release would make wrong. The bet's threshold, the top candidate right in nine breaks of ten, is about a scorer that always ranks; a rule that proposes only where it is sure trades how often it proposes for never being wrong. On this form it was never wrong. The sample is three changes of one form, and the relabel is the only case where a score would have had something to rank.
+
+Two things the work showed for the design:
+
+- Without the snapshot from before, the reword would have proposed nothing: the form holds an item-code box the screen does not model, so the screen model and the page now show two unclaimed text boxes, and only the earlier snapshot says which was there all along. This is decision 0323's owed `reference` of the matched element, seen from the other side: a kept shape of the screen at a verified run is what lets a proposer be sure.
+- A fingerprint's text is checkable only when it is an element's name; text a snapshot keeps as a type cannot be followed.
+
+Still unknown: a test-id locator; a framework upgrade; a weighted score on a case like the relabel; a page with several equal forms, where a section's role and name alone do not tell two sections apart.
