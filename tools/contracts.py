@@ -26,7 +26,9 @@ required; an input's or an output field's type changed; a member added to a clos
 class, run state, effect class, evidence level). Additions pass. A break passes only when the kept folder
 of a later release, or `contracts/next-breaks` for the release not yet made, lists it as
 `<break> <record>`, the record being the number of the decision record that made it; `write` moves
-`next-breaks` into the new folder as its `breaks`. A listed break that does not happen is a problem, so
+`next-breaks` into the new folder as its `breaks`. `check` also holds the description's `x-sdk` to the built actions:
+true for an action with a handler, false for one without, so that a client has a method for an action
+from the build that builds it (decision 0437, point 5). A listed break that does not happen is a problem, so
 the list stays true. Types are compared one level deep: a field's JSON type, an array's item type, a
 reference's name; what an object field holds inside is not compared yet.
 
@@ -121,10 +123,33 @@ def built_actions(root):
     return built
 
 
+def sdk_problems(root, document=None, built=None):
+    """Every route whose `x-sdk` does not say whether its action is built. An action has a client method
+    from the build that gives it a handler, and none before (decision 0437, point 5): the description
+    says `x-sdk: true` for a built action and `false` for one with no handler, so this count of the built
+    actions and the clients' generators, which read `x-sdk`, are made from the one place."""
+    if document is None:
+        document = json.loads((root / OPENAPI).read_text(encoding="utf-8"))
+    if built is None:
+        built = built_actions(root)
+    problems = []
+    for path, operations in document.get("paths", {}).items():
+        for method, op in operations.items():
+            name = op.get("x-action")
+            if name and op.get("x-sdk") is not (name in built):
+                said = "has no handler" if name not in built else "is built"
+                problems.append(f"{OPENAPI}: {method.upper()} {path} says `x-sdk: {json.dumps(op.get('x-sdk'))}`, "
+                                f"and `{name}` {said}; regenerate the description and the clients")
+    return problems
+
+
 def kept_openapi(root):
     """The API description as served, cut to the routes of built actions."""
     document = json.loads((root / OPENAPI).read_text(encoding="utf-8"))
     built = built_actions(root)
+    disagree = sdk_problems(root, document, built)
+    if disagree:
+        raise Fault("\n".join(disagree))
     paths = {}
     for path, operations in document.get("paths", {}).items():
         kept = {method: op for method, op in operations.items() if op.get("x-action") in built}
@@ -442,6 +467,7 @@ def main(argv):
             return 1 if problems else 0
         if command == "check":
             problems, compared = check(root)
+            problems = sdk_problems(root) + problems
             for p in problems:
                 print("-", p)
             print(f"{compared} kept release(s) compared; {len(problems)} problem(s)")

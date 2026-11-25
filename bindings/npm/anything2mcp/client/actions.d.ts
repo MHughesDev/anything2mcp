@@ -57,11 +57,6 @@ export interface BindingPromoteInput {
 }
 
 /**
- * The input of `browser.install`.
- */
-export type BrowserInstallInput = Record<string, never>;
-
-/**
  * The input of `capture.start`.
  */
 export interface CaptureStartInput {
@@ -90,43 +85,10 @@ export interface ClientConnectInput {
 }
 
 /**
- * The input of `component.list`.
- */
-export type ComponentListInput = Record<string, never>;
-
-/**
- * The input of `config.set`.
- */
-export interface ConfigSetInput {
-  key: string;
-  value: string;
-  layer?: "user" | "project";
-}
-
-/**
  * The input of `config.show`.
  */
 export interface ConfigShowInput {
   key?: string;
-}
-
-/**
- * The input of `delegation.grant`.
- */
-export interface DelegationGrantInput {
-  agent: string;
-}
-
-/**
- * The input of `delegation.list`.
- */
-export type DelegationListInput = Record<string, never>;
-
-/**
- * The input of `delegation.revoke`.
- */
-export interface DelegationRevokeInput {
-  agent: string;
 }
 
 /**
@@ -200,13 +162,6 @@ export interface DraftTryInput {
 export interface DraftWriteInput {
   content: string;
   file: string;
-  target: string;
-}
-
-/**
- * The input of `endpoints.infer`.
- */
-export interface EndpointsInferInput {
   target: string;
 }
 
@@ -342,18 +297,6 @@ export type NetRoutesInput = Record<string, never>;
 export type NetStandingInput = Record<string, never>;
 
 /**
- * The input of `plugin.install`.
- */
-export interface PluginInstallInput {
-  file: string;
-}
-
-/**
- * The input of `plugin.list`.
- */
-export type PluginListInput = Record<string, never>;
-
-/**
  * The input of `policy.explain`.
  */
 export interface PolicyExplainInput {
@@ -402,20 +345,6 @@ export interface PolicyWhoCanInput {
  * The input of `provider.describe`.
  */
 export interface ProviderDescribeInput {
-  provider: string;
-}
-
-/**
- * The input of `provider.disable`.
- */
-export interface ProviderDisableInput {
-  provider: string;
-}
-
-/**
- * The input of `provider.enable`.
- */
-export interface ProviderEnableInput {
   provider: string;
 }
 
@@ -488,46 +417,6 @@ export interface RunResumeInput {
 }
 
 /**
- * The input of `run.trace`.
- */
-export interface RunTraceInput {
-  run_id: string;
-}
-
-/**
- * The input of `run.undo`.
- */
-export interface RunUndoInput {
-  run_id: string;
-}
-
-/**
- * The input of `runner.drain`.
- */
-export interface RunnerDrainInput {
-  runner: string;
-}
-
-/**
- * The input of `runner.enroll`.
- */
-export interface RunnerEnrollInput {
-  name: string;
-}
-
-/**
- * The input of `runner.list`.
- */
-export type RunnerListInput = Record<string, never>;
-
-/**
- * The input of `runner.revoke`.
- */
-export interface RunnerRevokeInput {
-  runner: string;
-}
-
-/**
  * The input of `scout.report`.
  */
 export interface ScoutReportInput {
@@ -545,16 +434,6 @@ export interface ScoutRunInput {
   files?: Record<string, unknown>;
   fresh?: boolean;
   wait_seconds?: number;
-}
-
-/**
- * The input of `screen.snapshot`.
- */
-export interface ScreenSnapshotInput {
-  target: string;
-  limit?: number;
-  offset?: number;
-  surface?: string;
 }
 
 /**
@@ -751,13 +630,6 @@ export interface ToolsetUpdateInput {
 }
 
 /**
- * The input of `trace.export`.
- */
-export interface TraceExportInput {
-  run_id: string;
-}
-
-/**
  * The input of `trace.show`.
  */
 export interface TraceShowInput {
@@ -772,75 +644,12 @@ export interface UnknownListInput {
 }
 
 /**
- * The input of `unknown.settle`.
- */
-export interface UnknownSettleInput {
-  evidence: string;
-  unknown: string;
-}
-
-/**
- * The input of `vault.rotate`.
- */
-export interface VaultRotateInput {
-  layer: "root" | "workspace" | "owner";
-}
-
-/**
- * The input of `version.activate`.
- */
-export interface VersionActivateInput {
-  target: string;
-  version: string;
-  toolset?: string;
-}
-
-/**
- * The input of `version.bundle`.
- */
-export interface VersionBundleInput {
-  target: string;
-  version?: string;
-}
-
-/**
- * The input of `version.diff`.
- */
-export interface VersionDiffInput {
-  from: string;
-  target: string;
-  to: string;
-}
-
-/**
- * The input of `version.import`.
- */
-export interface VersionImportInput {
-  file: string;
-}
-
-/**
- * The input of `version.migrate`.
- */
-export interface VersionMigrateInput {
-  target: string;
-}
-
-/**
  * The input of `version.publish`.
  */
 export interface VersionPublishInput {
   target: string;
   compiled_target_hash?: string;
   version?: string;
-}
-
-/**
- * The input of `version.rollback`.
- */
-export interface VersionRollbackInput {
-  target: string;
-  version: string;
 }
 
 /**
@@ -955,12 +764,6 @@ export declare abstract class Actions {
   bindingPromote(input: BindingPromoteInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Fetch a pinned browser for the pack that drives one. The engine action is
-   * `browser.install`.
-   */
-  browserInstall(input?: BrowserInstallInput, options?: CallOptions): Promise<Response>;
-
-  /**
    * Ask for a capture of your person's own use of a surface. Nothing records until the
    * person begins it on the engine's page; then only the structure of what they use is
    * kept, never a value. The engine action is `capture.start`.
@@ -981,37 +784,10 @@ export declare abstract class Actions {
   clientConnect(input?: ClientConnectInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * The outside programs providers need: found or not, with path and digest. The engine
-   * action is `component.list`.
-   */
-  componentList(input?: ComponentListInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Change one setting in a settings file. Loosening a protected setting needs a person
-   * present. The engine action is `config.set`.
-   */
-  configSet(input: ConfigSetInput, options?: CallOptions): Promise<Response>;
-
-  /**
    * The effective settings, and for each the layer that set it. With a key, that key's
    * documentation. The engine action is `config.show`.
    */
   configShow(input?: ConfigShowInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * A person lets an agent act for them. The engine action is `delegation.grant`.
-   */
-  delegationGrant(input: DelegationGrantInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * The delegations a person has given. The engine action is `delegation.list`.
-   */
-  delegationList(input?: DelegationListInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * A person withdraws a delegation. The engine action is `delegation.revoke`.
-   */
-  delegationRevoke(input: DelegationRevokeInput, options?: CallOptions): Promise<Response>;
 
   /**
    * Run the discoverers that suit a target's surfaces, in the sandbox. Returns
@@ -1071,12 +847,6 @@ export declare abstract class Actions {
    * is `draft.write`.
    */
   draftWrite(input: DraftWriteInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Endpoint templates, schemas, and dependencies worked out from stored recordings.
-   * The engine action is `endpoints.infer`.
-   */
-  endpointsInfer(input: EndpointsInferInput, options?: CallOptions): Promise<Response>;
 
   /**
    * The local engine's recent log lines. The engine action is `engine.logs`.
@@ -1198,17 +968,6 @@ export declare abstract class Actions {
   netStanding(input?: NetStandingInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Install a plug-in from a file, after checking its manifest and signature. The
-   * engine action is `plugin.install`.
-   */
-  pluginInstall(input: PluginInstallInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * The plug-ins found on this machine. The engine action is `plugin.list`.
-   */
-  pluginList(input?: PluginListInput, options?: CallOptions): Promise<Response>;
-
-  /**
    * Why a past call was allowed or denied: the decision, the policy version, and the
    * rules that made it. For an auditor or an administrator. The engine action is
    * `policy.explain`.
@@ -1251,17 +1010,6 @@ export declare abstract class Actions {
    * settings. The engine action is `provider.describe`.
    */
   providerDescribe(input: ProviderDescribeInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Switch a provider off. The engine action is `provider.disable`.
-   */
-  providerDisable(input: ProviderDisableInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Switch a provider on. A protected setting on one machine where the provider starts
-   * processes or reaches a network. The engine action is `provider.enable`.
-   */
-  providerEnable(input: ProviderEnableInput, options?: CallOptions): Promise<Response>;
 
   /**
    * Every pack and provider: installed, enabled, ready, or what it lacks and how to get
@@ -1323,39 +1071,6 @@ export declare abstract class Actions {
   runResume(input: RunResumeInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * A summary of one run's trace, with references to its kept artifacts. The engine
-   * action is `run.trace`.
-   */
-  runTrace(input: RunTraceInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Build the reverse diff of a completed write run, for a person's approval. The
-   * engine action is `run.undo`.
-   */
-  runUndo(input: RunUndoInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Stop giving a runner new jobs. The engine action is `runner.drain`.
-   */
-  runnerDrain(input: RunnerDrainInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Enroll a runner on another machine. The engine action is `runner.enroll`.
-   */
-  runnerEnroll(input: RunnerEnrollInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * The runners, what each serves, and when each was last heard from. The engine action
-   * is `runner.list`.
-   */
-  runnerList(input?: RunnerListInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Revoke a runner's enrollment. The engine action is `runner.revoke`.
-   */
-  runnerRevoke(input: RunnerRevokeInput, options?: CallOptions): Promise<Response>;
-
-  /**
    * The last scout's report on a target: found, drafted, proven, open, and what to look
    * at first. Each list is counted and shows its first entries; `part` reads one whole,
    * in pages. The engine action is `scout.report`.
@@ -1368,12 +1083,6 @@ export declare abstract class Actions {
    * is `scout.run`.
    */
   scoutRun(input: ScoutRunInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * A compact snapshot of what a surface shows now, with stable references to its
-   * elements. The engine action is `screen.snapshot`.
-   */
-  screenSnapshot(input: ScreenSnapshotInput, options?: CallOptions): Promise<Response>;
 
   /**
    * Store a secret under a name, taken from a prompt or standard input. Nothing reads
@@ -1518,12 +1227,6 @@ export declare abstract class Actions {
   toolsetUpdate(input: ToolsetUpdateInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Export one run's evidence to a file in the project. The engine action is
-   * `trace.export`.
-   */
-  traceExport(input: TraceExportInput, options?: CallOptions): Promise<Response>;
-
-  /**
    * View one run's evidence: its trace lines and artifact references. The engine action
    * is `trace.show`.
    */
@@ -1535,56 +1238,10 @@ export declare abstract class Actions {
   unknownList(input: UnknownListInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * Settle an open question about a target, with evidence. The engine action is
-   * `unknown.settle`.
-   */
-  unknownSettle(input: UnknownSettleInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Rotate one layer of the vault's keys. The engine action is `vault.rotate`.
-   */
-  vaultRotate(input: VaultRotateInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Move a toolset to a version, through the candidate stage. The engine action is
-   * `version.activate`.
-   */
-  versionActivate(input: VersionActivateInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Pack a published version into a signed file. The engine action is `version.bundle`.
-   */
-  versionBundle(input: VersionBundleInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Compare two versions of a target and classify each change. The engine action is
-   * `version.diff`.
-   */
-  versionDiff(input: VersionDiffInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Import a signed bundle as a published version. The engine action is
-   * `version.import`.
-   */
-  versionImport(input: VersionImportInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Recompile stored sources for a newer engine. The engine action is
-   * `version.migrate`.
-   */
-  versionMigrate(input: VersionMigrateInput, options?: CallOptions): Promise<Response>;
-
-  /**
    * Publish a target's drafts, compiled, as an immutable version. A person's act, never
    * an agent's. The engine action is `version.publish`.
    */
   versionPublish(input: VersionPublishInput, options?: CallOptions): Promise<Response>;
-
-  /**
-   * Make an earlier version of a target current. The engine action is
-   * `version.rollback`.
-   */
-  versionRollback(input: VersionRollbackInput, options?: CallOptions): Promise<Response>;
 
   /**
    * The changes a watch recorded after a number: added, changed, unseen, gaps, pauses,

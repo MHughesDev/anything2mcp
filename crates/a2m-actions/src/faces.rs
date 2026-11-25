@@ -332,10 +332,12 @@ pub struct RestRouteFace {
     /// The input fields taken from the path. The rest come from the query
     /// of a `GET`, or the JSON body of a `POST`.
     pub path_fields: Vec<String>,
-    /// Whether the action has an SDK method (its `faces.sdk`). The API
-    /// description carries it as `x-sdk`, so the generators of the clients,
-    /// which read the description, write no method for an action without
-    /// one.
+    /// Whether the action has an SDK method: it has an SDK face
+    /// (`faces.sdk`) and a handler ([`ActionDef::built`]), so an action that
+    /// answers `action_not_built` has none until it is built (decision 0437,
+    /// point 5). The API description carries it as `x-sdk`, so the
+    /// generators of the clients, which read the description, write no
+    /// method for an action without one.
     pub sdk: bool,
     /// One line for the API description.
     pub summary: String,
@@ -357,7 +359,7 @@ pub fn rest_routes(registry: &ActionRegistry) -> Vec<RestRouteFace> {
             action: def.name.to_string(),
             alias,
             path_fields,
-            sdk: def.faces.sdk,
+            sdk: has_sdk_method(def),
             summary: def.summary.clone(),
             input_schema: def.input.schema.to_json(),
             output_schema: def.output.to_json(),
@@ -405,12 +407,21 @@ pub struct SdkMethodFace {
     pub output_schema: Json,
 }
 
-/// The SDK method of every action that has one, in catalog order.
+/// Whether an action has a method in the clients: an SDK face and a
+/// handler. An action with no handler is described with `x-sdk: false` and
+/// gains its method when it gains a handler (decision 0437, point 5).
+#[must_use]
+pub const fn has_sdk_method(def: &ActionDef) -> bool {
+    def.faces.sdk && def.built()
+}
+
+/// The SDK method of every action that has one, in catalog order: an
+/// action with an SDK face and a handler ([`has_sdk_method`]).
 #[must_use]
 pub fn sdk_methods(registry: &ActionRegistry) -> Vec<SdkMethodFace> {
     registry
         .iter()
-        .filter(|def| def.faces.sdk)
+        .filter(|def| has_sdk_method(def))
         .map(|def| SdkMethodFace {
             action: def.name.to_string(),
             namespace: def.name.noun().to_owned(),

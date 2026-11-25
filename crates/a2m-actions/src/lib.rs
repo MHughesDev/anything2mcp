@@ -68,8 +68,8 @@ pub use events::{EVENTS_PAGE, Followed, RunEventView, RunEvents, RunsInHand};
 pub use faces::{
     CommandArg, CommandFace, McpResultFace, McpToolFace, PROCESS_COMMANDS, PROGRAM, REST_PREFIX,
     RestRouteFace, SHORTCUTS, SdkMethodFace, Shortcut, ShortcutOption, ShortcutRun, ShortcutStep,
-    TOOL_PREFIX, ToolAnnotationsFace, command_faces, command_faces_of, mcp_tool, mcp_tools,
-    rest_routes, said_line, sdk_methods, tool_name,
+    TOOL_PREFIX, ToolAnnotationsFace, command_faces, command_faces_of, has_sdk_method, mcp_tool,
+    mcp_tools, rest_routes, said_line, sdk_methods, tool_name,
 };
 pub use health::{Health, HealthState, Impaired, Part};
 pub use kernel::{CallerCredential, CloseReason, Kernel, KernelParts, Prepared, StorePlace};

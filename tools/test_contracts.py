@@ -87,6 +87,22 @@ class Contracts(unittest.TestCase):
         self.assertIn("engine.start", actions, "an action the client carries out is built")
         self.assertNotIn("version.migrate", actions, "an action with no handler is not kept")
 
+    def test_the_description_says_x_sdk_for_exactly_the_built_actions(self):
+        root = HERE.parent
+        self.assertEqual(c.sdk_problems(root), [])
+        document = json.loads((root / c.OPENAPI).read_text(encoding="utf-8"))
+        built = c.built_actions(root)
+        for path, operations in document["paths"].items():
+            for op in operations.values():
+                if op.get("x-action") == "version.migrate":
+                    op["x-sdk"] = True
+                if op.get("x-action") == ACTION:
+                    op["x-sdk"] = False
+        problems = c.sdk_problems(root, document, built)
+        self.assertEqual(len(problems), 2, problems)
+        self.assertTrue(any("`version.migrate` has no handler" in p for p in problems), problems)
+        self.assertTrue(any(f"`{ACTION}` is built" in p for p in problems), problems)
+
     def test_a_folder_kept_from_today_passes(self):
         root = scratch()
         keep(root, "0.1.0", TODAY)
