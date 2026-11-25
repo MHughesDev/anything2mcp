@@ -15,8 +15,9 @@ the built engine serves), with an action built where `a2m-actions` gives it a ha
 in the client; the failure codes, each with its class and whether it passes by itself, as
 `tools/failure_codes.py` reads them; the names of the vocabularies of `a2m-core` that a result, a stored
 row, or a file carries, from their `vocabulary!` tables; the settings keys with their types, from the
-kernel's schema and each pack's manifest. `write` also compiles the `example` target through the test
-`kept_compiled_target` of `a2m-sources`, and keeps its bytes and hash; `a2m-core`'s test `kept_contracts`
+kernel's schema, less each key marked not built (decision 0455), and from each pack's manifest, read
+where the pack's source embeds it with `include_str!`. `write` also compiles the `example` target
+through the test `kept_compiled_target` of `a2m-sources`, and keeps its bytes and hash; `a2m-core`'s test `kept_contracts`
 proves on every build that each kept compiled target still loads with its hash.
 
 `check` names each break, one line each, in a form `contracts/next-breaks` can list: an action, a route,
@@ -224,24 +225,72 @@ KINDS = {"Kind::Bool": "bool", "Kind::Int": "int", "Kind::Text": "text", "Kind::
          "Kind::List": "list", "Kind::Words": "words"}
 
 
+def call_end(text, start):
+    """The index of the parenthesis that closes the call opened just before `start`, skipping
+    strings; -1 when it is not closed."""
+    depth, i = 1, start
+    while i < len(text):
+        c = text[i]
+        if c == '"':
+            i += 1
+            while i < len(text) and text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+INCLUDE = re.compile(r'\binclude_str!\(\s*"([^"]+\.toml)"\s*\)')
+
+
+def pack_manifests(root):
+    """Every pack manifest the registry reads: each TOML file with a `[provider]` table that a crate's
+    source, outside its tests, embeds with `include_str!`, wherever in the crate the file is."""
+    found = set()
+    crates = root / "crates"
+    for crate_dir in sorted(d for d in crates.iterdir() if d.is_dir()) if crates.is_dir() else []:
+        for p in failure_codes.source_files(crate_dir):
+            for m in INCLUDE.finditer(strip_comments(failure_codes.without_tests(p.read_text(encoding="utf-8")))):
+                path = (p.parent / m.group(1)).resolve()
+                if path.is_file() and crate_dir.resolve() in path.parents:
+                    found.add(path)
+    return sorted(found)
+
+
 def settings(root):
-    """{key: type} of every setting: the kernel's schema and each pack's manifest."""
+    """{key: type} of every setting that is built: the kernel's schema, less each key marked not built
+    (decision 0455), and each pack's manifest."""
     text = strip_comments((root / SCHEMA).read_text(encoding="utf-8"))
     consts = {m.group(1): KINDS.get(m.group(2)) for m in re.finditer(r"\bconst\s+(\w+)\s*:\s*Kind\s*=\s*(Kind::\w+)", text)}
     start = text.find("pub const SCHEMA")
     if start < 0:
         raise Fault(f"{SCHEMA}: `SCHEMA` is not there")
+    later = []
+    for m in re.finditer(r"\bnot_built\(", text[start:]):
+        end = call_end(text, start + m.end())
+        if end < 0:
+            raise Fault(f"{SCHEMA}: a `not_built(` call is not closed")
+        later.append((start + m.end(), end))
     found = {}
     for m in re.finditer(r'\bdef\(\s*"([^"]+)"\s*,\s*(Kind::\w+|\w+)', text[start:]):
         kind = KINDS.get(m.group(2)) or consts.get(m.group(2))
         if not kind:
             raise Fault(f"{SCHEMA}: the type `{m.group(2)}` of `{m.group(1)}` cannot be read")
+        if any(a <= start + m.start() < b for a, b in later):
+            continue
         found[m.group(1)] = kind
     if not found:
         raise Fault(f"{SCHEMA}: no setting could be read")
-    for manifest in sorted((root / "crates").glob("*/anything2mcp-provider.toml")):
+    for manifest in pack_manifests(root):
         data = tomllib.loads(manifest.read_text(encoding="utf-8"))
         pack = data.get("provider", {}).get("name")
+        if not pack:
+            continue
         for setting in data.get("settings", []):
             found[f"packs.{pack}.{setting['key']}"] = setting["type"]
     return dict(sorted(found.items()))

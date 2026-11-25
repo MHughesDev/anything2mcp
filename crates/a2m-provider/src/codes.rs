@@ -78,9 +78,6 @@ a2m_core::failure_codes! {
     FILE_NOT_ON_THIS_MACHINE = Policy, "file_not_on_this_machine",
         meaning "A file's bytes are not on this machine: a sync program keeps them elsewhere, and reading or replacing the file would make it fetch them. Nothing was read or written.",
         next "In the sync program's own settings, make the file kept on this machine, then try again.";
-    SIGNATURE_INVALID = Policy, "signature_invalid",
-        meaning "A plug-in's signature does not verify.",
-        next "Install the plug-in again from its author, signed by a key this engine trusts.";
     INTENT_MISSING = Policy, "intent_missing",
         meaning "A step that commits was given no intent token, or the wrong one.",
         next "Store the record's intent in the ledger first, and pass the token it gives for this record.";
@@ -138,9 +135,6 @@ a2m_core::failure_codes! {
     DECOMPILER_OUTPUT_UNKNOWN = UnknownVariant, "decompiler_output_unknown",
         meaning "A decompiling engine printed something that is not in the form the product reads; none of it was used.",
         next "Use an engine and an adapter that print one JSON object to a line, as the decompiler's documentation says.";
-    HANDSHAKE_FAILED = UnknownVariant, "handshake_failed",
-        meaning "A subsystem failed its handshake.",
-        next "Check that the subsystem's version is one this engine supports, and report it to the provider's author if it is.";
     UNDECLARED_CODE = UnknownVariant, "undeclared_code",
         meaning "A driver returned a failure code nothing declares.",
         next "Report this to the provider's author; every failure code is declared in the manifest.";

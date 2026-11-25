@@ -18,7 +18,9 @@ These are faults, which the tool names and for which it exits 1 in every mode: a
 two classes; a row of the table form that cannot be read, or that has an empty meaning or next step;
 one code given two answers to whether it passes by itself; and a code declared outside a table, as a
 literal `FailureCode::fixed("code")` in a crate's source, so that no crate can slip back into an
-older form. Lint codes (`kernel.*`) are another vocabulary and are not read.
+older form. `--check`, which the documentation audit and the gate run, also names a code a table
+declares and nothing raises (decision 0455; see `unraised`). Lint codes (`kernel.*`) are another
+vocabulary and are not read.
 Standard library only; Python 3.11 or newer.
 """
 import re
@@ -110,7 +112,8 @@ def split_rows(body):
 
 
 def table_rows(text, rel, faults):
-    """(rows, text with the blocks taken out): each row (code, class, meaning, next, passes, then)."""
+    """(rows, text with the blocks taken out): each row (code, class, meaning, next, passes, then,
+    constant)."""
     found, cuts = [], []
     for m in FC_START.finditer(text):
         end = block_end(text, m.end())
@@ -144,7 +147,7 @@ def table_rows(text, rel, faults):
             if passes is None:
                 passes = "by_itself" if cls == "transient" else "not_by_itself"
             then = (unescape(then_action), unescape(then_when)) if then_action is not None else None
-            found.append((code, cls, meaning, nxt, passes, then))
+            found.append((code, cls, meaning, nxt, passes, then, _name))
     for a, b in reversed(cuts):
         text = text[:a] + text[b:]
     return found, text
@@ -155,6 +158,12 @@ class Found:
         self.by_code = defaultdict(lambda: {"classes": defaultdict(set), "crates": set(), "meanings": {},
                                             "rows": {}})
         self.faults = []
+        # For the check that every code is raised: each code's constants, by crate; each crate's
+        # source outside its tables and tests, with comments taken out; and the crates whose
+        # manifest, outside tests, lists a code.
+        self.names = defaultdict(set)
+        self.source = defaultdict(list)
+        self.listed = defaultdict(set)
 
     def add(self, crate, code, cls, how, meaning=None):
         row = self.by_code[code]
@@ -171,10 +180,63 @@ def source_files(crate_dir):
             yield p
 
 
+# The tokens of Rust text that matter to the cuts below: a comment, a raw or plain string, a character
+# literal, and the mark of a test item; `BRACKETS` adds the brackets and `;` that end an item.
+# Everything between tokens is copied as it is.
+_LITERALS = r"""
+    (?P<comment>//[^\n]*|/\*.*?(?:\*/|\Z))
+  | (?P<string>\bb?r(?P<hashes>\#*)".*?(?:"(?P=hashes)|\Z)|"(?:[^"\\]|\\.)*(?:"|\Z))
+  | (?P<char>'(?:[^'\\\n]|\\[^\n]{1,9}?)')
+  | (?P<test>\#\[cfg\(test\)\])"""
+# The look-ahead lets the engine pass over most characters at once.
+TOKEN = re.compile(r"(?=[/\"'\#br])(?:" + _LITERALS + ")", re.S | re.X)
+BRACKETS = re.compile(r"(?=[/\"'\#br{}()\[\];])(?:" + _LITERALS + r"""
+  | (?P<bracket>[{}()\[\];]))""", re.S | re.X)
+ATTRIBUTE = re.compile(r"\s*#\[[^\]]*\]")
+
+
+def without_tests(text):
+    """Rust text with each item marked `#[cfg(test)]` taken out, to its `;` or the brace that closes
+    it: a `mod name;`, a `mod name { ... }`, or any other item. The mark is read only outside strings
+    and comments. A file marked `#![cfg(test)]` is all test."""
+    if re.search(r"^\s*#!\[cfg\(test\)\]", text, re.M):
+        return ""
+    if "#[cfg(test)]" not in text:
+        return text
+    out, i, n = [], 0, len(text)
+    for m in TOKEN.finditer(text):
+        if m.lastgroup != "test" or m.start() < i:
+            continue
+        out.append(text[i:m.start()])
+        j = m.end()
+        while (a := ATTRIBUTE.match(text, j)):
+            j = a.end()
+        depth, braces, end = 0, 0, n
+        for t in BRACKETS.finditer(text, j):
+            if t.lastgroup != "bracket":
+                continue
+            c = t.group()
+            if braces:
+                braces += {"{": 1, "}": -1}.get(c, 0)
+                if not braces:
+                    end = t.end()
+                    break
+            elif c in "([":
+                depth += 1
+            elif c in ")]":
+                depth -= 1
+            elif depth <= 0 and c == ";":
+                end = t.end()
+                break
+            elif depth <= 0 and c == "{":
+                braces = 1
+        i = end
+    out.append(text[i:])
+    return "".join(out)
+
+
 def read_rust(p):
-    text = p.read_text(encoding="utf-8")
-    cut = re.search(r"^#\[cfg\(test\)\]", text, re.M)
-    return text[:cut.start()] if cut else text
+    return without_tests(p.read_text(encoding="utf-8"))
 
 
 def scan(root=repo):
@@ -190,22 +252,59 @@ def scan(root=repo):
             except tomllib.TOMLDecodeError as e:
                 f.faults.append(f"{toml.relative_to(root).as_posix()}: cannot be read as TOML: {e}")
                 continue
+            in_tests = bool(TEST_FILE.search(toml.relative_to(crate_dir).as_posix()))
             for entry in data.get("failure_codes", []):
                 if entry.get("class") in CLASSES and re.fullmatch(CODE, str(entry.get("code", ""))):
                     f.add(crate, entry["code"], entry["class"], "manifest", entry.get("meaning"))
+                    if not in_tests:
+                        f.listed[entry["code"]].add(crate)
                 else:
                     f.faults.append(f"{toml.relative_to(root).as_posix()}: a failure_codes entry has no valid class and code: {entry!r}")
         for p in source_files(crate_dir):
             rel = p.relative_to(root).as_posix()
             rows, rest = table_rows(read_rust(p), rel, f.faults)
-            for code, cls, meaning, nxt, passes, then in rows:
+            for code, cls, meaning, nxt, passes, then, name in rows:
                 f.add(crate, code, cls, "macro", meaning)
                 f.by_code[code]["rows"].setdefault(crate, (meaning, nxt, passes, then))
+                f.names[code].add((crate, name))
+            f.source[crate].append(without_comments(rest))
             # Outside a table, a code is named only by a constant of a table or a manifest's code.
             for m in INLINE.finditer(rest):
                 f.faults.append(f"{rel}: `{m.group(1)}` is declared outside a `failure_codes!` table, as "
                                 f"`FailureCode::fixed`; declare it in {crate}'s table and use the constant")
     return f
+
+
+def without_comments(text):
+    """Rust text with its comments taken out, strings and characters kept whole."""
+    return TOKEN.sub(lambda m: "" if m.lastgroup == "comment" else m.group(), text)
+
+
+def unraised(f):
+    """A sentence for each code a `failure_codes!` table declares and nothing raises (decision 0455).
+    A code is raised when, outside every table and every test, with comments taken out: a crate's
+    source names its string; or the crate whose table declares it names its constant, or another crate
+    names the constant in a file that names the declaring crate (`a2m_x`), as a `use` of it does; or the
+    manifest of a crate whose table does not declare it passes it on. A pack's own manifest listing its
+    own code is a declaration, not a raise."""
+    words = {crate: [set(re.findall(r"\b[A-Za-z_]\w*\b", t)) for t in parts] for crate, parts in f.source.items()}
+    strings = {m for parts in f.source.values() for t in parts for m in re.findall(rf'"({CODE})"', t)}
+    problems = []
+    for code in sorted(f.names):
+        names = f.names[code]
+        declaring = {crate for crate, _ in names}
+        if code in strings or f.listed.get(code, set()) - declaring:
+            continue
+        path = {crate: crate.replace("-", "_") for crate in declaring}
+        found = any(
+            any(name in w for w in words.get(crate, []))
+            or any(name in w and path[crate] in w for other, files in words.items() if other != crate for w in files)
+            for crate, name in names)
+        if not found:
+            problems.append(f"`{code}` is declared in {', '.join(sorted(declaring))} and nothing raises it: no "
+                            "source outside its table and its tests names its constant or its string, and no "
+                            "other crate's manifest passes it on; remove it until something raises it (decision 0455)")
+    return problems
 
 
 def layers(root):
@@ -299,7 +398,7 @@ def check(root):
         if m:
             have[m.group(2)] = line
     wanted = {r[1]: line for r, line in zip(rows, want.splitlines()[2:])}
-    problems = list(faults)
+    problems = list(faults) + unraised(f)
     for code in sorted(set(wanted) - set(have)):
         problems.append(f"`{code}` is declared in {', '.join(next(r[2] for r in rows if r[1] == code))} "
                         "and has no row in the reference's table")
