@@ -43,15 +43,15 @@ const LARGEST_FILE: u64 = 1024 * 1024;
 /// A client profile, as its data file states it.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Profile {
+struct ClientProfile {
     format: String,
     key: String,
-    path: ProfilePaths,
+    path: ClientProfilePaths,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ProfilePaths {
+struct ClientProfilePaths {
     linux: Option<String>,
     macos: Option<String>,
     windows: Option<String>,
@@ -96,7 +96,7 @@ fn checked_name(name: &str) -> Result<&str, Failure> {
 }
 
 /// Reads the profile `name` from `folder`.
-fn profile(folder: &Path, name: &str) -> Result<Profile, Failure> {
+fn client_profile(folder: &Path, name: &str) -> Result<ClientProfile, Failure> {
     let file = folder.join(format!("{name}.toml"));
     let text = std::fs::read_to_string(&file).map_err(|_| {
         codes::input(
@@ -107,7 +107,7 @@ fn profile(folder: &Path, name: &str) -> Result<Profile, Failure> {
             ),
         )
     })?;
-    let read: Profile = toml::from_str(&text).map_err(|_| {
+    let read: ClientProfile = toml::from_str(&text).map_err(|_| {
         refused(
             format!("The client profile `{}` does not read as a profile.", file.display()),
             "Give it `format = \"json\"`, `key`, and a `[path]` table with `linux`, `macos`, or `windows`.",
@@ -126,7 +126,7 @@ fn profile(folder: &Path, name: &str) -> Result<Profile, Failure> {
 }
 
 /// The file a profile names on this system.
-fn file_of(profile: &Profile, name: &str, home: Option<&Path>) -> Result<PathBuf, Failure> {
+fn file_of(profile: &ClientProfile, name: &str, home: Option<&Path>) -> Result<PathBuf, Failure> {
     let given = match OsFamily::current() {
         OsFamily::Linux => profile.path.linux.as_deref(),
         OsFamily::MacOs => profile.path.macos.as_deref(),
@@ -269,7 +269,7 @@ handler!(
         let yes = call.flag("yes") == Some(true);
         let (shown_entry, named) = (entry.clone(), entry_name.clone());
         let (file, before, change, written) = off_thread(move || {
-            let profile = profile(&folder, &client)?;
+            let profile = client_profile(&folder, &client)?;
             let file = file_of(&profile, &client, home.as_deref())?;
             let mut root = match std::fs::metadata(&file) {
                 Ok(found) if found.is_file() && found.len() <= LARGEST_FILE => {

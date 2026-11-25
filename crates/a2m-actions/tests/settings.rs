@@ -523,7 +523,7 @@ fn a_preset_is_layer_three_tightens_only_and_is_named_as_the_source() {
     let scout = team.entry("authoring.scout.run").unwrap();
     assert_eq!(
         (scout.value.as_text(), scout.layer),
-        (Some("on_request"), Layer::Profile)
+        (Some("on_request"), Layer::DeploymentShape)
     );
 }
 

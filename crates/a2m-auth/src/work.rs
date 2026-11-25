@@ -23,7 +23,7 @@ use crate::failure;
 use crate::key::{AuthEntry, SessionKey, SessionRef};
 use crate::lease::{Bound, SessionGrant, SessionLease};
 use crate::material::Material;
-use crate::name::ProfileRef;
+use crate::name::BrowserProfileRef;
 use crate::person::{AskPerson, PersonAnswer, PersonAsk, PersonReason};
 use crate::provider::{AuthProvider, ProviderSet, Rung, SignInContext};
 
@@ -74,7 +74,7 @@ pub enum WorkOutcome {
         /// state may be saved.
         saved: Option<Sealed>,
         /// The engine-owned profile, when the live state is a directory.
-        profile: Option<ProfileRef>,
+        profile: Option<BrowserProfileRef>,
         /// Whether the other side accepted the credential in this work.
         confirmed: bool,
     },

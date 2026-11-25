@@ -37,8 +37,8 @@ pub use model::{
 };
 pub use rules::{Answer, RuleKind};
 pub use set::{
-    ApproveWrites, BuiltIn, CONDITION_NAMES, CandidateSet, Grant, LabelGrant, OptionGrant,
-    PolicyLayers, PolicyTest, PreApproval, Profile, Quota, RoleBinding, SET_FORMAT, Scope,
+    ApproveWrites, BuiltIn, CONDITION_NAMES, CandidateSet, DeploymentShape, Grant, LabelGrant,
+    OptionGrant, PolicyLayers, PolicyTest, PreApproval, Quota, RoleBinding, SET_FORMAT, Scope,
     Settings, Subject, TestFailure, TestReport,
 };
 pub use toolset::{RoleGrant, Toolset};

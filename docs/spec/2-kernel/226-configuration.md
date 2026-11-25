@@ -6,7 +6,7 @@ The key names are those of the settings loader ([decision 0095](../../decisions/
 
 ## Principles
 
-1. **Every setting has a default, and the defaults together are the safe single-user installation.** An empty file, or no file, is a complete configuration: the Solo profile, one engine per user, writes approved by a person every run, nothing sent anywhere.
+1. **Every setting has a default, and the defaults together are the safe single-user installation.** An empty file, or no file, is a complete configuration: the Solo deployment shape, one engine per user, writes approved by a person every run, nothing sent anywhere.
 2. **Every setting is typed, documented, and validated at start.** A value of the wrong type, out of range, or naming something that does not exist stops the load with the file, the line, the key, and the fix. **An unknown key is an error, never ignored**, with the nearest known keys offered, so a misspelt safety setting can never be silently without effect. **A key whose part is not built is refused by name** too, from every layer and whatever its value, with what happens instead and what it arrives with; the key stays declared, and `config.show` marks it `built: false` ([decision 0236](../../decisions/0236-a-declared-setting-whose-feature-is-not-built-is-refused-by-name.md), built by [decision 0241](../../decisions/0241-protected-settings-loosen-only-from-an-administrators-file-and-every-key-says-whether-it-is-built.md)).
 3. **One schema.** Each setting is declared once: its key, type, allowed values, default for each profile, scope, whether it is protected, which direction is safer, when a change takes effect, and its description. The validation at start and the output of `config.show`, with each key's documentation through `config.show <key>`, are generated from it; `docs.get settings` is one fixed paragraph, and no editor schema is generated yet. Two tests hold the schema to the code of every product crate: one fails if a key is read that the schema does not declare, the other if a key marked built has no reader or a key marked not built has one.
 4. **A change is audited.** At every start the audit records `settings.changed` with the digest of the effective settings when it differs from the last start's; the keys that changed and their layers are not recorded yet. `config.set`, which is to write an entry with who, which key, the old and new values, the layer, and the presence check passed, is not built.
@@ -45,7 +45,7 @@ Settings come from layers. A higher layer overrides a lower one, key by key, low
 | # | Layer | Where | Typical use |
 | --- | --- | --- | --- |
 | 1 | Built-in defaults | The binary | The safe single-user installation |
-| 2 | The deployment profile | `profile.name`, from the installation's file or the flags of `serve` | Defaults that differ by shape, such as the scout running on add only in `solo` and `workstation` |
+| 2 | The deployment shape | `profile.name`, from the installation's file or the flags of `serve` | Defaults that differ by shape, such as the scout running on add only in `solo` and `workstation` |
 | 3 | A preset | `profile.preset`, from the flags, the variables, the user's file, or the installation's file; never the project's | A handful of values set by one choice |
 | 4 | The installation's settings file | The installation's configuration directory. It may loosen a protected setting only when no account but an administrator can change it (below) | A server's store, listeners, identity provider, network |
 | 5 | The user's settings file | The user's configuration directory | One person's preferences on a shared machine |
@@ -372,7 +372,7 @@ A new policy version's tightening applies to waiting runs at their next check; i
 
 ## Worked examples
 
-The empty configuration. With no file at all, the engine is the Solo profile with the `standard` preset:
+The empty configuration. With no file at all, the engine is the Solo deployment shape with the `standard` preset:
 
 ```toml
 ```

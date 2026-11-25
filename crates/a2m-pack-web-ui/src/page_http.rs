@@ -46,9 +46,9 @@ use a2m_files::{
 };
 use a2m_logs::Detail;
 use a2m_pack_web_browser::{
-    ActTab, Address, AntiForgery, BodyEncoding, BrowserError, Browsers, Deadline, Dispatch,
-    FieldValue, Look, ObserveTab, Origins, PageAnswer, PageEnvironment, PagePath, PageWrite,
-    Primitive, ProfileKey, TokenFrom, TokenTo, Visibility, WriteMethod,
+    ActTab, Address, AntiForgery, BodyEncoding, BrowserError, BrowserProfileKey, Browsers,
+    Deadline, Dispatch, FieldValue, Look, ObserveTab, Origins, PageAnswer, PageEnvironment,
+    PagePath, PageWrite, Primitive, TokenFrom, TokenTo, Visibility, WriteMethod,
 };
 use a2m_provider::shape::{Misfit, MisfitKind, PathStep};
 use a2m_provider::{
@@ -799,7 +799,7 @@ impl PageHttpDriver {
 /// for it.
 struct ToAct {
     browsers: Browsers,
-    profile: ProfileKey,
+    profile: BrowserProfileKey,
     environment: PageEnvironment,
     origins: Origins,
 }

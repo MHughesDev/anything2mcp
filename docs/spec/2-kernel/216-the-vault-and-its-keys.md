@@ -33,7 +33,7 @@ Encryption is layered, so that most keys never need to leave the machine and rot
 | Machine | Root key store | Notes |
 | --- | --- | --- |
 | Windows, macOS, or Linux desktop | The operating system's credential store: Credential Manager, Keychain, or Secret Service | A maintained Rust crate family covers all three ([research note 15](../../research/15-traces-and-key-stores.md)). This build has no Secret Service back end ([decision 0123](../../decisions/0123-the-linux-secret-service-back-end-is-left-out-until-its-store-crate-is-maintained.md)), so a Linux desktop takes the row below |
-| Server | An external key service or secrets manager; the root key is used there and never exported | Preferred for every server profile |
+| Server | An external key service or secrets manager; the root key is used there and never exported | Preferred for every server deployment shape |
 | Linux with no desktop session | Secret Service is usually absent. Use an external service, or a key derived from a passphrase supplied at start | The passphrase route is reported as weaker. Where the build has an operating-system key store, choosing it is an explicit opt-in in the installation's settings; where the build has none, it is the default, because there is nothing stronger to move off ([decision 0220](../../decisions/0220-a-first-run-on-linux-needs-no-administrators-file.md)) |
 
 The engine never falls back to writing a key to disk in the clear. `anything2mcp doctor` reports which store is in use and warns about the weaker ones.

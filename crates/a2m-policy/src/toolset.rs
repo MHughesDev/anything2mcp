@@ -165,7 +165,7 @@ mod tests {
 
     use super::Toolset;
     use crate::model::{IdentityKind, ToolsetName};
-    use crate::set::{CandidateSet, PolicyLayers, Profile, Scope, Subject};
+    use crate::set::{CandidateSet, DeploymentShape, PolicyLayers, Scope, Subject};
 
     fn toolset(name: &str) -> Toolset {
         Toolset {
@@ -179,7 +179,7 @@ mod tests {
     }
 
     fn compiles(layers: &PolicyLayers) -> bool {
-        CandidateSet::compile(layers, Profile::Server).is_ok()
+        CandidateSet::compile(layers, DeploymentShape::Server).is_ok()
     }
 
     #[test]

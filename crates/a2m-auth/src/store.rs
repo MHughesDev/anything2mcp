@@ -19,7 +19,7 @@ use a2m_ledger::{Durability, Store};
 use a2m_vault::Sealed;
 
 use crate::key::SessionKey;
-use crate::name::{CredentialRef, ProfileRef, ProviderName};
+use crate::name::{BrowserProfileRef, CredentialRef, ProviderName};
 use crate::person::PersonReason;
 use crate::tables;
 
@@ -42,7 +42,7 @@ pub struct SessionRow {
     /// Whether its state may be saved and restored.
     pub movable: bool,
     /// The engine-owned profile, when the live state is a directory.
-    pub profile: Option<ProfileRef>,
+    pub profile: Option<BrowserProfileRef>,
     /// When the state last changed.
     pub state_since: Timestamp,
     /// When the present sign-in was made.

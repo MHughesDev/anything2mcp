@@ -259,7 +259,7 @@ impl BrowserSettings {
 /// Which browser: one per target, environment, and identity. Two keys
 /// never share a process or a data directory.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProfileKey {
+pub struct BrowserProfileKey {
     /// The target.
     pub target: TargetName,
     /// The environment.
@@ -268,7 +268,7 @@ pub struct ProfileKey {
     pub identity: Identity,
 }
 
-impl ProfileKey {
+impl BrowserProfileKey {
     /// The key's data directory, relative to the profile root. An identity
     /// can be any text, so its part of the path is a digest of it: the
     /// same on every operating system, and never a way out of the root.
@@ -317,7 +317,7 @@ pub enum BrowserHealth {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenBrowser {
     /// Its profile.
-    pub profile: ProfileKey,
+    pub profile: BrowserProfileKey,
     /// The supervisor's identifier of its process.
     pub subsystem: SubsystemId,
     /// What it reports itself to be, such as its name and version.
@@ -340,7 +340,7 @@ pub struct OpenBrowser {
 }
 
 pub(crate) struct BrowserInner {
-    pub(crate) profile: ProfileKey,
+    pub(crate) profile: BrowserProfileKey,
     pub(crate) subsystem: SubsystemId,
     pub(crate) client: Client,
     pub(crate) product: String,
@@ -545,7 +545,7 @@ pub(crate) struct Shared {
     root: Result<CheckedPath, Failure>,
     pub(crate) redact: Arc<dyn Redact>,
     pub(crate) settings: BrowserSettings,
-    open: Mutex<BTreeMap<ProfileKey, Arc<BrowserInner>>>,
+    open: Mutex<BTreeMap<BrowserProfileKey, Arc<BrowserInner>>>,
     /// One launch at a time, so that a profile is never started twice.
     launching: tokio::sync::Mutex<()>,
     /// Browsers whose launch was dropped after their program started,
@@ -560,10 +560,10 @@ pub(crate) struct Shared {
 }
 
 /// What each running browser holds, by profile.
-type Measured = Vec<(ProfileKey, Result<u64, String>)>;
+type Measured = Vec<(BrowserProfileKey, Result<u64, String>)>;
 
 impl Shared {
-    fn open(&self) -> MutexGuard<'_, BTreeMap<ProfileKey, Arc<BrowserInner>>> {
+    fn open(&self) -> MutexGuard<'_, BTreeMap<BrowserProfileKey, Arc<BrowserInner>>> {
         self.open
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1059,7 +1059,7 @@ impl Browsers {
     /// it was closed.
     pub async fn open(
         &self,
-        profile: &ProfileKey,
+        profile: &BrowserProfileKey,
         show: Visibility,
     ) -> Result<Browser, BrowserError> {
         self.open_for(profile, show, NoticeFor::SignIn).await
@@ -1068,7 +1068,7 @@ impl Browsers {
     /// As [`Self::open`], with a window's notice written for `purpose`.
     pub(crate) async fn open_for(
         &self,
-        profile: &ProfileKey,
+        profile: &BrowserProfileKey,
         show: Visibility,
         purpose: NoticeFor,
     ) -> Result<Browser, BrowserError> {
@@ -1431,7 +1431,7 @@ impl Browsers {
     /// its session to its data directory, waits for its end up to the
     /// close deadline, then has the supervisor end and reap its whole
     /// process group. A profile with no browser is a complete cleanup.
-    pub async fn close(&self, profile: &ProfileKey) -> Cleanup {
+    pub async fn close(&self, profile: &BrowserProfileKey) -> Cleanup {
         let shared = &self.shared;
         let _one = shared.launching.lock().await;
         let Some(browser) = shared.open().remove(profile) else {
@@ -1446,7 +1446,7 @@ impl Browsers {
             let _one = self.shared.launching.lock().await;
             self.shared.stop_abandoned().await
         };
-        let profiles: Vec<ProfileKey> = self.shared.open().keys().cloned().collect();
+        let profiles: Vec<BrowserProfileKey> = self.shared.open().keys().cloned().collect();
         for profile in profiles {
             remaining.extend(self.close(&profile).await.remaining);
         }
@@ -1772,7 +1772,7 @@ impl Observer {
     /// As [`Browsers::open`] and [`Browser::acting_tab`].
     pub async fn observing_tab(
         &self,
-        profile: &ProfileKey,
+        profile: &BrowserProfileKey,
         env: &PageEnvironment,
         allow: &SafeRequests,
         origins: &Origins,
@@ -1806,7 +1806,7 @@ impl Observer {
     /// `goto` of the first address.
     pub async fn watching_tab(
         &self,
-        profile: &ProfileKey,
+        profile: &BrowserProfileKey,
         env: &PageEnvironment,
         notice: &str,
         origins: &Origins,

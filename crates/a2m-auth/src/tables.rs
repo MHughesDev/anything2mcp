@@ -15,7 +15,7 @@ use a2m_ledger::{Owner, Row, SqlValue, Tx};
 use a2m_vault::Sealed;
 
 use crate::key::SessionKey;
-use crate::name::{CredentialRef, ProfileRef, ProviderName};
+use crate::name::{BrowserProfileRef, CredentialRef, ProviderName};
 use crate::person::PersonReason;
 use crate::store::{EventKind, Saved, SessionEvent, SessionRow};
 
@@ -72,7 +72,7 @@ fn row(row: &Row) -> Result<SessionRow, Failure> {
         movable: row.int(9)? != 0,
         profile: row
             .opt_text(10)?
-            .map(|text| ProfileRef::new(text).map_err(|_| corrupt("a profile name")))
+            .map(|text| BrowserProfileRef::new(text).map_err(|_| corrupt("a profile name")))
             .transpose()?,
         state_since: Timestamp::from_unix_millis(row.int(11)?),
         signed_in_at: moment(row.opt_int(12)?),
@@ -200,7 +200,7 @@ pub(crate) fn create(
             number(new.epoch),
             SqlValue::from(new.home.map(|home| home.to_string())),
             SqlValue::from(new.movable),
-            SqlValue::from(new.profile.as_ref().map(ProfileRef::as_str)),
+            SqlValue::from(new.profile.as_ref().map(BrowserProfileRef::as_str)),
             SqlValue::from(new.state_since),
             SqlValue::from(new.signed_in_at),
             SqlValue::from(new.expires_at),
@@ -242,7 +242,7 @@ pub(crate) fn advance(
             number(next.epoch),
             SqlValue::from(next.home.map(|home| home.to_string())),
             SqlValue::from(next.movable),
-            SqlValue::from(next.profile.as_ref().map(ProfileRef::as_str)),
+            SqlValue::from(next.profile.as_ref().map(BrowserProfileRef::as_str)),
             SqlValue::from(next.state_since),
             SqlValue::from(next.signed_in_at),
             SqlValue::from(next.expires_at),

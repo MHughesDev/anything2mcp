@@ -963,7 +963,10 @@ impl LintRule for NoFingerprint {
 
 /// The surface's profile, when the surface names one that exists and is not
 /// `auto`. A name that exists nowhere is `web.profile_unknown`'s.
-fn profile_of(view: &ResolvedView<'_>, surface: &str) -> Option<&'static crate::profiles::Profile> {
+fn platform_profile_of(
+    view: &ResolvedView<'_>,
+    surface: &str,
+) -> Option<&'static crate::profiles::PlatformProfile> {
     let named = view
         .target()
         .surface(surface)?
@@ -1012,7 +1015,7 @@ impl LintRule for GeneratedId {
         for screen in view.entries(&SCREEN_KIND, &WEB_SURFACE) {
             let Some(profile) = screen
                 .text("surface")
-                .and_then(|surface| profile_of(view, surface))
+                .and_then(|surface| platform_profile_of(view, surface))
             else {
                 continue;
             };
@@ -1035,7 +1038,7 @@ impl LintRule for GeneratedId {
 
 impl GeneratedId {
     fn look(
-        profile: &crate::profiles::Profile,
+        profile: &crate::profiles::PlatformProfile,
         part: &str,
         locator: &Located<Doc>,
         out: &mut Vec<Diagnostic>,
@@ -1074,9 +1077,9 @@ impl GeneratedId {
 }
 
 /// `web.profile_unknown`.
-pub(crate) struct ProfileUnknown;
+pub(crate) struct PlatformProfileUnknown;
 
-impl LintRule for ProfileUnknown {
+impl LintRule for PlatformProfileUnknown {
     fn code(&self) -> LintCode {
         code("profile_unknown")
     }
@@ -1122,9 +1125,9 @@ impl LintRule for ProfileUnknown {
 /// profile has the tier `read_only` or `unsupported`. It holds whatever
 /// mode binds the screen, since a mode that acts on the page acts on
 /// controls the profile says are not checked for writing.
-pub(crate) struct ProfileReadonly;
+pub(crate) struct PlatformProfileReadonly;
 
-impl LintRule for ProfileReadonly {
+impl LintRule for PlatformProfileReadonly {
     fn code(&self) -> LintCode {
         code("profile_readonly")
     }
@@ -1160,7 +1163,7 @@ impl LintRule for ProfileReadonly {
                     .iter()
                     .find(|screen| screen.text("screen") == Some(name))
                     .and_then(|screen| screen.text("surface"))
-                    .and_then(|surface| Some((surface, profile_of(view, surface)?)))
+                    .and_then(|surface| Some((surface, platform_profile_of(view, surface)?)))
                 else {
                     continue;
                 };

@@ -86,7 +86,7 @@ Each package is one branch and one pull request, unless it is the owner's act. "
 | Rules it keeps | It writes no passphrase or other secret into a client's file; it adds or replaces only its own entry and keeps every other server's; it writes full paths; it says what it wrote and where |
 | Crates | `a2m-actions` (the handler), `anything2mcp` (the profile file) |
 | Proof | For every profile and for `generic`, a test writes into a temporary home, parses the result, finds the entry and every entry that was there before, and runs `bridge` from the written command line to answer `initialize` and `tools/list`. Writing twice gives the same file |
-| Note | [Section 404](../spec/4-building-tools/404-setup-and-ease-of-use.md) shows `connect` with profile names of particular clients. When built, the README and the docs name the generic block first and list profiles without ranking them |
+| Note | [Section 404](../spec/4-building-tools/404-setup-and-ease-of-use.md) shows `connect` with client profile names of particular clients. When built, the README and the docs name the generic block first and list profiles without ranking them |
 | Whose | Agent |
 
 ### AD5. A listing in the public MCP registry

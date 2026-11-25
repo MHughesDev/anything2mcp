@@ -116,8 +116,8 @@ a2m_core::failure_codes! {
         meaning "The test `fixture.record` made does not pass against its scrubbed fixture, or an observed value would be in a file; nothing was written.",
         next "Write this fixture by hand with synthetic values its field types take.";
     CLIENT_CONFIG_REFUSED = Input, "client_config_refused",
-        meaning "`client.connect` cannot set a client's configuration: its profile does not read, names no file for this system, or the client's file does not read as a JSON object (decision 0219). Nothing is written.",
-        next "Correct the client's profile or its file, as the message names, then run the command again.";
+        meaning "`client.connect` cannot set a client's configuration: its client profile does not read, names no file for this system, or the client's file does not read as a JSON object (decision 0219). Nothing is written.",
+        next "Correct the client profile or its file, as the message names, then run the command again.";
     BINDING_NOT_PROMOTABLE = Input, "binding_not_promotable",
         meaning "A binding `binding.promote` may not make verified: not a drafted first binding of its operation, or one whose file cannot be rewritten by rule (decision 0189).",
         next "Write the binding with `status: draft`, test it and try it, then call `binding.promote`.";

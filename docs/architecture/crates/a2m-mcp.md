@@ -25,7 +25,7 @@ The MCP face of the kernel. It turns the action registry and a toolset's publish
 - The stdio proxy: a thin client that copies MCP messages between standard input and output and the engine's MCP endpoint.
 - Client profiles, as data: a quirk of one client, where one must be handled.
 
-It must never: hold run state between requests; decide whether a call is allowed; validate a call against anything but the full schema the dispatcher holds; let text from a target into a tool's name or description; branch on which client is calling except through a profile.
+It must never: hold run state between requests; decide whether a call is allowed; validate a call against anything but the full schema the dispatcher holds; let text from a target into a tool's name or description; branch on which client is calling except through a client profile.
 
 ## Interface
 

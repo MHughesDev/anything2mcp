@@ -51,7 +51,7 @@ pub use keeper::{
 pub use key::{AuthEntry, SessionKey, SessionRef};
 pub use lease::{LeaseRequest, Purpose, SessionGrant, SessionLease, Wait};
 pub use material::Material;
-pub use name::{CredentialRef, ProfileRef, ProviderName};
+pub use name::{BrowserProfileRef, CredentialRef, ProviderName};
 pub use person::{AskPerson, PersonAnswer, PersonAsk, PersonReason, Returned};
 pub use provider::{
     AuthProvider, ExpirySign, ProviderNeeds, ProviderSet, RawSign, Rung, SignInAddress,

@@ -379,7 +379,7 @@ A folder that fails is not handed on: `Call::project_folder` then answers `input
 
 ### The protected settings and what is in force
 
-Whether something may happen is the policy engine's to decide, so a setting about it is in force only as far as the policy engine decides by it. `Kernel::open` opens the policy engine with the built-in set of the profile, `BuiltIn::local(user, workspace)` or `BuiltIn::server()`, with the installation's policy settings carried into it by `BuiltIn::with_settings`; the policy engine keeps them in force under any set published later, which can only tighten them ([decision 0145](../../decisions/0145-only-the-policy-engine-clears-a-write-and-the-ledger-reads-the-whole-clearance.md)). The module `bounds` says how each protected setting is put in force:
+Whether something may happen is the policy engine's to decide, so a setting about it is in force only as far as the policy engine decides by it. `Kernel::open` opens the policy engine with the built-in set of the deployment shape, `BuiltIn::local(user, workspace)` or `BuiltIn::server()`, with the installation's policy settings carried into it by `BuiltIn::with_settings`; the policy engine keeps them in force under any set published later, which can only tighten them ([decision 0145](../../decisions/0145-only-the-policy-engine-clears-a-write-and-the-ledger-reads-the-whole-clearance.md)). The module `bounds` says how each protected setting is put in force:
 
 | Setting | In force through | A value other than the default |
 | --- | --- | --- |

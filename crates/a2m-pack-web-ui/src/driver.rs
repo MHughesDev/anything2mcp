@@ -23,10 +23,10 @@ use a2m_auth::{ChallengeScheme, CredentialSink, SessionLease};
 use a2m_core::{AccountName, Digest, EffectClass, Failure, Identity, Secret, Step, Value, Values};
 use a2m_logs::{Acting, Detail};
 use a2m_pack_web_browser::{
-    ActTab, Address, BrowserError, BrowserState, Browsers, Deadline, DialogAnswer, Dispatch,
-    Element, Input, Key, Loaded, Look, ObserveTab, Origins, PageEnvironment, Primitive, ProfileKey,
-    Query, RawValue, ReadWhat, Reason, RequestShape, SafeRequests, Snapshot, SnapshotLimits,
-    Visibility, looks_like_an_action, path_by_structure, plain_segment,
+    ActTab, Address, BrowserError, BrowserProfileKey, BrowserState, Browsers, Deadline,
+    DialogAnswer, Dispatch, Element, Input, Key, Loaded, Look, ObserveTab, Origins,
+    PageEnvironment, Primitive, Query, RawValue, ReadWhat, Reason, RequestShape, SafeRequests,
+    Snapshot, SnapshotLimits, Visibility, looks_like_an_action, path_by_structure, plain_segment,
 };
 use a2m_provider::{
     BoxFuture, Capture, Cleanup, Driver, DriverHealth, Observed, Posture, PrepareContext, Prepared,
@@ -237,7 +237,7 @@ const REDRAWN_WITHIN: Duration = Duration::from_secs(10);
 /// asks for it.
 struct ToAct {
     browsers: Browsers,
-    profile: ProfileKey,
+    profile: BrowserProfileKey,
     environment: PageEnvironment,
     origins: Origins,
 }
@@ -2265,7 +2265,7 @@ fn known_control(control: &str) -> Result<Rule, StepFailure> {
 pub(crate) struct TabSetup {
     /// `scheme://host`, with a port when the surface has one.
     pub origin: String,
-    pub profile: ProfileKey,
+    pub profile: BrowserProfileKey,
     pub environment: PageEnvironment,
     pub origins: Origins,
     /// The session's browser state, with the mark of its session and
@@ -2443,7 +2443,7 @@ pub(crate) fn tab_setup(
             }
         }
     };
-    let profile = ProfileKey {
+    let profile = BrowserProfileKey {
         target: cx.surface.target.clone(),
         environment: cx.surface.environment.clone(),
         identity: Identity::Account(AccountName::new(&account).map_err(|_| {

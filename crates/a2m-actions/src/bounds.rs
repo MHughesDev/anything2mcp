@@ -19,7 +19,7 @@
 //! | `files.allowed_roots` | The dispatcher's check of a stated project folder |
 
 use a2m_core::{EffectClass, Value};
-use a2m_policy::{ApproveWrites, BuiltIn, Profile};
+use a2m_policy::{ApproveWrites, BuiltIn, DeploymentShape};
 
 use crate::codes;
 use crate::settings::Settings;
@@ -70,7 +70,7 @@ pub(crate) fn carried(settings: &Settings, built_in: BuiltIn) -> (BuiltIn, Vec<N
         policy.pre_approval = flag;
     }
     if let Some(word) = settings.text("policy.approve_writes") {
-        let local = built_in.profile() == Profile::Local;
+        let local = built_in.profile() == DeploymentShape::Local;
         match ApproveWrites::from_text(word) {
             Some(ApproveWrites::NamedApprover) if local => refused.push(not_in_force(
                 settings,

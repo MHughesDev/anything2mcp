@@ -165,7 +165,7 @@ These start a long-lived role and are not actions.
 
 | Command | Starts |
 | --- | --- |
-| `serve` | A server in the configured profile |
+| `serve` | A server in the configured deployment shape |
 | `runner` | A runner that dials a control plane |
 | `bridge` | The link an SDK or a stdio MCP client uses to reach the local engine |
 | `completion` | Nothing: prints a completion script for a shell, answered by the program itself |

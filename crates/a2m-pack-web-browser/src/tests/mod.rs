@@ -26,8 +26,8 @@ use a2m_provider::{
 use example_app::harness::TestApp;
 
 use crate::{
-    Address, Browser, BrowserError, BrowserHealth, BrowserSettings, Browsers, By, Deadline,
-    Dispatch, LaunchReason, Look, Origins, PROFILE_ROOT, PageEnvironment, ProfileKey, Query,
+    Address, Browser, BrowserError, BrowserHealth, BrowserProfileKey, BrowserSettings, Browsers,
+    By, Deadline, Dispatch, LaunchReason, Look, Origins, PROFILE_ROOT, PageEnvironment, Query,
     Visibility, codes, test_support,
 };
 
@@ -169,7 +169,7 @@ impl Stand {
 
     /// The profile's browser. With no browser on the machine this is where
     /// a test fails, by the named failure.
-    async fn open(&self, profile: &ProfileKey) -> Browser {
+    async fn open(&self, profile: &BrowserProfileKey) -> Browser {
         must(self.browsers.open(profile, Visibility::Background).await)
     }
 
@@ -238,8 +238,8 @@ fn must<T>(result: Result<T, BrowserError>) -> T {
     }
 }
 
-fn profile(identity: &str) -> ProfileKey {
-    ProfileKey {
+fn profile(identity: &str) -> BrowserProfileKey {
+    BrowserProfileKey {
         target: TargetName::new("example").unwrap(),
         environment: Environment::new("test").unwrap(),
         identity: Identity::Account(AccountName::new(identity).unwrap()),

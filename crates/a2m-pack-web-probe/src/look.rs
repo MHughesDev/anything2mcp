@@ -16,8 +16,8 @@ use a2m_core::{
 };
 use a2m_logs::Clock;
 use a2m_pack_web_browser::{
-    Address, BrowserError, By, Deadline, Look, ObserveTab, Observer, Origins, PageEnvironment,
-    ProfileKey, Query, RawValue, ReadWhat, SafeRequests, WatchStart, WatchTab, is_plain_name,
+    Address, BrowserError, BrowserProfileKey, By, Deadline, Look, ObserveTab, Observer, Origins,
+    PageEnvironment, Query, RawValue, ReadWhat, SafeRequests, WatchStart, WatchTab, is_plain_name,
     path_by_structure,
 };
 use a2m_provider::{DiscoveryScope, ProviderName};
@@ -307,7 +307,7 @@ impl Core {
     /// the surface it observes, and the browser keeps it there.
     pub(crate) async fn tab(&self, scope: &DiscoveryScope<'_>) -> Result<ObserveTab, Failure> {
         let (surface, _) = Self::start(scope)?;
-        let profile = ProfileKey {
+        let profile = BrowserProfileKey {
             target: scope.surface.target.clone(),
             environment: scope.surface.environment.clone(),
             identity: Identity::Account(AccountName::new(DISCOVERY_ACCOUNT)?),
@@ -335,7 +335,7 @@ impl Core {
         let (surface, _) = Self::start(scope)?;
         let origins = Origins::of([&surface]);
         let start = WatchStart::new(&surface, &origins)?;
-        let profile = ProfileKey {
+        let profile = BrowserProfileKey {
             target: scope.surface.target.clone(),
             environment: scope.surface.environment.clone(),
             identity: Identity::Account(AccountName::new(WATCHING_ACCOUNT)?),

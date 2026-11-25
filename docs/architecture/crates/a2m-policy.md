@@ -31,7 +31,7 @@ The store hands a transaction to a closure on its own thread, so every call that
 
 ```rust
 #[derive(Clone)]
-pub struct Policy { /* the store; the profile; the set in force as last read */ }
+pub struct Policy { /* the store; the deployment shape; the set in force as last read */ }
 impl Policy {
     /// A fresh store gets `built_in` as its first version. The second value is the one
     /// handle that can record an approval or a decline.

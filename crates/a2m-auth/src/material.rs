@@ -7,7 +7,7 @@ use std::fmt;
 use a2m_core::{Failure, FailureClass, REDACTED, Secret, Timestamp};
 use zeroize::Zeroizing;
 
-use crate::name::{ProfileRef, ProviderName};
+use crate::name::{BrowserProfileRef, ProviderName};
 
 /// The four bytes saved material starts with, and its format number.
 const MAGIC: &[u8; 4] = b"A2MM";
@@ -26,7 +26,7 @@ pub struct Material {
     secrets: BTreeMap<String, Secret>,
     plain: BTreeMap<String, String>,
     expires_at: Option<Timestamp>,
-    profile: Option<ProfileRef>,
+    profile: Option<BrowserProfileRef>,
 }
 
 impl Material {
@@ -66,7 +66,7 @@ impl Material {
 
     /// The material with the engine-owned profile that holds the live state.
     #[must_use]
-    pub fn with_profile(mut self, profile: ProfileRef) -> Self {
+    pub fn with_browser_profile(mut self, profile: BrowserProfileRef) -> Self {
         self.profile = Some(profile);
         self
     }
@@ -97,7 +97,7 @@ impl Material {
 
     /// The engine-owned profile, when the live state is a directory.
     #[must_use]
-    pub fn profile(&self) -> Option<&ProfileRef> {
+    pub fn profile(&self) -> Option<&BrowserProfileRef> {
         self.profile.as_ref()
     }
 
@@ -230,7 +230,7 @@ impl Reader<'_> {
             material.expires_at = Some(Timestamp::from_unix_millis(i64::from_le_bytes(bytes)));
         }
         if self.byte()? == 1 {
-            material.profile = Some(ProfileRef::new(&self.text()?).ok()?);
+            material.profile = Some(BrowserProfileRef::new(&self.text()?).ok()?);
         }
         for _ in 0..self.count()? {
             let name = self.text()?;
@@ -249,7 +249,7 @@ mod tests {
     use a2m_core::{Secret, Timestamp};
 
     use super::Material;
-    use crate::name::{ProfileRef, ProviderName};
+    use crate::name::{BrowserProfileRef, ProviderName};
 
     fn sample() -> Material {
         Material::new(ProviderName::new("oauth_authorization_code").unwrap())
@@ -257,7 +257,7 @@ mod tests {
             .with_secret("refresh_token", Secret::new("rt-PLANTED-0002"))
             .with_plain("token_type", "Bearer")
             .expiring_at(Some(Timestamp::from_unix_millis(1_700_000_000_000)))
-            .with_profile(ProfileRef::new("s_abc").unwrap())
+            .with_browser_profile(BrowserProfileRef::new("s_abc").unwrap())
     }
 
     #[test]

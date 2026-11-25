@@ -33,14 +33,14 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use a2m_auth::{
-    AuthEntry, AuthProvider, BoxFuture, CredentialSink, ExpirySign, Material, PersonAnswer,
-    PersonAsk, PersonReason, ProfileRef, ProviderName, ProviderNeeds, RawSign, SignInContext,
+    AuthEntry, AuthProvider, BoxFuture, BrowserProfileRef, CredentialSink, ExpirySign, Material,
+    PersonAnswer, PersonAsk, PersonReason, ProviderName, ProviderNeeds, RawSign, SignInContext,
     SignedIn,
 };
 use a2m_core::{AccountName, Digest, Failure, Identity, Secret, SessionId, Timestamp};
 use a2m_pack_web_browser::{
-    ActTab, Address, BrowserError, BrowserState, Browsers, By, Deadline, Input, Look, Origins,
-    PageEnvironment, Primitive, ProfileKey, Query, StateCookie, Visibility,
+    ActTab, Address, BrowserError, BrowserProfileKey, BrowserState, Browsers, By, Deadline, Input,
+    Look, Origins, PageEnvironment, Primitive, Query, StateCookie, Visibility,
 };
 use serde::{Deserialize, Serialize};
 
@@ -475,7 +475,7 @@ impl FormLogin {
             return Err(refused());
         }
         let name = profile_name(cx.session().session);
-        let profile = ProfileKey {
+        let profile = BrowserProfileKey {
             target: cx.session().key.target.clone(),
             environment: cx.session().key.environment.clone(),
             identity: Identity::Account(AccountName::new(&name)?),
@@ -618,7 +618,7 @@ pub(crate) fn material_of(
         }
         let mut rules = Vec::new();
         let mut material = Material::new(provider)
-            .with_profile(ProfileRef::new(profile)?)
+            .with_browser_profile(BrowserProfileRef::new(profile)?)
             .expiring_at(None);
         for (position, cookie) in state.cookies.into_iter().enumerate() {
             cx.register(&cookie.value);
@@ -937,7 +937,7 @@ impl AuthProvider for FormLogin {
             if let Some(profile) = material.profile()
                 && let Ok(account) = AccountName::new(profile.as_str())
             {
-                let key = ProfileKey {
+                let key = BrowserProfileKey {
                     target: cx.session().key.target.clone(),
                     environment: cx.session().key.environment.clone(),
                     identity: Identity::Account(account),

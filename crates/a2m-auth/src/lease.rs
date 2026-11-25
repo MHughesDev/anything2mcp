@@ -12,7 +12,7 @@ use a2m_vault::Vault;
 
 use crate::failure;
 use crate::key::{AuthEntry, SessionKey};
-use crate::name::{ProfileRef, ProviderName};
+use crate::name::{BrowserProfileRef, ProviderName};
 use crate::provider::{ExpirySign, RawSign};
 use crate::sink::{ChallengeScheme, CredentialSink};
 use crate::work::Live;
@@ -94,7 +94,7 @@ pub struct SessionGrant {
     /// What it is for.
     pub purpose: Purpose,
     /// The engine-owned profile, when the live state is a directory.
-    pub profile: Option<ProfileRef>,
+    pub profile: Option<BrowserProfileRef>,
 }
 
 /// A session as one run may use it. It carries no secret and cannot print
@@ -144,7 +144,7 @@ impl SessionLease {
     /// The engine-owned profile directory's name, for a session whose live
     /// state is a directory. `None` otherwise.
     #[must_use]
-    pub fn profile(&self) -> Option<&ProfileRef> {
+    pub fn profile(&self) -> Option<&BrowserProfileRef> {
         self.grant.profile.as_ref()
     }
 
