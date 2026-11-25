@@ -895,7 +895,7 @@ Each operating system's own conventions are followed, as `Paths::resolve` in `a2
 | Caches | `cache` in the data folder | `~/Library/Caches/anything2mcp` | `$XDG_CACHE_HOME/anything2mcp`, else `~/.cache/anything2mcp` |
 | An administrator's installation file | `%PROGRAMDATA%\anything2mcp`, else `%LOCALAPPDATA%\anything2mcp` | `/Library/Application Support/anything2mcp` | `/etc/anything2mcp` |
 
-Inside the data directory: `store/` for the database with `blobs/` for evidence inside it, `profiles/<target>/<environment>/<kind>-<digest>/` for one browser data directory per identity, `journal/` for the runner's local journal, and `logs/`. A project folder holds only target files and working output, never any of these.
+Inside the data directory: `store/` for the database with `blobs/` for evidence inside it, `profiles/<target>/<environment>/<kind>-<digest>/` for one browser data directory per identity, `journal/` for the runner's local journal, `logs/`, and, on the passphrase route, `vault-salt`, the salt of the derivation with the algorithm and cost its root was derived with, which is not a secret ([decision 0438](../decisions/0438-the-passphrase-routes-salt-file-records-the-cost-its-root-was-derived-with.md)). A project folder holds only target files and working output, never any of these.
 
 ## REST endpoints
 

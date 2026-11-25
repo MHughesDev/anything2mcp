@@ -62,11 +62,13 @@ pub enum PassphraseRoute { NotEnabled, Enabled }     // PassphraseRoute::of_back
 pub const BACKEND_OS_KEY_STORE: &str = "os_keystore";
 pub const BACKEND_PASSPHRASE: &str = "passphrase";
 pub const DEFAULT_BACKEND: &str;  // the store where the build has one, the passphrase route where not (decision 0220)
-pub struct PassphraseSalt(/* 16 bytes, not secret */);
+pub struct PassphraseSalt { /* 16 bytes and the cost its root is derived with; not secret */ }
 impl PassphraseSalt {
     /// The salt kept in `file`, made there once, under the creation lock, when the file is missing.
+    /// Read in two forms, written in the recorded one (decision 0438).
     pub async fn load_or_create(file: &Path, random: &dyn RandomSource) -> Result<PassphraseSalt, Failure>;
-}   // also generate(&dyn RandomSource), from_bytes, as_bytes, for a caller that keeps it elsewhere
+}   // also generate(&dyn RandomSource), with this build's cost; from_bytes, as_bytes, for a caller that
+    // keeps the 16 bytes elsewhere: from_bytes reads them at the cost of the builds before decision 0438
 
 /// Where wrapped keys persist: one row per key and generation. Implemented by `a2m-ledger`.
 pub trait KeyRecords: Send + Sync {
@@ -226,14 +228,14 @@ It calls only `a2m-core`, and through its two traits, the back end and the key r
 | Wrapped data keys | Inside each `Sealed` envelope | Beside the data, as section 216 says |
 | Unwrapped upper keys | Memory, wiped on drop | Cached for the process; dropped on rotation |
 | Registered secrets | Memory, wiped on drop, inside the `Redactor` | Never written anywhere, and never digested. The matcher's automaton holds a copy that is freed but not wiped when the set changes |
-| The passphrase salt | A file the caller names, with a lock file beside it, through `PassphraseSalt::load_or_create`; or wherever the caller keeps it | Not secret. Made once per installation. Today 16 bare bytes; [decision 0438](../../decisions/0438-the-passphrase-routes-salt-file-records-the-cost-its-root-was-derived-with.md) makes it a record of the derivation's algorithm and cost as well, read back for every derivation (package YL3) |
+| The passphrase salt | A file the caller names, with a lock file beside it, through `PassphraseSalt::load_or_create`; or wherever the caller keeps it | Not secret. Made once per installation, and a record of the derivation its root is made with ([decision 0438](../../decisions/0438-the-passphrase-routes-salt-file-records-the-cost-its-root-was-derived-with.md)): one line, `format=1 algorithm=argon2id version=0x13 memory_kib=65536 passes=3 lanes=1 salt=<32 hexadecimal digits>`, ended by a line feed, its fields in that order. A root is derived with the cost the file records; the build's constant is the cost of a new file only. A file of 16 bare bytes, as every build before it wrote, is format 0, read at 64 MiB, three passes, and one lane, and never rewritten. This build derives with a recorded cost of at most 4 GiB, 1 to 64 passes, and 1 to 16 lanes that Argon2 accepts; a file that asks for another is refused, never derived with less |
 | The end of a streamed text | Memory, inside a `RedactStream` | Not yet redacted; let out by `push` and `finish` only |
 
 ## Failures
 
 | Class | Code | When |
 | --- | --- | --- |
-| `busy` | `key_store_unreachable` | The back end does not answer, or this machine has none this build can reach; the creation lock cannot be taken; the salt's file cannot be read or kept, or holds something that is not a salt. The kernel is degraded until it does |
+| `busy` | `key_store_unreachable` | The back end does not answer, or this machine has none this build can reach; the creation lock cannot be taken; the salt's file cannot be read or kept, or holds something that is not a salt; or it records a format, an algorithm, a version, or a cost this build does not derive with, when the next step says to start with a build that reads it. The kernel is degraded until it does |
 | `busy` | `key_store_entry_missing` | The root that wrapped a key is gone, as when a credential store is reset. The next step says that saved sessions must be signed in again |
 | `input` | `sealed_item_mismatch` | An envelope does not open under the context given: a swapped item, a wrong owner, a damaged envelope or key record, or a secret that is not text. Never says which |
 | `input` | `sealed_format_unsupported` | An envelope's format or cipher id is one this engine does not know |
@@ -270,6 +272,9 @@ A failure from this crate never names a key, a value, or a byte of either, and n
 | Two engines that start at once on a fresh installation end with one root | `two_engines_that_start_at_once_end_with_one_root`, over a credential store that holds both engines until each has found it empty and holds the second write until the first writer has read its own back, which is the order that lost a root; `engines_that_start_at_once_over_one_key_store_end_with_one_root` against the store in memory; `one_holder_at_a_time_and_a_dead_holder_holds_nothing` for the lock itself |
 | The same on the passphrase route: one salt, one root | `engines_that_start_at_once_on_the_passphrase_route_end_with_one_root`, and between two processes `two_processes_that_start_at_once_end_with_one_salt` |
 | An empty or short passphrase derives nothing | `a_passphrase_that_is_empty_or_short_is_refused_by_name` |
+| A salt file of 16 bare bytes gives the root earlier builds gave, and is not rewritten | `a_salt_of_sixteen_bare_bytes_gives_the_root_earlier_builds_gave`, against a root held in the test; `older_store.rs` in `a2m-ledger` opens its fixture's key records |
+| A new salt file is the recorded form, and a root is derived with the cost its file records | `a_new_salt_file_records_the_algorithm_and_the_cost`, `a_root_is_derived_with_the_cost_its_file_records` |
+| A salt file of an unknown format, algorithm, version, or cost, or a malformed one, is refused and derives nothing | `a_salt_file_this_build_does_not_read_is_refused_and_derives_nothing` |
 | A random source that repeats itself seals nothing | `a_source_that_repeats_itself_seals_nothing` |
 | A dedicated account's owner is the service identity named for it, and a person of the same text is another | `an_accounts_owner_is_the_service_identity_named_for_it` |
 | Rotating an upper layer re-wraps keys and re-encrypts no data | Not built: with `rotate` |
@@ -284,6 +289,7 @@ A failure from this crate never names a key, a value, or a byte of either, and n
 6. Not built: a key-service back end, for the server profile. Phase 6.
 7. Not built: `rotate`, with `vault.rotate`. Phase 9. `KeyRecords` already keeps one row per generation and has `replace` for it.
 8. Done: what the safety audit of [decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md) found: the creation lock for the root and the salt, the passphrase floor, the redactor's stream and its further forms, the registered set without digests, and the check on a random source that repeats itself. The creation lock's Windows and macOS code is the standard library's file lock; it is type-checked from Linux and has run only on Linux.
+9. Done: the salt file as a record of the derivation, read in its old form and its new one ([decision 0438](../../decisions/0438-the-passphrase-routes-salt-file-records-the-cost-its-root-was-derived-with.md), package YL3). Raising the cost of an existing installation waits on `rotate`.
 
 ## Open points
 
