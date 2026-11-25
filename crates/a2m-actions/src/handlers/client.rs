@@ -69,6 +69,19 @@ fn checked_name(name: &str) -> Result<&str, Failure> {
         && name
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
+    // A name Windows keeps for a device names the device, not a file, as
+    // `con.toml` does (decision 0431).
+    if a2m_core::is_kept_for_a_device(name) {
+        return Err(codes::input(
+            codes::SCHEMA_INVALID,
+            format!(
+                "`{name}` is not a valid client profile name; Windows keeps `{name}` for a device, so a file of that name cannot be made there, and the name is refused on every system."
+            ),
+            format!(
+                "Give the client profile a name Windows does not keep for a device, such as `{name}_main`."
+            ),
+        ));
+    }
     if plain {
         Ok(name)
     } else {
@@ -327,3 +340,39 @@ handler!(
         Ok(output)
     }
 );
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        reason = "a test: a helper that cannot do its work stops the test"
+    )]
+
+    use super::checked_name;
+    use crate::codes;
+
+    /// Decision 0431: a profile is the file `<name>.toml`, and a name
+    /// Windows keeps for a device names the device there, so it is refused
+    /// on every system with the reason; a word that only begins like one is
+    /// a name.
+    #[test]
+    fn a_profile_named_as_a_windows_device_is_refused_with_the_reason() {
+        for device in ["con", "prn", "aux", "nul", "com0", "com9", "lpt1"] {
+            let refused = checked_name(device).unwrap_err();
+            assert_eq!(refused.code(), &codes::SCHEMA_INVALID, "{device}");
+            assert!(
+                refused.message().contains("Windows keeps"),
+                "{device}: {refused:?}"
+            );
+            assert!(
+                refused.next_step().contains(&format!("{device}_main")),
+                "{device}: {refused:?}"
+            );
+        }
+        for name in ["console", "nulls", "com10", "generic", "my-client", "2nd"] {
+            assert_eq!(checked_name(name).unwrap(), name);
+        }
+        assert!(checked_name("Con").is_err());
+        assert!(checked_name("../con").is_err());
+    }
+}

@@ -364,6 +364,7 @@ async fn command(machine: &Machine, args: &[&str]) -> (Finished, Json) {
     let host = Host {
         cwd: machine.project.path().to_path_buf(),
         environment: machine.environment(),
+        session_folder: None,
         stdout_is_terminal: false,
         person_at_terminal: false,
         person: None,
@@ -649,6 +650,7 @@ async fn a_program_that_says_it_is_a_person_at_a_terminal_is_an_agent_and_raises
     let host = Host {
         cwd: machine.project.path().to_path_buf(),
         environment: machine.environment(),
+        session_folder: None,
         stdout_is_terminal: false,
         person_at_terminal: true,
         person: None,
@@ -841,6 +843,7 @@ async fn serve_asks_the_prompt_of_its_host_for_an_approval_with_the_operations_e
     let host = Host {
         cwd: machine.project.path().to_path_buf(),
         environment: machine.environment(),
+        session_folder: None,
         stdout_is_terminal: false,
         person_at_terminal: false,
         person: None,

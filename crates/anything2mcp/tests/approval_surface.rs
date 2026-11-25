@@ -171,6 +171,7 @@ async fn command(machine: &Machine, args: &[&str]) -> (Finished, Json) {
     let host = Host {
         cwd: machine.project.path().to_path_buf(),
         environment: machine.environment(),
+        session_folder: None,
         stdout_is_terminal: false,
         person_at_terminal: false,
         person: None,

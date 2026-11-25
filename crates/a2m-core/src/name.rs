@@ -202,6 +202,16 @@ const fn has_name_shape(bytes: &[u8], longest: usize) -> bool {
     true
 }
 
+/// Whether `text` is a name Windows keeps for a device: `con`, `prn`,
+/// `aux`, `nul`, or `com` or `lpt` and one digit, in lowercase (decision
+/// 0431). For a name of another shape that is joined into a file's name,
+/// such as a client profile's; a registered name is refused by its own
+/// check.
+#[must_use]
+pub const fn is_kept_for_a_device(text: &str) -> bool {
+    is_device_bytes(text.as_bytes())
+}
+
 /// Whether `bytes` is a name Windows keeps for a device: `con`, `prn`,
 /// `aux`, `nul`, or `com` or `lpt` and one digit (decision 0431). A path
 /// whose last part is one of them names the device on Windows 10, so such a

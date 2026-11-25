@@ -53,6 +53,11 @@ pub struct Host {
     pub cwd: PathBuf,
     /// The process environment.
     pub environment: BTreeMap<String, String>,
+    /// The session manager's folder of this user, on Linux, when it is the
+    /// user's and closed: where the runtime folder is when
+    /// `XDG_RUNTIME_DIR` is not set (decision 0432). Read from the machine
+    /// by [`Host::of_process`]; a test gives a stand-in, or `None`.
+    pub session_folder: Option<PathBuf>,
     /// Whether standard output is a terminal. When it is not, the result is
     /// one JSON object.
     pub stdout_is_terminal: bool,
@@ -86,6 +91,15 @@ impl std::fmt::Debug for Host {
 }
 
 impl Host {
+    /// The environment the layout is resolved from.
+    pub(crate) fn env(&self) -> Env {
+        Env {
+            os: OsFamily::current(),
+            vars: self.environment.clone(),
+            session_folder: self.session_folder.clone(),
+        }
+    }
+
     /// The surroundings of this process.
     #[must_use]
     pub fn of_process() -> Self {
@@ -93,6 +107,7 @@ impl Host {
         Self {
             cwd: std::env::current_dir().unwrap_or_default(),
             environment: env.vars,
+            session_folder: env.session_folder,
             stdout_is_terminal: std::io::stdout().is_terminal(),
             person_at_terminal: std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
             person: None,
@@ -453,11 +468,7 @@ pub async fn run_with(args: &[String], host: &Host) -> Finished {
         };
         return after_steps(nothing, stop.as_ref(), &tree, json);
     }
-    let env = Env {
-        os: OsFamily::current(),
-        vars: host.environment.clone(),
-    };
-    let paths = match Paths::resolve(&env) {
+    let paths = match Paths::resolve(&host.env()) {
         Ok(paths) => paths,
         Err(failure) => return stopped(&tree, &action, &failure, ExitClass::Failed, json),
     };
