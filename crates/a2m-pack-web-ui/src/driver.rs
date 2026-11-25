@@ -872,6 +872,17 @@ fn tab_for(step: &Step, gotos: &[(Step, bool)]) -> Result<TabKind, StepFailure> 
 /// denied, under.
 const LEFT_THE_PAGE: &[&str] = &["POPUP", "DOWNLOAD"];
 
+/// What the browser engine reports a socket, a shared worker, or a service
+/// worker under, which the page's lock refused when the page made it, before
+/// anything was sent; with the words a person reads for each.
+const REFUSED_WHEN_MADE: &[(&str, &str)] = &[
+    ("WEBSOCKET", "a WebSocket"),
+    ("WEBTRANSPORT", "a WebTransport session"),
+    ("PEERCONNECTION", "a peer connection"),
+    ("SHAREDWORKER", "a shared worker"),
+    ("SERVICEWORKER", "a service worker"),
+];
+
 /// What a tab refused since it was last asked, as a failure: a move of the
 /// page, which the browser ended, is `policy`, `surface_not_declared`; a
 /// window the page opened, which was closed, and a download, which was
@@ -905,6 +916,27 @@ pub(crate) fn refusal(
                 "The page tried to move to `{place}`, at {what}. The browser stopped it there, and the run stops: nothing is set, clicked, or read on a page that would leave."
             ),
             "Look at why the page moves. Declare the surface in the target's files if the system really lives there.",
+        )
+    } else if let Some((_, made)) = REFUSED_WHEN_MADE
+        .iter()
+        .find(|(method, _)| *method == first.method)
+    {
+        // Nothing was sent: the lock refused it when the page made it. It
+        // is not a request an asserted read could name, so the next step
+        // does not send the person to one (field test 11, finding 63).
+        let sent = address
+            .as_ref()
+            .and_then(|address| address.as_str().strip_prefix(&address.origin()))
+            .unwrap_or_default();
+        fail(
+            &codes::row::PAGE_WRITE_REFUSED,
+            format!(
+                "The page opened {made} (`{}`), at {what}, in a tab that may only read. The tab refused it when the page made it, so nothing was sent through it, and the run stops: what it would have sent is not held to what the tab may reach, and what the page shows without it is not known.",
+                shown(&format!("{place}{}", path_by_structure(sent))),
+            ),
+            &format!(
+                "Look at what the page does when it loads. A page that opens {made} as it loads cannot be read by the web pack yet, and no page request can say it only reads; read the record from a page that does not."
+            ),
         )
     } else if LEFT_THE_PAGE.contains(&first.method.as_str()) {
         fail(

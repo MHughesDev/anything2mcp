@@ -462,3 +462,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0468 | [Which actions with no handler serve one machine, and what each waits on](0468-which-actions-with-no-handler-serve-one-machine-and-what-each-waits-on.md) | Accepted (design decision) |
 | 0469 | [A run's trace is summarized for its person, and exported as one file in the working folder](0469-a-runs-trace-is-summarized-for-its-person-and-exported-as-one-file-in-the-working-folder.md) | Accepted (design decision) |
 | 0470 | [A rollback is a person's act, and moves to any version a person published](0470-a-rollback-is-a-persons-act-and-moves-to-any-version-a-person-published.md) | Accepted (design decision) |
+| 0471 | [The copy test's person has hands at the box's display](0471-the-copy-tests-person-has-hands-at-the-boxs-display.md) | Accepted (design decision) |

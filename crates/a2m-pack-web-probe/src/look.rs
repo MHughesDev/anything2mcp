@@ -48,7 +48,7 @@ pub const DISCOVERY_ACCOUNT: &str = "discovery";
 pub const WATCHING_ACCOUNT: &str = "watching";
 
 /// What the first tab of a watching window says to the person in it.
-pub const WATCHING_NOTICE: &str = "Anything2MCP is watching this window while you use it. It sends nothing of its own. It keeps the structure of what you use, the paths, methods, and field names of the requests and the screens you visit, and never a value you type or are shown. Press Stop recording on the engine's page, or close this window, to end it.";
+pub const WATCHING_NOTICE: &str = "Anything2MCP is watching this window while you use it. It sends nothing of its own. It keeps the structure of what you use: the paths, methods, and field names of the requests, and the screens you visit with the names a page gives its headings, links, and buttons, which can show a record's words. It never keeps a value you type, a value a field holds, or a value a request carries. Press Stop recording on the engine's page, or close this window, to end it.";
 
 /// How long a page is waited for to show the focus's ready text.
 const READY_WAIT: Duration = Duration::from_secs(10);
