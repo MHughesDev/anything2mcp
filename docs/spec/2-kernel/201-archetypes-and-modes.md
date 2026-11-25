@@ -117,7 +117,7 @@ Every write declares how its record is found again ([section 209](209-record-ide
 
 ## The modes of the first packs
 
-These are the modes of the four packs designed first ([section 202](202-kernel-and-packs.md)). The web pack is built first; the HTTP and MCP packs come in Phase 4, and the desktop pack in Phase 8.
+These are the modes of the four packs designed first ([section 202](202-kernel-and-packs.md)). Each is built and proven against its pack's test stand; how far each reaches on each system is in [SCOPE.md](../../../SCOPE.md).
 
 | Mode | Pack | Archetype | How it reaches the system | Needs | Best for | Main risk |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -131,13 +131,13 @@ These are the modes of the four packs designed first ([section 202](202-kernel-a
 
 **An application built on a browser runtime is a web surface.** Its browser is started by the supervisor, and it is served by `ui`. The `desktop` mode does not reach it; the browser engine belongs to the web pack.
 
-## The proposed modes of the designed packs
+## The modes of the other packs
 
-Five further packs are designed and not built. Each proposes one mode, which becomes real by its own decision record when the pack is built.
+Five further packs were designed after the first four, and each is built with one mode, named in its manifest.
 
 | Mode | Pack | Archetype | Reaches |
 | --- | --- | --- | --- |
-| `cli` | Command ([section 306](../3-packs/306-the-command-pack.md)) | Command | A program started by absolute path with typed arguments, never through a shell. Built second, to test that the kernel is neutral (hypothesis H-26) |
+| `cli` | Command ([section 306](../3-packs/306-the-command-pack.md)) | Command | A program started by absolute path with typed arguments, never through a shell. Built second of all the packs, to test that the kernel is neutral (hypothesis H-26) |
 | `sql` | Data ([section 307](../3-packs/307-the-data-pack.md)) | Request | A relational database; reads before writes |
 | `file` | File ([section 308](../3-packs/308-the-file-pack.md)) | Artifact | A file in a known format, treated as the system operated on |
 | `stream` | Stream ([section 309](../3-packs/309-the-stream-pack.md)) | Stream | A queue, a topic, a change feed, or a log |
