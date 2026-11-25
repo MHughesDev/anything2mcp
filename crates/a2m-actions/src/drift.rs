@@ -102,6 +102,10 @@ pub(crate) struct Held {
     pub mark: DriftMark,
     pub entry: String,
     pub found_at: i64,
+    /// The pack's code the drift stopped on.
+    pub code: String,
+    /// The run that saw it.
+    pub run: String,
 }
 
 /// The marks of a target, or that one of them cannot be read: what it said
@@ -118,7 +122,7 @@ pub(crate) fn marks(
     target: &str,
 ) -> Result<Marks, Failure> {
     let rows = tx.tables(Owner::Actions).query(
-        "SELECT surface, mode, knowledge, digest, entry, operation, found_at
+        "SELECT surface, mode, knowledge, digest, entry, operation, found_at, code, run_id
          FROM actions_drift_marks WHERE workspace_id = ?1 AND target = ?2
          ORDER BY found_at",
         &[
@@ -147,6 +151,8 @@ pub(crate) fn marks(
                 },
                 entry,
                 found_at: row.int(6).ok()?,
+                code: row.text(7).ok()?.to_owned(),
+                run: row.text(8).ok()?.to_owned(),
             })
         };
         match read() {

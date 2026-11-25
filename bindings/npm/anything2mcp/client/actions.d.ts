@@ -150,6 +150,7 @@ export interface ConfigShowInput {
 export interface DiscoverRunInput {
   target: string;
   files?: Record<string, unknown>;
+  focus?: Record<string, unknown>;
   surface?: string;
 }
 
@@ -434,6 +435,27 @@ export interface ReachNameInput {
  */
 export interface ReachWithdrawInput {
   label: string;
+}
+
+/**
+ * The input of `repair.accept`.
+ */
+export interface RepairAcceptInput {
+  knowledge: string;
+  now: string;
+  proposal: string;
+  target: string;
+  before?: string;
+}
+
+/**
+ * The input of `repair.propose`.
+ */
+export interface RepairProposeInput {
+  knowledge: string;
+  now: string;
+  target: string;
+  before?: string;
 }
 
 /**
@@ -1182,6 +1204,23 @@ export declare abstract class Actions {
    * A person forgets one reach by its label. The engine action is `reach.withdraw`.
    */
   reachWithdraw(input: ReachWithdrawInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Write a repair the pack proposed into the target's drafts, as `repair.propose`
+   * showed it. A person's act, carried out on the engine's page, never an agent's. The
+   * draft is linted, tested, and published like any other; nothing is published here.
+   * The engine action is `repair.accept`.
+   */
+  repairAccept(input: RepairAcceptInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The repair bundle of a drift: the drift, the tools it stops, two shapes of the
+   * surface from findings of a discovery, before and now, the draft file that holds the
+   * knowledge, and the change the pack's repair proposer proposes, as a diff, or why it
+   * proposes none. Keeps nothing, and writes nothing. The engine action is
+   * `repair.propose`.
+   */
+  repairPropose(input: RepairProposeInput, options?: CallOptions): Promise<Response>;
 
   /**
    * Stop a running or waiting run. Says what was completed before it stopped. The

@@ -16,6 +16,11 @@
 //!   description.
 //! - `wrap`: the form is wrapped in a card whose header holds the heading
 //!   "Line Item Details", which is no longer inside the form.
+//! - `relabel`: two labels say other words at once: "Description" reads
+//!   "Item", and "Quantity" reads "Qty". Which old label is which new one
+//!   is not shown by the page, so a rule that pairs a renamed element
+//!   only where the pairing is one to one proposes no repair
+//!   (decision 0492).
 
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +47,8 @@ pub enum ScreenChange {
     Reorder,
     /// The form is wrapped in another element, which takes its heading.
     Wrap,
+    /// Two labels say other words at once.
+    Relabel,
 }
 
 /// One change, as the control interface takes it.
@@ -88,10 +95,15 @@ pub(crate) fn item_form_body(
             String::new()
         }
     };
-    let (quantity_label, save_label) = if change == ScreenChange::Reword {
-        ("Qty", "Save line item")
+    let (quantity_label, save_label) = match change {
+        ScreenChange::Reword => ("Qty", "Save line item"),
+        ScreenChange::Relabel => ("Qty", "Save"),
+        _ => ("Quantity", "Save"),
+    };
+    let description_label = if change == ScreenChange::Relabel {
+        "Item"
     } else {
-        ("Quantity", "Save")
+        "Description"
     };
     let ItemValues {
         order,
@@ -110,7 +122,7 @@ pub(crate) fn item_form_body(
         field = id("item_code"),
     );
     let description_row = format!(
-        "<p{row}><label for=\"{field}\">Description</label> \
+        "<p{row}><label for=\"{field}\">{description_label}</label> \
          <input id=\"{field}\"{input} name=\"description\" value=\"{description}\" required></p>\n",
         field = id("description"),
     );

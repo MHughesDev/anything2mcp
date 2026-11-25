@@ -38,6 +38,7 @@ mod path;
 mod place;
 mod reach;
 mod registry;
+mod repair;
 mod replay;
 pub mod shape;
 mod supervisor;
@@ -85,6 +86,7 @@ pub use registry::{
     RefusedProvider, Registry, RegistryBuilder, RegistryProblem, SurfaceKindEntry, component_state,
     current_platform,
 };
+pub use repair::{RepairAsk, RepairFile, RepairProposal, RepairProposer};
 pub use replay::{Recorded, RecordedAnswer, Replay, answer_name, answers_to};
 pub use supervisor::{
     Cleanup, ConnFailure, EnvAllowlist, Exit, Finished, ForeignLink, ForeignPipe,

@@ -341,6 +341,15 @@ A front door authenticates and builds a `Request`; it decides nothing. `dispatch
 - **Whose.** Every action but `watch.create` serves only a watch of the caller's person; `watch.end` also its asker. A record a change names is resolved only from a run of that person.
 - **Idle.** `Kernel::watches_hold_the_engine` is true while a watch is confirmed or running; the product crate's idle holds read it.
 
+### The repair bundle
+
+[Decision 0492](../../decisions/0492-a-drift-yields-a-repair-bundle-and-a-person-accepts-a-repair-a-pack-proposed-by-rule.md). Module `handlers/repairs.rs`. Nothing is kept: the bundle is built on asking, again on the page, and again at the press.
+
+- **What it is built from.** The latest drift mark of the knowledge named (`drift::marks`, which now carries the pack's code and the run); the published compiled target, whose pack section with the mark's digest gives the file kind; two stored findings, of one kind and one subject; the drafts compiled under the draft version, one of whose sections must hold the mark's digest; and the drafts of that file kind as text. The pack's `RepairProposer` for the findings' kind, from the registry, says what it would change; the kernel reads no finding's `found`, no file's content, and no locator.
+- **What it gives.** The drift, the bindings the mark covers (`drift_covers`), the file kind and its files, each shape under `untrusted`, and `proposed` with the file, the reasons, a line diff, and the `proposal` digest of the path and both texts, or `proposed: false` with the reason.
+- **The acceptance.** `repair.accept` is a person's act (`PersonNeed::Presence`): an agent's call goes to the page, whose lines `Kernel::repair_lines` gives from the bundle built again, and is refused there, `repair_not_proposed` or `repair_changed`, before anyone is asked. The press builds it once more and hands the one file to `draft.write`'s own handler; it publishes nothing.
+- **`discover.run`'s focus.** The call's `focus` map is handed to the discoverers as the job's focus, as data, by the names they read; before, the kernel always handed an empty one.
+
 ### Runs that wait for a person
 
 - **Whose a run is.** `run.get`, `run.resume`, and `run.cancel` answer for a run only to the person who started it, or to a caller proved to act for that person (`Principal::person`). Anyone else is told `input`, `not_found`, whatever role they hold: a run acts under its person's session. `trace.show` is bound to the workspace alone, because reading a run's evidence is what the auditor's role is for and the dispatcher's decision was that the caller holds it. A resume never changes what was kept of the run's caller: the guard asks about the caller that started the run, and `run.resume` first asks the policy engine, and records the answer, whether whoever resumes may use the run's tool.
@@ -568,6 +577,8 @@ The crate's own codes are declared once, each with its class, meaning, next step
 | `policy` | `person_required` | A person's act was asked for by a caller that acts for no person, or the surface has no page for it |
 | `policy` | `address_unregistered` | A publish would reach a place no person registered for the target, and was not carried out from the publish page that names it (decision 0413) |
 | `stale` | `drafts_changed` | The drafts of a publish a person was shown compile to another compiled target by the time they press |
+| `input` | `repair_not_proposed` | `repair.accept` was asked of a repair bundle that proposes no repair, its pack's proposer having found none sure enough or the drafts no longer holding the drifted knowledge; nothing is written ([decision 0492](../../decisions/0492-a-drift-yields-a-repair-bundle-and-a-person-accepts-a-repair-a-pack-proposed-by-rule.md)) |
+| `stale` | `repair_changed` | The repair a person was shown is not the one the bundle proposes when they press; nothing is written |
 | `policy` | `scout_off` | `scout.run` was called and `authoring.scout.run` is `off` |
 | `input` | `discovery_file_not_taken` | `scout.run`, `discover.run`, or `spec.import` names a file under a name no discoverer suiting the observed surfaces reads; nothing starts |
 | `input` | `capture_not_offered` | `capture.start` names a surface, or a target with none, that no discoverer a person drives suits; nothing is asked ([decision 0433](../../decisions/0433-a-capture-is-asked-for-by-capture-start-begun-by-its-person-on-the-page-and-held-in-the-engines-memory.md)) |

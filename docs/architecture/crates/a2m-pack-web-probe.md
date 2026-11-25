@@ -11,7 +11,7 @@ Built so far ([decision 0114](../../decisions/0114-the-web-probe-as-built-three-
 | Side | Pack: web |
 | Layer | 10, Packs |
 | May depend on | Layers 1 to 5, and `a2m-pack-web-browser` |
-| Depends on | `a2m-core` (`Finding`, `Subject`, `Coverage`, `EvidenceLevel`), `a2m-provider` (`Discoverer`, `Describer`, `SandboxPort`, `PackContext`, registration), `a2m-logs` (the clock), `a2m-pack-web-browser` (the cell of browsers, of which only the `Observer` is kept). Outside: `serde_json`. Not yet `a2m-auth`: a discovery's scope carries no session |
+| Depends on | `a2m-core` (`Finding`, `Subject`, `Coverage`, `EvidenceLevel`), `a2m-provider` (`Discoverer`, `Describer`, `SandboxPort`, `PackContext`, `RepairProposer`, registration), `a2m-files` (the YAML reader with places, for the repair proposer alone), `a2m-logs` (the clock), `a2m-pack-web-browser` (the cell of browsers, of which only the `Observer` is kept). Outside: `serde_json`. Not yet `a2m-auth`: a discovery's scope carries no session |
 | Roadmap packages | Package E2, after E1 gives the discoverer extension point and the findings store, and after 2.6 gives sign-in. `auth.detect` arrives earlier, in package 2.6, as the first discoverer |
 | Carries out | Spec sections [301](../../spec/3-packs/301-the-web-pack.md) (the probe), [215](../../spec/2-kernel/215-sessions-and-the-session-keeper.md) (auth discovery), [401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md) (capture, mining, read-only exploration), [218](../../spec/2-kernel/218-discovery-and-findings.md), [401](../../spec/4-building-tools/401-overlaying-tools-on-an-existing-system.md) (scenarios, templating), [402](../../spec/4-building-tools/402-the-scout-and-who-does-what.md) (stages 1 and 2 for web surfaces) |
 
@@ -23,6 +23,7 @@ Built so far ([decision 0114](../../decisions/0114-the-web-probe-as-built-three-
 - Endpoint inference: grouping exchanges into endpoints, templating paths in two tiers, inferring request and response shapes and dependencies between requests.
 - Reading what a site declares for agents, including tools a page registers, as untrusted findings.
 - The describer: showing an agent, in compact text, what was seen.
+- The repair proposer of its `screen` findings: a rule of exact pairing between two snapshots of a page that proposes a change to a screen model and applies nothing (decision 0492).
 
 It must never: hold an acting tab; press, type, or submit; send a request other than a navigation to an address it was given or found as a plain link; enter a surface the target did not declare; keep a value where a shape will do, unless a person asked and policy allows it; claim `discovered` for anything that did not answer; write a draft file, which is the drafter's work.
 
@@ -36,6 +37,7 @@ It is a provider of its own, named `web_probe`, because a pack is handed its con
 | Finding kinds | Built: `surface`, `sign_in_method`, `screen`, `exchange`, each a checked name. It produces `endpoint` findings and does not own that kind: its manifest reads it. Not built: `declared_tool`. `field` and `action` are not kinds: one `screen` finding holds its fields and actions |
 | Discoverers | Built: `web_probe`, `web_snapshot`, `web_capture`, `web_auth`, and `web_use`, the one a person drives (`driven_by = "person"`, bound 1800 s). Not built: `web_endpoints`, `web_declared` |
 | Describer | `web_describer`, for each discoverer |
+| Repair proposer | `ScreenRepair`, for `screen` findings ([decision 0492](../../decisions/0492-a-drift-yields-a-repair-bundle-and-a-person-accepts-a-repair-a-pack-proposed-by-rule.md)): handed the drafts' `screen` files as text and two snapshots of one page, before and now, it pairs them by role and name in each section and proposes, in place, a locator's new name where exactly one element of its role is gone from its section and exactly one is new, or a fingerprint's new section where the text it names left its section; anything else proposes nothing, with why. Pure; it reaches nothing |
 | Drafting rules | None of its own. Its findings are drafted by the rules of the crates that own the file kinds: screens by `a2m-pack-web-ui`, which drafts a read of each table a snapshot names, and endpoints by `a2m-pack-http` |
 | Effects | The root `profiles` for writing, the network of the target's surfaces, and a requirement that lists every place of the base's `KNOWN_PLACES`; a test holds the two lists equal |
 | Settings | `max_pages`, the page budget of one discovery, 20 unless set |

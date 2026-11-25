@@ -75,12 +75,14 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | `provider.describe` | One provider's manifest, effects, and requirements | Viewer | No | Stage B |
 | `provider.enable`, `provider.disable` | Switch a provider on or off; a protected setting on one machine where it starts processes or reaches a network | Admin | No | Stage B, not built |
 | `component.list` | Outside programs providers need: found or not, with path and digest, known or unverified; starts nothing | Viewer | No | Stage B |
-| `discover.run` | Run the discoverers that suit a target's surfaces; returns findings. `files` hands them files of the project's `inputs` folder, each under a name a discoverer reads | Builder | build | Stage E |
+| `discover.run` | Run the discoverers that suit a target's surfaces; returns findings. `files` hands them files of the project's `inputs` folder, each under a name a discoverer reads; `focus` hands them what to look at, as data, such as the web probe's `paths` ([decision 0492](../decisions/0492-a-drift-yields-a-repair-bundle-and-a-person-accepts-a-repair-a-pack-proposed-by-rule.md)) | Builder | build | Stage E |
 | `finding.list`, `finding.describe` | Findings for a target, by level, kind, or source | Builder | build | Stage E |
 | `unknown.list` | The open questions about a target | Builder | build | Stage E |
 | `unknown.settle` | Settle an open question with evidence | Builder | No | Stage E, not built |
 | `scout.run` | Identify a target, run the discoverers that suit it, draft what follows by rule, and try the drafted reads; resumable. `files` hands its discoverers files of the project's `inputs` folder, as for `discover.run`, and a resumed scout hands the same ones. A scout whose discovery of every surface it observed failed answers `ok: false`, with that failure and the report; one where only some failed answers `ok` with a warning for each (decision 0451) | Builder | build | Stage E |
 | `scout.report` | The last scout's report, or the one `scout` names, such as a capture's: found, drafted, proven, open, and what to look at first; each list counted and cut to its first entries, one read whole in pages with `part`, `limit`, `offset`. A report from a capture says so, how it ended, and that its coverage is partial | Builder | build | Stage E |
+| `repair.propose` | The repair bundle of a drift: the drift, the tools it stops, two shapes of the surface from findings of a discovery, before and now, the draft file that holds the knowledge, and the change the pack's repair proposer proposes as a diff with its digest, or why it proposes none; keeps and writes nothing ([decision 0492](../decisions/0492-a-drift-yields-a-repair-bundle-and-a-person-accepts-a-repair-a-pack-proposed-by-rule.md)) | Builder | No | 9 |
+| `repair.accept` | Write the repair a bundle proposes into the drafts, exactly as shown: a person's act on the engine's page, never an agent's; publishes nothing, and the draft goes through the gates and a publish like any other | The person | No | 9 |
 
 ## Publishing and versions
 

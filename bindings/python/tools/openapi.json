@@ -7263,6 +7263,12 @@
           "required": [],
           "type": "object"
          },
+         "focus": {
+          "additionalProperties": {},
+          "properties": {},
+          "required": [],
+          "type": "object"
+         },
          "surface": {
           "type": "string"
          },
@@ -20737,6 +20743,932 @@
     },
     "summary": "A person forgets one reach by its label.",
     "x-action": "reach.withdraw",
+    "x-sdk": true
+   }
+  },
+  "/api/v1/actions/repair.accept": {
+   "post": {
+    "operationId": "repair_accept",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "before": {
+          "type": "string"
+         },
+         "knowledge": {
+          "type": "string"
+         },
+         "now": {
+          "type": "string"
+         },
+         "proposal": {
+          "type": "string"
+         },
+         "target": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "target",
+         "knowledge",
+         "now",
+         "proposal"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": {},
+             "properties": {
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              }
+             },
+             "required": [],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": {},
+             "properties": {
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              }
+             },
+             "required": [],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Write a repair the pack proposed into the target's drafts, as `repair.propose` showed it. A person's act, carried out on the engine's page, never an agent's. The draft is linted, tested, and published like any other; nothing is published here.",
+    "x-action": "repair.accept",
+    "x-sdk": true
+   }
+  },
+  "/api/v1/actions/repair.propose": {
+   "post": {
+    "operationId": "repair_propose",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "before": {
+          "type": "string"
+         },
+         "knowledge": {
+          "type": "string"
+         },
+         "now": {
+          "type": "string"
+         },
+         "target": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "target",
+         "knowledge",
+         "now"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "because": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "before": {
+             "additionalProperties": false,
+             "properties": {
+              "finding": {
+               "type": "string"
+              },
+              "shape": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              }
+             },
+             "required": [
+              "finding",
+              "shape"
+             ],
+             "type": "object"
+            },
+            "diff": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "after": {
+                "type": "string"
+               },
+               "before": {
+                "type": "string"
+               },
+               "line": {
+                "type": "integer"
+               }
+              },
+              "required": [
+               "line",
+               "before",
+               "after"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "drift": {
+             "additionalProperties": false,
+             "properties": {
+              "code": {
+               "type": "string"
+              },
+              "marked_at": {
+               "type": "integer"
+              },
+              "mode": {
+               "type": "string"
+              },
+              "run_id": {
+               "type": "string"
+              },
+              "surface": {
+               "type": "string"
+              },
+              "tool": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "tool",
+              "mode",
+              "surface",
+              "code",
+              "run_id",
+              "marked_at"
+             ],
+             "type": "object"
+            },
+            "file": {
+             "type": "string"
+            },
+            "file_kind": {
+             "type": "string"
+            },
+            "files": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "knowledge": {
+             "type": "string"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "now": {
+             "additionalProperties": false,
+             "properties": {
+              "finding": {
+               "type": "string"
+              },
+              "shape": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              }
+             },
+             "required": [
+              "finding",
+              "shape"
+             ],
+             "type": "object"
+            },
+            "proposal": {
+             "type": "string"
+            },
+            "proposed": {
+             "type": "boolean"
+            },
+            "reason": {
+             "type": "string"
+            },
+            "stops": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "mode": {
+                "type": "string"
+               },
+               "tool": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "tool",
+               "mode"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "target": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "target",
+            "knowledge",
+            "drift",
+            "stops",
+            "file_kind",
+            "files",
+            "now",
+            "proposed"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "because": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "before": {
+             "additionalProperties": false,
+             "properties": {
+              "finding": {
+               "type": "string"
+              },
+              "shape": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              }
+             },
+             "required": [
+              "finding",
+              "shape"
+             ],
+             "type": "object"
+            },
+            "diff": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "after": {
+                "type": "string"
+               },
+               "before": {
+                "type": "string"
+               },
+               "line": {
+                "type": "integer"
+               }
+              },
+              "required": [
+               "line",
+               "before",
+               "after"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "drift": {
+             "additionalProperties": false,
+             "properties": {
+              "code": {
+               "type": "string"
+              },
+              "marked_at": {
+               "type": "integer"
+              },
+              "mode": {
+               "type": "string"
+              },
+              "run_id": {
+               "type": "string"
+              },
+              "surface": {
+               "type": "string"
+              },
+              "tool": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "tool",
+              "mode",
+              "surface",
+              "code",
+              "run_id",
+              "marked_at"
+             ],
+             "type": "object"
+            },
+            "file": {
+             "type": "string"
+            },
+            "file_kind": {
+             "type": "string"
+            },
+            "files": {
+             "items": {
+              "type": "string"
+             },
+             "type": "array"
+            },
+            "knowledge": {
+             "type": "string"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "now": {
+             "additionalProperties": false,
+             "properties": {
+              "finding": {
+               "type": "string"
+              },
+              "shape": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              }
+             },
+             "required": [
+              "finding",
+              "shape"
+             ],
+             "type": "object"
+            },
+            "proposal": {
+             "type": "string"
+            },
+            "proposed": {
+             "type": "boolean"
+            },
+            "reason": {
+             "type": "string"
+            },
+            "stops": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "mode": {
+                "type": "string"
+               },
+               "tool": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "tool",
+               "mode"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "target": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "target",
+            "knowledge",
+            "drift",
+            "stops",
+            "file_kind",
+            "files",
+            "now",
+            "proposed"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "The repair bundle of a drift: the drift, the tools it stops, two shapes of the surface from findings of a discovery, before and now, the draft file that holds the knowledge, and the change the pack's repair proposer proposes, as a diff, or why it proposes none. Keeps nothing, and writes nothing.",
+    "x-action": "repair.propose",
     "x-sdk": true
    }
   },

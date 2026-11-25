@@ -722,6 +722,13 @@ impl Kernel {
             let details = self.canary_confirmation_lines(caller, &input).await?;
             return Ok((input, details, PublishShown::default(), Vec::new()));
         }
+        if def.name.as_str() == "repair.accept" {
+            // What the person accepts is the repair the pack proposes now,
+            // built again from what is kept, and refused here when it is
+            // not the one the agent was shown (decision 0492).
+            let details = self.repair_lines(caller, project, &input).await?;
+            return Ok((input, details, PublishShown::default(), Vec::new()));
+        }
         if def.name.as_str() == "assertion.confirm" {
             // What the person confirms is each asserted read of the drafts
             // as they are now, pinned by its digest (decision 0475).

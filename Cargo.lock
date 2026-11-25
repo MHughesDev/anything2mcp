@@ -435,6 +435,7 @@ name = "a2m-pack-web-probe"
 version = "0.1.0"
 dependencies = [
  "a2m-core",
+ "a2m-files",
  "a2m-logs",
  "a2m-pack-web-browser",
  "a2m-provider",

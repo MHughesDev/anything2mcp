@@ -91,6 +91,12 @@ a2m_core::failure_codes! {
     ADDRESS_UNREGISTERED = Policy, "address_unregistered",
         meaning "A publish would reach an address no person registered for the target, and it was not carried out from the publish page that names it.",
         next "Ask for the publish on its page, with `publish.request`, read the new address it names, and press there.";
+    REPAIR_NOT_PROPOSED = Input, "repair_not_proposed",
+        meaning "`repair.accept` was asked of a repair bundle that proposes no repair: the pack's proposer found none sure enough, or the drafts no longer hold the knowledge that drifted (decision 0492). Nothing is written.",
+        next "Call `repair.propose` to read why; write the repair as a draft by hand, or give a snapshot it can pair.";
+    REPAIR_CHANGED = Stale, "repair_changed",
+        meaning "The repair a person was shown changed before they pressed: the drafts, the drift mark, or the findings now give another proposal (decision 0492). Nothing is written.",
+        next "Call `repair.propose` again, and read the new bundle before accepting it.";
     DRAFTS_CHANGED = Stale, "drafts_changed",
         meaning "The drafts of a publish a person was shown changed before they pressed: they compile to another compiled target.",
         next "Ask again, and read the new page before pressing.";
