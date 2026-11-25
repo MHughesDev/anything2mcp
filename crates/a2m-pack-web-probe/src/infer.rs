@@ -30,6 +30,44 @@ pub enum Answer {
     Document,
 }
 
+/// The body a request sent, by structure: its media type and, for a JSON
+/// or form body, the names and kinds of its fields to one level. Never a
+/// value (decision 0392, point 1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Body {
+    /// The media type, in lowercase, without its parameters.
+    pub media_type: String,
+    /// Each field's name, and `outer.inner` one level inside an object,
+    /// with the kind of value it held, in the words of JSON: `string`,
+    /// `integer`, `number`, `boolean`, `null`, `object`, `array`, or
+    /// `mixed`. `None` when the body was not read as structure.
+    pub fields: Option<BTreeMap<String, String>>,
+    /// Whether names of the body were withheld, as a dictionary's are.
+    pub names_withheld: bool,
+}
+
+impl Body {
+    /// The body as an `exchange` finding keeps it.
+    #[must_use]
+    pub fn found(&self) -> Json {
+        object([
+            ("media_type", Json::from(self.media_type.as_str())),
+            (
+                "fields",
+                self.fields.as_ref().map_or(Json::Null, |fields| {
+                    Json::Object(
+                        fields
+                            .iter()
+                            .map(|(name, kind)| (name.clone(), Json::from(kind.as_str())))
+                            .collect(),
+                    )
+                }),
+            ),
+            ("names_withheld", Json::Bool(self.names_withheld)),
+        ])
+    }
+}
+
 /// One request, and what came back, by structure. It holds no value: a
 /// query holds names and types, an answer holds a shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +98,9 @@ pub struct Exchange {
     /// Whether the query held an entry that is not kept: one with no `=`,
     /// or one whose name is not a plain name.
     pub query_left_out: bool,
+    /// The body the request sent, for one a watching tab recorded with a
+    /// body; `None` for a request that sent none.
+    pub body: Option<Body>,
 }
 
 impl Exchange {
@@ -98,6 +139,9 @@ impl Exchange {
                 ),
             );
             fields.insert("query_left_out".to_owned(), Json::Bool(self.query_left_out));
+            if let Some(body) = &self.body {
+                fields.insert("body".to_owned(), body.found());
+            }
             return Json::Object(crate::shape::sorted(fields.clone()));
         }
         found
@@ -195,6 +239,11 @@ pub struct Endpoint {
     pub query: BTreeMap<String, BTreeSet<&'static str>>,
     /// The shape of its JSON answers, merged; nothing when none was JSON.
     pub response: Option<Shape>,
+    /// The shape of the bodies its requests sent, merged; nothing when
+    /// none sent a body read as structure.
+    pub request: Option<Shape>,
+    /// The media types of the bodies its requests sent, each once.
+    pub request_media_types: BTreeSet<String>,
     /// How many exchanges it was made from.
     pub seen: u64,
     /// Which exchanges, by their place in the input.
@@ -312,7 +361,7 @@ impl Endpoint {
         } else {
             "inferred"
         };
-        object([
+        let mut found = object([
             ("format", Json::from("1")),
             ("method", Json::from(self.method.as_str())),
             ("path", Json::from(self.template())),
@@ -348,7 +397,28 @@ impl Endpoint {
                 self.response.as_ref().map_or(Json::Null, Shape::to_json),
             ),
             ("seen", Json::from(self.seen)),
-        ])
+        ]);
+        // What a request sent is said only of an endpoint whose requests
+        // sent a body: an endpoint of reads by `GET` keeps the form it had.
+        if let Json::Object(fields) = &mut found
+            && !self.request_media_types.is_empty()
+        {
+            fields.insert(
+                "request".to_owned(),
+                self.request.as_ref().map_or(Json::Null, Shape::to_json),
+            );
+            fields.insert(
+                "request_media_types".to_owned(),
+                Json::Array(
+                    self.request_media_types
+                        .iter()
+                        .map(|one| Json::from(one.as_str()))
+                        .collect(),
+                ),
+            );
+            return Json::Object(crate::shape::sorted(std::mem::take(fields)));
+        }
+        found
     }
 }
 
@@ -548,6 +618,13 @@ fn absorb(into: &mut Endpoint, other: &Endpoint) {
         (Some(one), None) | (None, Some(one)) => Some(one.clone()),
         (None, None) => None,
     };
+    into.request = match (&into.request, &other.request) {
+        (Some(mine), Some(theirs)) => Some(mine.merged(theirs)),
+        (Some(one), None) | (None, Some(one)) => Some(one.clone()),
+        (None, None) => None,
+    };
+    into.request_media_types
+        .extend(other.request_media_types.iter().cloned());
     into.seen += other.seen;
     into.sources.extend(&other.sources);
     into.sources.sort_unstable();
@@ -578,6 +655,16 @@ pub fn infer_endpoints(exchanges: &[Exchange], tier_two: bool) -> Vec<Endpoint> 
                 Answer::Json(shape) => Some(shape.clone()),
                 Answer::Refused | Answer::Document => None,
             },
+            request: exchange
+                .body
+                .as_ref()
+                .and_then(|body| body.fields.as_ref())
+                .map(Shape::of_fields),
+            request_media_types: exchange
+                .body
+                .iter()
+                .map(|body| body.media_type.clone())
+                .collect(),
             seen: 1,
             sources: vec![index],
         };
@@ -667,6 +754,7 @@ pub fn matched_requests(exchanges: &[Exchange]) -> Vec<MatchedRequests> {
         Vec<String>,
         usize,
         Vec<String>,
+        String,
     );
     let mut groups: BTreeMap<Key, Vec<usize>> = BTreeMap::new();
     for (at, one) in exchanges.iter().enumerate() {
@@ -705,6 +793,10 @@ pub fn matched_requests(exchanges: &[Exchange]) -> Vec<MatchedRequests> {
                         blank(&request, hole),
                         page_hole,
                         blank(&made_by, page_hole),
+                        one.body
+                            .as_ref()
+                            .map(|body| body.found().to_string())
+                            .unwrap_or_default(),
                     ))
                     .or_default()
                     .push(at);
@@ -713,7 +805,7 @@ pub fn matched_requests(exchanges: &[Exchange]) -> Vec<MatchedRequests> {
     }
     // Two requests with one value at the varying place are one request
     // seen twice, not two records.
-    groups.retain(|(_, _, _, _, hole, _, _, _), members| {
+    groups.retain(|(_, _, _, _, hole, _, _, _, _), members| {
         let values: BTreeSet<&str> = members
             .iter()
             .filter_map(|at| {
@@ -734,7 +826,7 @@ pub fn matched_requests(exchanges: &[Exchange]) -> Vec<MatchedRequests> {
     }
     let mut out: Vec<MatchedRequests> = groups
         .into_iter()
-        .filter_map(|((_, _, _, _, hole, _, page_hole, _), members)| {
+        .filter_map(|((_, _, _, _, hole, _, page_hole, _, _), members)| {
             let mut members: Vec<usize> = members
                 .into_iter()
                 .filter(|at| held.get(at) == Some(&1))

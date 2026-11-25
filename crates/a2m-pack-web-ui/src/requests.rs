@@ -828,9 +828,17 @@ impl FileKind for RequestKind {
     /// one that is (decision 0206): a write entry, and an asserted read, are
     /// written by a person (decision 0394, point 2).
     fn writes(&self, doc: &Located<Doc>) -> bool {
-        !(doc.text("method") == Some("GET")
-            && doc.text("effect") == Some("read")
-            && doc.get("read_asserted").is_none())
+        let read_by_get = doc.text("method") == Some("GET") && doc.text("effect") == Some("read");
+        // A request by a method that may write, drafted from a capture with
+        // an open question in place of its effect (decision 0392, point 4):
+        // it is held, the loader reads nothing in the holding folder, and it
+        // reads or writes only once a person states its effect.
+        let effect_asked = doc.text("method") != Some("GET")
+            && doc
+                .get("effect")
+                .and_then(|effect| effect.get("open_question"))
+                .is_some();
+        !((read_by_get || effect_asked) && doc.get("read_asserted").is_none())
     }
 
     /// A page request marked `effect: read`, by a method other than `GET`,

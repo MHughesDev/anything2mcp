@@ -53,6 +53,25 @@ pub(crate) fn is_name(text: &str, longest: usize) -> bool {
 /// The kernel's file kind for operations.
 const OPERATION: FileKindName = FileKindName::fixed("operation");
 
+/// What a screen seen in a person's use asks in place of what shows it is
+/// ready.
+const PERSON_READY: &str = "This screen, at the address quoted, was seen while a person used the application in a window the engine watched; the engine never opened it itself. What shows that the page is ready when the engine opens it to read? Write it under `ready`, then release this draft.";
+
+/// Whether a `screen` finding says it was seen as a person used the
+/// application (`seen_by: person`, decision 0392).
+fn seen_by_a_person(found: &str) -> bool {
+    serde_json::from_str::<Json>(found)
+        .ok()
+        .and_then(|found| {
+            found
+                .get("seen_by")
+                .and_then(Json::as_str)
+                .map(str::to_owned)
+        })
+        .as_deref()
+        == Some("person")
+}
+
 /// The finding kind the web pack's discoverers give for a snapshot.
 pub(crate) const SCREEN_FINDING: &str = "screen";
 
@@ -851,6 +870,21 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
                 ("fields", DraftValue::Map(undecided)),
             ]),
         });
+    }
+    // A screen seen while a person used the application was never opened
+    // by the engine: what shows that it is ready when the engine opens it
+    // is a person's to say, and every draft from a capture is held
+    // (decision 0392, point 3). The reads over it are held with it.
+    if seen_by_a_person(finding.found()) {
+        for doc in &mut out.screens {
+            if let DraftValue::Map(pairs) = &mut doc.body {
+                for (key, value) in pairs.iter_mut() {
+                    if key == "ready" {
+                        *value = cx.open_question_quoting(PERSON_READY, &[path]);
+                    }
+                }
+            }
+        }
     }
     Ok(out)
 }

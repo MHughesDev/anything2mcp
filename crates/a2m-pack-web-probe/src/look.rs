@@ -16,7 +16,8 @@ use a2m_core::{
 };
 use a2m_pack_web_browser::{
     Address, BrowserError, By, Deadline, Look, ObserveTab, Observer, Origins, PageEnvironment,
-    ProfileKey, Query, RawValue, ReadWhat, SafeRequests, is_plain_name, path_by_structure,
+    ProfileKey, Query, RawValue, ReadWhat, SafeRequests, WatchStart, WatchTab, is_plain_name,
+    path_by_structure,
 };
 use a2m_provider::{DiscoveryScope, ProviderName};
 use a2m_telemetry::Clock;
@@ -39,6 +40,15 @@ pub const FOCUS_TIER_TWO: &str = "tier_two";
 /// The account name of the profile discovery looks through. It is the
 /// engine's own, and is signed in to nothing.
 pub const DISCOVERY_ACCOUNT: &str = "discovery";
+
+/// The account name of the profile a watching tab is opened in: the
+/// engine's own, apart from discovery's. A capture's scope names no person,
+/// so a person who must sign in to the surface signs in in the watching
+/// window itself, and that profile keeps it.
+pub const WATCHING_ACCOUNT: &str = "watching";
+
+/// What the first tab of a watching window says to the person in it.
+pub const WATCHING_NOTICE: &str = "Anything2MCP is watching this window while you use it. It sends nothing of its own. It keeps the structure of what you use, the paths, methods, and field names of the requests and the screens you visit, and never a value you type or are shown. Press Stop recording on the engine's page, or close this window, to end it.";
 
 /// How long a page is waited for to show the focus's ready text.
 const READY_WAIT: Duration = Duration::from_secs(10);
@@ -303,6 +313,36 @@ impl Core {
                 &PageEnvironment::default(),
                 &SafeRequests::default(),
                 &Origins::of([&surface]),
+            )
+            .await
+            .map_err(|error| failure(&error))
+    }
+
+    /// A watching tab, in a window, in the profile [`WATCHING_ACCOUNT`] of
+    /// the scope's target and environment, opened once on the surface's
+    /// own address and held to its origin (decision 0392, point 1). The
+    /// address passes the check every address of a discovery passes first.
+    pub(crate) async fn watching_tab(
+        &self,
+        scope: &DiscoveryScope<'_>,
+        deadline: Deadline,
+    ) -> Result<WatchTab, Failure> {
+        let (surface, _) = Self::start(scope)?;
+        let origins = Origins::of([&surface]);
+        let start = WatchStart::new(&surface, &origins)?;
+        let profile = ProfileKey {
+            target: scope.surface.target.clone(),
+            environment: scope.surface.environment.clone(),
+            identity: Identity::Account(AccountName::new(WATCHING_ACCOUNT)?),
+        };
+        self.observer
+            .watching_tab(
+                &profile,
+                &PageEnvironment::default(),
+                WATCHING_NOTICE,
+                &origins,
+                &start,
+                deadline,
             )
             .await
             .map_err(|error| failure(&error))

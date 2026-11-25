@@ -31,6 +31,7 @@ mod leaving;
 mod openapi;
 pub mod own_requests;
 mod pages;
+pub mod person;
 pub mod releases;
 pub mod store;
 #[cfg(feature = "tls")]
@@ -84,6 +85,9 @@ pub(crate) struct Inner {
     /// Case 39: the rows a page asks for with `POST`, and what their route
     /// was sent.
     pub(crate) case_rows: own_requests::CaseRows,
+    /// The walk of a person a test set, which every page then carries
+    /// ([`person`]).
+    pub(crate) walk: Option<Vec<person::WalkStep>>,
 }
 
 /// How many requests the application remembers having received.
@@ -106,6 +110,7 @@ impl Default for Inner {
             export_started: None,
             line_item_change: releases::ScreenChange::default(),
             case_rows: own_requests::CaseRows::default(),
+            walk: None,
         }
     }
 }
@@ -144,6 +149,10 @@ pub(crate) fn router_over(state: AppState) -> Router {
         .merge(views::routes())
         .merge(answers::routes())
         .merge(auth::routes(&state))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            person::walks,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             faults::apply,

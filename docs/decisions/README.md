@@ -433,3 +433,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0439 | [A tool's name carries no version, and a breaking change is named at publish](0439-a-tools-name-carries-no-version-and-a-breaking-change-is-named-at-publish.md) | Accepted (design decision) |
 | 0440 | [An operation no binding of which may act is warned of, and a call of one fails for good](0440-an-operation-no-binding-of-which-may-act-is-warned-of-and-a-call-of-one-fails-for-good.md) | Accepted (design decision) |
 | 0441 | [A device draft states its places, drafts no empty map, and its update's fixture is documented](0441-a-device-draft-states-its-places-drafts-no-empty-map-and-its-update-fixture-is-documented.md) | Accepted (design decision) |
+| 0442 | [A person's use is watched by `web_use`, and what it saw twice in one shape is drafted, held](0442-a-persons-use-is-watched-by-web-use-and-what-it-saw-twice-is-drafted-held.md) | Accepted (design decision) |
