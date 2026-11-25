@@ -4298,6 +4298,38 @@ impl ObserveTab {
         seen
     }
 
+    /// Whether the browser this tab is in still answers: asked for its
+    /// version, on the link, within the settings' probe time and the
+    /// deadline. A browser that is lost, whose link closes under the
+    /// question, or that gives no answer in that time, is lost: the link is
+    /// closed, as [`Self::browser_lost`] closes it, and every call on the
+    /// tab fails from then on. A refusal is an answer.
+    ///
+    /// A browser can be dead before the engine sees it: on Windows the
+    /// engine's end of the pipe can stay open after the browser's process
+    /// has ended, and the tab may have heard nothing, so that its first
+    /// request after the loss is the one that finds the pipe broken. A
+    /// step that lost its page for a reason the tab cannot tell from a
+    /// browser that is going asks this before the next step uses the tab.
+    pub async fn browser_answers(&self, deadline: Deadline) -> bool {
+        if self.browser_lost() {
+            return false;
+        }
+        let page = &self.page;
+        let within = Deadline::after(page.hang_probe.min(deadline.remaining()));
+        match page
+            .client
+            .call(None, &crate::protocol::GetVersion {}, within)
+            .await
+        {
+            Ok(_) | Err(ClientError::Protocol { .. } | ClientError::Shape { .. }) => true,
+            Err(ClientError::Closed { .. } | ClientError::Timeout { .. }) => {
+                page.client.close();
+                false
+            }
+        }
+    }
+
     /// What this tab refused since the last call, oldest first: a request
     /// whose method could change the system, by its method; a move of the
     /// tab that its page started (`NAVIGATION`); a window its page opened,
