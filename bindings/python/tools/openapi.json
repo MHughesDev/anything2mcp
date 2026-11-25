@@ -1778,7 +1778,7 @@
     },
     "summary": "Fetch a pinned browser for the pack that drives one.",
     "x-action": "browser.install",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/capture.start": {
@@ -2954,7 +2954,7 @@
     },
     "summary": "The outside programs providers need: found or not, with path and digest.",
     "x-action": "component.list",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/config.set": {
@@ -3288,7 +3288,7 @@
     },
     "summary": "Change one setting in a settings file. Loosening a protected setting needs a person present.",
     "x-action": "config.set",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/config.show": {
@@ -3926,7 +3926,7 @@
     },
     "summary": "A person lets an agent act for them.",
     "x-action": "delegation.grant",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/delegation.list": {
@@ -4116,7 +4116,7 @@
     },
     "summary": "The delegations a person has given.",
     "x-action": "delegation.list",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/delegation.revoke": {
@@ -4312,7 +4312,7 @@
     },
     "summary": "A person withdraws a delegation.",
     "x-action": "delegation.revoke",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/discover.run": {
@@ -6705,7 +6705,7 @@
     },
     "summary": "Endpoint templates, schemas, and dependencies worked out from stored recordings.",
     "x-action": "endpoints.infer",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/engine.logs": {
@@ -12981,7 +12981,7 @@
     },
     "summary": "Install a plug-in from a file, after checking its manifest and signature.",
     "x-action": "plugin.install",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/plugin.list": {
@@ -13171,7 +13171,7 @@
     },
     "summary": "The plug-ins found on this machine.",
     "x-action": "plugin.list",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/policy.explain": {
@@ -15204,7 +15204,7 @@
     },
     "summary": "Switch a provider off.",
     "x-action": "provider.disable",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/provider.enable": {
@@ -15528,7 +15528,7 @@
     },
     "summary": "Switch a provider on. A protected setting on one machine where the provider starts processes or reaches a network.",
     "x-action": "provider.enable",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/provider.list": {
@@ -18599,7 +18599,7 @@
     },
     "summary": "A summary of one run's trace, with references to its kept artifacts.",
     "x-action": "run.trace",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/run.undo": {
@@ -18795,7 +18795,7 @@
     },
     "summary": "Build the reverse diff of a completed write run, for a person's approval.",
     "x-action": "run.undo",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/runner.drain": {
@@ -18991,7 +18991,7 @@
     },
     "summary": "Stop giving a runner new jobs.",
     "x-action": "runner.drain",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/runner.enroll": {
@@ -19187,7 +19187,7 @@
     },
     "summary": "Enroll a runner on another machine.",
     "x-action": "runner.enroll",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/runner.list": {
@@ -19377,7 +19377,7 @@
     },
     "summary": "The runners, what each serves, and when each was last heard from.",
     "x-action": "runner.list",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/runner.revoke": {
@@ -19573,7 +19573,7 @@
     },
     "summary": "Revoke a runner's enrollment.",
     "x-action": "runner.revoke",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/scout.report": {
@@ -20218,7 +20218,7 @@
     },
     "summary": "A compact snapshot of what a surface shows now, with stable references to its elements.",
     "x-action": "screen.snapshot",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/secret.set": {
@@ -26451,7 +26451,7 @@
     },
     "summary": "Export one run's evidence to a file in the project.",
     "x-action": "trace.export",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/trace.show": {
@@ -27101,7 +27101,7 @@
     },
     "summary": "Settle an open question about a target, with evidence.",
     "x-action": "unknown.settle",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/vault.rotate": {
@@ -27301,7 +27301,7 @@
     },
     "summary": "Rotate one layer of the vault's keys.",
     "x-action": "vault.rotate",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/version.activate": {
@@ -27504,7 +27504,7 @@
     },
     "summary": "Move a toolset to a version, through the candidate stage.",
     "x-action": "version.activate",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/version.bundle": {
@@ -27703,7 +27703,7 @@
     },
     "summary": "Pack a published version into a signed file.",
     "x-action": "version.bundle",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/version.diff": {
@@ -27907,7 +27907,7 @@
     },
     "summary": "Compare two versions of a target and classify each change.",
     "x-action": "version.diff",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/version.import": {
@@ -28103,7 +28103,7 @@
     },
     "summary": "Import a signed bundle as a published version.",
     "x-action": "version.import",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/version.migrate": {
@@ -28299,7 +28299,7 @@
     },
     "summary": "Recompile stored sources for a newer engine.",
     "x-action": "version.migrate",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/version.publish": {
@@ -28877,7 +28877,7 @@
     },
     "summary": "Make an earlier version of a target current.",
     "x-action": "version.rollback",
-    "x-sdk": true
+    "x-sdk": false
    }
   },
   "/api/v1/actions/watch.changes": {

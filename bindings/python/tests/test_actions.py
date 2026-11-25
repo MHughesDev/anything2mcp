@@ -58,6 +58,31 @@ class GeneratedModuleTests(unittest.TestCase):
         for action in actions:
             self.assertTrue(callable(getattr(Client, action.replace(".", "_"))), action)
 
+    def test_an_action_with_no_handler_has_no_method(self) -> None:
+        # Decision 0437, point 5. Which actions are built is read where
+        # `tools/contracts.py` reads it, from `handler_for` in `a2m-actions`;
+        # the saved document must say `x-sdk: true` for exactly those, and
+        # the client has a method for nothing else.
+        repository = ROOT.parent.parent
+        sys.path.insert(0, str(repository / "tools"))
+        try:
+            import contracts
+        finally:
+            sys.path.remove(str(repository / "tools"))
+        built = contracts.built_actions(repository)
+        described = set()
+        for item in DOCUMENT["paths"].values():
+            for operation in item.values():
+                action = operation.get("x-action")
+                if action:
+                    described.add(action)
+                    self.assertIs(operation["x-sdk"], action in built, action)
+        unbuilt = described - built
+        for action in unbuilt:
+            self.assertNotIn(action, _actions.ACTIONS)
+            self.assertFalse(hasattr(Client, action.replace(".", "_")), action)
+        self.assertEqual(set(_actions.ACTIONS), described & built)
+
     def test_the_generated_methods_are_keyword_only(self) -> None:
         for action in _actions.ACTIONS:
             method = getattr(Client, action.replace(".", "_"))
@@ -92,23 +117,40 @@ class MethodShapeTests(unittest.TestCase):
             Recorder().tool_call()  # type: ignore[call-arg]
 
     def test_a_reserved_word_gets_a_trailing_underscore_and_is_sent_by_its_own_name(self) -> None:
-        withs = [
-            (a, op)
-            for a, op in generator.actions_of(DOCUMENT)
-            if "from" in dict(generator.request_schema(op)[0])
-        ]
-        self.assertTrue(withs, "the document has an action with a field named `from`")
-        action, _ = withs[0]
-        recorder = Recorder()
-        required = {
-            name: "x"
-            for name in generator.request_schema(withs[0][1])[1]
+        # The document's built actions have no field named `from` today, so
+        # the method is generated from a document that has one.
+        schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["from", "to"],
+            "properties": {"from": {"type": "string"}, "to": {"type": "string"}},
         }
-        required["from"] = "x"
-        kwargs = {("from_" if k == "from" else k): v for k, v in required.items()}
-        getattr(recorder, action.replace(".", "_"))(**kwargs)
-        self.assertEqual(recorder.sent[0], action)
-        self.assertIn("from", recorder.sent[1])
+        document = {
+            "info": {"version": "9.9.9"},
+            "paths": {
+                "/api/v1/actions/thing.compare": {
+                    "post": {
+                        "x-action": "thing.compare",
+                        "x-sdk": True,
+                        "summary": "Compares two things.",
+                        "requestBody": {"content": {"application/json": {"schema": schema}}},
+                    }
+                }
+            },
+        }
+        namespace: Dict[str, Any] = {"__name__": "generated_actions"}
+        exec(compile(generator.render(document), "generated_actions", "exec"), namespace)
+
+        class Recorded(namespace["Actions"]):  # type: ignore[misc, valid-type]
+            def call(self, action: str, input: Optional[Dict[str, Any]] = None, *, idempotency_key: Optional[str] = None) -> Any:
+                self.sent = (action, input, idempotency_key)
+                return "answer"
+
+        recorder = Recorded()
+        recorder.thing_compare(from_="a", to="b")
+        self.assertEqual(recorder.sent, ("thing.compare", {"from": "a", "to": "b"}, None))
+        with self.assertRaises(TypeError):
+            recorder.thing_compare(**{"from": "a", "to": "b"})
 
 
 class MethodNameTests(unittest.TestCase):

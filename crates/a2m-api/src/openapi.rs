@@ -125,8 +125,9 @@ fn operation(route: &RestRouteFace) -> Json {
     op.insert("summary".to_owned(), Json::String(route.summary.clone()));
     op.insert("x-action".to_owned(), Json::String(route.action.clone()));
     // Whether the clients have a method for the action: the generators read
-    // this, not the routes alone, so an action without an SDK face gets no
-    // method (`faces.sdk`).
+    // this, not the routes alone, so an action without an SDK face, or with
+    // no handler yet, gets no method (`RestRouteFace::sdk`; decisions 0420
+    // and 0437).
     op.insert("x-sdk".to_owned(), Json::Bool(route.sdk));
     if route.method == "GET" {
         for (name, schema) in &properties {

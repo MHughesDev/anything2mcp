@@ -327,6 +327,10 @@ Pre-alpha. Built and tested against the built-in test stands, on Windows, macOS,
 - Two watches of the same read and input share one run of it. Ending one no longer cancels the run the other is waiting on, so the other's check ends with that run's result instead of a gap; when the shared run waits for a sign-in, every watch on it pauses for the sign-in; and a watch's check that joined a run it did not open never cancels it (decisions 0285, 0287).
 - A watch past its end and its check's run are now ended and cancelled together: a moment when the store could not answer no longer left the run queued or waiting with no watch to read it.
 
+### Removed
+
+- The Python and Node clients no longer have a method for an action the engine has not built: 27 methods are gone, among them `version_diff` and `vault_rotate` in Python and `versionDiff` and `vaultRotate` in Node. Each such action answered `input`/`action_not_built` whatever it was given; its command, MCP tool, and REST route are unchanged and still answer so. An action gains its method in the release that builds it, and the API description says which have one with `x-sdk` ([decision 0437](docs/decisions/0437-what-a-release-publishes-is-kept-and-every-later-build-is-checked-against-it.md), point 5).
+
 ### Safety fixes
 
 A safety review read each crate against its design and the ten rules, and every finding was confirmed with a test. These are the ones a user would see.

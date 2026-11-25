@@ -337,6 +337,26 @@ test("every action of the document has a method, and a type, on the client", () 
   }
 });
 
+test("an action of the saved document that has no handler has no method and no type", () => {
+  // Decision 0437, point 5: an action that answers `action_not_built` is
+  // described with `x-sdk: false`, and the client has nothing for it.
+  const document = JSON.parse(fs.readFileSync(DOCUMENT, "utf8"));
+  const declared = fs.readFileSync(path.join(CLIENT_DIR, "actions.d.ts"), "utf8");
+  const written = fs.readFileSync(path.join(CLIENT_DIR, "actions.js"), "utf8");
+  const unbuilt = new Set();
+  for (const item of Object.values(document.paths)) {
+    for (const op of Object.values(item)) {
+      if (op["x-action"] && op["x-sdk"] === false) unbuilt.add(op["x-action"]);
+    }
+  }
+  for (const action of unbuilt) {
+    const name = generator.methodName(action);
+    assert.strictEqual(client.Client.prototype[name], undefined, action);
+    assert.ok(!client.ACTIONS.includes(action), action);
+    assert.ok(!declared.includes(`  ${name}(`) && !written.includes(`"${action}"`), action);
+  }
+});
+
 test("an input field named like the per-call key is not generated twice", () => {
   const schema = { type: "object", additionalProperties: false, required: ["idempotency_key"], properties: { idempotency_key: { type: "string" }, name: { type: "string" } } };
   const document = { info: {}, paths: { "/api/v1/actions/a.b": { post: { "x-action": "a.b", "x-sdk": true, summary: "S.", requestBody: { content: { "application/json": { schema } } } } } } };
