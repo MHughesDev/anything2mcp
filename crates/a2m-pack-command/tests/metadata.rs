@@ -412,7 +412,7 @@ async fn input_files_are_read_as_text_and_each_option_keeps_its_source() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_secret_in_a_handed_file_is_redacted_and_an_unreadable_file_starts_nothing() {
+async fn a_secret_in_an_input_file_is_redacted_and_an_unreadable_file_starts_nothing() {
     const SECRET: &str = "secret-for-tests-4471";
     let folder = Folder::new("metadata-secret");
     let stand = Stand::start().unwrap();

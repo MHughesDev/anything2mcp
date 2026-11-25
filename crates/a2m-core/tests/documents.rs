@@ -283,7 +283,7 @@ fn doctor_states_are_the_ones_doctor_reports() {
 }
 
 #[test]
-fn identity_strategies_are_the_ones_in_the_record_identity_section() {
+fn record_matchings_are_the_ones_in_the_record_identity_section() {
     let spec = document("spec/2-kernel/209-record-identity-and-dependent-records.md");
     assert_eq!(column(&spec, "| Strategy |", 0), RecordMatching::NAMES);
 }

@@ -3949,7 +3949,7 @@
     [
      "proj-source-defs",
      "proj-pipelines",
-     "how a handed file is read and mapped",
+     "how a input file is read and mapped",
      "use"
     ]
    ],
@@ -7693,14 +7693,14 @@
    "name": "Input Files",
    "group": "Project File",
    "state": "b",
-   "text": "The files in the project's sources folder: what a person gives a scout or a pipeline, such as a spreadsheet for a pipeline to read or a description the system publishes about itself. Named from the project folder and never compiled. A path outside it, a hidden file or a link is refused. Not the Source Definitions, which are a target's own files.",
+   "text": "The files in the project's inputs folder: what a person gives a scout or a pipeline, such as a spreadsheet for a pipeline to read or a description the system publishes about itself. Named from the project folder and never compiled. A path outside it, a hidden file or a link is refused. Not the Source Definitions, which are a target's own files.",
    "where": "a2m-files: src/source.rs",
    "never": [
     "Read a file outside the folder."
    ],
    "decided": [
     "Handing the add shortcut a description puts the file here and gives it to the scout under the name description. Not: a separate way of giving a file to the scout (0306).",
-    "The project's sources folder is named Input Files: what a person gives a scout or a pipeline, never compiled. The files under a target's sources folder are the Source Definitions. Neither folder is renamed on disk. Not: rename the project's folder (0309)."
+    "The project's inputs folder is named Input Files: what a person gives a scout or a pipeline, never compiled. The files under a target's sources folder are the Source Definitions. Neither folder is renamed on disk. Not: rename the project's folder (0309)."
    ]
   },
   "proj-target": {
@@ -10706,7 +10706,7 @@
   "pages-field-build": {
    "name": "Copy Test Harness",
    "group": "Person Surface",
-   "where": "tools/field-harness/, a workspace program built from the product crate's library",
+   "where": "tools/copy-test-harness/, a workspace program built from the product crate's library",
    "state": "t",
    "text": "A second program that is the product's own serve in every part but one: the command line's Host carries the Copy Test Prompt, which the shipped program never sets. It runs in a container on a network with no route out, beside copies of systems the field-test runner started with invented data; at start it refuses to serve if a public address answers. The runner builds it into a folder of its own and deletes it after the run, and the packaging check fails when a wheel or npm package holds any binary but the expected ones. Not built; roadmap package FT4 (decision 0310).",
    "never": [
@@ -10720,7 +10720,7 @@
   "pages-field-prompt": {
    "name": "Copy Test Prompt",
    "group": "Person Surface",
-   "where": "a2m-local (FieldPrompt), built only by the Copy Test Harness",
+   "where": "a2m-local (CopyTestPrompt), built only by the Copy Test Harness",
    "state": "p",
    "text": "The presence prompt of the Copy Test Harness. It writes the prompt's text to the runner's pipe and passes only when the runner answers with the short hash it showed; the ledger records the presence as field_harness, never as an operating system's prompt. It refuses an approval of an irreversible operation, and one whose effect it was not told, without asking. Built in a2m-local; the harness that uses it is roadmap package FT4.",
    "never": [
@@ -10737,7 +10737,7 @@
    "group": "Project File",
    "where": "a2m-files and a2m-sources",
    "state": "p",
-   "text": "The files under a target's sources/ folder: how a kind of handed file is read and mapped, with readers, template fingerprints and mappings. They are compiled with the target. Not the Input Files, which are in the project's own sources folder and are never compiled.",
+   "text": "The files under a target's sources/ folder: how a kind of input file is read and mapped, with readers, template fingerprints and mappings. They are compiled with the target. Not the Input Files, which are in the project's own sources folder and are never compiled.",
    "never": [
     "Be mistaken for the Input Files."
    ],

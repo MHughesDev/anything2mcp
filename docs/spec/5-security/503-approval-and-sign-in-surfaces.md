@@ -69,7 +69,7 @@ On a server the identity provider's sign-in is the proof of a person, so no oper
 
 | Piece | Language | Phase |
 | --- | --- | --- |
-| The diff page, sign-in status page, and decision-point form | TypeScript, in `web/console` | 3 |
+| The diff page, sign-in status page, and run-question form | TypeScript, in `web/console` | 3 |
 | The short-lived loopback listener | Rust, in `a2m-local` | 3 |
 | System notifications | Rust, through a cross-platform crate to be chosen | 3 |
 | Operating-system user-presence prompts | Rust, per operating system: Linux first, then macOS and Windows ([research note 20](../../research/20-operating-system-user-presence-checks.md)) | 3 |

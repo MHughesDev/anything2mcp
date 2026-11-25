@@ -1574,7 +1574,7 @@ async fn a_description_given_as_a_file_passes_the_redactor_before_anything_is_ma
 
 /// The findings a discovery of the surface at `address` makes from the
 /// test application's description, handed in as a file.
-async fn findings_from_handed_file(app: &TestApp, address: &str) -> Vec<Finding> {
+async fn findings_from_input_file(app: &TestApp, address: &str) -> Vec<Finding> {
     let description = app
         .http()
         .get(app.url("/api/openapi.json"))
@@ -1631,7 +1631,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
     // One `http` surface, whose address ends in a path: the findings carry
     // the origin and that path, and the surface is not an open question.
     let prefixed = format!("{base}/v1");
-    let findings = findings_from_handed_file(&app, &prefixed).await;
+    let findings = findings_from_input_file(&app, &prefixed).await;
     assert_eq!(findings.len(), 13);
     let one = target.replace("http://127.0.0.1:4010", &prefixed);
     let (_folder, root, scene, report) = draft_into(one, &findings);
@@ -1656,7 +1656,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
         "environments:",
         "  files:\n    kind: files\n    base: \"/tmp\"\nenvironments:",
     );
-    let findings = findings_from_handed_file(&app, &base).await;
+    let findings = findings_from_input_file(&app, &base).await;
     let (folder, _, _, report) = draft_into(with_other, &findings);
     assert!(report.open_questions.is_empty(), "{report:?}");
     let entry = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
@@ -1673,7 +1673,7 @@ async fn a_description_handed_in_as_a_file_is_tied_to_the_surface_it_was_read_fo
                 &format!("  other:\n    kind: http\n    base: \"{second}\"\nenvironments:"),
             )
     };
-    let findings = findings_from_handed_file(&app, &prefixed).await;
+    let findings = findings_from_input_file(&app, &prefixed).await;
     let (folder, _, _, report) = draft_into(two(&format!("{base}/v2")), &findings);
     assert!(report.open_questions.is_empty(), "{report:?}");
     let entry = std::fs::read_to_string(folder.path().join("descriptions/api.yaml")).unwrap();
