@@ -383,9 +383,11 @@ fn a_watching_tab_has_no_method_that_acts() {
             "changes",
             "closed",
             "exchanges",
+            "exchanges_through",
             "is_open",
             "looked_at",
             "looked_at_since",
+            "next_screen",
             "screens",
         ]
     );

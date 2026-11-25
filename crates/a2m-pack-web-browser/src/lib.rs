@@ -96,8 +96,9 @@ pub use structure::{
 };
 pub use tab::{
     ActTab, BROWSER_DEFAULT_HEADERS, BROWSER_HEADERS, By, CREDENTIAL_HEADER_WORDS, DialogAnswer,
-    Download, DownloadError, EXCHANGES_KEPT, Element, Input, Key, LONGEST_WATCHED_BODY, Loaded,
-    Look, OUTSIDE, ObserveTab, OpenDialog, PageEnvironment, PageExchange, PageExchanges,
-    PageRequest, PageResponse, Primitive, Query, RawValue, ReadWhat, SCREENS_KEPT, SETTLE_BOUND,
-    SiteAnswer, SiteTool, TextMatch, WatchStart, WatchTab, WatchedScreens, digest_of,
+    DocumentMark, Download, DownloadError, EXCHANGES_KEPT, Element, Input, Key,
+    LONGEST_WATCHED_BODY, Loaded, Look, OUTSIDE, ObserveTab, OpenDialog, PageEnvironment,
+    PageExchange, PageExchanges, PageRequest, PageResponse, Primitive, Query, RawValue, ReadWhat,
+    SCREENS_KEPT, SETTLE_BOUND, SiteAnswer, SiteTool, TextMatch, WatchStart, WatchTab,
+    WatchedScreen, WatchedScreens, digest_of,
 };
