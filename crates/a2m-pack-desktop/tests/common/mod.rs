@@ -415,7 +415,7 @@ impl Scene {
 
 /// A path as it stands inside the fixture's double-quoted string: a
 /// Windows path's backslashes doubled.
-fn yaml_text(path: &str) -> String {
+pub fn yaml_text(path: &str) -> String {
     path.replace('\\', "\\\\")
 }
 

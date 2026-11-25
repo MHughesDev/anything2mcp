@@ -28,7 +28,7 @@ use a2m_provider::{
     CheckedPaths, Deadline, Destinations, Posture, PrepareContext, ProgramRef, StepFailure,
     Supervisor, SupervisorLimits,
 };
-use common::{Folder, compile_at, fixture_copy, registry_with, run, shown};
+use common::{Folder, compile_at, fixture_copy, registry_with, run, shown, yaml_text};
 #[cfg(target_os = "linux")]
 use example_desk::Order;
 use example_desk::Session;
@@ -86,7 +86,7 @@ impl Started {
         let supervisor = Supervisor::new(SupervisorLimits::default());
         let registry = registry_with(folder.path(), session.bus(), supervisor.clone());
         let target = Folder::new(&format!("{name}-target"));
-        let program_text = program.to_string_lossy().into_owned();
+        let program_text = yaml_text(&program.to_string_lossy());
         let extra = extra.to_owned();
         fixture_copy(target.path(), "target.yaml", move |text| {
             text.replace("/opt/example/bin/example-desk", &program_text)
