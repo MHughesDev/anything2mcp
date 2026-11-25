@@ -1,7 +1,7 @@
 # The manifest of the desktop pack. What is not built is not declared: the
-# verbs `create`, `delete`, `submit`, and `upload`, writes on Windows and
-# macOS, keys and clicks, starting an application, the
-# `desktop_probe` discoverer, the lint rules of the design, and every
+# verbs `create`, `delete`, `submit`, and `upload`, keys and clicks,
+# starting an application on Windows and macOS, the `desktop_probe`
+# discoverer, the lint rules of the design, and every
 # control but `desktop_text`. No platform list: the compiler side works on every
 # system, and the driver stops at prepare with `system_not_built` where it
 # has no back end.
@@ -265,10 +265,26 @@ code = "writes_not_built"
 class = "policy"
 code = "remote_namespace_refused"
 
+[[failure_codes]]
+class = "busy"
+code = "start_not_built"
+
+[[failure_codes]]
+class = "busy"
+code = "application_not_started"
+
+[[failure_codes]]
+class = "policy"
+code = "program_refused"
+
 # It reads a running application a person started and the target names, on
-# the person's screen. It starts nothing and reaches no network.
+# the person's screen. It starts no program of its own: only the one a
+# published compiled target declares for a surface that states
+# `start: true`, by path and digest, when none of it runs (decision 0999).
+# It reaches no network.
 [effects]
 attach = true
+compiled_target_programs = true
 screen = true
 network = "none"
 

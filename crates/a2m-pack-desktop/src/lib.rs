@@ -57,6 +57,7 @@ mod roles;
 mod screens;
 mod sdef;
 mod service;
+mod start;
 mod tree;
 mod typelib;
 mod windows_kinds;
@@ -145,6 +146,7 @@ fn surface_fields() -> JsonSchema {
         .optional("service", JsonSchema::text())
         .optional("management_class", JsonSchema::text())
         .optional("management_namespace", JsonSchema::text())
+        .optional("start", JsonSchema::bool())
 }
 
 fn setting(cx: &PackContext, key: &str) -> Option<usize> {

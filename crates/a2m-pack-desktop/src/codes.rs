@@ -101,6 +101,17 @@ a2m_core::failure_codes! {
         meaning "This pack writes only on Linux, Windows, and macOS in this version. Nothing was sent.",
         next "Run the write on Linux, Windows, or macOS. On this system the pack reads only.",
         passes not_by_itself;
+    START_NOT_BUILT = Busy, "start_not_built",
+        meaning "The surface lets the pack start its program, no application of it is running, and this version starts an application only on Linux. Nothing was started.",
+        next "Start the application as you normally do, then run the tool again.",
+        passes not_by_itself;
+    APPLICATION_NOT_STARTED = Busy, "application_not_started",
+        meaning "The pack started the surface's program, and no application of it published itself on the accessibility interface by the deadline. The pack stopped what it started.",
+        next "Start the application as you normally do and check that it shows its window, then run the tool again.",
+        passes not_by_itself;
+    PROGRAM_REFUSED = Policy, "program_refused",
+        meaning "The surface lets the pack start its program, and the program's file is not one the pack starts: it is missing, is a shell, an interpreter, or a script, or another user can replace it or a folder on its way. Nothing was started.",
+        next "Declare the installed program's own file, in a folder only you or the system's administrator can change.";
     REMOTE_NAMESPACE_REFUSED = Policy, "remote_namespace_refused",
         meaning "The surface's management namespace names another machine (it begins with two separators). The driver asks only this machine's management service, and asks nothing of it.",
         next "Leave `management_namespace` out, or name a namespace of this machine.";
@@ -140,6 +151,77 @@ pub(crate) fn writes_not_built() -> StepFailure {
             std::env::consts::OS
         ),
         "Run the write on Linux, Windows, or macOS. On this system the pack reads only.",
+    ))
+}
+
+/// A surface that lets the pack start its program, outside a run: a
+/// discovery or a sandbox starts nothing.
+#[cfg(target_os = "linux")]
+pub(crate) fn not_started_outside_a_run(program: &str) -> StepFailure {
+    StepFailure::not_sent(failure(
+        &row::APPLICATION_NOT_RUNNING,
+        format!(
+            "No application in this session is the program `{}` with the name the surface states. The surface lets the pack start it, and the pack starts a program only in a run, never in a discovery or a sandbox. Nothing was started.",
+            shown(program)
+        ),
+        "Start the application as you normally do, then run the discovery again.",
+    ))
+}
+
+/// The program's file is not one the pack starts. Nothing was started.
+#[cfg(target_os = "linux")]
+pub(crate) fn program_refused(program: &str, why: &a2m_provider::ProgramRefused) -> StepFailure {
+    use a2m_provider::ProgramRefused as Why;
+    let why = match why {
+        Why::NotAbsolute => "its path is not absolute".to_owned(),
+        Why::Missing => "nothing that can be run is there".to_owned(),
+        Why::Script => "it is a shell, an interpreter, or a script".to_owned(),
+        Why::Writable(at) => format!(
+            "another user can change `{}`, on its way",
+            shown(&at.to_string_lossy())
+        ),
+        Why::Unreadable(at) => format!(
+            "who may change `{}` could not be read",
+            shown(&at.to_string_lossy())
+        ),
+        Why::Link(at) => format!("`{}` on its way is a link", shown(&at.to_string_lossy())),
+        Why::Elsewhere => "it is on another machine or a removable drive".to_owned(),
+    };
+    StepFailure::not_sent(failure(
+        &row::PROGRAM_REFUSED,
+        format!(
+            "The surface lets the pack start the program `{}`, and the pack does not start it: {why}. Nothing was started.",
+            shown(program)
+        ),
+        "Declare the installed program's own file, in a folder only you or the system's administrator can change.",
+    ))
+}
+
+/// The started program published no application by the deadline, and was
+/// stopped.
+#[cfg(target_os = "linux")]
+pub(crate) fn application_not_started(program: &str) -> StepFailure {
+    StepFailure::not_sent(failure(
+        &row::APPLICATION_NOT_STARTED,
+        format!(
+            "The pack started the program `{}`, and no application of it with the name the surface states published itself by the deadline. The pack stopped it.",
+            shown(program)
+        ),
+        "Start the application as you normally do and check that it shows its window, then run the tool again.",
+    ))
+}
+
+/// Starting an application is built on Linux only. Nothing was started.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn start_not_built(program: &str) -> StepFailure {
+    StepFailure::not_sent(failure(
+        &row::START_NOT_BUILT,
+        format!(
+            "No application in this session is the program `{}` with the name the surface states. The surface lets the pack start it, and this version starts an application only on Linux; this system is {}. Nothing was started.",
+            shown(program),
+            std::env::consts::OS
+        ),
+        "Start the application as you normally do, then run the tool again.",
     ))
 }
 

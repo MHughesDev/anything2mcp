@@ -77,11 +77,17 @@ pub fn mode() -> Mode {
 /// A registry that holds only the desktop pack, reading the session at
 /// `bus`, with its logs in `folder`.
 pub fn registry(folder: &Path, bus: Option<&str>) -> Registry {
+    registry_with(folder, bus, Supervisor::new(SupervisorLimits::default()))
+}
+
+/// The same, over `supervisor`, which a test that starts an application
+/// keeps to see what it started and to stop it.
+pub fn registry_with(folder: &Path, bus: Option<&str>, supervisor: Supervisor) -> Registry {
     let logs = folder.join("logs");
     std::fs::create_dir_all(&logs).unwrap();
     let redact: Arc<dyn a2m_core::Redact> = Arc::new(NoSecrets);
     let host = HostServices {
-        supervisor: Supervisor::new(SupervisorLimits::default()),
+        supervisor,
         roots: Roots::none(),
         redact: Arc::clone(&redact),
         logs_and_traces: a2m_logs::start(&LogSettings::default(), redact, &logs).unwrap(),

@@ -837,7 +837,10 @@ impl Lowering for DesktopLowering {
     }
 
     /// A binding of this pack starts no program and sets no variable: it
-    /// attaches to an application that is already running. The driver sends
+    /// attaches to an application that is already running, unless its
+    /// surface states `start: true`; then it names the program it may start
+    /// and the variables it passes, and does not say where the program
+    /// sends (decision 0999). The driver sends
     /// nothing over a network: it asks the platform's own accessibility
     /// interface (the session's accessibility bus, the window system, the
     /// process table) on this machine, and the one other thing it reads, a
@@ -863,6 +866,25 @@ impl Lowering for DesktopLowering {
             .is_some_and(names_another_machine)
         {
             return Statement::NotStated;
+        }
+        // A surface that lets the driver start its program says which, by
+        // path and digest, and the variables it is passed; where a program
+        // the pack starts sends is the program's, so the pack does not say
+        // (decision 0999).
+        if surface.doc.get("start").and_then(Located::as_bool) == Some(true) {
+            let Some(path) = surface.doc.text(crate::ADDRESS_KEY) else {
+                return Statement::NotStated;
+            };
+            let digest = surface
+                .doc
+                .text("digest")
+                .and_then(crate::start::parse_digest);
+            let (run, environment) = crate::start::statement_parts(path, digest);
+            return Statement::Stated(BindingStatement {
+                runs: vec![run],
+                environment,
+                sends: Sends::NotStated,
+            });
         }
         Statement::Stated(BindingStatement {
             sends: Sends::Only {

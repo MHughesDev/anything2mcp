@@ -376,6 +376,34 @@ impl Watch {
     }
 }
 
+/// The signals after which a new application may be on the bus, from the
+/// moment the listening began (decision 0999).
+pub(crate) struct Arrivals {
+    registry: MessageStream,
+    owners: MessageStream,
+}
+
+impl Arrivals {
+    /// Waits for the next such signal. `false` when the deadline passed
+    /// first.
+    pub(crate) async fn next(&mut self, deadline: Deadline) -> Result<bool, AxError> {
+        let (registry, owners) = (&mut self.registry, &mut self.owners);
+        let next = std::future::poll_fn(|cx| {
+            if let std::task::Poll::Ready(signal) = Pin::new(&mut *registry).poll_next(cx) {
+                return std::task::Poll::Ready(signal.map(|_| ()));
+            }
+            Pin::new(&mut *owners)
+                .poll_next(cx)
+                .map(|signal| signal.map(|_| ()))
+        });
+        match tokio::time::timeout_at(deadline.at(), next).await {
+            Ok(Some(())) => Ok(true),
+            Ok(None) => Err(AxError::Lost("the bus".to_owned())),
+            Err(_) => Ok(false),
+        }
+    }
+}
+
 /// What the driver proved of the application's process when it was
 /// prepared, and proves again before every act: the process that owns the
 /// application's connection, its start time, the program it runs, and,
@@ -896,6 +924,43 @@ impl Look {
             .await
             .map_err(|error| lost(&error))?;
         Ok(Watch { stream, gone })
+    }
+
+    /// Whether any process of the engine's own user runs `program`, from
+    /// the process table alone: the driver starts no second copy of a
+    /// program that runs and publishes nothing (decision 0999).
+    pub(crate) fn program_runs(&self, program: &str) -> bool {
+        let Ok(want) = std::fs::canonicalize(program) else {
+            return false;
+        };
+        std::fs::metadata("/proc/self").is_ok_and(|me| runs(&want, me.uid()))
+    }
+
+    /// Begins listening to what says a new application may have published
+    /// itself: the registry's signals (it signals a change of the
+    /// desktop's children when it embeds an application), and the bus
+    /// daemon's word of a connection's owner. A wait reads the list of
+    /// applications again on each, and never decides from a signal.
+    pub(crate) async fn arrivals(&self) -> Result<Arrivals, AxError> {
+        let registry = MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .sender(REGISTRY)
+            .build()
+            .map_err(|error| lost(&error))?;
+        let registry = MessageStream::for_match_rule(registry, &self.a11y, NonZeroUsize::new(64))
+            .await
+            .map_err(|error| lost(&error))?;
+        let owners = MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .sender("org.freedesktop.DBus")
+            .interface("org.freedesktop.DBus")
+            .member("NameOwnerChanged")
+            .build()
+            .map_err(|error| lost(&error))?;
+        let owners = MessageStream::for_match_rule(owners, &self.a11y, NonZeroUsize::new(64))
+            .await
+            .map_err(|error| lost(&error))?;
+        Ok(Arrivals { registry, owners })
     }
 
     /// What proves the application's process now: for the driver to keep,

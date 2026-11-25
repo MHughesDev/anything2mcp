@@ -1174,6 +1174,133 @@ fn sections_of(cx: &PrepareContext<'_>) -> Result<BTreeMap<usize, ScreenSection>
     Ok(sections)
 }
 
+impl DesktopDriver {
+    /// Starts the surface's program, which allows it, and waits for its
+    /// application to publish itself, by the accessibility bus's signals,
+    /// until the prepare's deadline (decision 0999). Only in a run, only
+    /// when no process runs the program, and only a program the provider's
+    /// check passes; the supervisor checks the digest the surface states.
+    /// One that publishes nothing by the deadline is stopped.
+    #[cfg(target_os = "linux")]
+    async fn start(
+        &self,
+        cx: &PrepareContext<'_>,
+        look: &Look,
+        program: &str,
+        fields: &SurfaceFields,
+    ) -> Result<App, StepFailure> {
+        use a2m_provider::{
+            EnvAllowlist, LaunchSpec, ProgramRef, ProgramRole, ProgramTrust, SubsystemKind,
+            check_program,
+        };
+
+        if cx.posture != Posture::Live {
+            return Err(codes::not_started_outside_a_run(program));
+        }
+        if look.program_runs(program) {
+            return Err(unsent(&AxError::NotRunning, program));
+        }
+        let checked = std::path::PathBuf::from(program);
+        let verdict = tokio::task::spawn_blocking(move || {
+            check_program(&checked, &ProgramTrust::default(), ProgramRole::Program)
+        })
+        .await
+        .unwrap_or(Err(a2m_provider::ProgramRefused::Missing));
+        if let Err(why) = verdict {
+            return Err(codes::program_refused(program, &why));
+        }
+        let declared = cx
+            .surface
+            .surface
+            .programs
+            .iter()
+            .find(|declared| declared.path == program)
+            .map(ProgramRef::from)
+            .ok_or_else(|| codes::not_usable("its surface declares no program to start"))?;
+        let env = match &self.session {
+            // A session of a test's own: its bus, and nothing of the
+            // engine's environment.
+            Some(address) => EnvAllowlist {
+                pass: Vec::new(),
+                set: vec![(
+                    "DBUS_SESSION_BUS_ADDRESS".to_owned(),
+                    address.as_ref().into(),
+                )],
+            },
+            None => EnvAllowlist {
+                pass: crate::start::PASSED
+                    .iter()
+                    .map(|name| (*name).to_owned())
+                    .collect(),
+                set: Vec::new(),
+            },
+        };
+        let spec = LaunchSpec {
+            program: declared,
+            args: Vec::new(),
+            env,
+            cwd: None,
+            kind: SubsystemKind::new(crate::start::KIND).map_err(StepFailure::not_sent)?,
+            place: None,
+        };
+        // Listening begins before the start, so that no signal is missed.
+        let mut arrivals = look
+            .arrivals()
+            .await
+            .map_err(|error| unsent(&error, program))?;
+        let link = cx
+            .supervisor
+            .start_on_standard_streams(spec)
+            .await
+            .map_err(StepFailure::not_sent)?;
+        let id = link.id;
+        // Nothing is written to it; what it writes is read and dropped, so
+        // that it never stops on a full pipe.
+        let (to_child, mut from_child) = (link.to_child, link.from_child);
+        drop(to_child);
+        tokio::spawn(async move {
+            let _ = tokio::io::copy(&mut from_child, &mut tokio::io::sink()).await;
+        });
+        loop {
+            match look
+                .application(program, &fields.application, fields.digest.as_deref())
+                .await
+            {
+                Ok(app) => return Ok(app),
+                Err(AxError::NotRunning | AxError::AccessibilityOff) => {}
+                Err(error) => {
+                    let _ = cx.supervisor.stop(id).await;
+                    return Err(unsent(&error, program));
+                }
+            }
+            match arrivals.next(cx.deadline).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    let _ = cx.supervisor.stop(id).await;
+                    return Err(codes::application_not_started(program));
+                }
+                Err(error) => {
+                    let _ = cx.supervisor.stop(id).await;
+                    return Err(unsent(&error, program));
+                }
+            }
+        }
+    }
+
+    /// On Windows and macOS nothing is started in this version: neither
+    /// back end has an event that says a new application appeared.
+    #[cfg(not(target_os = "linux"))]
+    async fn start(
+        &self,
+        _cx: &PrepareContext<'_>,
+        _look: &Look,
+        program: &str,
+        _fields: &SurfaceFields,
+    ) -> Result<App, StepFailure> {
+        Err(codes::start_not_built(program))
+    }
+}
+
 impl Driver for DesktopDriver {
     fn prepare<'a>(
         &'a self,
@@ -1198,14 +1325,20 @@ impl Driver for DesktopDriver {
             let look = Look::connect(self.session.as_deref())
                 .await
                 .map_err(|error| unsent(&error, &program))?;
-            let app = match look
+            let found = look
                 .application(&program, &fields.application, fields.digest.as_deref())
-                .await
-            {
+                .await;
+            let found = match found {
+                Err(AxError::NotRunning) if fields.start => {
+                    self.start(cx, &look, &program, &fields).await
+                }
+                found => found.map_err(|error| unsent(&error, &program)),
+            };
+            let app = match found {
                 Ok(app) => app,
-                Err(error) => {
+                Err(failure) => {
                     look.close().await;
-                    return Err(unsent(&error, &program));
+                    return Err(failure);
                 }
             };
             #[cfg(any(target_os = "linux", windows, target_os = "macos"))]

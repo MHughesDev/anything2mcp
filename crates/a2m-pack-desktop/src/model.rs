@@ -202,6 +202,11 @@ pub(crate) struct SurfaceFields {
     /// Its namespace, when not the default.
     #[serde(default)]
     pub management_namespace: Option<String>,
+    /// Whether the driver may start the program, by its path and digest,
+    /// when no application of it is running (decision 0999). Without it
+    /// the pack starts nothing.
+    #[serde(default)]
+    pub start: bool,
 }
 
 /// The payload of a `management_get` or a `com_get` step: the management

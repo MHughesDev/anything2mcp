@@ -46,6 +46,8 @@ mod win;
 mod app;
 #[cfg(target_os = "linux")]
 mod bus_service;
+#[cfg(target_os = "linux")]
+mod started;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -59,6 +61,8 @@ pub use bus_service::{
 pub use child::{CHILD_TEST, Session};
 #[cfg(not(any(windows, target_os = "macos")))]
 pub use session::{IdleService, Session};
+#[cfg(target_os = "linux")]
+pub use started::{MUTE, STARTED, marker};
 
 /// Declares, in a test binary, what serves the stand: on Windows and macOS
 /// the stand's process is this test binary, copied and started again with
@@ -79,6 +83,23 @@ macro_rules! stand_child {
         fn example_desk_stand_child() {
             $crate::serve_if_child();
         }
+
+        /// On Linux, serves the desktop stand as a program of its own when
+        /// this process is a copy of the test binary under one of the
+        /// stand's names (decision 0999), before the test harness begins.
+        // The system's loader calls each function in this section of a
+        // program as it loads the program, before `main`; a function of the
+        // plain C kind that takes nothing is what it calls.
+        #[cfg(target_os = "linux")]
+        #[allow(unsafe_code)]
+        #[used]
+        #[unsafe(link_section = ".init_array")]
+        static EXAMPLE_DESK_STAND_STARTED: extern "C" fn() = {
+            extern "C" fn start() {
+                $crate::serve_if_started();
+            }
+            start
+        };
 
         /// On macOS, serves the desktop stand on the main thread when this
         /// process is the stand's own, before the test harness begins.
@@ -104,6 +125,15 @@ macro_rules! stand_child {
 pub fn serve_if_child() {
     #[cfg(any(windows, target_os = "macos"))]
     child::serve_if_child();
+}
+
+/// Serves the stand as a program of its own and ends the process, when
+/// this process is a copy of a test binary under one of the stand's names
+/// on Linux ([`STARTED`], [`MUTE`]); otherwise returns at once. Called by
+/// what [`stand_child!`] declares.
+pub fn serve_if_started() {
+    #[cfg(target_os = "linux")]
+    started::serve_if_started();
 }
 
 /// The name the application has on the accessibility bus.
