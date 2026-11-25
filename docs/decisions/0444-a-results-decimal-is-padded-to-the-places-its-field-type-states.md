@@ -1,4 +1,4 @@
-# 0999. A result's decimal is padded to the places its field type states
+# 0444. A result's decimal is padded to the places its field type states
 
 **Status:** Accepted. Design decision, made by the worker on field test 8, finding 53, under the lead's brief. The owner had not read this record when it was written. No public interface changes: `Decimal` gains two methods and `CompiledFieldType` one, and the compiled target's format is unchanged.
 

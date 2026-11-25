@@ -717,7 +717,7 @@ impl CompiledFieldType {
     /// a `decimal` or a `money` type states, or money's currency's own. None
     /// for the built-in `decimal`, whose places bound a value and are not
     /// shown, for a measurement, whose places follow its step, and for every
-    /// other base (decision 0999).
+    /// other base (decision 0444).
     #[must_use]
     pub fn result_places(&self) -> Option<u32> {
         match self.base {

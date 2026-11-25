@@ -703,7 +703,7 @@ async fn a_record_found_unchanged_gives_every_output_and_on_resume_is_read_again
     assert!(scene.app.writes().await.unwrap().is_empty());
 }
 
-// ---- decision 0999: a result's number is padded to its type's places ----
+// ---- decision 0444: a result's number is padded to its type's places ----
 
 /// The line-item upsert with one more output, `length_in`, which its
 /// read-back observes as the application stores it, typed by an exact

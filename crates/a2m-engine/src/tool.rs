@@ -499,7 +499,7 @@ pub(crate) fn output_value(
     }
     // A number is padded to the places its field type states, and never
     // rounded to them here: the normalizer has rounded it by the type's own
-    // rule, so a value with more places is one no rule gave (decision 0999).
+    // rule, so a value with more places is one no rule gave (decision 0444).
     let places = output
         .field_type
         .and_then(|index| loaded.compiled_target.field_type(index))

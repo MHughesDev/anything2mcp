@@ -420,7 +420,7 @@ impl Value {
             Self::Int(number) => out.extend_from_slice(number.to_string().as_bytes()),
             Self::Text(text) => write_string(out, text),
             // A number's canonical form is its exact text, whatever places
-            // it is padded to: equal numbers hash alike (decision 0999).
+            // it is padded to: equal numbers hash alike (decision 0444).
             Self::Decimal(number) => {
                 out.extend_from_slice(b"{\"decimal\":");
                 write_string(out, &number.exact_text());

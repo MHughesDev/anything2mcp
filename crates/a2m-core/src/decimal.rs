@@ -60,7 +60,7 @@ impl Rounding {
 /// with the places it holds, which are its exact places unless it was made
 /// by [`Decimal::with_places`] or read from a stored form that had more: a
 /// result's value is padded to the places its field type states, so a
-/// speed of one place reads `120.0` (decision 0999).
+/// speed of one place reads `120.0` (decision 0444).
 #[derive(Clone, Copy)]
 pub struct Decimal(Inner);
 
