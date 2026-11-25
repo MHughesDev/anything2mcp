@@ -86,6 +86,11 @@ export interface ClientConnectInput {
 }
 
 /**
+ * The input of `component.list`.
+ */
+export type ComponentListInput = Record<string, never>;
+
+/**
  * The input of `config.show`.
  */
 export interface ConfigShowInput {
@@ -419,6 +424,13 @@ export interface RunResumeInput {
 }
 
 /**
+ * The input of `run.trace`.
+ */
+export interface RunTraceInput {
+  run_id: string;
+}
+
+/**
  * The input of `scout.report`.
  */
 export interface ScoutReportInput {
@@ -634,6 +646,13 @@ export interface ToolsetUpdateInput {
 }
 
 /**
+ * The input of `trace.export`.
+ */
+export interface TraceExportInput {
+  run_id: string;
+}
+
+/**
  * The input of `trace.show`.
  */
 export interface TraceShowInput {
@@ -664,6 +683,14 @@ export interface VersionPublishInput {
   compiled_target_hash?: string;
   tools?: string[];
   version?: string;
+}
+
+/**
+ * The input of `version.rollback`.
+ */
+export interface VersionRollbackInput {
+  target: string;
+  version: string;
 }
 
 /**
@@ -799,6 +826,12 @@ export declare abstract class Actions {
    * `client.connect`.
    */
   clientConnect(input?: ClientConnectInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The outside programs providers need: found or not, with path and digest, known or
+   * unverified. Starts nothing. The engine action is `component.list`.
+   */
+  componentList(input?: ComponentListInput, options?: CallOptions): Promise<Response>;
 
   /**
    * The effective settings, and for each the layer that set it. With a key, that key's
@@ -1088,6 +1121,13 @@ export declare abstract class Actions {
   runResume(input: RunResumeInput, options?: CallOptions): Promise<Response>;
 
   /**
+   * A summary of one of the caller's own runs' trace: each step's kind, outcome, and
+   * time, with references to its kept captures, and never a value. The engine action is
+   * `run.trace`.
+   */
+  runTrace(input: RunTraceInput, options?: CallOptions): Promise<Response>;
+
+  /**
    * The last scout's report on a target: found, drafted, proven, open, and what to look
    * at first. Each list is counted and shows its first entries; `part` reads one whole,
    * in pages. The engine action is `scout.report`.
@@ -1245,6 +1285,14 @@ export declare abstract class Actions {
   toolsetUpdate(input: ToolsetUpdateInput, options?: CallOptions): Promise<Response>;
 
   /**
+   * Export one run's evidence to one file in the project's working folder,
+   * `.anything2mcp/exports/<run>.json`: its events, its step trace, and its text
+   * captures, with a manifest that names each piece and what was left out and why. The
+   * engine action is `trace.export`.
+   */
+  traceExport(input: TraceExportInput, options?: CallOptions): Promise<Response>;
+
+  /**
    * View one run's evidence: its trace lines and capture references. The engine action
    * is `trace.show`.
    */
@@ -1266,6 +1314,13 @@ export declare abstract class Actions {
    * an agent's. The engine action is `version.publish`.
    */
   versionPublish(input: VersionPublishInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Make another published version of a target the one that runs now: an earlier one,
+   * or a later one again after a rollback. A person's act, never an agent's. The engine
+   * action is `version.rollback`.
+   */
+  versionRollback(input: VersionRollbackInput, options?: CallOptions): Promise<Response>;
 
   /**
    * The changes a watch recorded after a number: added, changed, unseen, gaps, pauses,
