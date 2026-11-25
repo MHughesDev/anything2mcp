@@ -501,3 +501,44 @@ async fn a_browser_that_stops_as_it_starts_is_named_with_what_it_wrote() {
     assert_eq!(again, error);
     stand.end().await;
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_browser_gone_before_its_first_request_is_written_is_named_with_what_it_wrote() {
+    // The other order of the same stop: the program has written its log
+    // and closed the end of its pipe it reads from before the engine
+    // writes its first request, so that write fails, and the engine never
+    // reads the pipe's end. The browser's words are shown all the same.
+    let program = stops_as_it_starts();
+    let mut settings = BrowserSettings::default().with_program(program.clone());
+    settings.environment_for_tests = vec![(
+        "STOP_ORDER_FOR_TESTS".to_owned(),
+        "read_end_closed_first".into(),
+    )];
+    settings.hear_before_first_request = true;
+    let stand = Stand::new("stops-unwritten", settings, &[&program]);
+    let error = stand
+        .browsers
+        .open(&profile("clerk"), Visibility::Background)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, BrowserError::LaunchFailed(LaunchReason::Stopped(_))),
+        "{error}"
+    );
+    let failure = error.failure().unwrap();
+    assert_eq!(
+        (failure.class(), failure.code()),
+        (FailureClass::Busy, &codes::BROWSER_STOPPED_AT_START)
+    );
+    assert!(
+        failure.message().contains(
+            "It wrote: Zygote process exited prematurely with exit code 82 (setuid sandbox: failed to move to new namespaces)."
+        ),
+        "{}",
+        failure.message()
+    );
+    // The program, which waited to be stopped, was stopped.
+    assert!(stand.supervisor.list().is_empty());
+    stand.end().await;
+}

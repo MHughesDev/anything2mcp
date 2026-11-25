@@ -116,8 +116,8 @@ pub enum LaunchReason {
     /// pipe ended or carried something else, it answered with another
     /// protocol, or its digest is not a known one. It was closed.
     NotOwned(String),
-    /// The program started, its pipe ended before it answered, and it
-    /// wrote why in its log file: its own lines, redacted and cut, such as
+    /// The program started, its pipe ended or could not be written to
+    /// before it answered, and it wrote why in its log file: its own lines, redacted and cut, such as
     /// a sandbox it cannot make. It was closed (decision 0450).
     Stopped(String),
     /// The program started, its pipe stayed open, and it did not answer

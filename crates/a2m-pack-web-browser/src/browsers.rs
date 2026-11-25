@@ -157,6 +157,13 @@ pub struct BrowserSettings {
     /// than its caller's limit does, so that a test can drop it there.
     #[cfg(test)]
     pub(crate) stall_after_start: Option<Arc<StallOnce>>,
+    /// This crate's own tests only: the launch reads one byte from the
+    /// program before it writes its first request. The program that stops
+    /// as it starts sends that byte once it has closed the end of its pipe
+    /// it reads from, so the first request is written to a pipe nobody
+    /// reads, in that order every time.
+    #[cfg(test)]
+    pub(crate) hear_before_first_request: bool,
 }
 
 /// This crate's own tests only: one launch that stops after its program
@@ -191,6 +198,8 @@ impl Default for BrowserSettings {
             environment_for_tests: Vec::new(),
             #[cfg(test)]
             stall_after_start: None,
+            #[cfg(test)]
+            hear_before_first_request: false,
         }
     }
 }
@@ -1233,11 +1242,14 @@ impl Browsers {
 
         let known = &shared.settings.known_digests;
         let reviewed = known.contains(&link.program_digest);
-        let client = Client::connect(
-            link.from_child,
-            link.to_child,
-            shared.settings.max_message_bytes,
-        );
+        #[allow(unused_mut, reason = "only this crate's tests read from it first")]
+        let mut from_child = link.from_child;
+        #[cfg(test)]
+        if shared.settings.hear_before_first_request {
+            use tokio::io::AsyncReadExt as _;
+            let _ = from_child.read_u8().await;
+        }
+        let client = Client::connect(from_child, link.to_child, shared.settings.max_message_bytes);
         // Ownership: the digest of the program that runs, and what it
         // answers over the pipe only its owner holds.
         let owned = if !known.is_empty() && !reviewed {
@@ -1268,12 +1280,17 @@ impl Browsers {
                     // can take longer than any deadline. A pipe that ended
                     // after the program wrote why in its log is a browser
                     // that could not start here, such as one that cannot
-                    // make its sandbox (decision 0450). Everything else
-                    // is a program that is not a browser.
+                    // make its sandbox (decision 0450). It ends in either
+                    // order: the engine reads the end, or the program is
+                    // gone before the first request is written, and the
+                    // write fails; a read that fails is an end too. Each
+                    // reads the log the same way. Everything else is a
+                    // program that is not a browser.
                     Err(match error {
                         ClientError::Timeout { .. } => LaunchReason::NoAnswer(why),
                         ClientError::Closed {
-                            why: Why::Ended, ..
+                            why: Why::Ended | Why::WriteFailed,
+                            ..
                         } => {
                             let read = log.clone();
                             let redact = Arc::clone(&shared.redact);
