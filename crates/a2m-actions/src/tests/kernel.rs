@@ -551,7 +551,10 @@ async fn a_write_rests_until_a_person_approves_at_the_desk_and_is_written_exactl
         .call("tool.call", json!({"tool": ITEM_UPSERT, "input": input}))
         .await;
     assert_eq!(rested.exit, ExitClass::PersonNeeded, "{rested:?}");
-    assert!(!rested.ok);
+    // The call did its part and waits for a person: `ok`, with no error
+    // and its state (decision 0999).
+    assert!(rested.ok);
+    assert!(rested.error.is_none());
     let result = rested.result.clone().unwrap();
     assert_eq!(result["status"], "needs_approval");
     let run = result["run_id"].as_str().unwrap().to_owned();

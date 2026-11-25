@@ -446,3 +446,5 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0452 | [The gate lints for Windows and macOS, and a nightly run looks for flaky tests under load](0452-the-gate-lints-for-windows-and-macos-and-a-nightly-run-looks-for-flaky-tests-under-load.md) | Accepted (design decision) |
 | 0453 | [The plan's counts are written from the rows, between markers](0453-the-plans-counts-are-written-from-the-rows-between-markers.md) | Accepted (design decision) |
 | 0454 | [What breaks follows where it leads on the publish page, and is named in the answer too](0454-what-breaks-follows-where-it-leads-on-the-publish-page-and-is-named-in-the-answer-too.md) | Accepted (design decision) |
+| 0998 | [A publish of named tools compiles only their files](0998-a-publish-of-named-tools-compiles-only-their-files.md) | Accepted (design decision) |
+| 0999 | [An answer that did its part and waits for a person is `ok`](0999-an-answer-that-did-its-part-and-waits-for-a-person-is-ok.md) | Accepted (design decision) |

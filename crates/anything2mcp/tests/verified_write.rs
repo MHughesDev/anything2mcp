@@ -89,7 +89,9 @@ async fn a_write_rests_is_approved_by_a_person_and_is_written_and_verified_exact
         .agent(&["tool", "call", UPSERT, "--input", INPUT])
         .await;
     assert_eq!(rested.finished.code, 3, "{:?}", rested.finished);
-    assert_eq!(rested.json["ok"], false);
+    // The call did its part and waits for a person (decision 0999).
+    assert_eq!(rested.json["ok"], true);
+    assert!(rested.json.get("error").is_none(), "{}", rested.json);
     let result = rested.result();
     assert_eq!(result["status"], "needs_approval", "{result}");
     assert!(result["diff"]["hash"].is_string(), "{result}");

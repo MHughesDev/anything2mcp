@@ -872,6 +872,7 @@ On a local machine no command approves a write; see spec section 222. On a serve
 | Machine output | One JSON object on standard output with `--json` or when output is not a terminal |
 | Success | `{"ok": true, "action", "result", "warnings", "next"}` |
 | Failure | `{"ok": false, "error": {"code", "class", "message", "fix"}}` |
+| Waiting for a person | `{"ok": true, "action", "result", "warnings", "next"}` with exit code 3, when the action did its part and waits: the result's `state` says on what. A refusal for want of a person is a failure, with exit code 3 ([decision 0999](../decisions/0999-an-answer-that-did-its-part-and-waits-for-a-person-is-ok.md)) |
 | Exit codes | 0 success; 1 action failed; 2 malformed command; 3 a person is needed; 4 engine unreachable |
 | Large results | Written under `.anything2mcp/out/`; the result carries path, size, and summary |
 | Prompts | None when output is not a terminal |
