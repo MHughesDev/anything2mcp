@@ -12,6 +12,9 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use a2m_core::Failure;
+
+use crate::codes;
 use crate::paths::{Env, OsFamily, Paths};
 use crate::settings::{PROJECT_FILE_NAME, Settings, SourceFile, Sources};
 
@@ -189,6 +192,85 @@ pub(crate) fn check(
         why: why.to_owned(),
         fix: None,
     })
+}
+
+/// The file, inside a project folder, that names the store the project is
+/// worked from (decision 0999). It sits in the engine's working folder,
+/// which `init` keeps out of version control, so each checkout of a
+/// project names its own machine's store.
+pub(crate) const STORE_MARK: &str = ".anything2mcp/engine";
+
+/// The first line of the mark, before the store's name.
+const STORE_MARK_LINE: &str = "store: ";
+
+/// Holds a project folder to one store (decision 0999): the store a call's
+/// project folder is worked from must be this engine's. A folder with no
+/// mark is given this store's, in the working folder `init` made, and is
+/// left unmarked when it has none; one whose mark names this store passes; one
+/// whose mark names another is refused, so that one engine never answers
+/// for a project whose scouts, trials, and versions another store holds.
+/// `store` is the name of this engine's store, the workspace it made at its
+/// first open. Looks at the disk.
+///
+/// # Errors
+///
+/// `input`/`project_of_another_store` when the mark names another store,
+/// or cannot be read as a mark; the checked path's failures, and those of
+/// writing the mark.
+pub(crate) fn hold_to_store(folder: &Path, store: &str) -> Result<(), Failure> {
+    let project = crate::handlers::build::project(folder)?;
+    let mark = project.join(STORE_MARK)?;
+    let named = match mark.entry_kind()? {
+        a2m_provider::EntryKind::Absent => None,
+        a2m_provider::EntryKind::File => {
+            let bytes = mark.read(4096)?;
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            Some(
+                text.lines()
+                    .find_map(|line| line.strip_prefix(STORE_MARK_LINE))
+                    .map(str::trim)
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        }
+        _ => Some(String::new()),
+    };
+    match named {
+        Some(named) if named == store => Ok(()),
+        Some(named) => Err(codes::input(
+            codes::PROJECT_OF_ANOTHER_STORE,
+            format!(
+                "The project folder `{}` is worked from another engine's store{}, and this engine's store is `{store}`: what this engine holds is not that project's scouts, trials, or published versions, so the call is refused.",
+                folder.display(),
+                if named.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (`{named}`)")
+                }
+            ),
+            format!(
+                "Run the command with the engine home the project was worked from (`{}`, or none); or, to work the project from this engine from now on, remove `{STORE_MARK}` in the project folder and run it again.",
+                crate::paths::HOME_VARIABLE
+            ),
+        )),
+        // Only a project whose working folder `init` made is marked: the
+        // engine writes in no folder of the project it was not given. A
+        // mark that cannot be written leaves the folder unmarked, and the
+        // call goes on: only a mark of another store refuses one.
+        None => {
+            let working = project.join(crate::init::WORKING_FOLDER)?;
+            if !matches!(working.entry_kind()?, a2m_provider::EntryKind::Folder) {
+                return Ok(());
+            }
+            let _ = mark.write(
+                format!(
+                    "# The engine store this project is worked from (decision 0999). Remove this file to work it from another.\n{STORE_MARK_LINE}{store}\n"
+                )
+                .as_bytes(),
+            );
+            Ok(())
+        }
+    }
 }
 
 /// Why a stated project folder is not used, and the fix where the

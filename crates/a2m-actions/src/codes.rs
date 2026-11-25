@@ -39,6 +39,9 @@ a2m_core::failure_codes! {
     PATH_NOT_ALLOWED = Input, "path_not_allowed",
         meaning "A project or file path is outside the allowed roots.",
         next "Name a path inside the project folder or the target's folder, one that is no link, or run the command inside a project folder of your own, or pass `--project` with its full path.";
+    PROJECT_OF_ANOTHER_STORE = Input, "project_of_another_store",
+        meaning "The project folder a call names is worked from another engine's store: its mark, `.anything2mcp/engine`, names another store than this engine's, so what this engine holds is not that project's scouts, trials, or published versions (decision 0999). The call is refused whole.",
+        next "Run the command with the engine home the project was worked from (`A2M_HOME`, or none); or, to work the project from this engine from now on, remove `.anything2mcp/engine` in the project folder and run it again.";
     SETTINGS_INVALID = Input, "settings_invalid",
         meaning "A settings file, variable, or flag cannot be loaded.",
         next "Correct the key or value at the place the message names, or remove it, then start again.";

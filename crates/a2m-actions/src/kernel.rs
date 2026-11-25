@@ -93,6 +93,8 @@ pub struct Prepared {
     redact: Arc<dyn Redact>,
     telemetry: Telemetry,
     impaired: Vec<Impaired>,
+    /// Whether the store is kept on disk, and so outlives the engine.
+    store_on_disk: bool,
 }
 
 impl std::fmt::Debug for Prepared {
@@ -207,6 +209,9 @@ pub(crate) struct Inner {
     pub(crate) actions: ActionRegistry,
     pub(crate) person: Arc<dyn PersonSurface>,
     pub(crate) installation: Option<Installation>,
+    /// Whether the store is kept on disk: only such a store names the
+    /// project folders it works (package 5.6b).
+    pub(crate) store_on_disk: bool,
     local: bool,
     health: Mutex<Health>,
     fixed: Vec<Impaired>,
@@ -270,6 +275,7 @@ impl Kernel {
     /// opens in the health state that part brings.
     pub async fn prepare(parts: KernelParts) -> Prepared {
         let mut impaired = Vec::new();
+        let store_on_disk = matches!(parts.place, StorePlace::Disk);
         let config = match parts.place {
             StorePlace::Disk => StoreConfig::in_dir(parts.paths.store.clone()),
             StorePlace::Memory => StoreConfig::in_memory(),
@@ -342,6 +348,7 @@ impl Kernel {
             redact,
             telemetry,
             impaired,
+            store_on_disk,
         }
     }
 
@@ -547,6 +554,7 @@ impl Kernel {
                 actions,
                 person,
                 installation,
+                store_on_disk: prepared.store_on_disk,
                 local,
                 health: Mutex::new(Health::of(Vec::new())),
                 fixed,

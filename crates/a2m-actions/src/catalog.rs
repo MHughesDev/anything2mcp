@@ -713,7 +713,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .pos("target", TEXT, TARGET)
             .opt("version", TEXT, "The version's label. The next number when left out.")
             .writes()
-            .output(published())
+            .output(published().optional("state", text()))
             .asks_a_person()
             .example(r#"{"target": "example"}"#)
             .done(),

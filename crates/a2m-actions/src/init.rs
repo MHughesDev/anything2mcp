@@ -69,6 +69,9 @@ fn guidance() -> &'static str {
 /// `input`/`path_not_allowed` for a path that is not a full path to a
 /// folder that exists; `input`/`file_unavailable` for a file that could
 /// not be written. What was written before a failure stays.
+/// The engine's working folder in a project.
+pub(crate) const WORKING_FOLDER: &str = ".anything2mcp";
+
 pub fn init_project(folder: &Path) -> Result<InitReport, Failure> {
     if !folder.is_absolute() {
         return Err(refused("the path is not a full path"));
@@ -115,6 +118,17 @@ pub fn init_project(folder: &Path) -> Result<InitReport, Failure> {
         }
         Err(_) => return Err(unwritten("targets")),
     }
+    // The engine's working folder, which `.gitignore` keeps out of version
+    // control: the engine writes its mark of the store the project is
+    // worked from there, and in no folder `init` did not make (decision
+    // 0999).
+    match std::fs::create_dir(folder.join(WORKING_FOLDER)) {
+        Ok(()) => report.written.push(WORKING_FOLDER),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            report.kept.push(WORKING_FOLDER);
+        }
+        Err(_) => return Err(unwritten(WORKING_FOLDER)),
+    }
     Ok(report)
 }
 
@@ -140,7 +154,12 @@ mod tests {
         let report = init_project(&folder).unwrap();
         assert_eq!(
             report.written,
-            ["anything2mcp.toml", ".gitignore", "targets"]
+            [
+                "anything2mcp.toml",
+                ".gitignore",
+                "targets",
+                ".anything2mcp"
+            ]
         );
         assert_eq!(report.kept, ["AGENTS.md"]);
         // What was there is kept as it was.

@@ -124,12 +124,14 @@ my-targets/
   AGENTS.md            # written by init: the build loop, the rules, a command list
   targets/
     example/           # one folder per target, laid out as in section 205
-  .anything2mcp/       # local working data, ignored by Git
+  .anything2mcp/       # local working data, ignored by Git; made by init
+    engine             # the engine store the project is worked from
     out/               # snapshots, captures, traces, diffs
   .gitignore
 ```
 
 - **Finding the project.** A command looks for `anything2mcp.toml` in the current directory and then in each parent; `--project` overrides. The path is turned into a checked path before any use ([section 502](../5-security/502-defending-against-a-manipulated-agent.md)).
+- **One store for a project.** The first call from an engine whose store is on disk writes `.anything2mcp/engine`, naming that store; a call that names the project to another engine's store is refused whole, `project_of_another_store` ([decision 0999](../../decisions/0999-the-first-hours-faults-a-list-on-the-command-line-a-key-off-a-list-and-a-project-held-to-one-store.md)).
 - **What is not in the project.** The store, the vault, and every session's live state live in the user's data directory, never in the project, so cloning or sharing a project never shares a session.
 - **Real targets stay private.** This is where target files for real systems belong. They are never added to the Anything2MCP repository, and the project publishes no catalog of them ([decision 0058](../../decisions/0058-a-toolkit-for-developers-with-no-catalog-and-no-preferred-agent.md)).
 
