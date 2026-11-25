@@ -424,3 +424,5 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0430 | [A file whose bytes are not on this machine is refused by name, and never fetched](0430-a-file-whose-bytes-are-not-on-this-machine-is-refused-by-name-and-never-fetched.md) | Accepted (design decision) |
 | 0431 | [A name that Windows keeps for a device is refused on every system](0431-a-name-that-windows-keeps-for-a-device-is-refused-on-every-system.md) | Accepted (design decision) |
 | 0432 | [The runtime folder does not follow a variable that differs between one user's processes](0432-the-runtime-folder-does-not-follow-a-variable-that-differs-between-one-users-processes.md) | Accepted (design decision) |
+| 0998 | [A broker that keys by subject gives the subject as a channel's key](0998-a-broker-that-keys-by-subject-gives-the-subject-as-a-channels-key.md) | Accepted (design decision) |
+| 0999 | [A plain link that carries no credential goes to the surface's address](0999-a-plain-link-that-carries-no-credential-goes-to-the-surfaces-address.md) | Accepted (design decision) |
