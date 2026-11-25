@@ -455,6 +455,14 @@ def main():
         for problem in failure_codes.check(repo):
             note("codes", problem)
 
+    # 18. The counts of the plan are the ones the roadmap's rows and the line give
+    #     (tools/progress.py writes them; this holds the two together, decision 0999).
+    if "docs/plan/roadmap.md" in md and "docs/plan/build-order.md" in md:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import progress
+        for problem in progress.check(str(repo)):
+            note("progress", problem)
+
     total = sum(len(v) for v in found.values())
     print(f"checked {len(md)} files: {len(nums)} spec sections, {n_dec} decisions, {n_res} research files, "
           f"{len(actions)} actions, {len(briefs)} open research briefs, {len(on_disk)} crates")

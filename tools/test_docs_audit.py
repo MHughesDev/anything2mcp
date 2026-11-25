@@ -132,6 +132,13 @@ class AuditCatches(unittest.TestCase):
         code, out = self.audit()
         self.assertEqual(code, 0, out)
 
+    def test_a_count_of_the_plan_typed_by_hand_is_refused(self):
+        plan = self.root / "docs" / "plan" / "build-order.md"
+        text = plan.read_text(encoding="utf-8")
+        start = text.index("<!-- progress:begin build-order -->") + len("<!-- progress:begin build-order -->")
+        plan.write_text(text[:start] + "9" + text[start:], encoding="utf-8")
+        self.assert_finding("progress", "the count build-order is stale")
+
     def test_a_crate_missing_from_the_table_is_refused(self):
         extra = self.root / "crates" / "a2m-extra"
         extra.mkdir()
