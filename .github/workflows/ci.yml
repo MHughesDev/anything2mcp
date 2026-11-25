@@ -18,12 +18,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # A build in CI is never built again in the same folder, so incremental
-  # files are only cost; and the debug and test builds keep line tables, which
-  # a backtrace needs, without the full debug information, which made most of
-  # the link time and of the folder, above all on Windows. What is compiled
-  # and what is checked are the same (decision 0372).
+  # files are only cost (decision 0372). How much debug information the debug
+  # and test builds keep is set in the profiles of Cargo.toml, for every build
+  # and not only CI's (decision 0999).
   CARGO_INCREMENTAL: "0"
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   rust:
@@ -43,8 +41,9 @@ jobs:
           persist-credentials: false
       - name: Install the toolchain pinned in rust-toolchain.toml
         run: rustup toolchain install
-      # The dependencies compiled in the last run with the same lock file and
-      # toolchain, restored before anything is built (decision 0372). Only what
+      # The dependencies compiled in the last run with the same lock file,
+      # toolchain, and root manifest, whose profiles say how they are compiled,
+      # restored before anything is built (decisions 0372 and 0999). Only what
       # was compiled is restored; every step below still builds and runs all
       # of its own crates.
       # Pinned by commit; this is v6.1.0.
@@ -57,7 +56,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/debug/
-          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml') }}
           restore-keys: deps-${{ runner.os }}-
       - name: Show versions
         run: cargo --version && rustc --version
@@ -95,7 +94,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/debug/
-          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml') }}
       # The vault's root key in the operating system's own key store, which
       # no other test touches (package 2.2). On macOS the keychain is a
       # throwaway one, created and unlocked here, so that no prompt can
@@ -445,7 +444,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/debug/
-          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml') }}
           restore-keys: deps-${{ runner.os }}-
       # HTTPS is in the default build, which the job above tests. This job
       # holds the build without it, which `--no-default-features` gives.
@@ -588,7 +587,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/debug/
-          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml') }}
           restore-keys: deps-${{ runner.os }}-
       # The test starts a display server of its own and gives the browser
       # its number; nothing is shown to anyone.
