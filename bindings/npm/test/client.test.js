@@ -18,6 +18,7 @@ const { spawn, spawnSync } = require("node:child_process");
 
 const client = require("../anything2mcp/client/index.js");
 const channel = require("../anything2mcp/client/channel.js");
+const program = require("../anything2mcp/client/program.js");
 const generator = require("../scripts/generate-actions.js");
 
 const WINDOWS = process.platform === "win32";
@@ -299,23 +300,87 @@ test("each system keeps the socket where the engine puts it", () => {
   assert.throws(() => client.socketPath({ A2M_HOME: "relative" }, "linux"), (error) => error.code === "path_not_allowed");
 });
 
-test("the pipe is named as the engine names it, from the runtime directory's text", () => {
-  const runtime = "C:\\Users\\pat\\AppData\\Local\\anything2mcp\\run";
-  const sid = "S-1-5-21-1111111111-2222222222-3333333333-1001";
-  assert.strictEqual(client.windowsRuntimeDir({ LOCALAPPDATA: "C:\\Users\\pat\\AppData\\Local" }), runtime);
-  assert.strictEqual(client.windowsRuntimeDir({ A2M_HOME: "D:\\a2m\\" }), "D:\\a2m\\run");
-  assert.strictEqual(client.windowsRuntimeDir({ A2M_HOME: "D:/a2m" }), "D:/a2m\\run");
-  assert.throws(() => client.windowsRuntimeDir({ A2M_HOME: "relative" }), (error) => error.code === "path_not_allowed");
-  assert.throws(() => client.windowsRuntimeDir({}), (error) => error.code === "path_not_allowed");
-  // The tag is the same one the Python client's test holds to the engine.
-  assert.strictEqual(client.pipeName(runtime, sid), `\\\\.\\pipe\\anything2mcp.${sid}.8af282852451f074`);
+// A stand-in for the program's `anything2mcp channel` command, run by Node
+// itself so that it runs on every system: it says it is open and then copies
+// bytes between its standard streams and the fake engine, or writes a
+// refusal and ends, as the command does.
+const FAKE_PROGRAM = `
+const net = require("node:net");
+const [, , mode, address] = process.argv;
+if (mode === "refuse") {
+  process.stderr.write(JSON.stringify({ ok: false, action: "channel", error: { class: "policy", code: "peer_not_allowed", message: "Not yours.", fix: "Stop it." } }) + "\\n");
+  process.exit(1);
+}
+if (mode === "silent") process.exit(3);
+const socket = net.createConnection({ path: address }, () => {
+  process.stderr.write("anything2mcp: the local channel is open.\\n");
+  process.stdin.pipe(socket);
+  socket.pipe(process.stdout);
+});
+socket.on("close", () => process.exit(0));
+`;
+
+function fakeProgram() {
+  const file = path.join(scratch(), "fake-channel.js");
+  fs.writeFileSync(file, FAKE_PROGRAM);
+  return file;
+}
+
+test("through the program's channel command the client says hello, calls, and is answered", async (t) => {
+  const engine = await fakeEngine();
+  t.after(() => engine.stop());
+  const stream = await program.openThroughProgram(process.execPath, [fakeProgram(), "open", engine.address]);
+  const c = await client.greet(stream, { name: "tests" });
+  t.after(() => c.close());
+  assert.strictEqual(c.engineVersion, "9.9.9");
+  const status = await c.engineStatus();
+  assert.strictEqual(status.ok, true);
+  assert.strictEqual(status.action, "engine.status");
+  // One connection carries the hello and every call.
+  await c.call("tool.list");
+  assert.strictEqual(engine.connections, 1);
+  assert.deepStrictEqual(
+    engine.requests.map((request) => request.url),
+    ["/local/hello", "/api/v1/actions/engine.status", "/api/v1/actions/tool.list"],
+  );
+  assert.strictEqual(engine.requests[0].headers["a2m-client-label"], "sdk:tests");
 });
 
-test("on Windows the client refuses to connect until the far end can be checked", async () => {
-  // Node's standard library cannot say who serves a pipe; nothing is opened without a check.
+test("the channel command's refusal is the client's, and nothing is sent", async (t) => {
+  const engine = await fakeEngine();
+  t.after(() => engine.stop());
   await assert.rejects(
-    client.connect({ platform: "win32", env: { LOCALAPPDATA: "C:\\Users\\pat\\AppData\\Local" } }),
-    (error) => error.code === "client_not_built",
+    program.openThroughProgram(process.execPath, [fakeProgram(), "refuse", engine.address]),
+    (error) => error.code === "peer_not_allowed" && error.reason === "Not yours." && error.fix === "Stop it.",
+  );
+  // A command that ends without saying it is open has sent nothing either.
+  await assert.rejects(
+    program.openThroughProgram(process.execPath, [fakeProgram(), "silent", engine.address]),
+    (error) => error.code === "connection_lost" && error.retrySafe === true,
+  );
+  // A program that is not there is told as the missing program.
+  await assert.rejects(
+    program.openThroughProgram(path.join(scratch(), "no-such-program"), ["channel"]),
+    (error) => error.code === "engine_unreachable",
+  );
+  assert.strictEqual(engine.requests.length, 0, "nothing was sent");
+});
+
+test("a call whose answer is lost through the channel command is not safe to make again", async (t) => {
+  const engine = await fakeEngine();
+  t.after(() => engine.stop());
+  engine.drops.add("tool.call");
+  const stream = await program.openThroughProgram(process.execPath, [fakeProgram(), "open", engine.address]);
+  const c = await client.greet(stream);
+  t.after(() => c.close());
+  await assert.rejects(c.toolCall({ tool: "example_orders_order_get" }), (error) => error.code === "answer_lost" && error.retrySafe === false);
+});
+
+test("on Windows connect goes through the program's channel command and no pipe is opened by Node", async () => {
+  // The program named is not there: the client says so, and opens nothing itself.
+  await assert.rejects(
+    client.connect({ platform: "win32", start: false, binary: path.join(scratch(), "no-such-program.exe") }),
+    (error) => error.code === "engine_unreachable" && /not found/.test(error.reason),
   );
 });
 
@@ -447,4 +512,41 @@ test("a client that finds no engine has the program start one and is answered", 
   again.close();
   const log = fs.readFileSync(path.join(home, "data", "logs", "engine-output.log"), "utf8");
   assert.strictEqual(log.split("a client started the engine on demand").length - 1, 1, log);
+});
+
+// The path the client takes on Windows, run on every system: `platform` set
+// to Windows sends the client through the program's `anything2mcp channel`
+// command, which checks the engine's owner as every command does and then
+// carries the client's bytes. On Windows CI runs this test alone and fails
+// when it is skipped (the bindings job).
+test("the client reaches a real engine through the program's channel command", { skip: !BINARY }, async (t) => {
+  const home = scratch();
+  const env = { A2M_HOME: home, A2M_VAULT_PASSPHRASE: "secret-for-tests-only" };
+  const engine = spawn(BINARY, ["serve"], { env: { ...process.env, ...env }, stdio: ["ignore", "ignore", "pipe"] });
+  engine.stderr.resume();
+  t.after(() => {
+    engine.kill();
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  // Waits on the named condition, an engine that answers, up to a deadline.
+  const deadline = Date.now() + 60000;
+  let c = null;
+  while (c === null) {
+    try {
+      c = await client.connect({ env, platform: "win32", binary: BINARY, start: false, name: "tests" });
+    } catch (error) {
+      assert.strictEqual(error.code, "engine_unreachable", String(error));
+      assert.ok(engine.exitCode === null, "the engine stopped");
+      assert.ok(Date.now() < deadline, "the engine did not answer within a minute");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  t.after(() => c.close());
+  assert.match(c.engineVersion, /^\d+\.\d+\.\d+/);
+  const status = await c.engineStatus();
+  assert.strictEqual(status.ok, true, JSON.stringify(status.body));
+  assert.strictEqual(status.exitClass, "succeeded");
+  // A second call on the same connection: the hello holds for it.
+  const unknown = await c.call("no.such");
+  assert.strictEqual(unknown.ok, false);
 });
