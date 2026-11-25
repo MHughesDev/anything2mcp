@@ -2750,9 +2750,13 @@ impl Page {
                     if self.watching {
                         self.left_behind(&lifecycle.loader_id);
                     }
+                    // Counted before the document is said to be parsed: a
+                    // `goto` returns once it is, and a count taken then must
+                    // already hold it, or the next wait for a change ends at
+                    // this document's own load.
+                    self.changes.send_modify(|count| *count += 1);
                     self.nav
                         .send_modify(|nav| nav.loaded = Some(lifecycle.loader_id));
-                    self.changes.send_modify(|count| *count += 1);
                 } else if lifecycle.frame_id == self.target && lifecycle.name == "networkIdle" {
                     self.nav
                         .send_modify(|nav| nav.idle = Some(lifecycle.loader_id));
