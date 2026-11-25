@@ -1102,6 +1102,79 @@ async fn compare(
     .await
 }
 
+/// The key of the stage-3 result that holds the comparison of what is
+/// described with what is observed (decision 0999).
+pub(crate) const DESCRIBED_AGAINST_OBSERVED: &str = "described_against_observed";
+
+/// Described against observed (decision 0999): the registry's comparison
+/// of the findings, as stage 3 keeps it, and a question for each entry
+/// that is not `matched`. A verb and a path are the system's words, kept
+/// under the mark; a question names neither, only the finding it is
+/// scoped to.
+fn described_against_observed(
+    kernel: &Kernel,
+    findings: &[Finding],
+) -> (Json, Vec<(String, String, String, String)>) {
+    use a2m_core::{ComparisonResult, NotCompared};
+    let comparison = kernel.providers().compare(findings);
+    let ids = |list: &[Digest]| list.iter().map(Digest::to_string).collect::<Vec<_>>();
+    let mut asked = Vec::new();
+    let entries: Vec<Json> = comparison
+        .entries
+        .iter()
+        .map(|entry| {
+            let scope = entry
+                .described
+                .first()
+                .or(entry.observed.first())
+                .map(Digest::to_string)
+                .unwrap_or_default();
+            let question = match entry.result {
+                ComparisonResult::Matched => None,
+                ComparisonResult::DescribedOnly => Some((
+                    "The system's description states this endpoint, and this observation did not see it. Does it work as described?".to_owned(),
+                    "A tool drafted from it rests on the description alone, at `inferred`.".to_owned(),
+                    "An observation of the surface that reaches it, such as a capture of a person's use, at `discovered`.".to_owned(),
+                )),
+                ComparisonResult::ObservedOnly => Some((
+                    "This endpoint was seen, and no description states it. What is it?".to_owned(),
+                    "Nothing but the observation says what it takes and what it returns.".to_owned(),
+                    "A description that states it, or a person's account in the target's files.".to_owned(),
+                )),
+                ComparisonResult::Unknown => Some((
+                    format!(
+                        "What the description states here could not be compared with an observation ({}). Is it there?",
+                        entry.reason.map_or("unknown", NotCompared::as_str)
+                    ),
+                    "Whether it was seen or not is not known, so nothing rests on it but the description.".to_owned(),
+                    "An observation of the place it names, with its coverage stated.".to_owned(),
+                )),
+            };
+            if let Some((question, why, settled_by)) = question {
+                asked.push((question, scope, why, settled_by));
+            }
+            json!({
+                "result": entry.result.as_str(),
+                "level": entry.level.as_str(),
+                "coverage": entry.coverage.as_str(),
+                "reason": entry.reason.map(NotCompared::as_str),
+                "described": ids(&entry.described),
+                "observed": ids(&entry.observed),
+                "endpoint": entry.key.as_ref().map(|key| untrusted(json!({
+                    "place": key.place(),
+                    "verb": key.verb(),
+                    "path": key.path(),
+                }))),
+            })
+        })
+        .collect();
+    let counts: serde_json::Map<String, Json> = ComparisonResult::ALL
+        .iter()
+        .map(|result| (result.as_str().to_owned(), json!(comparison.count(*result))))
+        .collect();
+    (json!({"counts": counts, "entries": entries}), asked)
+}
+
 /// The draft stage: the drafter in the target's folder. It writes only new
 /// files and its own unchanged drafts, never a file a person wrote, and
 /// never a write.
@@ -2132,20 +2205,25 @@ async fn go_on(
     // target's folder: drafts are files of the project.
     let no_folder = json!({"state": "not_looked_at", "why": "The call is not made in a project that holds the target's folder, so nothing is drafted."});
     if !done.contains_key(&3) {
-        let result = match &folder {
+        let (compared, mut asked) = described_against_observed(kernel, &findings);
+        let mut result = match &folder {
             Some(_) => {
-                let (result, asked) = compare(kernel, call, target, id, findings.clone()).await?;
-                let named = target.clone();
-                kernel
-                    .store()?
-                    .write(Durability::Synced, move |tx| {
-                        open_questions(tx, workspace, &named, &asked)
-                    })
-                    .await?;
+                let (result, drafted) = compare(kernel, call, target, id, findings.clone()).await?;
+                asked.extend(drafted);
                 result
             }
             None => no_folder.clone(),
         };
+        if let Json::Object(map) = &mut result {
+            map.insert(DESCRIBED_AGAINST_OBSERVED.to_owned(), compared);
+        }
+        let named = target.clone();
+        kernel
+            .store()?
+            .write(Durability::Synced, move |tx| {
+                open_questions(tx, workspace, &named, &asked)
+            })
+            .await?;
         kernel
             .store_stage(id, 3, input_hash(&done[&2]), &result)
             .await?;
