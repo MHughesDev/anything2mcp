@@ -51,6 +51,10 @@ pub(crate) const TOOL_TARGET_KEY: &str = "anything2mcp/target";
 pub(crate) const TOOL_VERSION_KEY: &str = "anything2mcp/version";
 /// The `_meta` key of who wrote a published tool's description.
 pub(crate) const TOOL_DESCRIPTION_BY_KEY: &str = "anything2mcp/description_by";
+/// The `_meta` key of a published tool's digest: the SHA-256 of its name,
+/// description, input schema, output schema, and annotations in canonical
+/// JSON, which a client pins to see that the tool changed (decision 0439).
+pub(crate) const TOOL_DIGEST_KEY: &str = "anything2mcp/digest";
 
 /// The `_meta` key of why a published tool cannot be called now.
 pub(crate) const TOOL_UNAVAILABLE_KEY: &str = "anything2mcp/unavailable";
@@ -93,8 +97,9 @@ pub(crate) struct ToolEntry {
     pub(crate) description: String,
     pub(crate) input_schema: Map<String, Json>,
     pub(crate) annotations: ToolAnnotationsFace,
-    /// What the tool's `_meta` carries: for a published tool, its target and
-    /// version under this product's own prefix; empty for a control tool.
+    /// What the tool's `_meta` carries: for a published tool, its target,
+    /// version, who wrote its description, and its digest, under this
+    /// product's own prefix; empty for a control tool.
     pub(crate) meta: Map<String, Json>,
 }
 
@@ -640,13 +645,17 @@ fn entry(name: &str, tool: &Json) -> ToolEntry {
     let hint = |key: &str| tool["annotations"][key].as_bool().unwrap_or(false);
     let title = tool["title"].as_str().unwrap_or(name).to_owned();
     // The target and the version, as the compiled target the tool was
-    // published in states them, and who wrote the description, `rule` or
-    // `builder` (decision 0307, point 6).
+    // published in states them, who wrote the description, `rule` or
+    // `builder` (decision 0307, point 6), and the tool's digest (decision
+    // 0439, point 1). The digest is of the tool as published: the sentence
+    // a drift puts first below is the product's, of the moment, and not in
+    // it.
     let mut meta = Map::new();
     for (key, field) in [
         (TOOL_TARGET_KEY, "target"),
         (TOOL_VERSION_KEY, "version"),
         (TOOL_DESCRIPTION_BY_KEY, "description_by"),
+        (TOOL_DIGEST_KEY, "digest"),
     ] {
         if let Some(text) = tool[field].as_str() {
             meta.insert(key.to_owned(), json!(text));

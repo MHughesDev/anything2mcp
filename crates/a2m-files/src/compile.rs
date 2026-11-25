@@ -310,6 +310,11 @@ fn json_schema_of(ty: &ValueType, codes: &[a2m_core::CodeLabel]) -> serde_json::
     }
 }
 
+/// The key that marks, in a tool's output schema, a field that holds the
+/// system's own words (spec section 221, decision 0325). Its value is
+/// always `true`; a field that is not marked carries no such key.
+pub const UNTRUSTED_MARK: &str = "x-anything2mcp-untrusted";
+
 /// The JSON Schema of a value a tool returns. A number, a date, a moment,
 /// or a length of time that holds a registered secret reaches the caller as
 /// the text `[redacted]` (decision 0153), so where one is declared that text
@@ -3911,6 +3916,18 @@ impl<'a> Compiler<'a> {
                     } else {
                         schema
                     };
+                    // The system's words are marked, so that a client can
+                    // treat them as data (decisions 0325 and 0439). Only a
+                    // marked field carries the key.
+                    let schema = match schema {
+                        serde_json::Value::Object(mut map)
+                            if self.is_untrusted(output.field_type) =>
+                        {
+                            map.insert(UNTRUSTED_MARK.to_owned(), serde_json::Value::Bool(true));
+                            serde_json::Value::Object(map)
+                        }
+                        schema => schema,
+                    };
                     (output.name.clone(), schema)
                 })
                 .collect();
@@ -4046,6 +4063,13 @@ impl<'a> Compiler<'a> {
             .and_then(|index| self.model.field_types.get(index.get()))
             .map_or(&[][..], |known| known.codes.as_slice());
         json_schema_of(ty, codes)
+    }
+
+    /// Whether the field type an output is of holds the system's free text.
+    fn is_untrusted(&self, field_type: Option<FieldTypeIndex>) -> bool {
+        field_type
+            .and_then(|index| self.model.field_types.get(index.get()))
+            .is_some_and(|known| known.untrusted)
     }
 
     fn output_schema_of_type(

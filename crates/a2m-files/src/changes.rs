@@ -14,8 +14,8 @@
 use std::collections::BTreeSet;
 
 use a2m_core::{
-    CompiledInput, CompiledOutput, CompiledTarget, CompiledTool, EffectClass, Hazard,
-    OperationName, ToolRuns, ValueType, Version,
+    CanonicalJson, CompiledInput, CompiledOutput, CompiledTarget, CompiledTool, Digest,
+    EffectClass, Hazard, OperationName, ToolRuns, ValueType, Version,
 };
 use serde::Serialize;
 
@@ -557,15 +557,54 @@ fn compared(before: &Contract<'_>, after: &Contract<'_>) -> Vec<Change> {
     if after.tool.description != before.tool.description {
         changes.push(Change::DescriptionChanged);
     }
+    // Anything else a client reads: what the digest covers, which is what a
+    // client pins, and the title, which is shown to people and is not in it.
+    // So a tool the comparison calls unchanged keeps its digest.
     if changes.is_empty()
         && (after.tool.title != before.tool.title
-            || after.tool.input_schema != before.tool.input_schema
-            || after.tool.output_schema != before.tool.output_schema
-            || after.tool.annotations != before.tool.annotations)
+            || tool_digest(after.tool) != tool_digest(before.tool))
     {
         changes.push(Change::DefinitionChanged);
     }
     changes
+}
+
+/// What a tool is, exactly, as a client pins it: the SHA-256 of its name,
+/// description, input schema, output schema, and annotations, as one object
+/// in canonical JSON (decisions 0325 and 0439, spec section 221):
+///
+/// ```json
+/// {"annotations":{"destructive":false,"idempotent":true,"open_world":false,"read_only":true},
+///  "description":"...","input_schema":{...},"name":"...","output_schema":{...}}
+/// ```
+///
+/// The version is not in it, so the same definition published again keeps
+/// its digest, and any change to one of those parts, a description's
+/// included, gives another. The title, the target, and the version are
+/// not part of it. `None` only for a tool whose schemas are not JSON, which
+/// no compiled target holds.
+#[must_use]
+pub fn tool_digest(tool: &CompiledTool) -> Option<Digest> {
+    let schema =
+        |text: &CanonicalJson| serde_json::from_slice::<serde_json::Value>(text.as_bytes());
+    let (Ok(input), Ok(output)) = (schema(&tool.input_schema), schema(&tool.output_schema)) else {
+        return None;
+    };
+    let definition = serde_json::json!({
+        "name": tool.name.as_str(),
+        "description": tool.description,
+        "input_schema": input,
+        "output_schema": output,
+        "annotations": {
+            "read_only": tool.annotations.read_only,
+            "destructive": tool.annotations.destructive,
+            "idempotent": tool.annotations.idempotent,
+            "open_world": tool.annotations.open_world,
+        },
+    });
+    CanonicalJson::encode(&definition)
+        .ok()
+        .map(|encoded| Digest::of(encoded.as_bytes()))
 }
 
 /// What changed in each tool from `before` to `after`, by the closed list

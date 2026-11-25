@@ -1416,7 +1416,8 @@ class Actions:
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """The full description, input schema, and output schema of one published
-        tool, by its name.
+        tool, by its name, and its digest, which changes when and only when its
+        definition does.
 
         The engine action is ``tool.describe``.
         """
