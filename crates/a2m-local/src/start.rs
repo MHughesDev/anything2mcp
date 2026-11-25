@@ -329,7 +329,12 @@ fn launch(start: &Launch) -> std::io::Result<Child> {
         })
         .stdout(log.try_clone()?)
         .stderr(log.try_clone()?);
+    // In a test build, no test lets a lock go while this child shares it.
+    #[cfg(test)]
+    let starting = os::children::starting();
     let mut child = os::spawn_detached(&mut command)?;
+    #[cfg(test)]
+    drop(starting);
     // One line, appended at once, so that a person who reads the log knows
     // which process wrote what follows.
     let _ = writeln!(log, "{STARTED_LINE} {}.", child.id());
