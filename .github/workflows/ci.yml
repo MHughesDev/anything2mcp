@@ -587,8 +587,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends xvfb
       - name: Test the browser base and the web pack, the window tests among them
         run: cargo test --locked --no-fail-fast -p a2m-pack-web-browser -p a2m-pack-web-ui
-      - name: Test the sign-in in a window through the product
-        run: cargo test --locked --no-fail-fast -p anything2mcp --test signed_in_web_read
+      - name: Test the sign-in and the capture of a person's use in a window through the product
+        run: cargo test --locked --no-fail-fast -p anything2mcp --test signed_in_web_read --test capture_use
 
   desktop-windows:
     name: The desktop pack on Windows, against its stand
