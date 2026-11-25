@@ -29,6 +29,7 @@ mod command_write;
 mod completion;
 mod copied_data_folder;
 mod data_write;
+mod described;
 mod engine_log;
 mod expired_session;
 mod export_download;

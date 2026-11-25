@@ -1969,3 +1969,61 @@ async fn two_operations_with_one_operation_id_are_drafted_to_two_endpoint_files(
         2
     );
 }
+
+/// Described against observed through the pack's key rules (decision
+/// 0486): against the test application, its description's operations are
+/// the described side and `http_surface`'s look at the root the observed
+/// side. The root is in no description, so it is named; every described
+/// operation, at a place the look covered and never seen, is
+/// `described_only` at `inferred`.
+#[tokio::test]
+async fn the_test_applications_description_set_against_a_look_at_its_root() {
+    let app = TestApp::start().await.unwrap();
+    let scene = Scene::new("example", &app.url(""));
+    let findings: Vec<Finding> = discover(&scene, &Values::new())
+        .await
+        .into_iter()
+        .flat_map(|(name, result)| result.unwrap_or_else(|failure| panic!("{name}: {failure}")))
+        .collect();
+    let described = findings
+        .iter()
+        .filter(|finding| finding.kind().as_str() == "described_operation")
+        .count();
+    assert!(described > 5, "{findings:?}");
+    let comparison = scene.registry.compare(&findings);
+    let by = |result: a2m_core::ComparisonResult| comparison.count(result);
+    // Each operation is its own key: two on one path differ by method.
+    assert_eq!(
+        by(a2m_core::ComparisonResult::DescribedOnly),
+        described,
+        "{comparison:?}"
+    );
+    assert_eq!(by(a2m_core::ComparisonResult::Matched), 0, "{comparison:?}");
+    assert_eq!(by(a2m_core::ComparisonResult::Unknown), 0, "{comparison:?}");
+    let named: Vec<(String, String, EvidenceLevel)> = comparison
+        .entries
+        .iter()
+        .filter(|entry| entry.result == a2m_core::ComparisonResult::ObservedOnly)
+        .map(|entry| {
+            let key = entry.key.as_ref().unwrap();
+            (key.verb().to_owned(), key.path(), entry.level)
+        })
+        .collect();
+    assert_eq!(
+        named,
+        [
+            ("GET".to_owned(), "/".to_owned(), EvidenceLevel::Discovered),
+            (
+                "OPTIONS".to_owned(),
+                "/".to_owned(),
+                EvidenceLevel::Discovered
+            ),
+        ]
+    );
+    for entry in &comparison.entries {
+        if entry.result == a2m_core::ComparisonResult::DescribedOnly {
+            assert_eq!(entry.level, EvidenceLevel::Inferred);
+            assert!(entry.observed.is_empty());
+        }
+    }
+}

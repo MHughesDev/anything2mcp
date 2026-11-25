@@ -484,7 +484,7 @@ export interface ScoutReportInput {
   target: string;
   limit?: number;
   offset?: number;
-  part?: "surfaces" | "found" | "compared.differs" | "compared.would_draft" | "compared.not_covered" | "drafted.written" | "drafted.held_back" | "drafted.not_drafted" | "drafted.conflicts" | "drafted.refused" | "checked.problems" | "checked.tools" | "tried.tools" | "tried.left_out" | "open" | "not_looked_at";
+  part?: "surfaces" | "found" | "compared.differs" | "compared.would_draft" | "compared.not_covered" | "compared.described_against_observed.entries" | "drafted.written" | "drafted.held_back" | "drafted.not_drafted" | "drafted.conflicts" | "drafted.refused" | "checked.problems" | "checked.tools" | "tried.tools" | "tried.left_out" | "open" | "not_looked_at";
   scout?: string;
 }
 

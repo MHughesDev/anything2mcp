@@ -6,7 +6,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use a2m_auth::AuthProvider;
-use a2m_core::{ControlName, Failure, Mode, Redact, Values};
+use a2m_core::{ControlName, Failure, FindingKind, Mode, Redact, Values};
 use a2m_files::{DraftingRule, FileKind, LintRule, Lowering, SurfaceKindSpec};
 use a2m_logs::LogsAndTraces;
 use a2m_sources::SourceReader;
@@ -14,6 +14,7 @@ use a2m_sources::SourceReader;
 use crate::action::ProviderAction;
 use crate::capture::CaptureSource;
 use crate::codes;
+use crate::compare::KeyRule;
 use crate::discover::{Describer, Discoverer};
 use crate::driver::Driver;
 use crate::manifest::{KindOf, Manifest};
@@ -201,6 +202,7 @@ pub(crate) struct Collected {
     pub compiler: CompilerRegistrations,
     pub actions: Vec<Arc<dyn ProviderAction>>,
     pub capture: Option<Arc<dyn CaptureSource>>,
+    pub key_rules: Vec<(FindingKind, Arc<dyn KeyRule>)>,
 }
 
 /// What a pack hands its objects to. Each call is checked against the
@@ -305,6 +307,31 @@ impl<'a> Registrar<'a> {
         }
         self.once("a traffic capture source".to_owned())?;
         self.collected.capture = Some(source);
+        Ok(())
+    }
+
+    /// Registers the key rule of a finding kind the manifest owns, under
+    /// `finding_kinds`: what the comparison of what is described with what
+    /// is observed reads a finding of that kind by (decision 0486).
+    ///
+    /// # Errors
+    ///
+    /// `policy`/`effect_not_declared` for a kind the manifest does not
+    /// own, or a second rule for one kind.
+    pub fn key_rule(&mut self, kind: FindingKind, rule: Arc<dyn KeyRule>) -> Result<(), Failure> {
+        if !self
+            .manifest
+            .finding_kinds
+            .iter()
+            .any(|owned| owned.name == kind)
+        {
+            return Err(self.undeclared(&format!(
+                "a key rule for the finding kind `{}`, which it does not own",
+                kind.as_str()
+            )));
+        }
+        self.once(format!("the key rule of `{}`", kind.as_str()))?;
+        self.collected.key_rules.push((kind, rule));
         Ok(())
     }
 

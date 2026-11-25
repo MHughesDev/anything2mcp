@@ -515,6 +515,7 @@ pub(crate) const PARTS: &[&str] = &[
     "compared.differs",
     "compared.would_draft",
     "compared.not_covered",
+    "compared.described_against_observed.entries",
     "drafted.written",
     "drafted.held_back",
     "drafted.not_drafted",

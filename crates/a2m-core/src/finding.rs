@@ -83,6 +83,34 @@ vocabulary! {
     }
 }
 
+vocabulary! {
+    /// What the comparison of what is described with what is observed
+    /// says of one endpoint (spec section 218, decision 0486).
+    pub enum ComparisonResult: "comparison result" {
+        /// Described and observed, exactly or through a path template.
+        Matched => "matched",
+        /// Described, and not seen in this observation.
+        DescribedOnly => "described_only",
+        /// Seen, and not in any description.
+        ObservedOnly => "observed_only",
+        /// The comparison could not be made, with a reason.
+        Unknown => "unknown",
+    }
+}
+
+vocabulary! {
+    /// Why a comparison of what is described with what is observed could
+    /// not be made (spec section 218, decision 0486).
+    pub enum NotCompared: "reason a comparison was not made" {
+        /// No observation looked at the place the description names.
+        NotObserved => "not_observed",
+        /// The observation of the place does not say how much it covered.
+        CoverageUnknown => "coverage_unknown",
+        /// The finding's pack gave no key for it.
+        NoKey => "no_key",
+    }
+}
+
 /// One reason a finding is weaker than it looks.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct Limitation {
