@@ -6,8 +6,8 @@ use std::path::Path;
 
 use a2m_core::{
     AccessKind, Availability, BindingStatus, Checkpoint, Coverage, DoctorState, EffectClass,
-    EnvironmentKind, EvidenceLevel, FailureClass, FieldBase, Hazard, IdentityStrategy,
-    LimitationCode, RecordState, RunState, Sensitivity, SessionState, Source, Subject,
+    EnvironmentKind, EvidenceLevel, FailureClass, FieldBase, Hazard, LimitationCode,
+    RecordMatching, RecordState, RunState, Sensitivity, SessionState, Source, Subject,
     SubsystemMove, SubsystemState, TestKind, WriteEvidence,
 };
 
@@ -285,7 +285,7 @@ fn doctor_states_are_the_ones_doctor_reports() {
 #[test]
 fn identity_strategies_are_the_ones_in_the_record_identity_section() {
     let spec = document("spec/2-kernel/209-record-identity-and-dependent-records.md");
-    assert_eq!(column(&spec, "| Strategy |", 0), IdentityStrategy::NAMES);
+    assert_eq!(column(&spec, "| Strategy |", 0), RecordMatching::NAMES);
 }
 
 /// The words written as code in the meaning of one field of a file format:
@@ -437,7 +437,7 @@ fn every_vocabulary_reads_back_what_it_writes() {
     round_trip(DoctorState::ALL, DoctorState::NAMES);
     round_trip(EnvironmentKind::ALL, EnvironmentKind::NAMES);
     round_trip(FieldBase::ALL, FieldBase::NAMES);
-    round_trip(IdentityStrategy::ALL, IdentityStrategy::NAMES);
+    round_trip(RecordMatching::ALL, RecordMatching::NAMES);
     round_trip(Sensitivity::ALL, Sensitivity::NAMES);
     round_trip(SubsystemMove::ALL, SubsystemMove::NAMES);
     round_trip(SubsystemState::ALL, SubsystemState::NAMES);

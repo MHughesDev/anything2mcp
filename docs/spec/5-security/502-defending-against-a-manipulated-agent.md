@@ -58,7 +58,7 @@ The agent that builds a target reads the system more than anyone. If it is steer
 | New or changed surfaces and destinations | Where data can now go |
 | New uploads and downloads | What can now leave or arrive |
 | Effect classes that rose; new `irreversible` operations | What can now be changed |
-| Changed identity strategies and read-back rules | Whether writes are still verified |
+| Changed record matchings and read-back rules | Whether writes are still verified |
 | Changed expressions in bodies and mappings | What values are now sent |
 | Changed descriptions | What agents will now be told |
 | What each tool starts and sets; every address a tool or a sign-in's credential can reach, by kind of place | What runs on the machine, and where data and credentials can go ([decision 0252](../../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)) |

@@ -314,7 +314,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 | --- | --- | --- |
 | 1 | A driver, no retries inside | The `device` driver, with no automatic retry of any write, even as `transient` |
 | 2 | Read-back for every write | Read the register again. A `write` register, a console command, or a register with a `read_effect` has none, and its write is `irreversible`. Any hazard other than `none` makes a write `irreversible` whatever its read-back |
-| 3 | Each identity strategy | `natural`, by the register's or object's name in the map. A command is `none`. `composite`, `stamped`, and `find` are refused with a reason |
+| 3 | Each record matching | `natural`, by the register's or object's name in the map. A command is `none`. `composite`, `stamped`, and `find` are refused with a reason |
 | 4 | A test stand | The simulated device above, with its control interface |
 | 5 | A discoverer | Identification, the device's own listing, a published map, and firmware inspection through the optional provider. Identification, a published map, and firmware inspection are built |
 | 6 | Failures mapped | The table above |

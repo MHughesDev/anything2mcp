@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use a2m_core::{Digest, FailureClass};
 use a2m_provider::{
-    EnvAllowlist, Exit, LaunchSpec, OWNER_MARK_VARIABLE, OneShot, ProgramRef, ProviderSettings,
+    EnvAllowlist, Exit, LaunchSpec, OneShot, PROCESS_MARK_VARIABLE, ProgramRef, ProviderSettings,
     Ran, RegistryBuilder, Roots, SubsystemKind, Supervisor, SupervisorLimits, codes,
 };
 use common::{Folder, TestPack, host, manifest};
@@ -87,7 +87,7 @@ async fn a_program_runs_to_its_end_with_its_output_captured_and_only_the_environ
     assert_eq!(started.exit, Some(0));
     assert!(started.env.contains_key("EXAMPLE_CLI_HOME"));
     assert_eq!(
-        started.env.get(OWNER_MARK_VARIABLE).map(String::len),
+        started.env.get(PROCESS_MARK_VARIABLE).map(String::len),
         Some(32)
     );
     assert!(

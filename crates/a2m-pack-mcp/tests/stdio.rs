@@ -772,7 +772,7 @@ async fn the_program_started_while_such_variables_are_set() {
             start.env
         );
     }
-    // What it does see: the variable its surface sets, the owner mark, and
+    // What it does see: the variable its surface sets, the process mark, and
     // on Windows the system's root folder; no variable of the engine's.
     assert!(
         start.env.iter().any(|seen| seen == "EXAMPLE_MCP_STATE"),
@@ -793,7 +793,7 @@ async fn the_program_started_while_such_variables_are_set() {
         seen.sort();
         assert_eq!(
             seen,
-            [a2m_provider::OWNER_MARK_VARIABLE, "EXAMPLE_MCP_STATE"],
+            [a2m_provider::PROCESS_MARK_VARIABLE, "EXAMPLE_MCP_STATE"],
             "the program's whole environment on Linux"
         );
     }

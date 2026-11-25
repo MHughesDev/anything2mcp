@@ -8,7 +8,7 @@ What it takes to keep an installation running from day to day: what an administr
 | --- | --- |
 | Targets and versions | See every target, its surfaces, published versions, and binding health; roll a target back to a previous version in one step (`version.rollback`) |
 | Toolsets and grants | Create toolsets, assign users and groups, set identity modes and approval policy ([section 214](../2-kernel/214-access-control-toolsets-and-tenancy.md)) |
-| Sessions | See which identities are signed in to which targets, their expiry, and their last use; revoke any session. Revoking never lets anyone use the session as its owner ([section 215](../2-kernel/215-sessions-and-the-session-keeper.md)) |
+| Sessions | See which identities are signed in to which targets, their expiry, and their last use; revoke any session. Revoking never lets anyone use the session as its session owner ([section 215](../2-kernel/215-sessions-and-the-session-keeper.md)) |
 | Runs | Watch live runs; inspect any run's ledger, diff, approval, and trace; cancel or resume |
 | Approvals | See pending approvals; set standing approvals and their expiry ([section 212](../2-kernel/212-policy-and-approvals.md)) |
 | Runners | See connected runners, their load, operating system, and assigned targets; drain a runner for maintenance |
@@ -65,7 +65,7 @@ Each of these closes a gap found by asking how such a system is used day to day.
 | Part | The gap | Design | Belongs in | Phase |
 | --- | --- | --- | --- | --- |
 | Target environments | A system has test and production instances | A target declares environments, each with its own surface addresses, sessions, and approval policy. Publish gates run against a test environment; a toolset pins one environment | [Section 205](../2-kernel/205-target-files.md) | 3 |
-| Mid-run input | A pipeline could only succeed or stop | A pipeline can declare decision points, such as two customers matching a name. The run rests at `needs_input`, a person chooses through a form or the approval page, and the choice is recorded. Decision points are declared, never improvised | [Section 208](../2-kernel/208-runs-the-ledger-and-resume.md) | 3 |
+| Mid-run input | A pipeline could only succeed or stop | A pipeline can declare run questions, such as two customers matching a name. The run rests at `needs_input`, a person chooses through a form or the approval page, and the choice is recorded. Run questions are declared, never improvised | [Section 208](../2-kernel/208-runs-the-ledger-and-resume.md) | 3 |
 | Undo | A wrong but approved write had no way back | The ledger keeps prior values for every write. `run.undo` builds the reverse diff, which goes through preview and approval like any write. Not offered for `irreversible` operations | [Section 208](../2-kernel/208-runs-the-ledger-and-resume.md) | 3 |
 | Read cache | Every read reached the system | Opt-in per operation: a time limit, keyed by identity and inputs, cleared by the runtime's own writes to the same record. Never used for previews or read-back | [Section 207](../2-kernel/207-the-engine-loop.md) | 4 |
 | Data classification | Any field could flow to any agent | Field types carry a sensitivity label. Toolset policy says which labels may reach which callers; others are masked or left out. Restricted fields never appear in what is given to a building agent. An optional hook lets a data-loss-prevention service inspect results | [Section 214](../2-kernel/214-access-control-toolsets-and-tenancy.md) | 6 |

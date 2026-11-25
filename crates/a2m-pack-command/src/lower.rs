@@ -5,8 +5,9 @@
 use std::collections::BTreeSet;
 
 use a2m_core::{
-    CodeEntry, Digest, EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload,
-    PackRef, SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, Verb, WriteEvidence,
+    CodeEntry, Digest, EffectClass, FailsAs, FileKindName, Mode, PackPayload, PackRef,
+    RecordMatching, SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, Verb,
+    WriteEvidence,
 };
 use a2m_files::{
     BindingStatement, Diagnostic, Diagnostics, Doc, EnvironmentVariable, JsonSchema, Located,
@@ -306,7 +307,7 @@ impl Lowering for CliLowering {
     fn evidence(&self, binding: &ResolvedBinding<'_>, lowered: &Lowered) -> WriteEvidence {
         let operation = binding.operation;
         if operation.effect() == EffectClass::Irreversible
-            && operation.strategy() == IdentityStrategy::None
+            && operation.strategy() == RecordMatching::None
             && binding.field("read_back").is_none()
             && lowered.read_back.is_empty()
             && lowered.act.first().is_some_and(|step| step.commits)
@@ -345,7 +346,7 @@ impl Lowering for CliLowering {
         &self.schema
     }
 
-    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         let named = |field: Option<&Located<Doc>>| {
             field
                 .and_then(|field| field.text("command"))
@@ -353,18 +354,18 @@ impl Lowering for CliLowering {
         };
         let lookup = named(binding.field("lookup"));
         match strategy {
-            IdentityStrategy::Natural | IdentityStrategy::Composite | IdentityStrategy::None => {
+            RecordMatching::Natural | RecordMatching::Composite | RecordMatching::None => {
                 Possible::Yes
             }
-            IdentityStrategy::Find if lookup.is_some() => Possible::Yes,
-            IdentityStrategy::Find => Possible::No(
+            RecordMatching::Find if lookup.is_some() => Possible::Yes,
+            RecordMatching::Find => Possible::No(
                 "the binding names no `lookup` command that lists by what the write set."
                     .to_owned(),
             ),
             // Whether both commands carry the stamp is checked when the
             // binding is lowered, where the commands can be read.
-            IdentityStrategy::Stamped if lookup.is_some() => Possible::Yes,
-            IdentityStrategy::Stamped => Possible::No(
+            RecordMatching::Stamped if lookup.is_some() => Possible::Yes,
+            RecordMatching::Stamped => Possible::No(
                 "the binding names no `lookup` command that finds a record by its stamp."
                     .to_owned(),
             ),
@@ -540,7 +541,7 @@ impl Lowering for CliLowering {
                     "Write `effect: irreversible` in the operation.",
                 ));
             }
-            if cx.operation().strategy() == IdentityStrategy::Stamped {
+            if cx.operation().strategy() == RecordMatching::Stamped {
                 let lookup_command = binding
                     .field("lookup")
                     .and_then(|lookup| lookup.text("command"))
@@ -550,7 +551,7 @@ impl Lowering for CliLowering {
                         "stamp_missing",
                         &name.at,
                         "The operation's identity is `stamped`, and the command or its lookup has no `{flag: ..., stamp: true}` entry.".to_owned(),
-                        "Add the entry to both commands, or choose another identity strategy.",
+                        "Add the entry to both commands, or choose another record matching.",
                     ));
                 }
             }

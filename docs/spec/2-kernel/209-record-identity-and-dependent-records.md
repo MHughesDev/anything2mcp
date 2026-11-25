@@ -70,7 +70,7 @@ steps:
 
 ## One save that carries many records
 
-Some systems save a header and its lines in a single commit: one form with a grid, or one request with a nested list. That is one commit point and one ledger row. Read-back compares the nested lines by their own identity strategy, so a line the system dropped or reordered is caught as a `mismatch`.
+Some systems save a header and its lines in a single commit: one form with a grid, or one request with a nested list. That is one commit point and one ledger row. Read-back compares the nested lines by their own record matching, so a line the system dropped or reordered is caught as a `mismatch`.
 
 ## What this adds elsewhere
 

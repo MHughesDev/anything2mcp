@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use a2m_core::{
     CompiledSurface, ControlName, EffectClass, Failure, FailureClass, FileKindName, Finding,
-    FindingKind, IdentityStrategy, LintCode, Mode, PackPayload, Step, StepKind, SurfaceKind,
+    FindingKind, LintCode, Mode, PackPayload, RecordMatching, Step, StepKind, SurfaceKind,
     SurfaceName, SurfaceNotice, ValueType, Verb, WriteEvidence,
 };
 
@@ -220,7 +220,7 @@ pub enum StepChanges {
     Can,
 }
 
-/// Whether an identity strategy can be carried out by a binding.
+/// Whether an record matching can be carried out by a binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Possible {
     /// It can.
@@ -317,7 +317,7 @@ pub trait Lowering: Send + Sync {
     /// a binding, `read_back` included, is checked against this.
     fn binding_schema(&self) -> &JsonSchema;
     /// Whether `strategy` is possible for this binding.
-    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible;
+    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible;
     /// The one fixed place the binding reads or writes, where it names one
     /// in the target's files and no input chooses it. The compiler holds
     /// the answer to the file kind's [`FileKind::fixed_places`]. A lowering

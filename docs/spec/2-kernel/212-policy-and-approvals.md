@@ -81,7 +81,7 @@ Treating "without approval" and "may see" as questions of their own keeps the an
 | Principals | People, groups, AI agents with their own identity, programs with a key | People belong to groups; an agent records the person it acts for, if any |
 | Resources | Operations and pipelines | Tool in module in target in workspace; toolsets and environments alongside |
 | Other resources | Sensitivity labels, runs, target versions, runners, sessions | Flat |
-| Context | Effect class, hazard, record count, toolset, environment, client, time, identity mode, the session's owner, whether the caller is an agent and for whom it acts | Built by `a2m-actions` from verified facts and from what the engine reports, never by the caller |
+| Context | Effect class, hazard, record count, toolset, environment, client, time, identity mode, the session owner, whether the caller is an agent and for whom it acts | Built by `a2m-actions` from verified facts and from what the engine reports, never by the caller |
 
 Because tools sit inside modules inside targets, one grant on a target covers every tool in it, and a grant on a module covers that module.
 

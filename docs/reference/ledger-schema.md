@@ -285,7 +285,7 @@ As built by migrations `0009`, `0011`, `0014`, and `0028`, which `a2m-actions` o
 
 | Table | One row is | Key |
 | --- | --- | --- |
-| `actions_installation` | One fact about the installation, by name: the workspace of one machine, the principal of its user, the digest of the recorded catalog, the digest of the settings at the last start. Never a secret | `name` |
+| `actions_installation` | One fact about the installation, by name: the workspace of one machine, the principal of its user, the digest of the action catalog, the digest of the settings at the last start. Never a secret | `name` |
 | `actions_toolsets` | A toolset, as JSON written through `toolset.create` and `toolset.update`, with who updated it and when | `workspace_id`, `name` |
 | `actions_scout_stages` | One finished stage of one scout run, stages 0 to 7: the hash of what it was given and its result, already redacted. A stopped scout continues after the last stage stored | `run_id`, `stage` |
 | `actions_targets` | A target that has a published version, so that a tool can be found by its name alone. Written by `version.publish` in the transaction that stores the version | `workspace_id`, `target` |

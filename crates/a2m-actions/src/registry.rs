@@ -16,7 +16,7 @@ use crate::def::{
 };
 use crate::handlers;
 
-/// The format of the recorded catalog.
+/// The format of the action catalog.
 pub const CATALOG_FORMAT: u32 = 1;
 
 /// Every action, by name, in catalog order: the kernel's own first, then
@@ -229,7 +229,7 @@ impl ActionRegistry {
             .collect()
     }
 
-    /// The recorded catalog: every action as data, with a digest. The input
+    /// The action catalog: every action as data, with a digest. The input
     /// to every generator.
     #[must_use]
     pub fn catalog(&self) -> Catalog {
@@ -264,7 +264,7 @@ fn invalid(message: String) -> Failure {
     )
 }
 
-/// The recorded catalog.
+/// The action catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Catalog {
     /// The format of this record.
@@ -290,7 +290,7 @@ pub struct CatalogField {
     pub help: String,
 }
 
-/// One action of the recorded catalog.
+/// One action of the action catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CatalogEntry {
     /// `noun.verb`.

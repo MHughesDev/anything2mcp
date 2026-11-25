@@ -869,12 +869,12 @@ fn a_private_folder_is_made_closed_to_other_users() {
 /// a removal held to the file the caller looked at leaves another file at
 /// the name where it is, and removes that file only while the name holds it.
 #[test]
-fn a_held_folder_removes_a_file_only_while_its_name_holds_the_file_looked_at() {
+fn a_folder_handle_removes_a_file_only_while_its_name_holds_the_file_looked_at() {
     let (folder, roots) = scene();
     let orders = roots
         .check(&root("project"), "orders", Access::Write)
         .unwrap();
-    let held = orders.hold_folder().unwrap();
+    let held = orders.folder_handle().unwrap();
     let looked_at = held.identity("one.txt").unwrap();
     // Another program replaces the file after the look.
     let on_disk = folder.path().join("project").join("orders");
@@ -929,7 +929,7 @@ fn a_held_folder_removes_a_file_only_while_its_name_holds_the_file_looked_at() {
 /// no longer at its path.
 #[cfg(unix)]
 #[test]
-fn a_held_folder_swapped_for_a_link_takes_every_call_and_the_link_none() {
+fn a_folder_handle_swapped_for_a_link_takes_every_call_and_the_link_none() {
     use std::time::{Duration, UNIX_EPOCH};
     let (folder, roots) = scene();
     let project = folder.path().join("project");
@@ -939,7 +939,7 @@ fn a_held_folder_swapped_for_a_link_takes_every_call_and_the_link_none() {
     let orders = roots
         .check(&root("project"), "orders", Access::Write)
         .unwrap();
-    let held = orders.hold_folder().unwrap();
+    let held = orders.folder_handle().unwrap();
     assert!(held.still_at_its_path());
     // A moment long past, which anything made or removed in the folder
     // outside would replace.
@@ -965,7 +965,7 @@ fn a_held_folder_swapped_for_a_link_takes_every_call_and_the_link_none() {
     );
     // A folder reached through the link now is refused.
     assert_eq!(
-        orders.hold_folder().unwrap_err().code(),
+        orders.folder_handle().unwrap_err().code(),
         &codes::PATH_NOT_ALLOWED
     );
 }

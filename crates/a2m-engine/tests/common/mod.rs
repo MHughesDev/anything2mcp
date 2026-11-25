@@ -23,12 +23,12 @@ use a2m_core::{
     CompiledProbe, CompiledSource, CompiledSurface, CompiledTarget, CompiledTargetHeader,
     CompiledTool, Digest, EffectClass, Environment, EnvironmentIndex, EnvironmentKind, Epoch,
     EvidenceLevel, ExprIndex, FailsAs, Failure, FailureClass, FailureCode, FieldFormat,
-    FieldTypeIndex, Finding, FindingKind, Hazard, IdentityStrategy, InputIndex, Mode,
-    OperationIndex, OperationName, PackPayload, PermissionManifest, PipelineIndex, PipelineLimits,
-    PipelineStep, PrincipalId, ProducedBy, RecordKey, RecordState, Rounding, RunId, RunState,
-    Sensitivity, SignInMode, Source, Step, StepArg, StepKind, Subject, SurfaceIndex, SurfaceKind,
-    SurfaceName, TargetName, TargetSection, Timestamp, ToolAnnotations, ToolRuns, Value, ValueType,
-    Values, Verb, Version, WhitespaceRule, WorkspaceId,
+    FieldTypeIndex, Finding, FindingKind, Hazard, InputIndex, Mode, OperationIndex, OperationName,
+    PackPayload, PermissionManifest, PipelineIndex, PipelineLimits, PipelineStep, PrincipalId,
+    ProducedBy, RecordKey, RecordMatching, RecordState, Rounding, RunId, RunState, Sensitivity,
+    SignInMode, Source, Step, StepArg, StepKind, Subject, SurfaceIndex, SurfaceKind, SurfaceName,
+    TargetName, TargetSection, Timestamp, ToolAnnotations, ToolRuns, Value, ValueType, Values,
+    Verb, Version, WhitespaceRule, WorkspaceId,
 };
 use a2m_engine::{
     BoxFuture, Clearance, Conditions, Control, Engine, EngineDeps, EngineEvent, EngineSettings,
@@ -1816,14 +1816,14 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
         inputs: vec![input("order_id", identifier, ValueType::Text, true)],
         outputs: order_outputs(),
         identity: CompiledIdentity {
-            strategy: IdentityStrategy::Natural,
+            strategy: RecordMatching::Natural,
             key: vec![InputIndex::new(0)],
         },
         commit_points: 0,
         bindings,
         manifest: no_manifest(),
         examples: Vec::new(),
-        decision_points: Vec::new(),
+        run_questions: Vec::new(),
     };
 
     // 0: read an order, through two bindings in order.
@@ -1848,7 +1848,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
             may_be_absent: false,
         }],
         identity: CompiledIdentity {
-            strategy: IdentityStrategy::Natural,
+            strategy: RecordMatching::Natural,
             key: vec![InputIndex::new(0)],
         },
         commit_points: 0,
@@ -1860,7 +1860,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
         )],
         manifest: no_manifest(),
         examples: Vec::new(),
-        decision_points: Vec::new(),
+        run_questions: Vec::new(),
     });
     // 2 and 3: create or update a line item. In the second the description
     // is compared as written, and the application trims what it stores.
@@ -1884,7 +1884,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
                 may_be_absent: false,
             }],
             identity: CompiledIdentity {
-                strategy: IdentityStrategy::Composite,
+                strategy: RecordMatching::Composite,
                 key: vec![InputIndex::new(0), InputIndex::new(1)],
             },
             commit_points: 1,
@@ -1908,7 +1908,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
             )],
             manifest: no_manifest(),
             examples: Vec::new(),
-            decision_points: Vec::new(),
+            run_questions: Vec::new(),
         });
     }
     // 4: a read on the surface that needs a sign-in.
@@ -1945,7 +1945,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
         )]
     };
     let create = |text: &str,
-                  strategy: IdentityStrategy,
+                  strategy: RecordMatching,
                   inputs: Vec<CompiledInput>,
                   key: Vec<InputIndex>,
                   act: Vec<Step>,
@@ -1963,13 +1963,13 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
             bindings: vec![binding],
             manifest: no_manifest(),
             examples: Vec::new(),
-            decision_points: Vec::new(),
+            run_questions: Vec::new(),
         }
     };
     // 5: `find`: the lookup searches on the description the write sets.
     compiled_target.operations.push(create(
         NOTE_ADD,
-        IdentityStrategy::Find,
+        RecordMatching::Find,
         vec![
             input("order_id", identifier, ValueType::Text, true),
             input("description", free_text, ValueType::Text, true),
@@ -2007,7 +2007,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
     let by_stamp = || vec![step("find_item", &[("order_id", order_id)], false, true)];
     compiled_target.operations.push(create(
         REF_ADD,
-        IdentityStrategy::Stamped,
+        RecordMatching::Stamped,
         stamped_inputs(),
         vec![InputIndex::new(0)],
         vec![step(
@@ -2026,7 +2026,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
     // and the read-back use it.
     compiled_target.operations.push(create(
         SLOT_ADD,
-        IdentityStrategy::Stamped,
+        RecordMatching::Stamped,
         stamped_inputs(),
         vec![InputIndex::new(0)],
         vec![
@@ -2300,7 +2300,7 @@ pub fn keyless_slot_add(compiled_target: &mut CompiledTarget) {
             // irreversible operation.
             operation.effect = EffectClass::Irreversible;
             operation.identity = CompiledIdentity {
-                strategy: IdentityStrategy::None,
+                strategy: RecordMatching::None,
                 key: Vec::new(),
             };
             for binding in &mut operation.bindings {

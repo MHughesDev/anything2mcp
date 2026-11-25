@@ -9,9 +9,9 @@ use std::collections::BTreeMap;
 
 use a2m_core::{
     BindingStatus, CompiledExpr, CompiledFieldType, CompiledInput, CompiledSurface, EffectClass,
-    ExprIndex, FieldTypeIndex, FileKindName, Hazard, IdentityStrategy, InputIndex, Mode,
-    OperationName, PackSection, SectionIndex, SurfaceIndex, SurfaceKind, SurfaceName, TargetName,
-    ValueType, Verb,
+    ExprIndex, FieldTypeIndex, FileKindName, Hazard, InputIndex, Mode, OperationName, PackSection,
+    RecordMatching, SectionIndex, SurfaceIndex, SurfaceKind, SurfaceName, TargetName, ValueType,
+    Verb,
 };
 use a2m_expr::{LibraryVersion, TypeEnv};
 
@@ -72,7 +72,7 @@ pub(crate) struct OpInfo {
     pub hazard: Hazard,
     pub inputs: Vec<InputInfo>,
     pub outputs: Vec<a2m_core::CompiledOutput>,
-    pub strategy: IdentityStrategy,
+    pub strategy: RecordMatching,
     pub key: Vec<String>,
     /// Where `place: fixed` is written, for an operation whose record is
     /// one fixed place (decision 0252).
@@ -373,9 +373,9 @@ impl<'a> OperationView<'a> {
         self.info.hazard
     }
 
-    /// Its identity strategy.
+    /// Its record matching.
     #[must_use]
-    pub fn strategy(&self) -> IdentityStrategy {
+    pub fn strategy(&self) -> RecordMatching {
         self.info.strategy
     }
 

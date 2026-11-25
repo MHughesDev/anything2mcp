@@ -430,7 +430,7 @@ The test application ([test application plan](../../plan/test-application.md)) i
 | --- | --- |
 | 6 to 12 | Locating without generated identifiers, widget escalation, in-page navigation, grids by key, custom controls (built: the page `/cases/controls`, [decision 0351](../../decisions/0351-the-remaining-widget-drivers-built-from-what-a-page-says-of-its-controls-a-staged-file-a-grid-cell-by-its-rows-key.md)), declared dialogs, frames and shadow trees |
 | 13 to 15 | The auth providers, sign-in detection, the keeper's probes, exclusive sessions |
-| 16 to 21 | Normalization, `possible_commit` after a crash, identity strategies, dependent records, no duplicate send, `changed_since_preview` |
+| 16 to 21 | Normalization, `possible_commit` after a crash, record matchings, dependent records, no duplicate send, `changed_since_preview` |
 | 22 to 24 | Mining stopping at shadow; edge blocks; long jobs and downloads |
 | 25 to 27 | Variants, locale, untrusted text |
 
@@ -460,7 +460,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 | --- | --- | --- |
 | 1 | A driver for its verbs, no retries inside | One driver per mode, over one `Browsers`. Widget escalation is one strategy in one step |
 | 2 | A read-back rule for every write | As in the driver table. A `site_tools` write without a read tool or a `ui` field is `irreversible` |
-| 3 | Each identity strategy | `natural` and `composite`: `reach` built from the key. `stamped`: write the stamp field, then find the record through a list screen. `find`: a search screen, with the declared `settle`. `none`: the write is `irreversible` |
+| 3 | Each record matching | `natural` and `composite`: `reach` built from the key. `stamped`: write the stamp field, then find the record through a list screen. `find`: a search screen, with the declared `settle`. `none`: the write is `irreversible` |
 | 4 | A test stand | The test application, cases 1 to 27, and a new case for a page that registers tools |
 | 5 | A discoverer | The six of the probe, and screen matching |
 | 6 | Failures mapped | The table above |

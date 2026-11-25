@@ -20,7 +20,7 @@
 //! field of each key input's name.
 
 use a2m_core::{
-    EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef, SectionIndex,
+    EffectClass, FailsAs, FileKindName, Mode, PackPayload, PackRef, RecordMatching, SectionIndex,
     Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
 };
 use a2m_files::{
@@ -877,20 +877,20 @@ impl Lowering for DesktopLowering {
         &self.schema
     }
 
-    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         let reads = READ_VERBS.contains(&binding.verb.as_str());
         match strategy {
-            IdentityStrategy::None => Possible::Yes,
-            IdentityStrategy::Natural | IdentityStrategy::Composite
+            RecordMatching::None => Possible::Yes,
+            RecordMatching::Natural | RecordMatching::Composite
                 if reads || binding.field("read_back").is_some() =>
             {
                 Possible::Yes
             }
-            IdentityStrategy::Natural | IdentityStrategy::Composite => Possible::No(
+            RecordMatching::Natural | RecordMatching::Composite => Possible::No(
                 "the binding names no `read_back` screen, where the window shows the record by its key."
                     .to_owned(),
             ),
-            IdentityStrategy::Stamped | IdentityStrategy::Find => Possible::No(
+            RecordMatching::Stamped | RecordMatching::Find => Possible::No(
                 "finding a record by a stamp or a search is not built in this version of the desktop pack."
                     .to_owned(),
             ),

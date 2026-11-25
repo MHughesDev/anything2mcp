@@ -421,7 +421,11 @@ async fn an_expired_session_with_no_renewal_path_gives_needs_login_to_every_call
 
     // Ended on purpose: `needs_login`, the old lease places nothing, and
     // nothing is retried.
-    world.keeper.revoke(&key, EndedBy::Owner).await.unwrap();
+    world
+        .keeper
+        .revoke(&key, EndedBy::SessionOwner)
+        .await
+        .unwrap();
     let revoked = world
         .keeper
         .lease(request(&key, &entry, Wait::NoWait))
@@ -1456,7 +1460,11 @@ async fn a_restore_that_ends_after_a_revoke_brings_nothing_back() {
     assert_eq!(placed(&lease).len(), 1);
 
     // The owner ends the session. The lease places nothing from here on.
-    world.keeper.revoke(&key, EndedBy::Owner).await.unwrap();
+    world
+        .keeper
+        .revoke(&key, EndedBy::SessionOwner)
+        .await
+        .unwrap();
     assert!(stale(&lease));
 
     // The first call's restore now reaches the worker.
@@ -1491,7 +1499,11 @@ async fn a_restore_is_undone_when_the_session_moved_on_while_it_ran() {
         tokio::spawn(async move { keeper.lease(req).await })
     };
     until(|| world.relay.restores_seen() == 1).await;
-    world.keeper.revoke(&key, EndedBy::Owner).await.unwrap();
+    world
+        .keeper
+        .revoke(&key, EndedBy::SessionOwner)
+        .await
+        .unwrap();
 
     world.relay.restores.release_one();
     let late = slow.await.unwrap().unwrap_err();
@@ -1594,7 +1606,11 @@ async fn work_that_ends_after_a_revoke_keeps_nothing() {
         tokio::spawn(async move { keeper.lease(req).await })
     };
     until(|| world.fake.refreshes() == 1).await;
-    world.keeper.revoke(&key, EndedBy::Owner).await.unwrap();
+    world
+        .keeper
+        .revoke(&key, EndedBy::SessionOwner)
+        .await
+        .unwrap();
     world.fake.release_renewals();
     assert!(waiting.await.unwrap().is_err());
     world.keeper.idle().await;

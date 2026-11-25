@@ -33,7 +33,7 @@ The digest pins the script: the bytes reviewed at publish are the bytes started.
 | --- | --- |
 | 1. A driver with no retries inside | "The driver" |
 | 2. A read-back rule for every write, or `irreversible` | "Read-back" |
-| 3. An answer for each identity strategy | "Identity" |
+| 3. An answer for each record matching | "Identity" |
 | 4. A test stand with a control interface | "The test stand" |
 | 5. A discoverer whose findings claim no more than was observed | "Discovery and drafting" |
 | 6. Failures mapped to the existing classes | "Failures" |

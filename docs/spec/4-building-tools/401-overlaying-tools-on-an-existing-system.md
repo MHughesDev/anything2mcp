@@ -12,7 +12,7 @@ Anything2MCP supplies the evidence and the guardrails. Whoever builds the tools,
 | 2 | Attach | The probe looks at each surface and says what kind it is, which pack serves it, and how sign-in works | Surfaces, each with a pack and a sign-in method |
 | 3 | Observe | Discoverers explore the system at rest and read what it publishes about itself, and a person's own use of it may be captured. Discovery writes nothing | Findings, `discovered` or `inferred` ([section 218](../2-kernel/218-discovery-and-findings.md)) |
 | 4 | Model | The target's files are written from the findings: screens, endpoints, commands, schemas. The drafter writes what follows by rule; an agent or a person writes the rest | Drafts at `reconstructed` |
-| 5 | Bind | Each business action is defined once as an operation, with an identity strategy and a read-back rule, and bound to the surfaces that can carry it out | Operations with bindings |
+| 5 | Bind | Each business action is defined once as an operation, with a record matching and a read-back rule, and bound to the surfaces that can carry it out | Operations with bindings |
 | 6 | Verify | Fixtures, the sandbox, test records, and the publish gates ([section 403](403-testing-and-publish-gates.md)) | A version at `behavior_verified` |
 | 7 | Publish | A person reads the review summary, ordered by risk, and publishes | Tools at `approved` |
 | 8 | Watch | Canaries, the target's identity, and drift detection. A change sends the affected bindings back to step 6 | Tools that stay true, or stop |

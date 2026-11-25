@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use a2m_core::{
-    EffectClass, FailsAs, FileKindName, Hazard, IdentityStrategy, Mode, PackPayload, PackRef,
+    EffectClass, FailsAs, FileKindName, Hazard, Mode, PackPayload, PackRef, RecordMatching,
     SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
     WriteEvidence,
 };
@@ -929,10 +929,10 @@ impl Lowering for DeviceLowering {
         &self.schema
     }
 
-    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         match strategy {
-            IdentityStrategy::Natural | IdentityStrategy::None => Possible::Yes,
-            IdentityStrategy::Composite | IdentityStrategy::Stamped | IdentityStrategy::Find => {
+            RecordMatching::Natural | RecordMatching::None => Possible::Yes,
+            RecordMatching::Composite | RecordMatching::Stamped | RecordMatching::Find => {
                 Possible::No(
                     "a register is found by its name in the map, and a command has no record."
                         .to_owned(),

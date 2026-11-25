@@ -37,7 +37,7 @@ use std::time::Duration;
 
 use a2m_auth::SessionLease;
 use a2m_core::{
-    EffectClass, FailsAs, FileKindName, IdentityStrategy, Mode, PackPayload, PackRef, SectionIndex,
+    EffectClass, FailsAs, FileKindName, Mode, PackPayload, PackRef, RecordMatching, SectionIndex,
     Step, StepArg, StepKind, SurfaceKind, SurfaceName, Value, ValueType, Values, Verb,
 };
 use a2m_files::{
@@ -675,11 +675,11 @@ impl Lowering for PageHttpLowering {
         &self.schema
     }
 
-    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         let reads = READ_VERBS.contains(&binding.verb.as_str());
         match strategy {
-            IdentityStrategy::None if reads => Possible::Yes,
-            IdentityStrategy::Natural | IdentityStrategy::Composite
+            RecordMatching::None if reads => Possible::Yes,
+            RecordMatching::Natural | RecordMatching::Composite
                 if reads || binding.field("read_back").is_some() =>
             {
                 Possible::Yes

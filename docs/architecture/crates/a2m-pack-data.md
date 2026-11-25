@@ -187,7 +187,7 @@ Every call into the store runs on a blocking thread; the connection moves there 
 | --- | --- | --- |
 | 1 | A driver, no retries inside | `SqlDriver`. A lock wait, a refusal, and a lost answer are each returned once |
 | 2 | Read-back for every write | The read by key the pack wrote for the write's record, in a new read-only transaction, held to the key asked for. A hand-written read is never a read-back. The kernel refuses a write binding without one |
-| 3 | Each identity strategy | `natural` and `composite`: the record's key. A key the store assigns: captured before `commit`; the kernel has no strategy for it, so such a create compiles as `none`. `stamped` and `find`: refused as not built. `none`: `irreversible`, by the kernel's rule |
+| 3 | Each record matching | `natural` and `composite`: the record's key. A key the store assigns: captured before `commit`; the kernel has no strategy for it, so such a create compiles as `none`. `stamped` and `find`: refused as not built. `none`: `irreversible`, by the kernel's rule |
 | 4 | A test stand | `targets/example-db`, cases 1 to 10; its server side, `example_db::server`, for a lost answer after `commit`, an administrative identity, a row lock, a statement timeout, and read-only transactions |
 | 5 | A discoverer | `catalog`: `discovered`, `live_system`, nothing sampled |
 | 6 | Failures mapped | Below |

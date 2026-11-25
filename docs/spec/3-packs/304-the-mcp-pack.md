@@ -130,7 +130,7 @@ The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-
 | From a finding of kind | The drafter writes | Left to the developer |
 | --- | --- | --- |
 | A tool on the server's list, marked read-only by the server | A mapping entry with its digest, and a pass-through read operation with one binding | Its name in the language of the work; whether the marking is believed |
-| A tool not marked read-only | A mapping entry only, with `effect` left as an open question | The operation, its identity strategy, its read-back tool |
+| A tool not marked read-only | A mapping entry only, with `effect` left as an open question | The operation, its record matching, its read-back tool |
 
 As built, the drafter writes the mapping entry for either kind of tool, and the pass-through read operation for a read-only tool whose entry holds no question ([decision 0179](../../decisions/0179-what-each-pack-drafts-so-that-a-scout-ends-with-reads-that-work.md)); an entry that holds one is drafted into a mapping file of its own. It also proposes `untrusted_fields` from the output schema's free-text members, and `result: text` for a tool with no output schema: it sees no answer, so it never proposes `json_text`. For a tool whose whole input is one string it leaves `free_text` as an open question, and drafts the read once the target's mapping answers `free_text: false` for the definition listed. For each tool it drafts no read for, it gives its reason [decision 0365](../../decisions/0365-an-mcp-servers-json-answered-as-text-is-a-declared-result-form-and-the-pack-speaks-the-earlier-handshake-revision.md).
 
@@ -206,7 +206,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 | --- | --- | --- |
 | 1 | A driver, no retries inside | The `mcp` driver |
 | 2 | Read-back for every write | The mapped read tool; without one, `irreversible` |
-| 3 | Each identity strategy | `natural`: the read tool by key. `composite`: where the read tool takes a parent and a child key. `stamped`: a field the tool accepts and its read or list tool returns. `find`: a list or search tool with `settle`. `none`: `irreversible` |
+| 3 | Each record matching | `natural`: the read tool by key. `composite`: where the read tool takes a parent and a child key. `stamped`: a field the tool accepts and its read or list tool returns. `find`: a list or search tool with `settle`. `none`: `irreversible` |
 | 4 | A test stand | The small MCP server above |
 | 5 | A discoverer | `mcp_tools`, which lists and never calls |
 | 6 | Failures mapped | The table above |

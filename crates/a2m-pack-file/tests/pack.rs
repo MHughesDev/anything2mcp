@@ -799,7 +799,7 @@ fn a_settings_write_declares_its_record_one_fixed_place() {
             .unwrap();
         assert_eq!(
             operation.identity.strategy,
-            a2m_core::IdentityStrategy::Natural
+            a2m_core::RecordMatching::Natural
         );
         assert!(
             operation.identity.key.is_empty(),

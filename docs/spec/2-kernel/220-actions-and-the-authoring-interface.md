@@ -42,12 +42,12 @@ Every action is defined once, in Rust, in `a2m-actions` ([crate design](../../ar
 | Command | `anything2mcp <noun> <verb>` | `anything2mcp target probe https://app.example.com` | The product crate, from the registry, when the program starts |
 | MCP tool | `a2m_<noun>_<verb>` | `a2m_target_probe` | `a2m-mcp`, when a tool list is asked for |
 | REST route | `POST /api/v1/actions/<noun>.<verb>` | `POST /api/v1/actions/target.probe` | `a2m-api`, when its router is built, with any resource-shaped alias the definition declares |
-| SDK method | `client.<noun>.<verb>()` | `client.target.probe(url=...)` | A code-generation task, from the recorded catalog, written to `bindings/` |
-| Reference page | `anything2mcp docs <name>` | `anything2mcp docs target.probe` | The same task, from the recorded catalog and the documents |
+| SDK method | `client.<noun>.<verb>()` | `client.target.probe(url=...)` | A code-generation task, from the action catalog, written to `bindings/` |
+| Reference page | `anything2mcp docs <name>` | `anything2mcp docs target.probe` | The same task, from the action catalog and the documents |
 
 - **No hand-written face.** A parity check enumerates the live command tree, MCP tool list, router, and SDK method list, and compares each with the registry. It fails on anything extra or missing. Process commands and shortcuts are the only words allowed beside the nouns.
 - **Same behavior everywhere.** All faces call the same dispatcher, so a result is identical whichever way it was asked for. A parity test calls each action through each face with the same input and compares the results.
-- **A recorded catalog.** The build writes the catalog of actions and tools with a digest. The engine checks the digest at start; CI fails when the checked-in SDKs were generated from another digest; and a test compares the recorded catalog with a live listing through a real client library.
+- **A action catalog.** The build writes the catalog of actions and tools with a digest. The engine checks the digest at start; CI fails when the checked-in SDKs were generated from another digest; and a test compares the action catalog with a live listing through a real client library.
 
 ### The dispatcher
 

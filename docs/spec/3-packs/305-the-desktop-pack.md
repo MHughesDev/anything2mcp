@@ -207,7 +207,7 @@ The eight items of [section 202](../2-kernel/202-kernel-and-packs.md).
 | --- | --- | --- |
 | 1 | A driver, no retries inside | The `desktop` driver |
 | 2 | Read-back for every write | The element's value after the screen is reached again, where the window shows what is stored, never the field typed into. A field written that no output reads back compiles only as `irreversible` (`desktop.unreadable_write`, decision 0218) |
-| 3 | Each identity strategy | As for `ui`: `natural` and `composite` through a screen reached by key; `stamped` and `find` through a list or search window; `none` as `irreversible` |
+| 3 | Each record matching | As for `ui`: `natural` and `composite` through a screen reached by key; `stamped` and `find` through a list or search window; `none` as `irreversible` |
 | 4 | A test stand | Case 28 |
 | 5 | A discoverer | `desktop_probe` and `desktop_snapshot` |
 | 6 | Failures mapped | The table above |

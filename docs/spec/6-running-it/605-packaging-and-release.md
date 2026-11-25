@@ -129,7 +129,7 @@ Four layers, from what every install has to what is never bundled.
 | The base | One Rust binary with every first-party pack compiled in and switched off until enabled; a thin client | Any install route below |
 | What a pack needs from outside | A browser for the web pack; a database client library where one is not built in | Used where already installed. Fetched only by an explicit install action, such as `browser.install`, never during a run |
 | Provider packages | Plug-ins published by this project or anyone else | A pip package of their own, found through a Python entry point; or an extra, `anything2mcp[name]`, that names one |
-| Managed components | Outside programs a provider drives, such as an analysis engine or its runtime | Never bundled. Detected, identified by digest, and reported when missing or unknown (`component.list`) |
+| Required programs | Outside programs a provider drives, such as an analysis engine or its runtime | Never bundled. Detected, identified by digest, and reported when missing or unknown (`component.list`) |
 
 **Why first-party packs are compiled in.**
 
@@ -194,7 +194,7 @@ remote = anything2mcp.connect("https://mcp.example.com", toolset="orders")   # a
 
 - **Two transports.** Local: the client speaks HTTP over the local channel itself, after checking that the channel belongs to the user ([section 222](../2-kernel/222-front-doors-and-the-local-engine.md), [decision 0135](../../decisions/0135-the-wheel-carries-the-binary-and-a-thin-client-and-npm-uses-platform-packages.md)); the Python client does so on macOS and Linux, and on Windows by the named pipe, checking that the pipe's server runs as the user; the Node client does so on macOS and Linux, and on Windows only when the caller supplies that check, because Node's standard library cannot make it ([decision 0156](../../decisions/0156-the-clients-are-generated-from-the-served-document-and-reach-windows-by-the-pipe.md)). Remote: HTTPS to a server's REST interface, with OAuth or an API key.
 - **The same calls either way.** Code written against a laptop's engine runs unchanged against a company server.
-- **Generated.** Models and methods come from the action registry, through a recorded catalog, and from the OpenAPI document, so a client cannot drift from the engine. CI fails when a generated file differs from what the generator produces.
+- **Generated.** Models and methods come from the action registry, through a action catalog, and from the OpenAPI document, so a client cannot drift from the engine. CI fails when a generated file differs from what the generator produces.
 - **Synchronous and asynchronous clients,** with few or no third-party dependencies.
 - **Compatibility.** A client states the engine interface version it needs and gives a clear error on a mismatch.
 

@@ -17,8 +17,8 @@ use a2m_auth::{
     SignInContext, SignedIn,
 };
 use a2m_core::{
-    Failure, FailureClass, FailureCode, FileKindName, Finding, IdentityStrategy, Mode, NoSecrets,
-    PackPayload, Step, StepKind, SurfaceKind, SurfaceName, Timestamp, Values, Verb,
+    Failure, FailureClass, FailureCode, FileKindName, Finding, Mode, NoSecrets, PackPayload,
+    RecordMatching, Step, StepKind, SurfaceKind, SurfaceName, Timestamp, Values, Verb,
 };
 use a2m_files::{
     CompiledSection, DefinedName, Diagnostics, Doc, ExprSite, FileKind, JsonSchema, KindContext,
@@ -223,7 +223,7 @@ impl Lowering for StandLowering {
     fn binding_schema(&self) -> &JsonSchema {
         &self.schema
     }
-    fn identity(&self, _binding: &ResolvedBinding<'_>, _strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, _binding: &ResolvedBinding<'_>, _strategy: RecordMatching) -> Possible {
         Possible::Yes
     }
     fn lower(

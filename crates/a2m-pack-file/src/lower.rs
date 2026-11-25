@@ -7,8 +7,9 @@
 //! fills the value of a key or of a field, and nothing else.
 
 use a2m_core::{
-    CodeEntry, EffectClass, FailsAs, FileKindName, IdentityStrategy, LintCode, Mode, PackPayload,
-    PackRef, SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType, Verb,
+    CodeEntry, EffectClass, FailsAs, FileKindName, LintCode, Mode, PackPayload, PackRef,
+    RecordMatching, SectionIndex, Step, StepArg, StepKind, SurfaceKind, SurfaceName, ValueType,
+    Verb,
 };
 use a2m_files::{
     BindingStatement, CompileMode, Diagnostic, Diagnostics, Doc, FixedPlace, JsonSchema, Level,
@@ -379,12 +380,12 @@ impl Lowering for FileLowering {
         &self.schema
     }
 
-    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         match strategy {
-            IdentityStrategy::Natural | IdentityStrategy::Composite | IdentityStrategy::None => {
+            RecordMatching::Natural | RecordMatching::Composite | RecordMatching::None => {
                 Possible::Yes
             }
-            IdentityStrategy::Stamped | IdentityStrategy::Find => Possible::No(
+            RecordMatching::Stamped | RecordMatching::Find => Possible::No(
                 "a file never assigns a key, so it has no field that carries a stamp and no search."
                     .to_owned(),
             ),

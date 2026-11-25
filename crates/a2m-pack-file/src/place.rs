@@ -18,7 +18,7 @@ use std::io::{ErrorKind, Read as _};
 use std::path::PathBuf;
 
 use a2m_core::Digest;
-use a2m_provider::{Access, CheckedPath, EntryKind, HeldFolder, StepFailure};
+use a2m_provider::{Access, CheckedPath, EntryKind, FolderHandle, StepFailure};
 
 use crate::codes::{self, stop};
 use crate::open::{
@@ -210,9 +210,9 @@ impl Folder {
     /// path meanwhile (decision 0272). No part of the way from the root is
     /// a link as the surface names it, and the folder is reached again from
     /// the root down with no link followed.
-    pub(crate) fn held(&self) -> Result<HeldFolder, StepFailure> {
+    pub(crate) fn held(&self) -> Result<FolderHandle, StepFailure> {
         self.reached_by_no_link()?;
-        self.checked.hold_folder().map_err(|failure| {
+        self.checked.folder_handle().map_err(|failure| {
             if failure.code() == &a2m_provider::codes::PATH_MISSING {
                 missing()
             } else if failure.code() == &a2m_provider::codes::PATH_NOT_ALLOWED {

@@ -289,7 +289,7 @@ They wait. They fit the request access kind ([section 201](../2-kernel/201-acces
 | --- | --- | --- |
 | 1 | A driver, no retries inside | The driver, part by part |
 | 2 | A read-back rule for every write | A read statement by key, in a new transaction; a `call` without one is `irreversible` |
-| 3 | Each identity strategy | Identity |
+| 3 | Each record matching | Identity |
 | 4 | A test stand with ground truth | The embedded stand, and the server stand for what it cannot show |
 | 5 | A discoverer that claims no more than it saw | The catalog as `discovered`; samples as `inferred` |
 | 6 | Failures mapped to the classes | Failures |

@@ -170,7 +170,7 @@ As built ([decision 0254](../../decisions/0254-a-person-signs-in-in-a-window-of-
 | --- | --- | --- |
 | 1 | A driver for its verbs, no retries inside | The three drivers above. A widget driver's escalation from fill to typing to the native setter is one strategy in one step, chosen by the control, not a retry |
 | 2 | A read-back rule for every write | As in the table above |
-| 3 | Each identity strategy | `natural` and `composite`: `reach` built from the key; built. `stamped`: write the stamp field, then find the record through a list screen; not built. `find`: a search screen, with the declared `settle`; not built. `none`: the write is `irreversible` |
+| 3 | Each record matching | `natural` and `composite`: `reach` built from the key; built. `stamped`: write the stamp field, then find the record through a list screen; not built. `find`: a search screen, with the declared `settle`; not built. `none`: the write is `irreversible` |
 | 4 | A test stand | The test application, cases 1 to 27; `site_tools` needs a page that registers tools, which is a new case. As built, the application has the cases that [What is built](../../plan/test-application.md#what-is-built) in the test application plan lists. A page with a password, a check box, and a select is served by the test that needs it |
 | 5 | A discoverer | Snapshots and capture are in `a2m-pack-web-probe`, and so is the matching of pages into one screen (decision 0187); setting a finding against existing screen models would be here |
 | 6 | Failures mapped | Below |

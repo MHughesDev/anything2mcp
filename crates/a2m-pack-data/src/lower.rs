@@ -7,7 +7,7 @@
 //! nothing here can place one in a statement's text.
 
 use a2m_core::{
-    EffectClass, FailsAs, FileKindName, IdentityStrategy, LintCode, Mode, PackPayload, PackRef,
+    EffectClass, FailsAs, FileKindName, LintCode, Mode, PackPayload, PackRef, RecordMatching,
     SectionIndex, Step, StepArg, StepKind, SurfaceKind, Verb, WriteEvidence,
 };
 use a2m_files::{
@@ -365,7 +365,7 @@ impl Lowering for SqlLowering {
         if lowered.read_back.is_empty()
             && lowered.act.iter().any(|step| step.commits)
             && binding.operation.effect() == EffectClass::Irreversible
-            && binding.operation.strategy() == IdentityStrategy::None
+            && binding.operation.strategy() == RecordMatching::None
         {
             WriteEvidence::Acknowledged
         } else {
@@ -427,12 +427,12 @@ impl Lowering for SqlLowering {
         &self.schema
     }
 
-    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         match strategy {
-            IdentityStrategy::Natural | IdentityStrategy::Composite | IdentityStrategy::None => {
+            RecordMatching::Natural | RecordMatching::Composite | RecordMatching::None => {
                 Possible::Yes
             }
-            IdentityStrategy::Stamped | IdentityStrategy::Find => Possible::No(
+            RecordMatching::Stamped | RecordMatching::Find => Possible::No(
                 "the data pack does not yet find a record by a stamp or by a declared search."
                     .to_owned(),
             ),
@@ -584,7 +584,7 @@ impl Lowering for SqlLowering {
             // with identity `none`, and the store's own count of exactly one
             // row, checked before the commit, is the evidence.
             let appends = binding.operation.effect() == EffectClass::Irreversible
-                && binding.operation.strategy() == IdentityStrategy::None;
+                && binding.operation.strategy() == RecordMatching::None;
             if read_back_named.is_none() && !appends {
                 problems.push(problem(
                     &lint::READ_BACK_INVALID,

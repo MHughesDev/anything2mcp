@@ -39,7 +39,7 @@ use std::io::{ErrorKind, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 
 use a2m_core::{Date, Digest, Value, Values};
-use a2m_provider::{HeldFolder, StepFailure};
+use a2m_provider::{FolderHandle, StepFailure};
 
 use crate::codes::{self, stop};
 use crate::open::{missing, not_allowed, not_on_this_machine, unavailable};
@@ -518,8 +518,8 @@ fn refuses_links(error: &std::io::Error) -> bool {
     error.raw_os_error() == Some(INVALID_FUNCTION)
 }
 
-/// The names a held folder holds that the pack can use.
-fn held_names(held: &HeldFolder, ceiling: usize) -> Result<Vec<String>, StepFailure> {
+/// The names a folder handle holds that the pack can use.
+fn held_names(held: &FolderHandle, ceiling: usize) -> Result<Vec<String>, StepFailure> {
     let all = held
         .names()
         .map_err(|_| StepFailure::not_sent(unavailable("cannot be listed")))?;
@@ -533,10 +533,10 @@ fn held_names(held: &HeldFolder, ceiling: usize) -> Result<Vec<String>, StepFail
         .collect())
 }
 
-/// How a name stands in a held folder.
-/// That no entry of the held folder has `name`, in any spelling the pack or
+/// How a name stands in a folder handle.
+/// That no entry of the folder handle has `name`, in any spelling the pack or
 /// the file system takes for it, for a name about to be given.
-fn name_free(held: &HeldFolder, name: &str, ceiling: usize) -> Result<(), StepFailure> {
+fn name_free(held: &FolderHandle, name: &str, ceiling: usize) -> Result<(), StepFailure> {
     match standing(&held_names(held, ceiling)?, name) {
         Held::Exactly => Err(changed()),
         Held::OtherCase => Err(other_case()),
@@ -554,7 +554,7 @@ fn name_free(held: &HeldFolder, name: &str, ceiling: usize) -> Result<(), StepFa
 /// `from`, which the system does only where nothing has the name. Where it
 /// says something has it and the folder lists none the pack takes for it,
 /// the file system folded the name.
-fn link_new(held: &HeldFolder, from: &str, to: &str, ceiling: usize) -> Result<(), StepFailure> {
+fn link_new(held: &FolderHandle, from: &str, to: &str, ceiling: usize) -> Result<(), StepFailure> {
     match held.link(from, to) {
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
             match held_names(held, ceiling).map(|found| standing(&found, to)) {
@@ -589,7 +589,7 @@ fn moved_during(what: &str) -> StepFailure {
 /// A temporary file the pack made, removed when dropped, only while its
 /// name still holds the file it made.
 struct Made<'a> {
-    held: &'a HeldFolder,
+    held: &'a FolderHandle,
     name: String,
     identity: Option<Identity>,
 }
@@ -711,7 +711,7 @@ fn create_with(
 
 /// After the act: the folder's names written to the disk, and the folder
 /// still the one at the surface's path.
-fn finish(held: &HeldFolder, what: &str) -> Result<(), StepFailure> {
+fn finish(held: &FolderHandle, what: &str) -> Result<(), StepFailure> {
     held.sync().map_err(|_| {
         StepFailure::unknown(unavailable(&format!(
             "was {what}, and its folder could not be written to the disk"
@@ -1021,7 +1021,7 @@ mod tests {
         assert_eq!(
             failure.sent,
             a2m_provider::Sent::Unknown,
-            "the act was made, in the held folder"
+            "the act was made, in the folder handle"
         );
         let moved = swap.root.join("inbox-moved");
         assert_eq!(fs::read(moved.join("new.txt")).unwrap(), b"new bytes\n");

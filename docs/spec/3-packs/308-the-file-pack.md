@@ -307,7 +307,7 @@ The workbook reader itself is `a2m-sources`' choice, made once, and this pack us
 | --- | --- | --- |
 | 1 | A driver, no retries inside | The driver, part by part |
 | 2 | A read-back rule for every write | Opening the saved file again; a format that cannot round-trip is read-only |
-| 3 | Each identity strategy | Identity, effects, hazards, and paths |
+| 3 | Each record matching | Identity, effects, hazards, and paths |
 | 4 | A test stand with ground truth | Files in a temporary folder, read by the stand's own reader |
 | 5 | A discoverer that claims no more than it saw | The file's own structure as `discovered`; header and key guesses as `inferred` |
 | 6 | Failures mapped to the classes | Failures |

@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use a2m_core::{
     CompiledBinding, CompiledInput, CompiledOperation, Digest, EffectClass, ExprIndex, Failure,
-    FailureClass, IdentityStrategy, OperationIndex, OperationName, REDACTED, RecordKey,
-    RecordState, RunState, StepArg, Timestamp, ToolRuns, Value, Values, WriteEvidence,
+    FailureClass, OperationIndex, OperationName, REDACTED, RecordKey, RecordMatching, RecordState,
+    RunState, StepArg, Timestamp, ToolRuns, Value, Values, WriteEvidence,
 };
 use a2m_expr::names;
 use a2m_ledger::{
@@ -1718,7 +1718,7 @@ async fn hold_for(
     Ok(held)
 }
 
-/// Reads a record as its identity strategy says (spec section 209).
+/// Reads a record as its record matching says (spec section 209).
 /// `Ok(None)` when it does not exist. A sign that the session ended is
 /// relayed to the keeper.
 ///
@@ -1740,7 +1740,7 @@ async fn read_record(
     let binding = &found.bindings[record.binding];
     let searches = matches!(
         found.identity.strategy,
-        IdentityStrategy::Stamped | IdentityStrategy::Find
+        RecordMatching::Stamped | RecordMatching::Find
     ) && !binding.lookup.is_empty()
         && record.assigned.is_none()
         && !record.recorded;
@@ -1916,16 +1916,14 @@ async fn preview_record(
     // fourth has a key and a binding with nothing to read it with: it is
     // not read, and the diff says that what it holds now cannot be read.
     let unreadable = !record.pending
-        && found.identity.strategy != IdentityStrategy::None
+        && found.identity.strategy != RecordMatching::None
         && found.bindings.get(record.binding).is_some_and(cannot_read);
     let looked_up = !record.pending
         && !unreadable
         && match found.identity.strategy {
-            IdentityStrategy::None => false,
-            IdentityStrategy::Stamped => record.stamp.is_some(),
-            IdentityStrategy::Natural | IdentityStrategy::Composite | IdentityStrategy::Find => {
-                true
-            }
+            RecordMatching::None => false,
+            RecordMatching::Stamped => record.stamp.is_some(),
+            RecordMatching::Natural | RecordMatching::Composite | RecordMatching::Find => true,
         };
     let raw = if looked_up {
         let held = hold_for(run, found, record, None, false).await?;
@@ -2137,7 +2135,7 @@ async fn reconcile(
         let held = snapshot.iter().find(|held| held.record == record.record);
         let found = operation(loaded, record.operation)?;
         let mode = held.and_then(|held| held.mode.clone());
-        if found.identity.strategy == IdentityStrategy::None
+        if found.identity.strategy == RecordMatching::None
             || found.bindings.get(record.binding).is_some_and(cannot_read)
         {
             // A record of no identity has no key to be read by, and a
@@ -2578,7 +2576,7 @@ async fn read_in_doubt(
     let binding = &found.bindings[record.binding];
     let by_lookup = matches!(
         found.identity.strategy,
-        IdentityStrategy::Stamped | IdentityStrategy::Find
+        RecordMatching::Stamped | RecordMatching::Find
     ) && !binding.lookup.is_empty()
         && record.assigned.is_none()
         && !record.recorded;
@@ -2616,7 +2614,7 @@ async fn verify_again(
         .filter(|record| record.state == RecordState::Verified)
     {
         let found = operation(loaded, record.operation)?;
-        if found.identity.strategy == IdentityStrategy::None {
+        if found.identity.strategy == RecordMatching::None {
             continue;
         }
         run.checkpoint(Duration::ZERO)?;
@@ -2773,11 +2771,11 @@ async fn commit_point(
     // say nothing more, and where the system cannot prove an absence by
     // itself, such as a log that has lost its front, it would stop the
     // write for nothing.
-    let never_sent = found.identity.strategy == IdentityStrategy::Stamped
-        && record.state == RecordState::Planned;
+    let never_sent =
+        found.identity.strategy == RecordMatching::Stamped && record.state == RecordState::Planned;
     if !fresh
         && !never_sent
-        && found.identity.strategy != IdentityStrategy::None
+        && found.identity.strategy != RecordMatching::None
         && !cannot_read(binding)
     {
         let raw = read_record(run, found, record, held, false).await?;

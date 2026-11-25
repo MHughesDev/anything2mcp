@@ -189,7 +189,7 @@ Of the `engine.*` actions, which act on the process, `engine.stop` is carried ou
 | npm | A launcher package and one package per platform holding only the binary; the TypeScript SDK; no install script | The launcher's commands start the platform binary |
 | Standalone | Installers, Homebrew and winget entries, a container image, an offline bundle | The binary, and a link or copy for `a2m` |
 
-Every first-party pack is compiled in and switched off until enabled ([spec section 605](../../spec/6-running-it/605-packaging-and-release.md)). The SDKs start `bridge` for a local engine, or speak HTTPS to a server; both are generated from the recorded catalog and the OpenAPI document.
+Every first-party pack is compiled in and switched off until enabled ([spec section 605](../../spec/6-running-it/605-packaging-and-release.md)). The SDKs start `bridge` for a local engine, or speak HTTPS to a server; both are generated from the action catalog and the OpenAPI document.
 
 **`a2m` is the same program.** One binary is shipped. On each install route `a2m` is a link to it or the smallest launcher that route supports, and the cost of each in start time is measured against the 30 ms budget of spec section 222. The workspace today builds two small binary targets, `anything2mcp` and `a2m`, from one module for convenience; each is a one-line `main` calling `run`, and the output names the product whatever name started it. The package build is where the link replaces the second target, because two shipped copies would count twice against the 25 MB target of hypothesis H-28.
 

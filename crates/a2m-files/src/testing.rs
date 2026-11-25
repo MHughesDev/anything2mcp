@@ -40,7 +40,7 @@ use std::sync::Arc;
 
 use a2m_core::{
     ControlName, EffectClass, FailsAs, Failure, FailureClass, FailureCode, FileKindName, Finding,
-    FindingKind, IdentityStrategy, LintCode, Mode, PackPayload, PackRef, Step, StepArg, StepKind,
+    FindingKind, LintCode, Mode, PackPayload, PackRef, RecordMatching, Step, StepArg, StepKind,
     SurfaceKind, ValueType, Verb, WriteEvidence,
 };
 
@@ -427,12 +427,12 @@ impl Lowering for StandLowering {
         }
     }
 
-    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, _binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         match strategy {
-            IdentityStrategy::Natural | IdentityStrategy::Composite | IdentityStrategy::None => {
+            RecordMatching::Natural | RecordMatching::Composite | RecordMatching::None => {
                 Possible::Yes
             }
-            IdentityStrategy::Stamped | IdentityStrategy::Find => {
+            RecordMatching::Stamped | RecordMatching::Find => {
                 Possible::No("a call has no field that carries a stamp and no search.".to_owned())
             }
         }

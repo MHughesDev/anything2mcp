@@ -227,8 +227,8 @@ fn may_have_sent(failure: &Failure) -> bool {
 /// Who ended a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndedBy {
-    /// The person whose session it is: `session.revoke`.
-    Owner,
+    /// The session owner, the person whose session it is: `session.revoke`.
+    SessionOwner,
     /// An administrator, who ends it without using it: `session.end`.
     Administrator,
 }
@@ -794,7 +794,8 @@ impl Keeper {
     pub async fn revoke(&self, key: &SessionKey, by: EndedBy) -> Result<(), Failure> {
         let inner = &self.inner;
         let cause = match by {
-            EndedBy::Owner => "revoked_by_owner",
+            // The stored cause keeps the old word (decision 0402).
+            EndedBy::SessionOwner => "revoked_by_owner",
             EndedBy::Administrator => "ended_by_administrator",
         };
         loop {

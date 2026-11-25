@@ -80,7 +80,7 @@ vocabulary! {
 
 vocabulary! {
     /// How a write's record is found again (spec section 209).
-    pub enum IdentityStrategy: "identity strategy" {
+    pub enum RecordMatching: "record matching" {
         /// By an input that is the system's own key.
         Natural => "natural",
         /// By several inputs that are unique together, within a parent.
@@ -801,7 +801,7 @@ fn is_false(flag: &bool) -> bool {
 #[serde(deny_unknown_fields)]
 pub struct CompiledIdentity {
     /// The strategy.
-    pub strategy: IdentityStrategy,
+    pub strategy: RecordMatching,
     /// The inputs whose normalized values are the record key, in declared
     /// order, parent first. Empty for `natural` only where the record is one
     /// fixed place that every binding names in the target's files, and no
@@ -828,8 +828,8 @@ pub struct PermissionManifest {
 /// what its operation declares.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DecisionPoint {
-    /// The decision point's name, unique within the operation.
+pub struct RunQuestion {
+    /// The run question's name, unique within the operation.
     pub name: String,
     /// The question, as the person is asked it.
     pub question: String,
@@ -861,14 +861,17 @@ pub struct CompiledOperation {
     /// inputs.
     pub examples: Vec<Values>,
     /// The questions a person may have to answer during a run.
-    pub decision_points: Vec<DecisionPoint>,
+    /// Written as `decision_points`, the old name, so that every compiled
+    /// target keeps its bytes and its hash (decision 0402).
+    #[serde(rename = "decision_points")]
+    pub run_questions: Vec<RunQuestion>,
 }
 
 /// One way of carrying out an operation, through one mode.
 ///
 /// The engine treats a binding by what its steps and its operation state:
 /// which steps commit, which is a lookup, the operation's effect, and its
-/// identity strategy. The verb is kept for traces and messages and is never
+/// record matching. The verb is kept for traces and messages and is never
 /// read for its spelling (decision 0068).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1472,7 +1475,7 @@ impl CompiledTarget {
                 return unsafe_compiled_target(position, "has a hazard and is not irreversible");
             }
             if operation.effect == EffectClass::Write
-                && operation.identity.strategy == IdentityStrategy::None
+                && operation.identity.strategy == RecordMatching::None
             {
                 return unsafe_compiled_target(position, "writes and cannot find its record again");
             }
@@ -1484,7 +1487,7 @@ impl CompiledTarget {
             }
             let needs_read_back = operation.effect == EffectClass::Write
                 || (operation.effect == EffectClass::Irreversible
-                    && operation.identity.strategy != IdentityStrategy::None);
+                    && operation.identity.strategy != RecordMatching::None);
             for binding in &operation.bindings {
                 let commits = |steps: &[Step]| steps.iter().filter(|step| step.commits).count();
                 if commits(&binding.confirm)
@@ -1675,8 +1678,8 @@ impl CompiledTarget {
 /// verified by that read (spec section 208; decision 0193). The compiler
 /// and the compiled target's check ask this one question.
 #[must_use]
-pub fn acknowledgement_may_stand(strategy: IdentityStrategy, read_back: &[Step]) -> bool {
-    strategy == IdentityStrategy::None || read_back.is_empty()
+pub fn acknowledgement_may_stand(strategy: RecordMatching, read_back: &[Step]) -> bool {
+    strategy == RecordMatching::None || read_back.is_empty()
 }
 
 #[cfg(test)]
@@ -1767,7 +1770,7 @@ mod tests {
                 },
             ],
             identity: CompiledIdentity {
-                strategy: IdentityStrategy::Natural,
+                strategy: RecordMatching::Natural,
                 key: vec![InputIndex::new(0)],
             },
             commit_points: 1,
@@ -1791,7 +1794,7 @@ mod tests {
                 destinations: vec!["https://files.example.test".to_owned()],
             },
             examples: vec![Values::new().with("order_id", "SO-1001")],
-            decision_points: vec![DecisionPoint {
+            run_questions: vec![RunQuestion {
                 name: "which_order".to_owned(),
                 question: "Two orders match. Which one?".to_owned(),
             }],
@@ -2365,7 +2368,7 @@ mod tests {
             }),
             ("cannot find its record again", |compiled_target| {
                 compiled_target.operations[0].identity = CompiledIdentity {
-                    strategy: IdentityStrategy::None,
+                    strategy: RecordMatching::None,
                     key: Vec::new(),
                 };
             }),
@@ -2444,7 +2447,7 @@ mod tests {
         // With no key there is nothing to read it back by.
         let mut keyless = compiled_target.clone();
         keyless.operations[0].identity = CompiledIdentity {
-            strategy: IdentityStrategy::None,
+            strategy: RecordMatching::None,
             key: Vec::new(),
         };
         keyless.encode().unwrap();
@@ -2452,11 +2455,11 @@ mod tests {
         compiled_target.operations[0].bindings[0].read_back.clear();
         compiled_target.encode().unwrap();
         assert!(super::acknowledgement_may_stand(
-            IdentityStrategy::None,
+            RecordMatching::None,
             &sample().operations[0].bindings[0].read_back
         ));
         assert!(!super::acknowledgement_may_stand(
-            IdentityStrategy::Natural,
+            RecordMatching::Natural,
             &sample().operations[0].bindings[0].read_back
         ));
     }
@@ -2489,7 +2492,7 @@ mod tests {
         sent.operations[0].bindings[0].read_back.clear();
         assert!(sent.encode().is_err());
         sent.operations[0].identity = CompiledIdentity {
-            strategy: IdentityStrategy::None,
+            strategy: RecordMatching::None,
             key: Vec::new(),
         };
         sent.encode().unwrap();

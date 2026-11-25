@@ -74,7 +74,7 @@ A setting is how this installation behaves. A target file is what a system is: i
 | Project | Authoring and the scout, the keys of scope P; applied today from the folder the engine started in (layer 6, above) | `anything2mcp.toml` | The developer | `authoring.scout.run = "on_request"` |
 | Target | Surfaces, rates, operations, environments, which bindings exist | The target's files, versioned and published | The target's author, then a publisher | A surface's request budget |
 | Environment, test or production | Addresses, declared test records, which writes the gates may try | The target's environments file | The target's author; test records are declared by a person ([section 403](../4-building-tools/403-testing-and-publish-gates.md)) | Writes run in the gates only in `test` |
-| Surface | Request budget, how it stands to other surfaces, its identity strategy | The target's files | The target's author | Two requests a second |
+| Surface | Request budget, how it stands to other surfaces, its record matching | The target's files | The target's author | Two requests a second |
 | Toolset | Which tools, which version, identity mode, keep-alive window on a server, how the tool list is shaped | The store | Whoever defines the toolset, through `toolset.create` and `toolset.update`, which are not built; on one machine only the built-in toolsets exist | Keep-alive 4 hours for `orders` |
 | Operation | Effect class, hazard, time limits, record limit, binding order | The target's files | The target's author | A 30-second limit on one save |
 | Caller or grant | Highest effect class, identity mode, scope, quota | The store | An administrator, through `grant.add`, which is not built | An agent may read `example` only |

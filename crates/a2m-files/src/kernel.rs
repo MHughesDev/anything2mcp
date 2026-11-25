@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 
 use a2m_core::{
     ApproveWrites, BindingStatus, CaptureLevel, Checkpoint, DecimalMark, DescriptionBy, DriftRisk,
-    EffectClass, EnvironmentKind, FieldBase, Hazard, IdentityStrategy, Rounding, Sensitivity,
+    EffectClass, EnvironmentKind, FieldBase, Hazard, RecordMatching, Rounding, Sensitivity,
     SignInMode, TestKind, WhitespaceRule,
 };
 
@@ -240,7 +240,7 @@ fn operation() -> JsonSchema {
         .optional(
             "identity",
             JsonSchema::object()
-                .required("strategy", JsonSchema::words(IdentityStrategy::NAMES))
+                .required("strategy", JsonSchema::words(RecordMatching::NAMES))
                 .optional("inputs", JsonSchema::list(JsonSchema::name()))
                 .optional("place", JsonSchema::words(&["fixed"])),
         )

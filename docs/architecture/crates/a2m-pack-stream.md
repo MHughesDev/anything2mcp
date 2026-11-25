@@ -161,7 +161,7 @@ What a step is given and gives:
 | --- | --- | --- |
 | 1 | A driver, no retries inside | One step, one request, except a wait, which fetches one message at a time until its limit. A failure whose fate is unknown gives the connection up |
 | 2 | Read-back for every write | By the table of section 309. Where there is none the operation is `irreversible` with no identity, and the compiler says so |
-| 3 | Each identity strategy | `natural` on a retained state channel. `stamped` on a log or a retained channel that declares an idempotency header. `composite` and `find` are refused. `none` elsewhere |
+| 3 | Each record matching | `natural` on a retained state channel. `stamped` on a log or a retained channel that declares an idempotency header. `composite` and `find` are refused. `none` elsewhere |
 | 4 | A test stand | `targets/example-broker`, cases 1 to 16; `targets/example-nats` for the protocol `nats`, with a test against a real server when `A2M_TEST_NATS` names one |
 | 5 | A discoverer | `broker_look` |
 | 6 | Failures mapped | Below |

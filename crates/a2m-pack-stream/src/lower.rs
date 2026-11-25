@@ -7,8 +7,8 @@
 use std::collections::BTreeMap;
 
 use a2m_core::{
-    EffectClass, FailsAs, FailureClass, FileKindName, Hazard, IdentityStrategy, Mode, PackPayload,
-    PackRef, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb, WriteEvidence,
+    EffectClass, FailsAs, FailureClass, FileKindName, Hazard, Mode, PackPayload, PackRef,
+    RecordMatching, Step, StepArg, StepKind, SurfaceKind, ValueType, Verb, WriteEvidence,
 };
 use a2m_files::{
     BindingStatement, Diagnostics, Doc, JsonSchema, Located, LowerContext, Lowered, Lowering,
@@ -490,7 +490,7 @@ impl Work<'_, '_> {
         }
         let operation = self.binding.operation;
         if operation.effect() != EffectClass::Irreversible
-            || operation.strategy() != IdentityStrategy::None
+            || operation.strategy() != RecordMatching::None
         {
             self.wrong(
                 "publish_effect",
@@ -577,26 +577,26 @@ impl Work<'_, '_> {
             );
         }
         let strategy_fits = match operation.strategy() {
-            IdentityStrategy::Natural => {
+            RecordMatching::Natural => {
                 self.entry.shape == Shape::Retained && self.entry.role == Some(Role::State)
             }
             // A stamp needs somewhere the runtime can find it again: a log,
             // or a retained value. On a queue or a topic the token still
             // travels, and the broker may refuse a repeat, but nothing can be
             // read back, so the operation declares no identity.
-            IdentityStrategy::Stamped => {
+            RecordMatching::Stamped => {
                 self.entry.token_header.is_some()
                     && matches!(self.entry.shape, Shape::Log | Shape::Retained)
             }
-            IdentityStrategy::None => true,
-            IdentityStrategy::Composite | IdentityStrategy::Find => false,
+            RecordMatching::None => true,
+            RecordMatching::Composite | RecordMatching::Find => false,
         };
         if !strategy_fits {
             self.wrong(
                 "publish_effect",
                 self.binding.doc,
                 format!(
-                    "The identity strategy `{}` cannot find a message on the channel `{}` again.",
+                    "The record matching `{}` cannot find a message on the channel `{}` again.",
                     operation.strategy(),
                     self.name
                 ),
@@ -648,13 +648,12 @@ impl Work<'_, '_> {
         args.extend(self.map_args("headers", ARG_HEADER, Some(&ValueType::Text)));
         args.extend(self.map_args("body", ARG_BODY, None));
         let read_back = self.read_back(key.as_ref());
-        let lookup = if operation.strategy() == IdentityStrategy::Stamped
-            && self.entry.shape == Shape::Log
-        {
-            vec![self.step(STEP_SCAN, Vec::new(), &StepDetail::default())]
-        } else {
-            Vec::new()
-        };
+        let lookup =
+            if operation.strategy() == RecordMatching::Stamped && self.entry.shape == Shape::Log {
+                vec![self.step(STEP_SCAN, Vec::new(), &StepDetail::default())]
+            } else {
+                Vec::new()
+            };
         // Where the publish is read back by a scan for its token, the place
         // the log ends at is read first and recorded before the publish is
         // sent: the message, if it was stored, is at or after it, so a scan
@@ -795,10 +794,10 @@ impl Lowering for StreamLowering {
     /// Whether a strategy is possible depends on the channel the binding
     /// names, and this method is not shown the channel files. It refuses
     /// what no channel can do; [`Lowering::lower`] refuses the rest.
-    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         let writes = *binding.verb == VERB_PUBLISH || *binding.verb == VERB_TAKE;
         match strategy {
-            IdentityStrategy::Composite | IdentityStrategy::Find if writes => Possible::No(
+            RecordMatching::Composite | RecordMatching::Find if writes => Possible::No(
                 "a message has one key, and a lookup over a flow is a bounded scan for a stamp."
                     .to_owned(),
             ),

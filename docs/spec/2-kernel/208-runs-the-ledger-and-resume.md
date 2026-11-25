@@ -44,7 +44,7 @@ The store also holds published versions and their compiled targets, findings, an
 | `needs_approval` | Diff ready; waiting for a person | Approval, expiry, or cancel |
 | `expired` | Approval declined or timed out | Final |
 | `running` | Steps executing | Engine |
-| `needs_input` | A declared decision point is waiting for a person | Input or cancel |
+| `needs_input` | A declared run question is waiting for a person | Input or cancel |
 | `needs_login` | The session expired and could not renew itself | Sign-in |
 | `stopped` | Halted with a failure class; can be resumed | Resume or cancel |
 | `completed` | Every record verified, unchanged, or acknowledged | Final |
@@ -97,7 +97,7 @@ A write run builds its diff while it is `validating`, before anyone is asked to 
 1. Validate the inputs and read the whole source ([section 210](210-sources-and-value-normalization.md)). A file is read once and stored as a blob ([section 502](../5-security/502-defending-against-a-manipulated-agent.md)).
 2. Apply the record limit and quotas ([section 212](212-policy-and-approvals.md)).
 3. Run the read steps that come before the first write step, checking each `expect`. A failure here ends the run before anyone is asked to approve. Read steps after the first write step run only in the write phase.
-4. For each record the write steps would touch: evaluate its inputs, look the record up by its identity strategy, and class it `create`, `update`, or `unchanged` ([section 209](209-record-identity-and-dependent-records.md)). For `natural` and `composite` identity the lookup is the read-back rule of the binding that will write the record, used on its own. The values found are kept as the values seen before the write.
+4. For each record the write steps would touch: evaluate its inputs, look the record up by its record matching, and class it `create`, `update`, or `unchanged` ([section 209](209-record-identity-and-dependent-records.md)). For `natural` and `composite` identity the lookup is the read-back rule of the binding that will write the record, used on its own. The values found are kept as the values seen before the write.
 5. Build the diff, hash it by the canonical form in the reference, and store both on the run. The engine computes the hash and nothing else does, so an approval and a run can never disagree about it.
 6. If the diff holds nothing to create or update and the tool has no other effect, such as an upload, no approval is needed: the run writes nothing, runs its remaining read steps, and ends `completed`. This is what makes a second run of the same sheet change nothing. Otherwise the policy engine is asked whether the write may proceed without a person, and the run waits at `needs_approval` if not.
 
@@ -142,7 +142,7 @@ When a run is resumed, for each record in `intent`, `acted`, or a retryable `fai
 
 How the record is read depends on how it is found again:
 
-| Identity strategy | How the record is read |
+| Record matching | How the record is read |
 | --- | --- |
 | `natural`, `composite` | The binding's read-back steps alone, from the identity inputs |
 | `stamped` | The lookup by the record's token |

@@ -43,7 +43,7 @@ Decisions taken in this spec:
 | Keys | Root, workspace, owner, and data keys; root in the OS store or a key service | One key for everything | Rotation without re-encrypting; ownership backed by encryption |
 | Local approval surface | A diff page served for that moment, then an operating-system prompt; no tray application at first | A system dialog alone | A diff needs a page; a page alone can be approved by a script |
 | Outbound data | Nothing leaves the machine unless switched on | Usage statistics by default | The tool holds live sessions to business systems |
-| Finding a record again | Five identity strategies; assigned keys and results kept in the ledger | Class every create irreversible | Creates and header-with-lines pipelines must be resumable |
+| Finding a record again | Five record matchings; assigned keys and results kept in the ledger | Class every create irreversible | Creates and header-with-lines pipelines must be resumable |
 | A manipulated agent | Typed templates, allowed file roots, a risk-ordered publish review, protected settings | Trust the agent | Agents read text that can steer them |
 | Engine faults | No ledger, no write; nothing unverified runs; three health states | Best effort | Fail closed, and say why |
 | Version rollout | Published, then candidate with shadowed reads, then current | Switch on publish | A bad version is the likeliest self-inflicted failure |

@@ -53,7 +53,7 @@ The crate `a2m-core` holds the words every other crate shares. A word with a fix
 | `Availability` | Eight; the default is `unknown`, which is never `ready` | [Spec section 203](../spec/2-kernel/203-the-provider-contract.md) |
 | `SubsystemState`, `SubsystemMove` | Four and three | [Spec section 204](../spec/2-kernel/204-supervising-subsystems.md) |
 | `DoctorState` | Seven; the default is `unknown` | [Spec section 204](../spec/2-kernel/204-supervising-subsystems.md) |
-| `IdentityStrategy` | Five | [Spec section 209](../spec/2-kernel/209-record-identity-and-dependent-records.md) |
+| `RecordMatching` | Five | [Spec section 209](../spec/2-kernel/209-record-identity-and-dependent-records.md) |
 | `FieldBase`, `Sensitivity`, `EnvironmentKind`, `TestKind`, `Checkpoint` | Ten, three in order, two, two, two | [File formats](file-formats.md) |
 | `SignInMode`, `DriftRisk`, `WhitespaceRule`, `DecimalMark` | Three, three in order, three, two | [File formats](file-formats.md) |
 | `CaptureLevel` | Three, each including the one before | [Spec section 217](../spec/2-kernel/217-traces-evidence-and-repair.md) |
@@ -161,8 +161,8 @@ The check of who may change a program, and what it gives the supervisor, are in 
 
 A folder's writes act through the folder held from the root down ([decision 0272](../decisions/0272-the-file-packs-folder-writes-act-through-a-held-folder-after-a-second-reader.md)):
 
-- **`CheckedPath::hold_folder`** gives a **`HeldFolder`**: the folder, reached from the root down with no link followed. Each of its calls (`kind`, `identity`, `names`, `create_new`, `link`, `remove_file_if`, `remove_empty_folder`, `sync`) names one entry directly in it and follows no link at that name, and gives the system's own `std::io::Error`. On Linux and macOS the held folder is its own descriptor; on Windows every folder from the root down is held open, and none of them can be renamed, removed, or replaced by a link while it is held. **`HeldFolder::still_at_its_path`** says whether the folder reached afresh from the root is still the one held.
-- **`HeldFolder::remove_file_if`** removes a file only where it is the file expected and the caller's check of its bytes, read through a handle of that file, says yes. It answers a **`Removal`**: `Removed`, or `NotThatFile { put_back }`.
+- **`CheckedPath::folder_handle`** gives a **`FolderHandle`**: the folder, reached from the root down with no link followed. Each of its calls (`kind`, `identity`, `names`, `create_new`, `link`, `remove_file_if`, `remove_empty_folder`, `sync`) names one entry directly in it and follows no link at that name, and gives the system's own `std::io::Error`. On Linux and macOS the folder handle is its own descriptor; on Windows every folder from the root down is held open, and none of them can be renamed, removed, or replaced by a link while it is held. **`FolderHandle::still_at_its_path`** says whether the folder reached afresh from the root is still the one held.
+- **`FolderHandle::remove_file_if`** removes a file only where it is the file expected and the caller's check of its bytes, read through a handle of that file, says yes. It answers a **`Removal`**: `Removed`, or `NotThatFile { put_back }`.
 - **`FileIdentity`** is the system's identifier of a file: the device and the file number on Linux and macOS, and on Windows the volume's serial number and the file's identifier. **`FileIdentity::to_bytes`** gives it as 24 bytes, for a digest that tells one file from another; it is never shown.
 
 A discovery is input files by name ([decision 0263](../decisions/0263-a-person-hands-the-scout-files-of-the-projects-sources-folder-by-names-the-discoverers-declare.md)):

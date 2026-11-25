@@ -8,7 +8,7 @@ Two moments need a person in front of a screen: approving a write, and signing i
 | --- | --- | --- |
 | Approve a write | To read the diff properly: every changed record, current beside proposed | Proof that a person, not the calling agent, said yes to this exact diff |
 | Sign in | Where the system's sign-in is a web page, a real browser window, so the system's own sign-in and MFA work unchanged | To know when sign-in finished, without seeing the credentials |
-| Answer a decision point | The question and its options | The answer, recorded with who gave it |
+| Answer a run question | The question and its options | The answer, recorded with who gave it |
 | Carry out a person's act an agent asked for, such as a publish | To read exactly what will be done: the action and every value of its input, and for a publish what each tool may do | Proof that a person, not the agent, said yes to this act, given for it alone ([decision 0163](../../decisions/0163-a-persons-act-an-agent-asks-for-is-carried-out-on-a-page-of-the-person-surface.md)) |
 
 ## On one machine

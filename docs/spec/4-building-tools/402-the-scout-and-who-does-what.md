@@ -78,7 +78,7 @@ Everything else is left untried: a command with unknown effect, a tool not marke
 Three things, and the report lists them in this order.
 
 1. **Meaning.** What things are called, which capabilities are worth being tools, what a field's unit is when the system does not say, what counts as the same record.
-2. **Writes.** Everything about them: the operation, its identity strategy, its read-back rule, its effect class, and above all where a test write is allowed. The developer declares test records ([section 403](403-testing-and-publish-gates.md)). Without one, a write can be drafted and can never be verified.
+2. **Writes.** Everything about them: the operation, its record matching, its read-back rule, its effect class, and above all where a test write is allowed. The developer declares test records ([section 403](403-testing-and-publish-gates.md)). Without one, a write can be drafted and can never be verified.
 3. **Open questions.** Whatever the scout could not decide is in the unknowns ledger, each with the observation that would settle it. `unknown.settle` closes one with evidence.
 
 An agent is well suited to all three, and the product gives it the same tools a person has: the report, the findings, the drafts, the sandbox. The agent works at build time. Nothing it writes runs until it has passed the compiler and the gates.
@@ -102,7 +102,7 @@ On one machine, with one user, these are light: a prompt from the operating syst
 | --- | --- |
 | The system has at least one surface that the user is entitled to use and that a pack can reach | Source code, a vendor's help, a published interface, or a stable one |
 | Reading is repeatable, or the system says when it is not | That a read is free: reads are rate-limited and counted |
-| A write is unsafe to repeat until an identity strategy proves otherwise | That a system forgives a duplicate |
+| A write is unsafe to repeat until a record matching proves otherwise | That a system forgives a duplicate |
 | The machine it runs on belongs to the user, with a key store and a browser already there | A cloud service, an account with us, or a network beyond the target |
 | Someone, a person or an agent, exercises judgment at build time | That an agent is present. Every file can be written by hand |
 | A person can be reached when authority is needed | That the person is watching. Work that needs them stops and waits |

@@ -14,8 +14,8 @@ use crate::{
     VariableValue, compile, lint_one, load_files,
 };
 use a2m_core::{
-    AddressScope, CompiledProbe, Digest, EffectClass, Environment, FileKindName, IdentityStrategy,
-    Mode, StepKind, SurfaceKind, Verb, Version, WriteEvidence,
+    AddressScope, CompiledProbe, Digest, EffectClass, Environment, FileKindName, Mode,
+    RecordMatching, StepKind, SurfaceKind, Verb, Version, WriteEvidence,
 };
 
 type Files = Vec<(RelPath, Vec<u8>)>;
@@ -104,7 +104,7 @@ fn a_write_of_one_fixed_place_compiles_with_no_identity_input() {
         .find(|operation| operation.name.as_str() == "example_settings_set")
         .unwrap();
     // The record's key is the place, which the files name: no input is in it.
-    assert_eq!(operation.identity.strategy, IdentityStrategy::Natural);
+    assert_eq!(operation.identity.strategy, RecordMatching::Natural);
     assert!(operation.identity.key.is_empty());
     let item = compiled
         .review
@@ -221,7 +221,7 @@ impl Lowering for Stating {
     fn binding_schema(&self) -> &JsonSchema {
         self.inner.binding_schema()
     }
-    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: IdentityStrategy) -> Possible {
+    fn identity(&self, binding: &ResolvedBinding<'_>, strategy: RecordMatching) -> Possible {
         self.inner.identity(binding, strategy)
     }
     fn fixed_place(&self, binding: &ResolvedBinding<'_>) -> Option<FixedPlace> {

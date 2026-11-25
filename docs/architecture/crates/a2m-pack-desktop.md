@@ -118,7 +118,7 @@ The type has no method that sets a value, invokes, selects, focuses, scrolls, or
 | --- | --- | --- |
 | 1 | A driver, no retries inside | `desktop` |
 | 2 | Read-back for every write | The element's value after the screen is reached again. A control that exposes no value cannot be written except as `irreversible` |
-| 3 | Each identity strategy | As for `ui`: `natural` and `composite` through a screen reached by key, `stamped` and `find` through a list or search window, `none` as `irreversible` |
+| 3 | Each record matching | As for `ui`: `natural` and `composite` through a screen reached by key, `stamped` and `find` through a list or search window, `none` as `irreversible` |
 | 4 | A test stand | Test-application case 28, `targets/example-desk`: a tree published over AT-SPI with the test application's order and line items, edit fields apart from the values that show what is stored, and a control interface that counts every member it is asked and every press of Save, and reports what is stored, every store, and every value set into each field, with faults a test switches on (decisions 0198 and 0218); on Windows and macOS the same window of the system's own controls, with the same edit fields, store, and record of sets, and five of the faults (decision 0399) |
 | 5 | A discoverer | `desktop_snapshot`, built; `desktop_probe`, not. They read the tree and never invoke, expand, or focus anything; what is hidden behind a collapsed node is a limitation, `not_exercised` |
 | 6 | Failures mapped | Below |

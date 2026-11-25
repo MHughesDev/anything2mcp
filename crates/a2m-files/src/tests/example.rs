@@ -17,7 +17,7 @@ use crate::{
 use a2m_core::{
     ApproveWrites, CaptureLevel, CompiledProbe, CompiledTarget, DecimalMark, DeclaredProgram,
     Digest, DriftRisk, EffectClass, FailsAs, FailureClass, FailureCode, FieldFormat, FileKindName,
-    IdentityStrategy, Mode, PackPayload, RecordKey, SignInMode, Stands, Step, StepArg, StepKind,
+    Mode, PackPayload, RecordKey, RecordMatching, SignInMode, Stands, Step, StepArg, StepKind,
     SurfaceIndex, SurfaceKind, SurfaceName, Value, Verb, Version,
 };
 
@@ -617,7 +617,7 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
         get.examples[0].get("order_id"),
         Some(&Value::from("SO-1001"))
     );
-    assert!(get.decision_points.is_empty());
+    assert!(get.run_questions.is_empty());
 
     let upsert = compiled_target
         .operations
@@ -625,7 +625,7 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
         .find(|op| op.name.as_str() == "example_line_item_upsert")
         .unwrap();
     assert_eq!(upsert.effect, EffectClass::Write);
-    assert_eq!(upsert.identity.strategy, IdentityStrategy::Composite);
+    assert_eq!(upsert.identity.strategy, RecordMatching::Composite);
     assert_eq!(upsert.identity.key.len(), 2);
     assert_eq!(upsert.commit_points, 1);
     assert_eq!(upsert.bindings[0].read_back.len(), 1);
@@ -1267,7 +1267,7 @@ impl Lowering for Faulty {
     fn binding_schema(&self) -> &JsonSchema {
         &self.schema
     }
-    fn identity(&self, _: &ResolvedBinding<'_>, _: IdentityStrategy) -> Possible {
+    fn identity(&self, _: &ResolvedBinding<'_>, _: RecordMatching) -> Possible {
         Possible::Yes
     }
     fn lower(
@@ -1630,9 +1630,9 @@ fn the_compiled_target_carries_what_the_run_time_needs_from_every_target_file() 
         get.examples[0].get("order_id"),
         Some(&Value::from("SO-1001"))
     );
-    assert_eq!(get.decision_points[0].name, "which_order");
+    assert_eq!(get.run_questions[0].name, "which_order");
     assert_eq!(
-        get.decision_points[0].question,
+        get.run_questions[0].question,
         "Two orders match. Which one?"
     );
 
@@ -2826,7 +2826,7 @@ impl Lowering for Unmarked {
     fn binding_schema(&self) -> &JsonSchema {
         unreachable!("the tests never register it")
     }
-    fn identity(&self, _: &ResolvedBinding<'_>, _: IdentityStrategy) -> Possible {
+    fn identity(&self, _: &ResolvedBinding<'_>, _: RecordMatching) -> Possible {
         Possible::Yes
     }
     fn lower(&self, _: &ResolvedBinding<'_>, _: &LowerContext<'_>) -> Result<Lowered, Diagnostics> {

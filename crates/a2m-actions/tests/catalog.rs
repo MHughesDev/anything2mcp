@@ -373,7 +373,7 @@ fn no_action_without_a_handler_is_listed_up_front_and_the_trial_is() {
 
 #[test]
 fn a_shortcut_is_offered_once_its_last_step_is_built_in_the_catalog() {
-    // Asked of the recorded catalog: what is offered follows what each
+    // Asked of the action catalog: what is offered follows what each
     // entry says is built, and nothing else.
     let registry = ActionRegistry::kernel_only();
     let catalog = registry.catalog();
