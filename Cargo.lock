@@ -1113,6 +1113,7 @@ dependencies = [
 name = "example-desk"
 version = "0.0.1"
 dependencies = [
+ "futures-core",
  "objc2",
  "objc2-app-kit",
  "objc2-application-services",

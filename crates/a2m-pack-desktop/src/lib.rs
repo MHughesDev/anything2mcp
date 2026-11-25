@@ -48,15 +48,18 @@ mod dbus;
 mod discover;
 mod draft;
 mod driver;
+mod keys;
 mod lower;
 mod members;
 mod model;
 mod plist;
+mod probe;
 mod propose;
 mod roles;
 mod screens;
 mod sdef;
 mod service;
+mod start;
 mod tree;
 mod typelib;
 mod windows_kinds;
@@ -84,6 +87,10 @@ pub const ADDRESS_KEY: &str = "program";
 
 /// The name of the pack's discoverer of windows.
 pub const SNAPSHOT_DISCOVERER: &str = "desktop_snapshot";
+
+/// The name of the pack's discoverer of what the declared application is
+/// and how far the pack reaches it (decision 0467).
+pub const PROBE_DISCOVERER: &str = "desktop_probe";
 
 /// The name of the pack's discoverer of a service on the session bus.
 pub const SERVICE_DISCOVERER: &str = "desktop_service";
@@ -145,6 +152,7 @@ fn surface_fields() -> JsonSchema {
         .optional("service", JsonSchema::text())
         .optional("management_class", JsonSchema::text())
         .optional("management_namespace", JsonSchema::text())
+        .optional("start", JsonSchema::bool())
 }
 
 fn setting(cx: &PackContext, key: &str) -> Option<usize> {
@@ -224,6 +232,16 @@ impl Pack for DesktopPack {
                 clock: cx.logs_and_traces().clock(),
             }),
             Arc::new(discover::DesktopDescriber { kind: window }),
+        )?;
+        let surface_kind = FindingKind::new(probe::SURFACE_FINDING)?;
+        to.discoverer(
+            Arc::new(probe::DesktopProbe {
+                name: DiscovererName::new(PROBE_DISCOVERER)?,
+                kind: surface_kind.clone(),
+                version: version(),
+                clock: cx.logs_and_traces().clock(),
+            }),
+            Arc::new(probe::ProbeDescriber { kind: surface_kind }),
         )?;
         to.discoverer(
             Arc::new(service::DesktopService {

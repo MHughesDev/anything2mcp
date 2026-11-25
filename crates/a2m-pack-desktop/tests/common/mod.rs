@@ -77,11 +77,17 @@ pub fn mode() -> Mode {
 /// A registry that holds only the desktop pack, reading the session at
 /// `bus`, with its logs in `folder`.
 pub fn registry(folder: &Path, bus: Option<&str>) -> Registry {
+    registry_with(folder, bus, Supervisor::new(SupervisorLimits::default()))
+}
+
+/// The same, over `supervisor`, which a test that starts an application
+/// keeps to see what it started and to stop it.
+pub fn registry_with(folder: &Path, bus: Option<&str>, supervisor: Supervisor) -> Registry {
     let logs = folder.join("logs");
     std::fs::create_dir_all(&logs).unwrap();
     let redact: Arc<dyn a2m_core::Redact> = Arc::new(NoSecrets);
     let host = HostServices {
-        supervisor: Supervisor::new(SupervisorLimits::default()),
+        supervisor,
         roots: Roots::none(),
         redact: Arc::clone(&redact),
         logs_and_traces: a2m_logs::start(&LogSettings::default(), redact, &logs).unwrap(),
@@ -202,6 +208,11 @@ impl Scene {
             )
         });
         Self::build(name, true, copy.path()).await
+    }
+
+    /// The same, with the target at `target` in place of the fixture.
+    pub async fn at(name: &str, target: &Path) -> Option<Self> {
+        Self::build(name, true, target).await
     }
 
     async fn with(name: &str, application: bool) -> Option<Self> {
@@ -348,20 +359,23 @@ impl Scene {
     }
 
     async fn discovered(&self) -> Result<Vec<Finding>, String> {
+        self.discover_with("desktop_snapshot").await
+    }
+
+    /// The pack's discoverer `name`, run against the session.
+    pub async fn discover_with(&self, name: &str) -> Result<Vec<Finding>, String> {
         let description = SurfaceDescription {
             kind: SurfaceKind::new("desktop").unwrap(),
             access_kind: AccessKind::Interface,
             address: self.surface.surface.address.clone(),
             facts: Values::new(),
         };
-        // The window's: the pack has another, of services, which a test of
-        // its own runs.
         let discoverer = self
             .registry
             .discoverers_for(&description)
             .into_iter()
-            .find(|found| found.declared().name.as_str() == "desktop_snapshot")
-            .expect("the pack registers a discoverer of windows");
+            .find(|found| found.declared().name.as_str() == name)
+            .expect("the pack registers the discoverer");
         let (handle, prepared) = self
             .prepare(a2m_provider::Posture::Discovery)
             .await
