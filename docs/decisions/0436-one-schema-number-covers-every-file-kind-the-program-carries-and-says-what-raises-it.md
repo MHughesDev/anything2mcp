@@ -1,4 +1,4 @@
-# 0996. One schema number covers every file kind the program carries, and says what raises it
+# 0436. One schema number covers every file kind the program carries, and says what raises it
 
 **Status:** Accepted. Design decision, made in the design review round by lens 14, a year later ([report](../reviews/a-year-later-review-2026-11-25.md), finding 6). The owner had not read this record when it was written. It states what `schema_version` in `target.yaml` promises, which no document said. It changes no code today: the compiler reads number 1, the only one there is.
 

@@ -1,4 +1,4 @@
-# 0997. What a release publishes is kept, and every later build is checked against it
+# 0437. What a release publishes is kept, and every later build is checked against it
 
 **Status:** Accepted. Design decision, made in the design review round by lens 14, a year later ([report](../reviews/a-year-later-review-2026-11-25.md), findings 3, 4, and 5). The owner had not read this record when it was written. It adds a check and a folder kept from each release, and narrows which actions get a client method; it refines point 1 of [decision 0420](0420-the-api-description-says-which-actions-have-a-client-method.md). Built by roadmap packages YL4 and YL5.
 

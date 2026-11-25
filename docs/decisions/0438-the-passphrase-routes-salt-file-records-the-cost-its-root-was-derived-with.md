@@ -1,4 +1,4 @@
-# 0998. The passphrase route's salt file records the cost its root was derived with
+# 0438. The passphrase route's salt file records the cost its root was derived with
 
 **Status:** Accepted. Design decision, made in the design review round by lens 14, a year later ([report](../reviews/a-year-later-review-2026-11-25.md), finding 2). The owner had not read this record when it was written. It changes the form of one file the vault keeps, and no public type. Built by roadmap package YL3.
 

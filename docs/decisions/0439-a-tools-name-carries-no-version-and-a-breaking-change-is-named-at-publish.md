@@ -1,4 +1,4 @@
-# 0999. A tool's name carries no version, and a breaking change is named at publish
+# 0439. A tool's name carries no version, and a breaking change is named at publish
 
 **Status:** Accepted. Design decision, made in the design review round by lens 14, a year later ([report](../reviews/a-year-later-review-2026-11-25.md), finding 1). The owner had not read this record when it was written. It settles how a tool's contract changes between published versions, where three documents said three things. It changes no built code; the parts it promises are roadmap packages YL1 and YL2.
 

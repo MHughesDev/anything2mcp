@@ -226,7 +226,7 @@ It calls only `a2m-core`, and through its two traits, the back end and the key r
 | Wrapped data keys | Inside each `Sealed` envelope | Beside the data, as section 216 says |
 | Unwrapped upper keys | Memory, wiped on drop | Cached for the process; dropped on rotation |
 | Registered secrets | Memory, wiped on drop, inside the `Redactor` | Never written anywhere, and never digested. The matcher's automaton holds a copy that is freed but not wiped when the set changes |
-| The passphrase salt | A file the caller names, with a lock file beside it, through `PassphraseSalt::load_or_create`; or wherever the caller keeps it | Not secret. Made once per installation. Today 16 bare bytes; [decision 0998](../../decisions/0998-the-passphrase-routes-salt-file-records-the-cost-its-root-was-derived-with.md) makes it a record of the derivation's algorithm and cost as well, read back for every derivation (package YL3) |
+| The passphrase salt | A file the caller names, with a lock file beside it, through `PassphraseSalt::load_or_create`; or wherever the caller keeps it | Not secret. Made once per installation. Today 16 bare bytes; [decision 0438](../../decisions/0438-the-passphrase-routes-salt-file-records-the-cost-its-root-was-derived-with.md) makes it a record of the derivation's algorithm and cost as well, read back for every derivation (package YL3) |
 | The end of a streamed text | Memory, inside a `RedactStream` | Not yet redacted; let out by `push` and `finish` only |
 
 ## Failures
