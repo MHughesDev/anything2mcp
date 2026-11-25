@@ -494,6 +494,9 @@ fn pages_of_one_screen_are_matched_only_when_one_segment_differs_and_nothing_els
         matched(&[(origin, "/A-1", &lines), (origin, "/B-2", &lines)])[0].pattern,
         "/{key}"
     );
+    // One page seen twice at one address, as a start page that redirects
+    // to a page a link also leads to, is one page: never `/{key}`.
+    assert!(matched(&[(origin, "/orders", &lines), (origin, "/orders", &lines)]).is_empty());
 }
 
 #[test]

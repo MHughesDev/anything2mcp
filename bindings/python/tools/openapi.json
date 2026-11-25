@@ -15912,6 +15912,9 @@
                ],
                "type": "object"
               },
+              "state": {
+               "type": "string"
+              },
               "target": {
                "type": "string"
               },
@@ -16071,6 +16074,9 @@
                 "when"
                ],
                "type": "object"
+              },
+              "state": {
+               "type": "string"
               },
               "target": {
                "type": "string"

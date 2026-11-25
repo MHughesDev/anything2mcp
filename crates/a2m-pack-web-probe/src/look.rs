@@ -144,6 +144,11 @@ pub(crate) struct Arrival {
     pub(crate) asked: Place,
     /// Where it ended, after redirects.
     pub(crate) ended: Place,
+    /// The whole address it ended at, as the browser gave it, when the
+    /// browser ended the move on this surface's origin: kept in memory to
+    /// tell whether two addresses led to one page, and never written into a
+    /// finding.
+    pub(crate) ended_address: Option<String>,
     /// The page's title, through the redactor.
     pub(crate) title: String,
     /// The status of the document's answer.
@@ -420,6 +425,7 @@ impl Core {
                 return Ok(Arrival {
                     asked,
                     ended,
+                    ended_address: None,
                     title: String::new(),
                     status: None,
                     standing: Standing::SignIn("other_origin"),
@@ -459,6 +465,7 @@ impl Core {
         Ok(Arrival {
             asked,
             ended,
+            ended_address: Some(loaded.address.clone()),
             title: codes::shown(&scope.redact.redact(&loaded.title)),
             status: loaded.status,
             standing,

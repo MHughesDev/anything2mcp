@@ -762,6 +762,9 @@ impl Tree {
                 if !arg.choices.is_empty() {
                     notes.push(format!("one of: {}", arg.choices.join(", ")));
                 }
+                if arg.ty == "list" && !arg.positional {
+                    notes.push(LIST_FORM.replace("--files", &arg.flag));
+                }
                 let notes = if notes.is_empty() {
                     String::new()
                 } else {
@@ -978,6 +981,26 @@ fn value_of(arg: &CommandArg, written: &str) -> Result<Json, Failure> {
     }
 }
 
+/// How a list is written on the command line, as the help and a refusal
+/// say it (package 5.6b).
+pub(crate) const LIST_FORM: &str = "a list: repeat the flag for each item (`--files a --files b`), or give one JSON array of text (`--files '[\"a\", \"b\"]'`)";
+
+/// The items one value of a list flag gives: a JSON array of text is its
+/// items, in order, as an agent that copies a list from a result writes
+/// it; any other text is one item. A comma is part of an item, since a
+/// name may hold one.
+fn list_items(value: Json) -> Vec<Json> {
+    if let Json::String(text) = &value
+        && text.trim_start().starts_with('[')
+        && let Ok(Json::Array(items)) = serde_json::from_str::<Json>(text)
+        && !items.is_empty()
+        && items.iter().all(Json::is_string)
+    {
+        return items;
+    }
+    vec![value]
+}
+
 fn shown_name(arg: &CommandArg) -> String {
     if arg.positional {
         format!("<{}>", arg.field)
@@ -1092,7 +1115,7 @@ fn parse_args(
                 .entry(arg.field.clone())
                 .or_insert_with(|| Json::Array(Vec::new()));
             if let Json::Array(items) = list {
-                items.push(value);
+                items.extend(list_items(value));
             }
         } else if input.insert(arg.field.clone(), value).is_some() {
             return Err(malformed(format!("`{name}` was given twice."), usage()));
@@ -1131,6 +1154,20 @@ fn parse_args(
     Ok((Json::Object(input), stdin_for))
 }
 
+/// A word as a shell reads it back: quoted when it holds anything but
+/// plain characters.
+fn quote(written: &str) -> String {
+    if written.is_empty()
+        || written
+            .chars()
+            .any(|c| !(c.is_ascii_alphanumeric() || "-_./:@".contains(c)))
+    {
+        format!("'{}'", written.replace('\'', "'\\''"))
+    } else {
+        written.to_owned()
+    }
+}
+
 /// The command line that asks for `action` with `input`, for the `next`
 /// line of a result. `None` when the action has no command face.
 pub(crate) fn command_line(tree: &Tree, action: &str, input: &Json) -> Option<String> {
@@ -1145,17 +1182,19 @@ pub(crate) fn command_line(tree: &Tree, action: &str, input: &Json) -> Option<St
             Json::String(text) => text.clone(),
             other => other.to_string(),
         };
-        let quoted = if written.is_empty()
-            || written
-                .chars()
-                .any(|c| !(c.is_ascii_alphanumeric() || "-_./:@".contains(c)))
-        {
-            format!("'{}'", written.replace('\'', "'\\''"))
-        } else {
-            written
-        };
+        let quoted = quote(&written);
         if arg.positional {
             line.push_str(&format!(" {quoted}"));
+        } else if let (true, Json::Array(items)) = (arg.ty == "list", value) {
+            // A list is written as the flag once for each item, the form
+            // the help names first.
+            for item in items {
+                let written = match item {
+                    Json::String(text) => text.clone(),
+                    other => other.to_string(),
+                };
+                line.push_str(&format!(" {} {}", arg.flag, quote(&written)));
+            }
         } else if arg.ty == "flag" {
             if value == &Json::Bool(true) {
                 line.push_str(&format!(" {}", arg.flag));

@@ -517,7 +517,7 @@ fn a_new_project_gets_a_target_and_a_linted_draft_with_the_shortcuts_alone() {
     );
     assert_eq!(
         made["written"],
-        serde_json::json!(["AGENTS.md", ".gitignore", "targets"]),
+        serde_json::json!(["AGENTS.md", ".gitignore", "targets", ".anything2mcp"]),
         "{made}"
     );
 
@@ -687,10 +687,17 @@ fn init_makes_an_empty_folder_a_project_and_keeps_what_is_there() {
     let result = &object(&made)["result"];
     assert_eq!(
         result["written"],
-        serde_json::json!(["anything2mcp.toml", "AGENTS.md", ".gitignore", "targets"]),
+        serde_json::json!([
+            "anything2mcp.toml",
+            "AGENTS.md",
+            ".gitignore",
+            "targets",
+            ".anything2mcp"
+        ]),
         "{result}"
     );
     assert!(folder.path().join("targets").is_dir());
+    assert!(folder.path().join(".anything2mcp").is_dir());
     let guidance = std::fs::read_to_string(folder.path().join("AGENTS.md")).unwrap();
     assert!(!guidance.trim().is_empty());
     // The folder is a project now: a command run in it finds it.

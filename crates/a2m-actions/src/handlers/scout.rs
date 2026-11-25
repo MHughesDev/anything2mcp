@@ -1294,8 +1294,9 @@ async fn trial_rests(kernel: &Kernel, run: RunId) -> Result<Option<a2m_ledger::R
 /// proven in this scout. The rule, and no other: the read states exactly
 /// one key input; among the reads proven so far in this scout run, exactly
 /// one acts on the same surface (by its first binding) and declares an
-/// output of exactly the key's name whose type is a list; the first item of
-/// that output, in the list's own order, is text or a whole number.
+/// output of exactly the key's name whose type is a list, or, when none
+/// does, of exactly that name without its `_id` (decision 0445); the first
+/// item of that output, in the list's own order, is text or a whole number.
 /// Anything else is not tried, with its reason (rule 7: no guessing by
 /// resemblance).
 fn key_from_list(operation: &a2m_core::CompiledOperation, proven: &[Proven]) -> TryInput {
@@ -1324,14 +1325,31 @@ fn key_from_list(operation: &a2m_core::CompiledOperation, proven: &[Proven]) -> 
     else {
         return TryInput::None("It has no binding to try.");
     };
-    let lists: Vec<&Proven> = proven
-        .iter()
-        .filter(|read| {
-            read.surface == surface
-                && read.lists.contains(&key.name)
-                && read.result.get(&key.name).is_some_and(Json::is_array)
-        })
-        .collect();
+    // The output of the key's own name; when no list answers one, the
+    // output of that name without its `_id`, as a key `order_id` is read
+    // off a list's `order` column (package 5.6b). Exactly one list read
+    // must answer it, under either rule.
+    let answering = |name: &str| -> Vec<&Proven> {
+        proven
+            .iter()
+            .filter(|read| {
+                read.surface == surface
+                    && read.lists.iter().any(|listed| listed == name)
+                    && read.result.get(name).is_some_and(Json::is_array)
+            })
+            .collect()
+    };
+    let mut output = key.name.clone();
+    let mut lists = answering(&output);
+    if lists.is_empty()
+        && let Some(record) = key
+            .name
+            .strip_suffix("_id")
+            .filter(|record| !record.is_empty())
+    {
+        output = record.to_owned();
+        lists = answering(&output);
+    }
     let [
         Proven {
             tool: list, result, ..
@@ -1339,12 +1357,12 @@ fn key_from_list(operation: &a2m_core::CompiledOperation, proven: &[Proven]) -> 
     ] = lists.as_slice()
     else {
         return TryInput::None(if lists.is_empty() {
-            "It takes a key it states no example of, and no list read of the same surface proven in this scout answers an output of the key's name."
+            "It takes a key it states no example of, and no list read of the same surface proven in this scout answers an output of the key's name, or of that name without its `_id`."
         } else {
             "It takes a key it states no example of, and more than one list read proven in this scout answers an output of the key's name; nothing says which is of the same record."
         });
     };
-    let value = match result[&key.name].get(0) {
+    let value = match result[&output].get(0) {
         Some(Json::String(text)) => a2m_core::Value::Text(text.clone()),
         Some(Json::Number(number)) if number.is_i64() => {
             a2m_core::Value::Int(number.as_i64().unwrap_or_default())
@@ -1355,11 +1373,7 @@ fn key_from_list(operation: &a2m_core::CompiledOperation, proven: &[Proven]) -> 
             );
         }
     };
-    TryInput::FromList(
-        Values::new().with(&key.name, value),
-        list.clone(),
-        key.name.clone(),
-    )
+    TryInput::FromList(Values::new().with(&key.name, value), list.clone(), output)
 }
 
 /// A read proven in this scout run, as the next reads may use it: kept in
