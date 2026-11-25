@@ -17,7 +17,9 @@ use a2m_core::{
 use serde::{Deserialize, Serialize};
 
 use super::signature::Chain;
-use super::{Acting, CaptureLevel, CaptureRef, ChoiceReason, Locating, Phase, TraceOutcome};
+use super::{
+    Acting, CaptureLevel, CaptureRef, ChoiceReason, Locating, Phase, TimeMarks, TraceOutcome,
+};
 
 /// The version of the trace schema this crate writes.
 pub const TRACE_SCHEMA: u32 = 1;
@@ -177,6 +179,11 @@ pub struct EndLine {
     /// What is weak about this trace.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub limitations: Vec<Limitation>,
+    /// Where the attempt's time went, when the engine marked it. Not in the
+    /// signature. Added to schema 1 as an optional entry (decision 0999): a
+    /// trace written before it reads without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marks: Option<TimeMarks>,
 }
 
 /// Reads a trace's bytes back into its lines.

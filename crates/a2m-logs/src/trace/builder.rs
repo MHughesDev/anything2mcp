@@ -15,7 +15,7 @@ use super::wire::{
 };
 use super::{
     Acting, CaptureLevel, CaptureOutcome, Detail, DropReason, Locating, MaskReport, OfferedCapture,
-    RedactedCapture, StepRecord, TraceIdentity, TraceOutcome, TracedValue,
+    RedactedCapture, StepRecord, TimeMarks, TraceIdentity, TraceOutcome, TracedValue,
 };
 use crate::clock::micros;
 use crate::codes::TRACE_HOLDS_SECRET;
@@ -40,6 +40,7 @@ pub struct TraceBuilder {
     kept: u32,
     cut: bool,
     limitations: Vec<Limitation>,
+    marks: Option<TimeMarks>,
 }
 
 impl fmt::Debug for TraceBuilder {
@@ -135,6 +136,7 @@ impl TraceBuilder {
             kept: 0,
             cut: false,
             limitations: Vec::new(),
+            marks: None,
         };
         let header = TraceLine::Header(HeaderLine {
             schema: TRACE_SCHEMA,
@@ -350,6 +352,13 @@ impl TraceBuilder {
         })
     }
 
+    /// Gives the trace the time marks of its attempt, written in its end
+    /// line. Called once, before [`TraceBuilder::finish`]; a later call
+    /// replaces the marks. The marks never enter the signature.
+    pub fn mark(&mut self, marks: TimeMarks) {
+        self.marks = Some(marks);
+    }
+
     /// Ends the trace: the JSON Lines bytes, already checked, and the
     /// signature.
     ///
@@ -374,6 +383,7 @@ impl TraceBuilder {
             kept: self.kept,
             signature,
             limitations: self.limitations.clone(),
+            marks: self.marks,
         });
         // The end line is written even past the limit: without it a reader
         // cannot tell a cut trace from a broken one.

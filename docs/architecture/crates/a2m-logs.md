@@ -58,9 +58,18 @@ impl TraceBuilder {
     /// Offers a capture. `Kept` carries redacted, checked bytes for the ledger; `Dropped` says why.
     pub fn capture(&mut self, offered: OfferedCapture) -> CaptureOutcome;
 
+    /// The attempt's time marks, written in the end line and never in the signature (decision 0999).
+    pub fn mark(&mut self, marks: TimeMarks);
+
     /// Ends the trace: the JSON Lines bytes, already checked, and the signature.
     pub fn finish(self) -> Result<FinishedTrace, TraceRefused>;
 }
+
+/// Where an attempt's time went: the whole attempt, and what the calls to each part of the control plane took.
+pub struct TimeMarks { pub run_us: u64, pub policy: Mark, pub scheduling: Mark, pub session: Mark,
+                       pub ledger: Mark, pub loading: Mark }
+impl TimeMarks { pub const fn policy_scheduling_and_ledger_us(&self) -> u64; }
+pub struct Mark { pub calls: u32, pub took_us: u64 }
 
 pub struct TraceIdentity { pub workspace: WorkspaceId, pub run: RunId, pub attempt: u32, pub operation: OperationName,
                            pub compiled_target: Digest, pub engine: Version, pub registry: Digest }
@@ -249,6 +258,7 @@ The last line:
 | `kept` | How many of them are in this trace |
 | `signature` | The trace signature |
 | `limitations` | Optional. A list of `code` and `sentence` |
+| `marks` | Optional; written by every engine since [decision 0999](../../decisions/0999-a-runs-trace-ends-with-the-time-each-part-of-the-control-plane-took.md). `run_us`, the attempt from the engine's start of the job to the end of its trace; then `policy` (the guard's decision and an approval's check), `scheduling` (rate budgets and record locks), `session` (the keeper's leases and a sign of expiry), `ledger` (the run's events, each intent, act, read-back, and settling, the preview, and the evidence), and `loading` (the compiled target), each `calls` and `took_us`, a part with no call left out. Not in the signature. What is outside the engine's run, the front door, the scheduler's claim and finish, and the storing of the trace, is in no mark |
 
 A trace with no end line is incomplete. A change that a reader of version 1 would misread raises `schema`; a new optional entry does not.
 
@@ -317,6 +327,7 @@ A failure to capture evidence never fails a read. For a write, the engine decide
 | Nothing is sent | There is no exporter. `the_crate_depends_on_nothing_that_could_send_anything` holds the outside crates to four. The test against a listening socket comes with the exporter |
 | Logs rotate by size, and a folder that cannot be written sends them to standard error | `rotate::tests`, `logs_rotate_by_size`, `a_folder_that_cannot_be_written_sends_logs_to_standard_error` |
 | Spans and metrics read back exactly under a fixed clock | `tests/spans.rs` |
+| The time marks are in the end line, read back, and never enter the signature; a trace without them still reads | `the_time_marks_are_in_the_end_line_and_not_in_the_signature` |
 | `standard` capture adds no more than 5% to a run, and a record stays near 2 KB | Not measured. Benchmarks in `bench/`, slice 1.7. The simulated records are 0.5 to 1.3 KB |
 
 ## Build order
