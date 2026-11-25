@@ -646,6 +646,15 @@ export interface UnknownListInput {
 }
 
 /**
+ * The input of `version.diff`.
+ */
+export interface VersionDiffInput {
+  from: string;
+  target: string;
+  to: string;
+}
+
+/**
  * The input of `version.publish`.
  */
 export interface VersionPublishInput {
@@ -1240,6 +1249,12 @@ export declare abstract class Actions {
    * The open questions about a target. The engine action is `unknown.list`.
    */
   unknownList(input: UnknownListInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Compare two versions of a target and classify each change. The engine action is
+   * `version.diff`.
+   */
+  versionDiff(input: VersionDiffInput, options?: CallOptions): Promise<Response>;
 
   /**
    * Publish a target's drafts, compiled, as an immutable version. A person's act, never

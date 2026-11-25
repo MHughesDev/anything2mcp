@@ -88,6 +88,7 @@ const ACTIONS = Object.freeze([
   "toolset.update",
   "trace.show",
   "unknown.list",
+  "version.diff",
   "version.publish",
   "watch.changes",
   "watch.confirm",
@@ -774,6 +775,14 @@ class Actions {
    */
   unknownList(input, options = {}) {
     return this.call("unknown.list", input, options);
+  }
+
+  /**
+   * Compare two versions of a target and classify each change. The engine action is
+   * `version.diff`.
+   */
+  versionDiff(input, options = {}) {
+    return this.call("version.diff", input, options);
   }
 
   /**

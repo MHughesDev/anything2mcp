@@ -101,6 +101,7 @@ ACTIONS = (
     "toolset.update",
     "trace.show",
     "unknown.list",
+    "version.diff",
     "version.publish",
     "watch.changes",
     "watch.confirm",
@@ -1575,6 +1576,28 @@ class Actions:
         The engine action is ``unknown.list``.
         """
         return self._action("unknown.list", {"target": target}, idempotency_key)
+
+    def version_diff(
+        self,
+        *,
+        from_: str,
+        target: str,
+        to: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Compare two versions of a target and classify each change.
+
+        The engine action is ``version.diff``.
+        """
+        return self._action(
+            "version.diff",
+            {
+                "from": from_,
+                "target": target,
+                "to": to,
+            },
+            idempotency_key,
+        )
 
     def version_publish(
         self,

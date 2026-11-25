@@ -1333,6 +1333,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -1502,6 +1538,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -3097,6 +3169,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -3231,6 +3339,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -3735,6 +3879,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -3869,6 +4049,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -8438,6 +8654,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -8581,6 +8833,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -9066,6 +9354,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -9209,6 +9533,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -9423,6 +9783,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -9570,6 +9966,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -13597,6 +14029,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -13740,6 +14208,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -15337,6 +15841,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -15471,6 +16011,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -15975,6 +16551,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -16136,6 +16748,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -16660,6 +17308,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -16830,6 +17514,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -17029,6 +17749,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -17172,6 +17928,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -21236,6 +22028,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -21416,6 +22244,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -25098,6 +25962,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -25241,6 +26141,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -25671,6 +26607,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -25814,6 +26786,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -26058,6 +27066,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -26201,6 +27245,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -27803,8 +28883,14 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "breaking": {
+             "type": "integer"
+            },
+            "from": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -27831,9 +28917,54 @@
               "when"
              ],
              "type": "object"
+            },
+            "target": {
+             "type": "string"
+            },
+            "to": {
+             "type": "string"
+            },
+            "tools": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "changes": {
+                "items": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "class": {
+                "enum": [
+                 "breaking",
+                 "compatible",
+                 "unchanged"
+                ]
+               },
+               "tool": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "tool",
+               "class",
+               "changes"
+              ],
+              "type": "object"
+             },
+             "type": "array"
             }
            },
-           "required": [],
+           "required": [
+            "target",
+            "from",
+            "to",
+            "breaking",
+            "tools"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -27875,8 +29006,14 @@
            "type": "boolean"
           },
           "result": {
-           "additionalProperties": {},
+           "additionalProperties": false,
            "properties": {
+            "breaking": {
+             "type": "integer"
+            },
+            "from": {
+             "type": "string"
+            },
             "next": {
              "additionalProperties": false,
              "properties": {
@@ -27903,9 +29040,54 @@
               "when"
              ],
              "type": "object"
+            },
+            "target": {
+             "type": "string"
+            },
+            "to": {
+             "type": "string"
+            },
+            "tools": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "changes": {
+                "items": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "type": "array"
+               },
+               "class": {
+                "enum": [
+                 "breaking",
+                 "compatible",
+                 "unchanged"
+                ]
+               },
+               "tool": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "tool",
+               "class",
+               "changes"
+              ],
+              "type": "object"
+             },
+             "type": "array"
             }
            },
-           "required": [],
+           "required": [
+            "target",
+            "from",
+            "to",
+            "breaking",
+            "tools"
+           ],
            "type": "object"
           },
           "warnings": {
@@ -27939,7 +29121,7 @@
     },
     "summary": "Compare two versions of a target and classify each change.",
     "x-action": "version.diff",
-    "x-sdk": false
+    "x-sdk": true
    }
   },
   "/api/v1/actions/version.import": {
@@ -28465,6 +29647,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -28623,6 +29841,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
@@ -29495,6 +30749,42 @@
               "action": {
                "type": "string"
               },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
               "expires_at": {
                "type": "integer"
               },
@@ -29716,6 +31006,42 @@
                "type": "string"
               },
               "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
                "type": "string"
               },
               "expires_at": {
