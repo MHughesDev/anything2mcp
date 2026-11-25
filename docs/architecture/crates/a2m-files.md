@@ -449,13 +449,15 @@ A compile reports `Diagnostics`, not a failure; the action that called it turns 
 
 15. Done (package E7d, [decision 0426](../../decisions/0426-the-publish-page-names-each-asserted-read-after-the-sign-ins-from-what-each-file-kind-says-it-asserts.md)): `FileKind::asserts`, empty by default, and the summary's `asserted`, one `AssertedReview` for each read a pack's file asserts, with `ASSERTED_NOTICE`. The web pack's `page_request` kind and the HTTP pack's `endpoint` kind answer. Test: `each_asserted_read_is_one_item_with_its_request_its_fields_and_the_sentence`; through the product, `crates/anything2mcp/tests/asserted_publish.rs`.
 
+16. Done ([decision 0999](../../decisions/0999-a-read-declares-its-records-over-its-list-outputs-and-a-driver-states-whether-it-returned-every-record.md)): a read's `records: {key: [...]}` over its list outputs, compiled to `CompiledOperation::records`, left out of the bytes when absent; `kernel.records_invalid` for a key on an operation that writes, a name that is no list output, or a name twice. Test: `a_read_declares_its_records_by_the_list_outputs_that_make_their_key`.
+
 Not built, in any step:
 
 - **The rest of the Scope rule.** The compiler checks the form of what an operation's `permissions` declares: one exact address, one name, once. It does not check a destination against a list a person registered for the target, because no file holds such a list; the review summary shows every destination, and confirming a new one is the publish gate's ([section 502](../../spec/5-security/502-defending-against-a-manipulated-agent.md)). It does not check that an upload or a download names an input of the operation or a root of the installation.
 - **A secret outside what the credential lint knows.** A diagnostic never quotes a value under a key the lint knows, or one in a credential's shape. A token pasted under any other key, where a name or a word is expected, is still echoed, up to 64 characters. A fixture's recorded file is looked through by line for key material, an authorization header's value, and a signed token, and for nothing else; one that is not text is not looked through.
 
 - `lint_one` compiles the whole target again; nothing is reused by file digest.
-- An operation's outputs by reference to a pack's schema, and nested records.
+- An operation's outputs by reference to a pack's schema, and nested records: a read's records are its list outputs taken as columns (decision 0999).
 - The action registry's reading and rewriting of a binding by its place in the file (`binding promote`), and the proof of a live read after a promotion. The provider registry gives `CompilerSetBuilder::mode_rank` each rank its manifest states for a mode it brings a lowering for, and the compiler orders an operation's bindings by rank unless it states `binding_order: listed` ([decision 0337](../../decisions/0337-a-description-says-who-wrote-it-a-drafter-reports-what-it-left-undrafted-and-bindings-are-ordered-by-rank.md); `crates/a2m-provider/tests/ranks.rs`).
 - The `stands` rule for surfaces that may sit under an application. The compiled target carries where a surface stands; refusing a write on a surface that does not say is the rule of the pack whose kind needs it, and no such pack is built.
 - Lint rules that are errors only on a server.
