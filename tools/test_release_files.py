@@ -204,7 +204,7 @@ class Changelog(unittest.TestCase):
         self.assertTrue(any("no link line" in p for p in problems), problems)
 
     def test_the_tree_is_not_ready_to_release_a_version_it_has_no_section_for(self):
-        self.assertTrue(rf.changelog_problems(REPO, "0.1.0"))
+        self.assertTrue(rf.changelog_problems(REPO, "99.0.0"))
 
 
 class Workflow(unittest.TestCase):
