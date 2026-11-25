@@ -244,6 +244,10 @@ pub struct PreviewField { pub name: String, pub current: Option<String>, pub pro
 
 pub struct Paths { /* installation_config, config, data, store, blobs, profiles, journal, logs, runtime, cache */ }
 impl Paths { pub fn resolve(env: &Env) -> Result<Paths, Failure>; pub fn under(home: &Path) -> Paths; }
+pub struct Env { pub os: OsFamily, pub vars: BTreeMap<String, String>,
+    pub session_folder: Option<PathBuf> }   // `/run/user/<uid>` when the user's and closed (decision 0432)
+impl Env { pub fn of_process() -> Env; pub fn on_this_machine(vars: BTreeMap<String, String>) -> Env;
+    pub fn with(os: OsFamily, vars: &[(&str, &str)]) -> Env; }   // `with` reads nothing from the machine
 
 pub struct Settings { /* every key, its value, the layer that set it */ }
 impl Settings {

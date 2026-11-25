@@ -1,6 +1,6 @@
 # 0432. The runtime folder does not follow a variable that differs between one user's processes
 
-**Status:** Accepted. Design decision, made in the design review round by lens 13, the other operating systems ([report](../reviews/other-operating-systems-review-2026-11-24.md), finding 1). The owner had not read this record when it was written. It changes where `Paths::resolve` of `a2m-actions` puts the runtime folder on macOS and, where the variable is missing, on Linux, and what a client says when it is refused `engine_running`. It changes no public interface. Built by roadmap package OS1; until then the code is as before.
+**Status:** Accepted. Design decision, made in the design review round by lens 13, the other operating systems ([report](../reviews/other-operating-systems-review-2026-11-24.md), finding 1). The owner had not read this record when it was written. It changes where `Paths::resolve` of `a2m-actions` puts the runtime folder on macOS and, where the variable is missing, on Linux, and what a client says when it is refused `engine_running`. It changes no public interface. Built by roadmap package OS1.
 
 **Date:** 2026-11-24
 
