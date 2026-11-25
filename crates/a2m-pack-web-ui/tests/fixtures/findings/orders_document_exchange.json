@@ -1,0 +1,5 @@
+{
+  "found": "{\"answered\":true,\"content\":\"document\",\"format\":\"1\",\"method\":\"GET\",\"path\":\"/orders\",\"query\":{},\"response\":null,\"status\":200}",
+  "kind": "exchange",
+  "path": "/orders"
+}

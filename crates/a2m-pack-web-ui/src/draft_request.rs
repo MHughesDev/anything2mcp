@@ -183,6 +183,58 @@ const TWO_SHAPES: &str = "The request was seen in more than one shape of body or
 /// Why no read is drafted over a request by a method that may write.
 const NO_READ: &str = "The request is by a method that may write. It is drafted as a page request whose effect is a question, and no read is drafted over it until a person says it changes nothing (decision 0392, point 4).";
 
+/// Why a request by a method that may write that exploration found is not
+/// drafted.
+const EXPLORED_WRITE: &str = "The request is by a method that may write, and it was found by exploring the application, not in a capture of a person's use. Such a request is drafted only from a capture that saw it at least twice in one shape (decision 0392, point 4). To have it drafted, capture a person using the page that sends it.";
+
+/// Why a request with no answer is not drafted.
+const NOT_ANSWERED: &str = "The request was not answered, so no answer was seen whose shape a read could state. If the page needs it, scout the page again once the application answers it.";
+
+/// Why an address the tab was sent to is not drafted as a request.
+const NOT_MADE_BY_A_PAGE: &str = "The request was not made by a page by itself: the tab was sent to this address, so the address is a page, and a screen read over it covers what it shows. Only a request a page makes by itself is drafted as a page request. If the address is a service that answers programs, add it to the target as an `http` surface.";
+
+/// Why a request answered with another status than 200 is not drafted.
+const NOT_200: &str = "The request was answered with a status other than 200, and a read is drafted only from a request answered 200. Scout the page again when the application answers it with 200.";
+
+/// Why a request answered with something other than JSON is not drafted.
+const NOT_JSON: &str = "The request was answered with something other than JSON, so no answer's shape can be stated, and only a request answered in JSON is drafted as a page request. What the page shows is read through its screen.";
+
+/// Why a finding about no address is not drafted.
+const NOT_AN_ADDRESS: &str = "The finding is not about an address on the web, so there is no path to draft a page request from.";
+
+/// Why nothing is drafted for a target with no name.
+const NO_TARGET: &str = "The target has no name in its target file, and a read is named after its target. Name the target, then draft again.";
+
+/// Why a request to an origin that is not one `web` surface is not drafted.
+const NO_SURFACE: &str = "The request went to an origin that is not exactly one `web` surface of the target. If the request belongs to this application, give the target one `web` surface at that origin and draft again; otherwise it goes to another system, and nothing over it belongs here.";
+
+/// Why a request whose path, or whose page's, is too long is not drafted.
+const TOO_LONG: &str = "The request's path, or its page's, is longer than 160 characters, the most a page request and its read hold. Write the entry by hand if it is wanted.";
+
+/// Why a request whose path is not plain is not drafted.
+const NOT_PLAIN: &str = "A part of the request's path, or of its page's, is neither plain words nor one whole placeholder, so no entry can state it. Write the entry by hand if it is wanted.";
+
+/// Why a request whose placeholders are not the page's is not drafted.
+const KEY_NOT_THE_PAGES: &str = "A placeholder of the page's path is not one of the request's, or the request's path names one placeholder twice, so the read's key cannot be the page's. Write the entry by hand if it is wanted.";
+
+/// Why a request with a placeholder named as a secret is not drafted.
+const SECRET_PLACEHOLDER: &str = "A placeholder of the request's path is named as a secret, so a read over it would take a secret as an input, and nothing is drafted (decision 0302). A secret comes from the session, never from a caller.";
+
+/// Why a request whose answer is not a JSON object is not drafted.
+const NOT_AN_OBJECT: &str = "The request's answer is not a JSON object, so it has no named values for an entry to state or a read to give.";
+
+// `TOO_LONG` states the bound in words.
+const _: () = assert!(LONGEST_PATH == 160);
+
+/// Why a request whose path gives no name is not drafted.
+const NO_NAME: &str = "The request's path has no plain words, or they make a name longer than an entry or a read may have, so neither can be named. Write the entry by hand, with a name of your own.";
+
+/// Why a request whose answer gives no plain value is not drafted.
+const NO_OUTPUT: &str = "The request's answer holds no plain value a read could give: no text, whole number, or true-or-false value that every answer held and that is not its key or named as a secret. A number with a fraction and a nested value are never drafted as outputs. Read what the page shows through its screen.";
+
+/// Why no read is drafted over a request the page sent more with.
+const NOT_MADE_AGAIN: &str = "The page sent more with this request than a read from inside the page would, so no read is drafted over it. The page request is drafted with a question in place of its path, which names what the page sent. Answer it, and write the read by hand if it is wanted.";
+
 /// What the held page request of a request by a method that may write
 /// asks in place of its effect (decision 0392, point 4), for one seen
 /// `seen` times.
@@ -215,6 +267,11 @@ fn held_request(
         text("made_by"),
         found.get("status").and_then(Json::as_u64),
     ) else {
+        cx.not_drafted(if found.get("status").and_then(Json::as_u64).is_none() {
+            NOT_ANSWERED
+        } else {
+            NOT_MADE_BY_A_PAGE
+        });
         return Ok(Vec::new());
     };
     if seen < 2 {
@@ -238,29 +295,34 @@ fn held_request(
         return refuse("The request's method is not one a page request is written with.");
     }
     let Subject::Address(address) = finding.subject() else {
-        return Ok(Vec::new());
+        return refuse(NOT_AN_ADDRESS);
     };
-    let (Some(_), Some(surface)) = (cx.target(), crate::draft::surface(cx, address.origin()))
-    else {
-        return Ok(Vec::new());
+    if cx.target().is_none() {
+        return refuse(NO_TARGET);
+    }
+    let Some(surface) = crate::draft::surface(cx, address.origin()) else {
+        return refuse(NO_SURFACE);
     };
     let path = address.path();
     if path.chars().count() > LONGEST_PATH || page.chars().count() > LONGEST_PATH {
-        return Ok(Vec::new());
+        return refuse(TOO_LONG);
     }
     let (Some((words, holes)), Some((_, page_holes))) =
         (words_and_holes(path), words_and_holes(page))
     else {
-        return Ok(Vec::new());
+        return refuse(NOT_PLAIN);
     };
-    if words.is_empty()
-        || !crate::draft::is_name(&format!("{words}_request"), LONGEST)
-        || page_holes.iter().any(|hole| !holes.contains(hole))
-        || holes
-            .iter()
-            .any(|hole| crate::draft::named_as_secret(hole, &crate::draft::snake(hole)))
+    if words.is_empty() || !crate::draft::is_name(&format!("{words}_request"), LONGEST) {
+        return refuse(NO_NAME);
+    }
+    if page_holes.iter().any(|hole| !holes.contains(hole)) {
+        return refuse(KEY_NOT_THE_PAGES);
+    }
+    if holes
+        .iter()
+        .any(|hole| crate::draft::named_as_secret(hole, &crate::draft::snake(hole)))
     {
-        return Ok(Vec::new());
+        return refuse(SECRET_PLACEHOLDER);
     }
     let Some(values) = found.get("response").and_then(values) else {
         return refuse("The request's answer is not a JSON object.");
@@ -408,16 +470,26 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         // capture, and only as a held page request (decision 0392, point 4).
         if seen.is_some() {
             out.entries.extend(held_request(finding, &found, cx)?);
+        } else {
+            cx.not_drafted(EXPLORED_WRITE);
         }
         return Ok(out);
     }
     // A request the page made by itself, with GET, answered 200 in JSON.
-    let (Some("GET"), Some("json"), Some(200), Some(page)) = (
-        text("method"),
-        text("content"),
-        found.get("status").and_then(Json::as_u64),
-        text("made_by"),
-    ) else {
+    // Each that is not says why, in the order a person would mend it.
+    let status = found.get("status").and_then(Json::as_u64);
+    let (Some("GET"), Some("json"), Some(200), Some(page)) =
+        (text("method"), text("content"), status, text("made_by"))
+    else {
+        cx.not_drafted(if status.is_none() || text("content") == Some("none") {
+            NOT_ANSWERED
+        } else if text("made_by").is_none() {
+            NOT_MADE_BY_A_PAGE
+        } else if status != Some(200) {
+            NOT_200
+        } else {
+            NOT_JSON
+        });
         return Ok(out);
     };
     match seen {
@@ -432,19 +504,26 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         _ => {}
     }
     let Subject::Address(address) = finding.subject() else {
+        cx.not_drafted(NOT_AN_ADDRESS);
         return Ok(out);
     };
-    let (Some(target), Some(surface)) = (cx.target(), crate::draft::surface(cx, address.origin()))
-    else {
+    let Some(target) = cx.target() else {
+        cx.not_drafted(NO_TARGET);
+        return Ok(out);
+    };
+    let Some(surface) = crate::draft::surface(cx, address.origin()) else {
+        cx.not_drafted(NO_SURFACE);
         return Ok(out);
     };
     let path = address.path();
     if path.chars().count() > LONGEST_PATH || page.chars().count() > LONGEST_PATH {
+        cx.not_drafted(TOO_LONG);
         return Ok(out);
     }
     let (Some((words, holes)), Some((_, page_holes))) =
         (words_and_holes(path), words_and_holes(page))
     else {
+        cx.not_drafted(NOT_PLAIN);
         return Ok(out);
     };
     // Every placeholder of the page is one of the request's: the page's key
@@ -455,6 +534,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
             .enumerate()
             .any(|(at, hole)| holes[..at].contains(hole))
     {
+        cx.not_drafted(KEY_NOT_THE_PAGES);
         return Ok(out);
     }
     // A placeholder named as a secret would be an input that is a secret:
@@ -463,9 +543,11 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         .iter()
         .any(|hole| crate::draft::named_as_secret(hole, &crate::draft::snake(hole)))
     {
+        cx.not_drafted(SECRET_PLACEHOLDER);
         return Ok(out);
     }
     let Some(values) = found.get("response").and_then(values) else {
+        cx.not_drafted(NOT_AN_OBJECT);
         return Ok(out);
     };
     // A value named as a secret is never an output, and the entry does not
@@ -484,6 +566,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         || !crate::draft::is_name(&format!("{words}_request"), LONGEST)
         || OperationName::new(&operation).is_err()
     {
+        cx.not_drafted(NO_NAME);
         return Ok(out);
     }
     let outputs: Vec<&Value> = values
@@ -495,6 +578,7 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         })
         .collect();
     if outputs.is_empty() {
+        cx.not_drafted(NO_OUTPUT);
         return Ok(out);
     }
 
@@ -578,6 +662,8 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
     });
 
     if unmade.is_some() {
+        // The entry is drafted; only the read is not.
+        cx.not_drafted(NOT_MADE_AGAIN);
         return Ok(out);
     }
     let mut doc = vec![
