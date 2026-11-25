@@ -109,13 +109,7 @@ def shard_tests(k, n, env):
         target = message["target"]
         manifest = message["manifest_path"]
         source = target["src_path"]
-        try:
-            with open(source, encoding="utf-8", errors="replace") as f:
-                count = len(re.findall(r"#\[(?:tokio::)?test\b", f.read()))
-        except OSError:
-            count = 0
-        if "lib" in target["kind"] or "bin" in target["kind"]:
-            count = max(count, weights_of_folder(os.path.dirname(source)))
+        count = program_weight(target["kind"], source)
         name = message["package_id"].split("#")[-1].split("@")[0].rsplit("/", 1)[-1]
         programs.append((count, f"{name} {target['kind'][0]} {target['name']}", message["executable"], os.path.dirname(manifest), name))
     bins = [[0, []] for _ in range(n)]
@@ -139,6 +133,21 @@ def shard_tests(k, n, env):
             failed.append("doctests")
             output.append(doc.stdout[-4000:] + doc.stderr[-2000:])
     return not failed, round(time.monotonic() - started), "\n".join(output), failed
+
+
+def program_weight(kinds, source):
+    """How many tests a test program holds, for sharing programs out: the
+    tests of its source file, or, for a library, a program, or a test target
+    whose source is a `main.rs` and whose other files are its modules
+    (decision 0446), the tests of the whole folder that file is in."""
+    try:
+        with open(source, encoding="utf-8", errors="replace") as f:
+            count = len(re.findall(r"#\[(?:tokio::)?test\b", f.read()))
+    except OSError:
+        count = 0
+    if "lib" in kinds or "bin" in kinds or os.path.basename(source) == "main.rs":
+        count = max(count, weights_of_folder(os.path.dirname(source)))
+    return count
 
 
 def weights_of_folder(folder):
@@ -183,7 +192,6 @@ def run(name, command, env):
 
 def main(argv):
     env = dict(os.environ)
-    env.setdefault("CARGO_PROFILE_DEV_DEBUG", "line-tables-only")
     env.setdefault("CARGO_TERM_COLOR", "never")
     before_tests = [step for step in STEPS if step[0] != "test"]
     steps = [(name, command, {}) for name, command in (before_tests if "--fast" in argv else STEPS)]
