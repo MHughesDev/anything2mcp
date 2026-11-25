@@ -30,7 +30,7 @@ The browser tests find a browser through `A2M_TEST_BROWSER`. In a cloud containe
 ## 2. Where the work stands
 
 - **Branches.** `main` holds everything merged through pull request 27, including the prepared commit of 0.1.0 (`261eee0`). The session branch of the last session holds pull request 28, in draft, with everything since: decisions 0479 to 0493. Merge it when every check is green on Windows, macOS, and Linux; never over red. A new session works on its own branch, cut from that one or from main once 28 is merged.
-- **Scope.** The first release has its full scope again ([decision 0493](../decisions/0493-the-first-release-has-its-full-scope-again-and-the-prepared-preview-is-not-tagged.md)). The first task is the one that decision names: rewrite the preview's words in the README, the changelog's 0.1.0 section, and the roadmap rows 3.6, 5.6, and OS5.
+- **Scope.** The first release has its full scope again ([decision 0493](../decisions/0493-the-first-release-has-its-full-scope-again-and-the-prepared-preview-is-not-tagged.md)). The preview's words in the README, the changelog's 0.1.0 section, and the roadmap rows 3.6, 5.6, and OS5 are rewritten to say so. When the release is near, bring the 0.1.0 section up to date with what is under Unreleased, and check `contracts/0.1.0/` against what main then holds (`python3 tools/contracts.py`).
 - **What is left.** `python3 tools/progress.py` counts it from the roadmap. Of the packages left, the owner's are the release gate (SR1), the registries (0.2p), and the checks a person makes at a Windows and a macOS machine (3.6, OS5); 5.6 needs a person or an agent timed in the loop on each system. Package 8.3 is held: a start and keys of the desktop pack on Windows and macOS are not built ([decision 0490](../decisions/0490-the-desktop-pack-still-starts-nothing-on-macos-because-no-event-off-the-main-run-loop-says-an-application-answers.md)). The rest is in the [build order](build-order.md).
 - **Next free decision number:** 0494.
 
@@ -61,6 +61,42 @@ The last sessions ran one lead and up to four builders at once, each a subagent 
 - Commit on your branch, one concern per commit, and do not push.
 - Hand back: done, not done, unsure, gaps decided, changed files, the checks' last lines and every failure, and the commit hashes.
 
-## 4. What no agent does
+## 4. What the last lead knew that is written nowhere else
+
+A new session on another account shares no memory with the old one. This is what the last lead held in mind.
+
+**The owner.**
+- The owner directs in short messages, often typed fast, and wants the work to move without being asked. Per AGENTS.md: decide, record, build, merge. Ask only what is truly the owner's, and then in one question with a recommended answer first.
+- The owner asked for the lead to act as an orchestrator: plan, brief builders, merge, and fix CI, with builders doing the building.
+- The owner tests on a Windows 11 laptop. The CI job "Wheel and npm packages on windows-latest" stores the artifact `windows-tester-kit` for 14 days: the program, the test application, the wheel, the notices, and [the guide](trying-the-preview-on-windows.md) as its README. Give the owner a fresh link from a green run's artifacts when asked. Turn the owner's notes into entries in `docs/reviews/field-tests.md` and into the Windows halves of 3.6, 5.6, and OS5.
+- Permission to run real open-source applications for H-50 and FT6 (reads only, in local containers, no real accounts) was given for that session and is done. Any new run against a real application needs the owner's go-ahead again (rule 10). Writes against a real business application are never allowed.
+- The registries were put off by the owner ("later"). Never ask for a token.
+
+**The owner's steps before the first release** (none an agent can take):
+1. SR1: in the repository's settings, the environments `release`, `pypi`, and `npm`, each with the owner as a required reviewer and deployments from `main` and `v*` tags only; and a tag ruleset that lets only the owner create a `v*` tag.
+2. 0.2p: the trusted publishers on PyPI and npm for `release.yml`, as [publishing setup](publishing-setup.md) says.
+3. The checks at a macOS and a Windows machine (3.6, OS5), and 5.6 measured with a person.
+4. Then the tag, on the commit the lead names, as [RELEASING.md](../../RELEASING.md) says. The CI-passed check of SR3 is in `release.yml` on main; a tag of a commit runs that commit's workflow.
+
+**CI, as it behaves.**
+- A new push cancels the run in progress on the same branch, main included. Cancelled jobs are not failures; read only jobs that ended `failure`.
+- The session cannot re-run a job (the API answers 403). Each retry is a push.
+- A log too long for the tool is saved to a file; read it with python, and read the failing test's whole output.
+- The Rust tests run in three shards per system ("Tests K of 3"). A shard's summary at its end names each failing test.
+- An exact count of tests in a CI step (the sign-in window job expects `6 passed; 0 failed; 5 ignored`) must be raised by a builder who adds a test to that step.
+- `crates/a2m-provider/tests/paths.rs` counts each file's uses of paths; a builder that adds one updates its entry and reason.
+- `crates/a2m-auth/tests/tls_rules.rs` refuses an HTTP client made by hand: a test makes its client with `client_builder` of the test application's `harness` module, or of the `tls` module of `a2m-auth`.
+- A bump of the version moves the compiler's version (`crates/a2m-files/src/compile.rs`), the stream pack's manifest, and the hash of a compiled target in the web pack's test; run the whole suite and every tool test after one.
+
+**Faults seen more than once, and their cure.**
+- A test that counts what a background task did races it: wait on a named condition (for example the keeper's `idle()`), never a sleep.
+- On macOS a peer that closed before the client asked who it is reads as an error of the socket; it is mapped to a lost connection, not a refusal.
+- A test that starts a program on macOS must name a copy that nothing runs, or it finds the test program itself running.
+- Browser tests run in one step share the runner's cores; a slow one gets a step of its own.
+- When the disk fills, builds and test runs fail with misleading errors. Check `df` first, and delete build folders of merged work.
+
+**The lead's own tools,** all in the repository: `tools/gate.py` (CI's Linux checks here, with the Windows and macOS lints through the stand-ins in `tools/cross/`), `tools/progress.py --write` (every count of packages), `tools/renumber_decision.py`, `tools/failure_codes.py`, `tools/contracts.py`, `tools/check_workflows.py`, and `tools/release_files.py`.
+
+## 5. What no agent does
 
 The ten rules and "What an agent does not do alone" in [AGENTS.md](../../AGENTS.md) hold in every session. In particular: no agent tags a release, starts the release workflow, or touches a registry or its token; the release goes out only through `.github/workflows/release.yml`, as [RELEASING.md](../../RELEASING.md) says, when the owner starts it.

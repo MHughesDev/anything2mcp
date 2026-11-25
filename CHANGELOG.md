@@ -35,12 +35,13 @@ The design's own history is in the [decision records](docs/decisions/README.md),
 
 ## [0.1.0] - 2026-11-25
 
-The first published version, a **preview**, before version 1.0 ([decision 0476](docs/decisions/0476-version-0-1-is-a-preview-and-the-checks-a-person-makes-move-to-before-1-0.md)). Built and tested against the built-in test stands on Windows, macOS, and Linux. Until 1.0 a minor version may break. What this preview has not had yet:
+Prepared and not published. The first release has its full scope ([decision 0493](docs/decisions/0493-the-first-release-has-its-full-scope-again-and-the-prepared-preview-is-not-tagged.md), which supersedes the preview of [decision 0476](docs/decisions/0476-version-0-1-is-a-preview-and-the-checks-a-person-makes-move-to-before-1-0.md)): it is published when every condition is met, and this section is then brought up to date with what was added since. Built and tested against the built-in test stands on Windows, macOS, and Linux. Still to be met before it is published:
 
 - The presence prompt and the approval page have been passed by a person on Linux only. On macOS and Windows they are built and tested in CI with a stand-in for the person, and fail closed: an act that needs a person is not done when no prompt can be shown.
 - The first hour, from an empty folder to a published tool an agent calls, is measured as machine time, not with a person at the keyboard.
 - No copy test has been run from a Windows or a macOS machine, and nothing has been tried against a real business application.
-- Not built: a shared server, plug-ins, MCP over HTTP, remote runners, ten of the twelve publish gates, and the drafting of writes.
+
+Not built, and not conditions of this release: a shared server, plug-ins, MCP over HTTP, remote runners, ten of the twelve publish gates, and the drafting of writes.
 
 ### Added
 
