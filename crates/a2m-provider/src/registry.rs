@@ -171,18 +171,26 @@ pub struct ComponentState {
     pub known: bool,
 }
 
+/// The first of a requirement's fixed places that holds a file. A place
+/// written for another operating system, which is not an absolute path
+/// here, is passed over rather than looked for in the engine's own working
+/// folder.
+fn component_place(needed: &crate::manifest::Requirement) -> Option<PathBuf> {
+    needed
+        .paths
+        .iter()
+        .map(Path::new)
+        .find(|path| path.is_absolute() && path.is_file())
+        .map(Path::to_path_buf)
+}
+
 /// Looks for one requirement at its fixed places, in order, and takes the
 /// digest of what it finds. It starts nothing, and a place written for
 /// another operating system, which is not an absolute path here, is passed
 /// over rather than looked for in the engine's own working folder.
 #[must_use]
 pub fn component_state(needed: &crate::manifest::Requirement) -> ComponentState {
-    let found = needed
-        .paths
-        .iter()
-        .map(Path::new)
-        .find(|path| path.is_absolute() && path.is_file())
-        .map(Path::to_path_buf);
+    let found = component_place(needed);
     let digest = found.as_deref().and_then(file_digest);
     let known = digest.is_some_and(|digest| needed.known_digests.contains(&digest));
     ComponentState {
@@ -206,11 +214,16 @@ fn availability(manifest: &Manifest) -> (Availability, String) {
         );
     }
     for needed in &manifest.requirements {
-        let state = component_state(needed);
-        if state.found.is_none() {
+        // Only where the place is found; the digest is taken only when the
+        // manifest lists one to compare it with, since a registry is built
+        // for every command and a browser's program is hundreds of
+        // megabytes to read.
+        let Some(found) = component_place(needed) else {
             return (Availability::ComponentMissing, needed.missing.clone());
-        }
-        if !needed.known_digests.is_empty() && !state.known {
+        };
+        if !needed.known_digests.is_empty()
+            && !file_digest(&found).is_some_and(|digest| needed.known_digests.contains(&digest))
+        {
             return (
                 Availability::ComponentUnverified,
                 format!(
