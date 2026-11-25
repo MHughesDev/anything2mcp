@@ -42,9 +42,15 @@ async fn the_probe_names_the_program_its_digest_and_a_tier_and_changes_nothing()
     assert!(found["windows"].as_u64().unwrap() >= 1, "{found}");
     assert!(found["controls"].as_u64().unwrap() >= 1, "{found}");
     // The stand's window has a control with no name: it cannot be
-    // located, so the tier is partial.
-    assert!(found["unnamed_controls"].as_u64().unwrap() >= 1, "{found}");
-    assert_eq!(found["tier"], Json::from("partial"));
+    // located, so the tier is partial. On Windows and macOS the system's
+    // own controls are walked, and whatever role it gives that control,
+    // the tier follows the count.
+    let unnamed = found["unnamed_controls"].as_u64().unwrap();
+    if cfg!(target_os = "linux") {
+        assert_eq!(unnamed, 1, "{found}");
+    }
+    let tier = if unnamed > 0 { "partial" } else { "full" };
+    assert_eq!(found["tier"], Json::from(tier), "{found}");
     // Nothing of a value the window shows.
     assert!(!finding.found().contains(example_desk::SECRET));
     assert!(!finding.found().contains("Example Supplies"));
