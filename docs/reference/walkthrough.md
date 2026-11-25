@@ -1,22 +1,23 @@
 # Walkthrough: from nothing to a working tool
 
-What using Anything2MCP should feel like, end to end, on one machine against the built-in test application. It is illustrative: outputs are shortened and details will change as the commands are built. It is not run as a test. The exit test of Phase 5 (package 5.6) is `crates/anything2mcp/tests/first_hour.rs`, which follows a shorter path, from an empty folder to a published read an agent calls.
+What using Anything2MCP should feel like, end to end, on one machine against the built-in test application. It is illustrative: outputs are shortened and details will change. It is not run as a test, but every command in it exists as written; a step whose action is not built yet says so. The path a person can walk today, against the test application's published description, is the README's "Try it from source". The exit test of Phase 5 (package 5.6) is `crates/anything2mcp/tests/first_hour.rs`, which follows a shorter path, from an empty folder to a published read an agent calls.
 
 Commands a coding agent runs are shown as the agent sees them, with one JSON object returned per command.
 
 ## 1. Install and start a project
 
 ```text
-pip install anything2mcp
+pip install anything2mcp      # once it is published; until then, build from source
 anything2mcp init
 ```
 
-`init` creates a project folder with `anything2mcp.toml`, an `AGENTS.md` that teaches the build loop, and an empty `targets/` folder. Nothing else needs configuring.
+`init` makes the folder it runs in a project with `anything2mcp.toml`, an `AGENTS.md` that teaches the build loop, and an empty `targets/` folder. Nothing else needs configuring.
 
 ## 2. Add the application
 
 ```text
-anything2mcp add http://localhost:4010
+anything2mcp add example --address http://127.0.0.1:4010/ --kind web
+anything2mcp session login example
 ```
 
 ```json
@@ -26,48 +27,38 @@ anything2mcp add http://localhost:4010
  "next": {"action": "session.login", "args": {"target": "example"}}}
 ```
 
-A browser window opens at the application's sign-in page. The person signs in once. The command returns exit code 3 until they have, and says so.
+`add` takes the target's name, the address, and the kind of surface, which is never guessed from the address. A sign-in is asked for with `session login`: the person signs in once, on the engine's own page. The command returns exit code 3 until they have, and says so.
 
 ## 3. See where things stand
 
 ```text
-anything2mcp status
+anything2mcp status example
 ```
 
 ```json
 {"ok": true, "result": {"target": "example", "state": "signed_in"},
- "next": {"action": "screen.snapshot"}}
+ "next": {"action": "capture.start", "args": {"target": "example"}}}
 ```
 
 ## 4. Look at a screen
 
-```text
-anything2mcp screen snapshot --url /orders/A-100/items
-```
-
-```json
-{"ok": true, "result": {"path": ".anything2mcp/out/snapshot-01.txt", "elements": 14, "matches": []},
- "next": {"action": "capture.start"}}
-```
-
-The agent reads the file itself. The snapshot is not returned inline.
+`screen snapshot` is not built yet: it answers `action_not_built`. When it is, it writes the snapshot to a file under `.anything2mcp/out/` and returns the path; the agent reads the file itself, and the snapshot is not returned inline.
 
 ## 5. Record the application being used
 
 ```text
-anything2mcp capture start
-anything2mcp capture stop
-anything2mcp endpoints infer
+anything2mcp learn example          # capture start: the answer is the page where the person begins
+anything2mcp capture stop example   # how it ended, and the scout of what it saw
 ```
 
-Between start and stop, the person or the agent opens an order and looks at its lines. Exploration cannot send anything but reads. `infer` returns the endpoints it found, with schemas, and writes draft files.
+The person begins the capture on the engine's page, opens an order, and looks at its lines; only the structure of what they use is kept, never a value. `capture stop` scouts what it saw and drafts reads, held where a rule is not sure. `endpoints infer`, an inference of endpoints apart from a capture, is not built.
 
 ## 6. Write and check the drafts
 
 The agent edits the files under `targets/example/`: a screen, an endpoint, and a read operation. Then:
 
 ```text
-anything2mcp lint
+anything2mcp lint example
 ```
 
 ```json
@@ -85,8 +76,8 @@ The agent fixes both and runs `lint` again until it passes.
 ## 7. Try it and test it
 
 ```text
-anything2mcp try example_order_get --input order_id=A-100
-anything2mcp test
+anything2mcp try example --tool example_order_get --input '{"order_id": "A-100"}'
+anything2mcp test example
 ```
 
 `try` runs the draft in the sandbox and returns the result with the binding used. `test` runs the publish gates and returns which passed, with evidence for any that did not.
@@ -94,15 +85,16 @@ anything2mcp test
 ## 8. Publish
 
 ```text
-anything2mcp publish
+anything2mcp publish example
 ```
 
-The command returns exit code 3: a person must review. The person is shown the review summary, ordered by risk, and approves. The version is now published and its compiled target hash recorded.
+`anything2mcp ready example` does steps 7 and 8 in one, for every read a trial proved. The command returns exit code 3, with a link: a person must review. The person is shown the review summary, ordered by risk, and approves. The version is now published and its compiled target hash recorded.
 
 ## 9. Connect an agent and use the tool
 
 ```text
-anything2mcp connect <client>
+anything2mcp connect            # prints the block for any client
+anything2mcp connect <client>   # writes it into the file a client profile names
 ```
 
 The agent's tool list now includes the control tools. It finds and calls the new tool:
@@ -117,7 +109,7 @@ The agent's tool list now includes the control tools. It finds and calls the new
 After the agent has also built `example_line_item_upsert` and the pipeline `example_order_sheet_enter`, and the person has published them:
 
 ```text
-anything2mcp run example_order_sheet_enter --source sheet.xlsx --input order_id=A-100
+anything2mcp run example_order_sheet_enter --source-file sheet.xlsx --input '{"order_id": "A-100"}'
 ```
 
 ```json
