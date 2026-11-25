@@ -74,13 +74,22 @@ fn run_writes_one_result_file_that_compares_clean_with_itself() -> Outcome {
     );
     let shown = String::from_utf8_lossy(&ran.stdout);
     assert!(shown.contains("direct_read"), "{shown}");
-    // A budget with no scenario is said to be not measured, never passed;
-    // the split of a call has none, and the budgeted scenarios that ran have a standing.
+    // A budget with no number is said to be not measured, never passed: a
+    // debug harness measures no program size, because a debug program is not
+    // the product. The budgeted scenarios that ran have a standing, the split
+    // of a call among them, which the trace's time marks give (decision 0999).
+    if cfg!(debug_assertions) && std::env::var_os("A2M_BENCH_PROGRAM").is_none() {
+        let size = shown
+            .lines()
+            .find(|line| line.starts_with("program_size") && line.contains("KB"))
+            .ok_or("no row for the program's size")?;
+        assert!(size.contains("not measured"), "{size}");
+    }
     let split = shown
         .lines()
-        .find(|line| line.starts_with("call_overhead"))
-        .ok_or("no row for the split of a call")?;
-    assert!(split.contains("not measured"), "{split}");
+        .find(|line| line.starts_with("call_overhead") && line.contains("target"))
+        .ok_or("no standing for the split of a call")?;
+    assert!(!split.contains("not measured"), "{split}");
     let listing = shown
         .lines()
         .find(|line| line.starts_with("list_tools") && line.contains("target"))
