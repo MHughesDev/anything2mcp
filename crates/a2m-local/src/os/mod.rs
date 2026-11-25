@@ -19,6 +19,11 @@ pub(crate) use unix::{
 #[cfg(all(unix, test))]
 pub(crate) use unix::longest_socket_path as unix_longest_socket_path;
 
+/// The client's reading of who serves a connected socket, and its judgment
+/// of that reading, for the tests.
+#[cfg(all(unix, test))]
+pub(crate) use unix::{served_by as unix_served_by, server_user as unix_server_user};
+
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
