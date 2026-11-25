@@ -515,6 +515,17 @@ async fn a_capture_records_only_once_its_person_begins_it_on_the_page_and_ends_a
     assert_eq!(stopped["state"], "ended", "{stopped}");
     assert_eq!(stopped["ended_by"], "asked", "{stopped}");
     assert_eq!(stopped["findings"], 1, "{stopped}");
+    // It ended as a scout does (decision 0400): the answer is the reference
+    // of the report its findings went into, which `scout.report` reads.
+    assert_eq!(stopped["report"]["state"], "finished", "{stopped}");
+    let report = world
+        .ok(
+            "scout.report",
+            json!({"target": "example", "scout": stopped["report"]["scout_id"]}),
+        )
+        .await;
+    assert_eq!(report["report_hash"], stopped["report"]["report_hash"]);
+    assert_eq!(report["content"]["found"].as_array().unwrap().len(), 1);
     let listed = world.ok("finding.list", json!({"target": "example"})).await;
     assert_eq!(listed["total"], 1, "{listed}");
     assert_eq!(listed["findings"][0]["kind"], "exchange", "{listed}");

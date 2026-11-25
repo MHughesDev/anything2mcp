@@ -1928,6 +1928,12 @@
             "person": {
              "type": "string"
             },
+            "report": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
             "state": {
              "enum": [
               "asked",
@@ -2077,6 +2083,12 @@
             "person": {
              "type": "string"
             },
+            "report": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
             "state": {
              "enum": [
               "asked",
@@ -2164,6 +2176,11 @@
          },
          "target": {
           "type": "string"
+         },
+         "wait_seconds": {
+          "maximum": 600,
+          "minimum": 0,
+          "type": "integer"
          }
         },
         "required": [
@@ -2281,6 +2298,12 @@
             "person": {
              "type": "string"
             },
+            "report": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
             "state": {
              "enum": [
               "asked",
@@ -2430,6 +2453,12 @@
             "person": {
              "type": "string"
             },
+            "report": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
             "state": {
              "enum": [
               "asked",
@@ -2485,7 +2514,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "End a capture you asked for, or read how it ended, and store what it found as findings.",
+    "summary": "End a capture you asked for, or read how it ended; store what it found as findings, and scout from them as `scout.run` does from a discovery: draft by rule, try the drafted reads, and report. Answers with the report's reference; never writes to the system.",
     "x-action": "capture.stop",
     "x-sdk": true
    }
@@ -19627,6 +19656,9 @@
            "open",
            "not_looked_at"
           ]
+         },
+         "scout": {
+          "type": "string"
          },
          "target": {
           "type": "string"
