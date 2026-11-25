@@ -220,6 +220,17 @@ jobs:
         run: python3 tools/test_field_test.py
       - name: Prove the packaging check fails when a package holds another binary
         run: python3 tools/test_check_packages.py
+      # A workflow file GitHub cannot parse fails every run at once and says
+      # nothing; this reads each one, with the standard library alone.
+      - name: Read every workflow file as YAML
+        run: python3 tools/check_workflows.py
+      - name: Prove the workflow check fails on a file that does not read
+        run: python3 tools/test_check_workflows.py
+      # Every build against every release kept in contracts/ (decision 0437).
+      - name: Check the tree against every kept release's contract
+        run: python3 tools/contracts.py check
+      - name: Prove the contract check names each kind of break
+        run: python3 tools/test_contracts.py
 
   bindings:
     name: Wheel and npm packages on ${{ matrix.os }}

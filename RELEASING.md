@@ -14,8 +14,13 @@ How a version of Anything2MCP is numbered, built, and published. The design behi
 
 1. `main` is green on all three operating systems.
 2. The version is set in all places (`Cargo.toml`, `bindings/python/pyproject.toml`, and the npm launcher's `package.json` with its optional dependencies), and `python3 tools/docs_audit.py` reports no findings. The engine's OpenAPI document carries the version, so the saved copy is fetched again from the built program and both clients regenerated ([bindings/README.md](bindings/README.md)); CI fails until it is.
-3. [CHANGELOG.md](CHANGELOG.md) has a section for the version, with the date, and "Unreleased" is empty again.
-4. Anything the release promises is proven by a test that ran in CI on the commit being released.
+3. [CHANGELOG.md](CHANGELOG.md) has a section for the version, with the date, and "Unreleased" is empty again. Where `contracts/next-breaks` lists a break, the section says so.
+4. The release keeps its contract ([decision 0437](docs/decisions/0437-what-a-release-publishes-is-kept-and-every-later-build-is-checked-against-it.md)): `python3 tools/contracts.py write VERSION`, on the commit to be released, writes `contracts/VERSION/` from the tree (the API description of the built actions, the failure codes with their classes, the closed and open vocabularies of `a2m-core`, the settings keys with their types, and the compiled target of the `example` target with its hash, which it compiles with cargo) and moves `contracts/next-breaks` into it as its `breaks`. Commit the folder before the tag; it is never changed after. The tool refuses when the tree breaks a kept release with a break not listed, and refuses a listed break in a version that may not break: before 1.0 only a minor version may, from 1.0 only a major one. The release workflow refuses a version whose folder is not there or not whole.
+5. Anything the release promises is proven by a test that ran in CI on the commit being released.
+
+### A break on purpose
+
+Every build is checked against every kept release: CI's documents job runs `python3 tools/contracts.py check`, and `a2m-core`'s test `kept_contracts` loads each kept compiled target with its hash. The check names each break on one line, such as `code.removed:some_code` or `input.required:docs.get.topic`. A break made on purpose is listed in `contracts/next-breaks`, one line each, as the check names it, then a space and the number of the decision record that made it; a `#` begins a comment. The check passes a listed break and nothing else, and a listed break that does not happen is a problem too. Additions pass without a listing.
 
 ## Publishing
 
@@ -34,7 +39,7 @@ For npm it takes the binary out of each wheel (so the npm and pip packages carry
 
 The workflow also writes a bill of materials, a list per target of the Rust crates compiled into the binary with their licences, and keeps it as the run's `bill-of-materials` artifact. It does not publish to crates.io, which the product is not published to ([decision 0242](docs/decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)), does not sign any artifact or attest the binaries, and makes no release page, no standalone archives or installers, and no list of third-party licence texts; see [publishing setup](docs/plan/publishing-setup.md). Before the first npm publish, the owner has setup to do there.
 
-Either way the workflow refuses to publish a version that is not the package's own, or a commit that is not on `main`.
+Either way the workflow refuses to publish a version that is not the package's own, a commit that is not on `main`, or a version with no whole kept contract in `contracts/`.
 
 The order the design asks for, once more than one registry is involved: the release page, PyPI, npm, then everything that installs from those. Today PyPI and npm are published by separate jobs that do not wait on each other.
 

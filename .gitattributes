@@ -5,3 +5,5 @@
 crates/a2m-pack-desktop/tests/fixtures/bundles/binary/** binary
 # A store kept as a release wrote it is bytes: a database, a salt, and sealed blobs.
 crates/a2m-ledger/tests/fixtures/** binary
+# A compiled target a release kept is bytes, held to the hash kept beside it.
+contracts/*/compiled/** binary
