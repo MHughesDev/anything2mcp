@@ -344,3 +344,10 @@ impl ActTab {
         }
     }
 }
+
+impl SiteState {
+    /// Whether nothing was ever set here: as in a new tab.
+    pub(super) fn untouched(&self) -> bool {
+        !self.enabled && self.tools.is_empty() && self.answers.is_empty()
+    }
+}
