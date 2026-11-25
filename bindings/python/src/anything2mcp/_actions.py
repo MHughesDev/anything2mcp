@@ -279,10 +279,13 @@ class Actions:
         *,
         target: str,
         capture: Optional[str] = None,
+        wait_seconds: Optional[int] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """End a capture you asked for, or read how it ended, and store what it
-        found as findings.
+        """End a capture you asked for, or read how it ended; store what it found
+        as findings, and scout from them as `scout.run` does from a discovery:
+        draft by rule, try the drafted reads, and report. Answers with the
+        report's reference; never writes to the system.
 
         The engine action is ``capture.stop``.
         """
@@ -291,6 +294,7 @@ class Actions:
             {
                 "target": target,
                 "capture": capture,
+                "wait_seconds": wait_seconds,
             },
             idempotency_key,
         )
@@ -1059,6 +1063,7 @@ class Actions:
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         part: Optional[Literal["surfaces", "found", "compared.differs", "compared.would_draft", "compared.not_covered", "drafted.written", "drafted.held_back", "drafted.not_drafted", "drafted.conflicts", "drafted.refused", "checked.problems", "checked.tools", "tried.tools", "tried.left_out", "open", "not_looked_at"]] = None,
+        scout: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """The last scout's report on a target: found, drafted, proven, open, and
@@ -1074,6 +1079,7 @@ class Actions:
                 "limit": limit,
                 "offset": offset,
                 "part": part,
+                "scout": scout,
             },
             idempotency_key,
         )

@@ -10,7 +10,8 @@
 //! and the form of a line item, where it saves once and sends one search
 //! whose body names a planted credential. The agent ends the capture with
 //! `capture stop`; the findings are read with `finding list` and `finding
-//! describe`, and drafted by the rules of the engine's own registry.
+//! describe`; its answer is the reference of the report of the scout its
+//! findings went through (decision 0400), which `scout report` reads.
 //!
 //! What the test asks of it: the read by `GET` the pages made twice is
 //! drafted, held, as a page request and a read; the search behind `POST`
@@ -42,10 +43,9 @@ use std::time::Duration;
 
 use a2m_actions::{BoxFuture, Paths, PersonSurface};
 use a2m_core::Finding;
-use a2m_files::{Drafter, TargetRoot};
 use a2m_local::{Availability, PresencePrompt, PromptAnswer, PromptName, PromptText, StopReason};
 use a2m_pack_web_browser::test_support::{Screen, screen_required};
-use anything2mcp::{Engine, EngineOptions, LocalEngine, PASSPHRASE_VARIABLE};
+use anything2mcp::{EngineOptions, LocalEngine, PASSPHRASE_VARIABLE};
 use common::{Folder, IN_PROCESS_VARIABLE, PASSPHRASE, Surface, USER};
 use example_app::harness::TestApp;
 use example_app::person::WalkStep;
@@ -384,6 +384,23 @@ async fn a_person_s_use_is_captured_in_a_watching_tab_and_drafted_held_on_the_di
     assert_eq!(stopped["ended_by"], "asked", "{stopped}");
     assert!(stopped["findings"].as_u64().unwrap() > 0, "{stopped}");
 
+    // The capture ended as a scout does: its findings went through the
+    // scout's stages, and the answer is the report's reference, which
+    // `scout report` reads (decision 0400).
+    assert_eq!(stopped["report"]["state"], "finished", "{stopped}");
+    let scout = stopped["report"]["scout_id"].as_str().unwrap().to_owned();
+    let read = desk
+        .ok(&["scout", "report", "example", "--scout", &scout])
+        .await;
+    let report = read["result"].clone();
+    assert_eq!(
+        report["report_hash"], stopped["report"]["report_hash"],
+        "{report}"
+    );
+    let content = &report["content"];
+    assert_eq!(content["capture"]["coverage"], "partial", "{report}");
+    assert_eq!(content["surfaces"][0]["observed_by"], "person", "{report}");
+
     // The findings, as the product lists and describes them.
     let listed = desk
         .ok(&["finding", "list", "example", "--limit", "200"])
@@ -434,29 +451,20 @@ async fn a_person_s_use_is_captured_in_a_watching_tab_and_drafted_held_on_the_di
     ]);
     assert_eq!(counted(heard), counted(expected));
 
-    // Drafted by the rules of the engine's own registry, into the target.
-    let options = {
-        let mut options = EngineOptions::of_machine(
-            Paths::under(desk.home.path()),
-            desk.environment(),
-            Surface::new() as Arc<dyn PersonSurface>,
-        );
-        options.project = Some(desk.project.path().to_path_buf());
-        options
-    };
-    let engine = Engine::open(options).await.unwrap();
+    // Drafted by the rules of the engine's own registry, into the target,
+    // by the scout of the capture.
     let folder = desk.project.path().join("targets").join("example");
-    let root = TargetRoot::new(&folder);
-    let redact = engine.kernel().redact();
-    let report = Drafter::new(engine.kernel().providers().compiler_set(), &root)
-        .with_redact(redact.as_ref())
-        .draft(&findings)
-        .unwrap();
-    engine.close().await;
-    let held: Vec<&str> = report.held.iter().map(|path| path.as_str()).collect();
+    let held: Vec<&str> = content["drafted"]["held_back"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|path| path.as_str().unwrap())
+        .collect();
 
-    // Every draft from a capture waits in the holding folder.
-    assert!(report.written.is_empty(), "{:?}", report.written);
+    // Every draft from a capture waits in the holding folder, and nothing
+    // was tried: a held draft is not.
+    assert_eq!(content["drafted"]["written"], json!([]), "{report}");
+    assert_eq!(content["tried"]["tools"], json!([]), "{report}");
 
     // The read by `GET` the pages of two orders made, each once: one page
     // request and one read over it, both held.
@@ -515,12 +523,12 @@ async fn a_person_s_use_is_captured_in_a_watching_tab_and_drafted_held_on_the_di
         );
     }
     assert!(
-        report
-            .not_drafted
+        content["drafted"]["not_drafted"]
+            .as_array()
+            .unwrap()
             .iter()
-            .any(|left| left.reason.contains("seen once")),
-        "{:?}",
-        report.not_drafted
+            .any(|left| left["reason"].as_str().unwrap().contains("seen once")),
+        "{report}"
     );
 
     // The credential is in nothing a command printed, and in no file under

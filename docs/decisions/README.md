@@ -442,3 +442,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0448 | [Debug builds keep line tables of the workspace and no debug information of the dependencies](0448-debug-builds-keep-line-tables-of-the-workspace-and-no-debug-information-of-dependencies.md) | Accepted (design decision) |
 | 0449 | [Each system's Rust tests run in three shards, proven to be one run](0449-each-systems-rust-tests-run-in-three-shards-proven-to-be-one-run.md) | Accepted (design decision) |
 | 0450 | [A browser that stops as it starts is named with what it wrote](0450-a-browser-that-stops-as-it-starts-is-named-with-what-it-wrote.md) | Accepted (design decision) |
+| 0451 | [A capture is scouted when `capture.stop` finds it ended, and a scout that saw nothing does not answer `ok`](0451-a-capture-is-scouted-when-capture-stop-finds-it-ended-and-a-scout-that-saw-nothing-does-not-answer-ok.md) | Accepted (design decision) |

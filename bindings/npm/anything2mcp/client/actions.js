@@ -162,8 +162,10 @@ class Actions {
   }
 
   /**
-   * End a capture you asked for, or read how it ended, and store what it found as
-   * findings. The engine action is `capture.stop`.
+   * End a capture you asked for, or read how it ended; store what it found as findings,
+   * and scout from them as `scout.run` does from a discovery: draft by rule, try the
+   * drafted reads, and report. Answers with the report's reference; never writes to the
+   * system. The engine action is `capture.stop`.
    */
   captureStop(input, options = {}) {
     return this.call("capture.stop", input, options);

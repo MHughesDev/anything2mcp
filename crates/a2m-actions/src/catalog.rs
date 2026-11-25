@@ -253,6 +253,7 @@ fn capture_output() -> JsonSchema {
         )
         .optional("findings", JsonSchema::int())
         .optional("discoverers", list_of(any_map()))
+        .optional("report", any_map())
         .optional("act", text())
         .optional("link", text())
         .optional("person", text())
@@ -564,10 +565,12 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .output(capture_output())
             .example(r#"{"target": "example"}"#)
             .done(),
-        act("capture.stop", "End a capture you asked for, or read how it ended, and store what it found as findings.", BUILDER, Build, "4", Observe)
+        act("capture.stop", "End a capture you asked for, or read how it ended; store what it found as findings, and scout from them as `scout.run` does from a discovery: draft by rule, try the drafted reads, and report. Answers with the report's reference; never writes to the system.", BUILDER, Build, "4", Observe)
             .pos("target", TEXT, TARGET)
             .opt("capture", TEXT, "The capture, as `capture.start` gave it. The newest of the target when left out.")
+            .opt("wait_seconds", FieldType::Int { min: 0, max: 600 }, "How long to wait for each trial of a drafted read to end before returning; called again, it goes on from there.")
             .writes()
+            .long_running()
             .output(capture_output())
             .example(r#"{"target": "example"}"#)
             .done(),
@@ -793,6 +796,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .done(),
         act("scout.report", "The last scout's report on a target: found, drafted, proven, open, and what to look at first. Each list is counted and shows its first entries; `part` reads one whole, in pages.", BUILDER, Build, "Stage E", Inspect)
             .pos("target", TEXT, TARGET)
+            .opt("scout", TEXT, "The scout whose report to read, as `capture.stop` or `scout.run` gave its identifier. The last one that finished when left out.")
             .opt("part", FieldType::Word(crate::handlers::scout_report::PARTS), "One list of the report to read whole, by its path in the report's content, such as `drafted.written`. The report with each list cut to its first entries when left out.")
             .opt("limit", COUNT, LIMIT)
             .opt("offset", OFFSET, OFFSET_HELP)

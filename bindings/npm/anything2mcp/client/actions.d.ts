@@ -71,6 +71,7 @@ export interface CaptureStartInput {
 export interface CaptureStopInput {
   target: string;
   capture?: string;
+  wait_seconds?: number;
 }
 
 /**
@@ -424,6 +425,7 @@ export interface ScoutReportInput {
   limit?: number;
   offset?: number;
   part?: "surfaces" | "found" | "compared.differs" | "compared.would_draft" | "compared.not_covered" | "drafted.written" | "drafted.held_back" | "drafted.not_drafted" | "drafted.conflicts" | "drafted.refused" | "checked.problems" | "checked.tools" | "tried.tools" | "tried.left_out" | "open" | "not_looked_at";
+  scout?: string;
 }
 
 /**
@@ -771,8 +773,10 @@ export declare abstract class Actions {
   captureStart(input: CaptureStartInput, options?: CallOptions): Promise<Response>;
 
   /**
-   * End a capture you asked for, or read how it ended, and store what it found as
-   * findings. The engine action is `capture.stop`.
+   * End a capture you asked for, or read how it ended; store what it found as findings,
+   * and scout from them as `scout.run` does from a discovery: draft by rule, try the
+   * drafted reads, and report. Answers with the report's reference; never writes to the
+   * system. The engine action is `capture.stop`.
    */
   captureStop(input: CaptureStopInput, options?: CallOptions): Promise<Response>;
 
