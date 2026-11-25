@@ -673,6 +673,17 @@ impl Tree {
                  that says to run `anything2mcp serve`.\nThe \
                  project folder is the one it is started in, or the one `--project` names.",
             ),
+            "channel" => (
+                format!("{PROGRAM} channel"),
+                "A process command: it starts a long-lived role and is not an action.",
+                "The local channel as bytes on standard input and output, for a client that \
+                 cannot check the engine itself, such as the Node client on Windows.\nIt connects \
+                 to the engine with the check every command makes, that the engine runs as this \
+                 user, then copies bytes both ways and reads none of them.\nStandard error says \
+                 `anything2mcp: the local channel is open.` once connected, or the refusal as one \
+                 JSON object.\nIt starts no engine, and ends when standard input ends or the \
+                 engine closes the connection.",
+            ),
             COMPLETION_COMMAND => (
                 format!(
                     "{PROGRAM} {COMPLETION_COMMAND} <{}>",

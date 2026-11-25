@@ -63,6 +63,8 @@ pub(crate) async fn run(
         // Answered by the program itself: it starts nothing.
         COMPLETION_COMMAND => return super::complete::run(tree, rest, json),
         "serve" => serve(tree, globals, rest, host, json).await,
+        // Standard output carries the engine's bytes alone (decision 0999).
+        "channel" => return super::channel::run(rest, host).await,
         // Standard output of the stdio proxy carries protocol messages and
         // nothing else, so what stops it is told on standard error alone.
         "stdio" => {
