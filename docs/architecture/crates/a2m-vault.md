@@ -50,7 +50,7 @@ pub trait KeyStore: Send + Sync {
     fn unwrap<'a>(&'a self, wrapped: &'a Wrapped, bound_to: &'a Binding) -> BoxFuture<'a, Result<KeyMaterial, Failure>>;
     fn health(&self) -> BoxFuture<'_, StoreHealth>;  // ok, unreachable, or entry_missing
 }
-pub struct Binding { pub key: KeyId, pub layer: Layer, pub generation: Generation }
+pub struct Binding { pub key: KeyId, pub layer: Layer, pub rotation: KeyRotationNumber }
 
 pub struct OsKeyStore;          // OsKeyStore::open(&InstallationName).await
                                 // OsKeyStore::IN_THIS_BUILD: true on Windows and macOS, by the same cfg as the back end
@@ -70,21 +70,21 @@ impl PassphraseSalt {
 }   // also generate(&dyn RandomSource), with this build's cost; from_bytes, as_bytes, for a caller that
     // keeps the 16 bytes elsewhere: from_bytes reads them at the cost of the builds before decision 0438
 
-/// Where wrapped keys persist: one row per key and generation. Implemented by `a2m-ledger`.
+/// Where wrapped keys persist: one row per key and key rotation number. Implemented by `a2m-ledger`.
 pub trait KeyRecords: Send + Sync {
-    fn get<'a>(&'a self, id: &'a KeyId, generation: Generation) -> BoxFuture<'a, Result<Option<KeyRecord>, Failure>>;
-    /// The highest generation of the key, or None when it was never made.
+    fn get<'a>(&'a self, id: &'a KeyId, rotation: KeyRotationNumber) -> BoxFuture<'a, Result<Option<KeyRecord>, Failure>>;
+    /// The highest key rotation number of the key, or None when it was never made.
     fn newest<'a>(&'a self, id: &'a KeyId) -> BoxFuture<'a, Result<Option<KeyRecord>, Failure>>;
-    /// Insert only. Refuses when the id and generation exist: a key is never overwritten by accident.
+    /// Insert only. Refuses when the id and key rotation number exist: a key is never overwritten by accident.
     fn insert(&self, record: KeyRecord) -> BoxFuture<'_, Result<(), Failure>>;
     /// For rotation of the key above: replaces the record only if its wrapped bytes are still `expected`.
     fn replace<'a>(&'a self, record: KeyRecord, expected: &'a Wrapped) -> BoxFuture<'a, Result<(), Failure>>;
 }
 pub fn key_record_conflict() -> Failure;             // what `insert` and `replace` return when they refuse
-pub struct KeyRecord { pub id: KeyId, pub layer: Layer, pub generation: Generation, pub wrapped: Wrapped, pub wrapped_by: KeyRef }
-pub struct KeyRef { pub id: KeyId, pub generation: Generation }
+pub struct KeyRecord { pub id: KeyId, pub layer: Layer, pub rotation: KeyRotationNumber, pub wrapped: Wrapped, pub wrapped_by: KeyRef }
+pub struct KeyRef { pub id: KeyId, pub rotation: KeyRotationNumber }
 pub struct KeyId(/* a digest of what the key is for; 64 hexadecimal characters */);
-pub struct Generation(/* u32; FIRST is 1 */);
+pub struct KeyRotationNumber(/* u32; FIRST is 1 */);
 pub enum Layer { Root, Workspace, Owner, Digest, Data }
 pub struct MemoryKeyRecords;    // for tests; all() lists what was stored
 
@@ -100,7 +100,7 @@ impl SealContext {
     pub fn credential(workspace: WorkspaceId, owner: OwnerRef, target: &TargetName, reference: &str) -> Result<SealContext, Failure>;
 }
 
-/// The envelope: format, cipher, the owner's key and its generation, the wrapped data key, the
+/// The envelope: format, cipher, the owner's key and its key rotation number, the wrapped data key, the
 /// nonce, and the ciphertext with its tag. Holds nothing in the clear.
 pub struct Sealed { /* ... */ }
 impl Sealed {
@@ -224,7 +224,7 @@ It calls only `a2m-core`, and through its two traits, the back end and the key r
 | --- | --- | --- |
 | The root key | The operating system's key store, or a key service | One entry per installation, under the service name `anything2mcp` and the installation's name, never a target's. The product names every installation `local`, so every engine of one user shares one entry, whatever its data directory |
 | The root's creation lock | A file in the user's temporary directory, `anything2mcp-root-` and a digest of the installation's name | Holds no byte. Locked only while a root is made. Never removed |
-| Wrapped workspace and owner keys, and the wrapped digest key | The store, through `KeyRecords` | A table the ledger owns; one row per key and generation |
+| Wrapped workspace and owner keys, and the wrapped digest key | The store, through `KeyRecords` | A table the ledger owns; one row per key and key rotation number |
 | Wrapped data keys | Inside each `Sealed` envelope | Beside the data, as section 216 says |
 | Unwrapped upper keys | Memory, wiped on drop | Cached for the process; dropped on rotation |
 | Registered secrets | Memory, wiped on drop, inside the `Redactor` | Never written anywhere, and never digested. The matcher's automaton holds a copy that is freed but not wiped when the set changes |
@@ -287,7 +287,7 @@ A failure from this crate never names a key, a value, or a byte of either, and n
 4. Done here: the restart test, over the in-memory records. Not done: `KeyRecords` in `a2m-ledger`.
 5. Done: the passphrase route, behind `PassphraseRoute`, which the caller fills from `vault.backend`. Where the build has no operating-system key store, the route is that setting's default ([decision 0220](../../decisions/0220-a-first-run-on-linux-needs-no-administrators-file.md)): `DEFAULT_BACKEND`, from the same `cfg` as the back end, proven by `where_the_build_has_no_key_store_the_passphrase_route_is_the_default_and_opens`. The settings schema takes its default from it once its owner changes one line.
 6. Not built: a key-service back end, for the server profile. Phase 6.
-7. Not built: `rotate`, with `vault.rotate`. Phase 9. `KeyRecords` already keeps one row per generation and has `replace` for it.
+7. Not built: `rotate`, with `vault.rotate`. Phase 9. `KeyRecords` already keeps one row per key rotation number and has `replace` for it.
 8. Done: what the safety audit of [decision 0138](../../decisions/0138-the-vault-and-the-session-keeper-after-their-safety-audit.md) found: the creation lock for the root and the salt, the passphrase floor, the redactor's stream and its further forms, the registered set without digests, and the check on a random source that repeats itself. The creation lock's Windows and macOS code is the standard library's file lock; it is type-checked from Linux and has run only on Linux.
 9. Done: the salt file as a record of the derivation, read in its old form and its new one ([decision 0438](../../decisions/0438-the-passphrase-routes-salt-file-records-the-cost-its-root-was-derived-with.md), package YL3). Raising the cost of an existing installation waits on `rotate`.
 
@@ -295,8 +295,8 @@ A failure from this crate never names a key, a value, or a byte of either, and n
 
 - **Locking secret memory is not done.** It needs calls to each operating system that the workspace's rule against unsafe code forbids without a stated reason, and it does not cover copies the outside crates make. Keys and plain items are wiped on drop; that is all ([brief 5](../../research/11-open-research.md)).
 - **Recovery after the root is lost.** The wrapped keys in the store are then dead, and nothing new can be sealed for those workspaces until their records are replaced. Which action does that, and what it does with the sealed items that can no longer be read, is not designed.
-- **What rotation of an owner's key means.** Data keys live in the envelopes, so re-wrapping them would touch every sealed item. The records are therefore kept per generation: a rotated owner key gets a new generation for new items, and the old one stays readable until its items are rewritten. Step 7 confirms or changes this.
-- **A second engine does not see a rotation** made by the first until it restarts, because the newest generation of each key is cached. Step 7 settles it.
+- **What rotation of an owner's key means.** Data keys live in the envelopes, so re-wrapping them would touch every sealed item. The records are therefore kept per key rotation number: a rotated owner key gets a new key rotation number for new items, and the old one stays readable until its items are rewritten. Step 7 confirms or changes this.
+- **A second engine does not see a rotation** made by the first until it restarts, because the newest key rotation number of each key is cached. Step 7 settles it.
 - How the Windows credential store behaves for a service running under its own account.
 - **The creation lock is shared only by engines that agree on the temporary directory.** Two engines of one user whose temporary directories differ, as on a Windows server that gives each sign-in session its own, do not exclude each other, and can still lose a root between them. Reading the store at every `wrap` narrows the time in which that can happen and does not close it. The macOS Keychain can refuse to add an item that exists, which would let the key store itself decide; the store crate offers no such call, and going around it means matching its item's attributes in code that cannot be run here.
 - **A predictable random source in a running engine is not detected.** Only one that repeats itself is. The product hands the kernel the operating system's source; nothing in the types holds it to that.

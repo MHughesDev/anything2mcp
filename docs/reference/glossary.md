@@ -53,7 +53,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Endpoint catalog | Where every request the HTTP pack sends is stated, once: the endpoint entries in `endpoints/`, and the pinned descriptions in `descriptions/`, whose documents are the entries of reads bound in `api` ([decision 0389](../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) |
 | Engine | The Anything2MCP process. On one machine, one per user |
 | Engine loop | The eight parts every operation call goes through: guard, choose, prepare, intend, act, confirm, read back, record |
-| Envelope | A sealed value together with what it is bound to: the owner's key and its generation, the wrapped data key, and the ciphertext. It opens only under the context it was sealed for |
+| Envelope | A sealed value together with what it is bound to: the owner's key and its key rotation number, the wrapped data key, and the ciphertext. It opens only under the context it was sealed for |
 | Environment | A named instance of a target, such as test or production |
 | Evidence | Everything recorded about a run or an observation: events, step trace, captures, and what a discoverer saw |
 | Evidence level | How far a finding, draft, or tool has been proven: `inferred`, `discovered`, `reconstructed`, `schema_verified`, `executed`, `behavior_verified`, `approved` |
@@ -72,7 +72,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Folder handle | A folder reached from its root down with no link followed, and held while a pack acts on one entry directly in it, so that nothing done to the path meanwhile leads the act elsewhere: on Linux and macOS its own descriptor, on Windows every folder from the root down held open. Made by `CheckedPath::folder_handle` ([decision 0272](../decisions/0272-the-file-packs-folder-writes-act-through-a-held-folder-after-a-second-reader.md)) |
 | Gap | A change of a watch that says a check did not complete, or that due times passed while the engine was not running. A missed due time is never made up by a later check ([decision 0247](../decisions/0247-a-watch-keeps-only-digests-and-its-due-times-come-from-the-stores-clock.md)). A gap is also written for a check whose run's own result is not of the watch's record shape (`watch_result_not_its_shape`), and for the check a watch's end closes while it runs (`watch_ended`) ([decision 0262](../decisions/0262-watches-are-held-to-their-end-their-budget-and-their-runs-own-result.md)) |
 | Gate evidence | What each publish gate returned when a version was published, stored with the version, with the gates that did not run named as such ([decision 0180](../decisions/0180-a-targets-offline-tests-cover-writes-and-gate-the-publish.md)) |
-| Generation | Which version of a key: 1 for the first, one more after each rotation |
+| Generation | The old name of a key rotation number ([decision 0330](../decisions/0330-every-name-says-what-the-part-is-in-plain-words.md)). A page generation, a scheduler's wait generation, and code generation are other words and keep it. Package N0b renamed it in the code and the documents in force; what is stored keeps it, as [decision 0402](../decisions/0402-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md) says |
 | Grant | A rule giving a principal access to a scope up to an effect class |
 | Guardrail | A product rule that is compiled in and that no setting, profile, or preset can loosen |
 | Handed Files | The old name of input files ([decision 0330](../decisions/0330-every-name-says-what-the-part-is-in-plain-words.md)). The project folder `sources/` that held them is `inputs/`. Package N0b renamed it in the code and the documents in force; what is stored keeps it, as [decision 0402](../decisions/0402-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md) says |
@@ -98,7 +98,8 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Intent token | What the ledger returns when an intent is recorded. A driver's handle refuses a step that commits without one |
 | Job | A piece of a run handed to a runner under a lease |
 | Kernel | The crates that are the same whatever kind of system is integrated |
-| Key record | The stored form of one wrapped key: its identifier, layer, and generation, the wrapped key, and which key wrapped it. One per key and generation, kept by the ledger |
+| Key record | The stored form of one wrapped key: its identifier, layer, and key rotation number, the wrapped key, and which key wrapped it. One per key and key rotation number, kept by the ledger |
+| Key rotation number | Which version of a key: 1 for the first, one more after each rotation. The type `KeyRotationNumber` of `a2m-vault`; the ledger's columns keep the word `generation` |
 | Kill switch | A person's stop on everything, a workspace, a target, or an operation, kept by the policy engine. While it is on, a call in its scope is refused with `kill_switch_on` |
 | Lease | Time-limited permission for one runner to work on one job, with a number that only increases |
 | Local channel | The per-user socket or named pipe between clients and the engine on one machine |

@@ -10,8 +10,8 @@ use a2m_core::{
     WorkspaceId,
 };
 use a2m_vault::{
-    BoxFuture, Generation, ItemId, KeyId, KeyMaterial, KeyRecord, KeyRecords, KeyStore, Layer,
-    MemoryKeyRecords, MemoryKeyStore, Opened, OsRandom, OwnerRef, RandomSource, SealContext,
+    BoxFuture, ItemId, KeyId, KeyMaterial, KeyRecord, KeyRecords, KeyRotationNumber, KeyStore,
+    Layer, MemoryKeyRecords, MemoryKeyStore, Opened, OsRandom, OwnerRef, RandomSource, SealContext,
     Sealed, SealedKind, StoreHealth, StoreStrength, Vault, Wrapped, codes,
 };
 
@@ -116,7 +116,7 @@ async fn a_sealed_item_opens_under_its_own_context() {
         sealed.owner_key().id,
         KeyId::owner(&workspace(1), &context().owner)
     );
-    assert_eq!(sealed.owner_key().generation, Generation::FIRST);
+    assert_eq!(sealed.owner_key().rotation, KeyRotationNumber::FIRST);
 }
 
 #[tokio::test]
@@ -574,9 +574,9 @@ impl KeyRecords for Racing {
     fn get<'a>(
         &'a self,
         id: &'a KeyId,
-        generation: Generation,
+        rotation: KeyRotationNumber,
     ) -> BoxFuture<'a, Result<Option<KeyRecord>, Failure>> {
-        self.records.get(id, generation)
+        self.records.get(id, rotation)
     }
 
     fn newest<'a>(&'a self, id: &'a KeyId) -> BoxFuture<'a, Result<Option<KeyRecord>, Failure>> {

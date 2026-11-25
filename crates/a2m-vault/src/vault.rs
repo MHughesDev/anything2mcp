@@ -9,7 +9,7 @@ use crate::cipher::{self, BoundTo};
 use crate::digest::VaultDigest;
 use crate::failure;
 use crate::material::{KeyMaterial, Opened, OsRandom, RandomSource};
-use crate::names::{Binding, Generation, KeyId, KeyRef, Layer, OwnerRef, SealContext};
+use crate::names::{Binding, KeyId, KeyRef, KeyRotationNumber, Layer, OwnerRef, SealContext};
 use crate::records::{KeyRecord, KeyRecords};
 use crate::redactor::{Redactor, RedactorHealth};
 use crate::sealed::{self, Sealed};
@@ -34,8 +34,8 @@ pub struct Vault {
     redactor: Arc<Redactor>,
     /// Unwrapped workspace and owner keys and the digest key, in wiped memory.
     keys: Mutex<BTreeMap<KeyRef, Arc<KeyMaterial>>>,
-    /// The newest generation of each key this process has seen.
-    newest: Mutex<BTreeMap<KeyId, Generation>>,
+    /// The newest key rotation number of each key this process has seen.
+    newest: Mutex<BTreeMap<KeyId, KeyRotationNumber>>,
 }
 
 /// The state of the vault, for the kernel's health state and for `doctor`.
@@ -271,7 +271,7 @@ impl Vault {
         Arc::clone(keys.entry(key).or_insert_with(|| Arc::new(material)))
     }
 
-    fn newest_seen(&self, id: &KeyId) -> Option<Generation> {
+    fn newest_seen(&self, id: &KeyId) -> Option<KeyRotationNumber> {
         self.newest
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -281,12 +281,12 @@ impl Vault {
 
     fn saw_newest(&self, key: KeyRef) {
         let mut newest = self.newest.lock().unwrap_or_else(PoisonError::into_inner);
-        let seen = newest.entry(key.id).or_insert(key.generation);
-        *seen = (*seen).max(key.generation);
+        let seen = newest.entry(key.id).or_insert(key.rotation);
+        *seen = (*seen).max(key.rotation);
     }
 
     /// A key the root wraps, a workspace's or the digest key, at one
-    /// generation; `None` when no record of it exists.
+    /// key rotation number; `None` when no record of it exists.
     async fn under_root(
         &self,
         key: KeyRef,
@@ -298,7 +298,7 @@ impl Vault {
         }
         let record = match record {
             Some(record) => record,
-            None => match self.records.get(&key.id, key.generation).await? {
+            None => match self.records.get(&key.id, key.rotation).await? {
                 Some(record) => record,
                 None => return Ok(None),
             },
@@ -310,15 +310,15 @@ impl Vault {
         Ok(Some(self.cache(key, material)))
     }
 
-    /// The newest generation of a key the root wraps, made and recorded when
+    /// The newest key rotation number of a key the root wraps, made and recorded when
     /// there is none.
     async fn newest_under_root(
         &self,
         id: KeyId,
         layer: Layer,
     ) -> Result<(KeyRef, Arc<KeyMaterial>), Failure> {
-        if let Some(generation) = self.newest_seen(&id) {
-            let key = KeyRef { id, generation };
+        if let Some(rotation) = self.newest_seen(&id) {
+            let key = KeyRef { id, rotation };
             if let Some(material) = self.cached(key) {
                 return Ok((key, material));
             }
@@ -329,7 +329,7 @@ impl Vault {
             if let Some(record) = self.records.newest(&id).await? {
                 let key = KeyRef {
                     id,
-                    generation: record.generation,
+                    rotation: record.rotation,
                 };
                 let material = self
                     .under_root(key, layer, Some(record))
@@ -340,7 +340,7 @@ impl Vault {
             }
             let key = KeyRef {
                 id,
-                generation: Generation::FIRST,
+                rotation: KeyRotationNumber::FIRST,
             };
             let material = KeyMaterial::generate(self.random.as_ref())?;
             let wrapped = self
@@ -350,11 +350,11 @@ impl Vault {
             let record = KeyRecord {
                 id,
                 layer,
-                generation: key.generation,
+                rotation: key.rotation,
                 wrapped,
                 wrapped_by: KeyRef {
                     id: KeyId::root(),
-                    generation: Generation::FIRST,
+                    rotation: KeyRotationNumber::FIRST,
                 },
             };
             match self.records.insert(record).await {
@@ -369,7 +369,7 @@ impl Vault {
         Err(failure::record_conflict())
     }
 
-    /// An owner's key at one generation, or `None` when no record of it
+    /// An owner's key at one key rotation number, or `None` when no record of it
     /// exists.
     async fn owner_key(
         &self,
@@ -379,7 +379,7 @@ impl Vault {
         if let Some(material) = self.cached(key) {
             return Ok(Some(material));
         }
-        match self.records.get(&key.id, key.generation).await? {
+        match self.records.get(&key.id, key.rotation).await? {
             Some(record) => self.unwrap_owner(workspace, key, &record).await,
             None => Ok(None),
         }
@@ -395,7 +395,7 @@ impl Vault {
         // a record moved from another workspace must not open.
         let above = KeyRef {
             id: KeyId::workspace(workspace),
-            generation: record.wrapped_by.generation,
+            rotation: record.wrapped_by.rotation,
         };
         let Some(workspace_key) = self.under_root(above, Layer::Workspace, None).await? else {
             return Ok(None);
@@ -408,15 +408,15 @@ impl Vault {
         Ok(Some(self.cache(key, material)))
     }
 
-    /// The newest generation of an owner's key, made and recorded when the
+    /// The newest key rotation number of an owner's key, made and recorded when the
     /// owner has none.
     async fn newest_owner_key(
         &self,
         workspace: &WorkspaceId,
         id: KeyId,
     ) -> Result<(KeyRef, Arc<KeyMaterial>), Failure> {
-        if let Some(generation) = self.newest_seen(&id) {
-            let key = KeyRef { id, generation };
+        if let Some(rotation) = self.newest_seen(&id) {
+            let key = KeyRef { id, rotation };
             if let Some(material) = self.cached(key) {
                 return Ok((key, material));
             }
@@ -425,7 +425,7 @@ impl Vault {
             if let Some(record) = self.records.newest(&id).await? {
                 let key = KeyRef {
                     id,
-                    generation: record.generation,
+                    rotation: record.rotation,
                 };
                 let material = self
                     .unwrap_owner(workspace, key, &record)
@@ -439,7 +439,7 @@ impl Vault {
                 .await?;
             let key = KeyRef {
                 id,
-                generation: Generation::FIRST,
+                rotation: KeyRotationNumber::FIRST,
             };
             let material = KeyMaterial::generate(self.random.as_ref())?;
             let wrapped = cipher::wrap(
@@ -451,7 +451,7 @@ impl Vault {
             let record = KeyRecord {
                 id,
                 layer: Layer::Owner,
-                generation: key.generation,
+                rotation: key.rotation,
                 wrapped,
                 wrapped_by: above,
             };
@@ -480,7 +480,7 @@ fn root_binding(key: KeyRef, layer: Layer) -> Binding {
     Binding {
         key: key.id,
         layer,
-        generation: key.generation,
+        rotation: key.rotation,
     }
 }
 
@@ -490,7 +490,8 @@ fn owner_bound_to(key: KeyRef, above: KeyRef) -> BoundTo {
     BoundTo::new(UPPER_KEY)
         .field("key", key.id.as_bytes())
         .field("layer", Layer::Owner.as_str().as_bytes())
-        .number("generation", key.generation.get())
+        // The label keeps the old word, so every bound byte is unchanged (decision 0402).
+        .number("generation", key.rotation.get())
         .field("wrapped_by", above.id.as_bytes())
-        .number("wrapped_by_generation", above.generation.get())
+        .number("wrapped_by_generation", above.rotation.get())
 }

@@ -7,7 +7,7 @@ use a2m_core::{Digest, Failure};
 use crate::cipher::{BoundTo, NONCE_LENGTH, TAG_LENGTH};
 use crate::failure;
 use crate::material::{KeyMaterial, Wrapped, deserialize_bytes, serialize_bytes};
-use crate::names::{Generation, KeyId, KeyRef, SealContext};
+use crate::names::{KeyId, KeyRef, KeyRotationNumber, SealContext};
 
 /// The four bytes every envelope starts with.
 const MAGIC: &[u8; 4] = b"A2MS";
@@ -20,7 +20,7 @@ const DATA_KEY_LENGTH: usize = NONCE_LENGTH + KeyMaterial::LENGTH + TAG_LENGTH;
 /// Everything before the ciphertext.
 const HEADER_LENGTH: usize = MAGIC.len() + 2 + Digest::LENGTH + 4 + DATA_KEY_LENGTH + NONCE_LENGTH;
 
-/// A sealed item: the format, the cipher, the owner's key and its generation,
+/// A sealed item: the format, the cipher, the owner's key and its key rotation number,
 /// the wrapped data key, the nonce, and the ciphertext with its tag.
 ///
 /// It holds nothing in the clear, so it is safe to store, to copy, and to
@@ -50,8 +50,8 @@ impl Sealed {
         }
     }
 
-    /// The owner's key that wrapped this item's data key, and its generation.
-    /// A rotation uses it to find the items a generation still protects.
+    /// The owner's key that wrapped this item's data key, and its key rotation number.
+    /// A rotation uses it to find the items a key rotation number still protects.
     #[must_use]
     pub fn owner_key(&self) -> KeyRef {
         self.owner_key
@@ -89,7 +89,7 @@ impl Sealed {
         bytes.push(FORMAT);
         bytes.push(CIPHER);
         bytes.extend_from_slice(self.owner_key.id.as_bytes());
-        bytes.extend_from_slice(&self.owner_key.generation.get().to_le_bytes());
+        bytes.extend_from_slice(&self.owner_key.rotation.get().to_le_bytes());
         bytes.extend_from_slice(self.data_key.as_bytes());
         bytes.extend_from_slice(&self.nonce);
         bytes.extend_from_slice(&self.ciphertext);
@@ -116,7 +116,7 @@ impl Sealed {
         let (id, rest) = rest
             .split_first_chunk::<{ Digest::LENGTH }>()
             .ok_or_else(failure::mismatch)?;
-        let (generation, rest) = rest
+        let (rotation, rest) = rest
             .split_first_chunk::<4>()
             .ok_or_else(failure::mismatch)?;
         let (data_key, rest) = rest
@@ -131,7 +131,7 @@ impl Sealed {
         Ok(Self {
             owner_key: KeyRef {
                 id: KeyId::from_bytes(*id),
-                generation: Generation::new(u32::from_le_bytes(*generation)),
+                rotation: KeyRotationNumber::new(u32::from_le_bytes(*rotation)),
             },
             data_key: Wrapped::from_bytes(data_key.to_vec()),
             nonce: *nonce,
@@ -173,5 +173,6 @@ pub(crate) fn bound_to(purpose: &str, cx: &SealContext, owner_key: KeyRef) -> Bo
             .number("cipher", u32::from(CIPHER)),
     )
     .field("owner_key", owner_key.id.as_bytes())
-    .number("owner_key_generation", owner_key.generation.get())
+    // The label keeps the old word, so every bound byte is unchanged (decision 0402).
+    .number("owner_key_generation", owner_key.rotation.get())
 }

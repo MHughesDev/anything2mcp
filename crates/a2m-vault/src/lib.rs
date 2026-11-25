@@ -30,8 +30,8 @@ mod vault;
 pub use digest::VaultDigest;
 pub use material::{KeyMaterial, Opened, OsRandom, RandomSource, Wrapped};
 pub use names::{
-    Binding, Generation, InstallationName, ItemId, KeyId, KeyRef, Layer, OwnerKind, OwnerRef,
-    SealContext, SealedKind,
+    Binding, InstallationName, ItemId, KeyId, KeyRef, KeyRotationNumber, Layer, OwnerKind,
+    OwnerRef, SealContext, SealedKind,
 };
 pub use records::{KeyRecord, KeyRecords, MemoryKeyRecords, key_record_conflict};
 pub use redactor::{RedactStream, Redactor, RedactorHealth};

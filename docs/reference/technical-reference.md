@@ -258,7 +258,7 @@ The design of [`a2m-vault`](../architecture/crates/a2m-vault.md) gives the inter
 
 - **`Vault`** seals a plain item into a **`Sealed`** envelope under a **`SealContext`**, and opens it again only under the same context. The caller stores the envelope.
 - **`KeyStore`** is the back end that holds the root key. `OsKeyStore`, `PassphraseKeyStore`, and `MemoryKeyStore` implement it. A root, and the passphrase route's salt through `PassphraseSalt::load_or_create`, is made once, under a lock that two engines starting together both take.
-- **`KeyRecords`** is where wrapped keys persist, as one **`KeyRecord`** per key and **`Generation`**. `a2m-ledger` implements it.
+- **`KeyRecords`** is where wrapped keys persist, as one **`KeyRecord`** per key and **`KeyRotationNumber`**. `a2m-ledger` implements it.
 - **`Redactor`** implements `Redact`, and **`VaultDigest`** implements `KeyedDigest`, both from `a2m-core`. A text that arrives in pieces is redacted through the redactor's **`RedactStream`**, never piece by piece.
 
 ## Logs and traces interface
