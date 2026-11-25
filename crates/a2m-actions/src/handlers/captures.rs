@@ -664,11 +664,16 @@ impl Kernel {
                     } => (Some(*began_at), *ending),
                     _ => (None, None),
                 };
-                let by = ending.unwrap_or(if bound {
+                // A discoverer that says its bound of time passed was ended
+                // by the bound, whatever was asked after: a stop asked while
+                // it returned, or while what it found was stored, came after
+                // its end. Its own report is the evidence, not the order in
+                // which the stop and the return were seen.
+                let by = if bound {
                     EndedBy::Bound
                 } else {
-                    EndedBy::Returned
-                });
+                    ending.unwrap_or(EndedBy::Returned)
+                };
                 capture.stage = Stage::Ended {
                     began_at,
                     ended: Ended {
