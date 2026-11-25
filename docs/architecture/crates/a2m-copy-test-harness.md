@@ -48,6 +48,8 @@ A fourth option gives the box a desktop session, which a desktop application nee
 
 The step `desktop` lists the applications the box's registry holds, asked of the bus by the runner and never through the product. The report states the application and the script's hash.
 
+The step `hands` is the person's hands at that display ([decision 0999](../../decisions/0999-the-copy-tests-person-has-hands-at-the-boxs-display.md)): a program of the box's image or of `box_mounts`, run in the box as its user with the session's `DISPLAY` and nothing else, waited for within `seconds` or, with `detach`, started and not waited for. It reaches the product only through what the display shows and takes, as in FT6, where it types and presses keys in the windows of the engine's own browser.
+
 ## Where it runs
 
 On Linux alone. The closed network of decision 0310 is a container network made with `--internal`, and the runner (`tools/copy_test.py`) reaches the system by the container's address on it, which only Linux with docker allows; on Docker Desktop the containers are in a virtual machine whose addresses the host cannot reach. The harness itself is built from the product and would compile anywhere, but the binary in the box is a Linux one.

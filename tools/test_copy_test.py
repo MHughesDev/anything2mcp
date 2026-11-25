@@ -945,6 +945,23 @@ class DesktopSession(unittest.TestCase):
         with self.assertRaises(copy_test.CannotRun):
             copy_test.do_step({"desktop": {}}, {"project": "/p"}, {}, copy_test.Run("example", token="abc"))
 
+    def test_the_person_s_hands_need_the_session_and_reach_the_box_by_its_display_alone(self):
+        run = copy_test.Run("example", token="abc")
+        with self.assertRaises(copy_test.CannotRun):
+            copy_test.do_step({"hands": ["/person/hands.sh"]}, {"project": "/p"}, {}, run)
+        run.desktop = self.box(DESKTOP)
+        argv = run.hands_argv(["/person/hands.sh", "sign_in"])
+        self.assertEqual(argv[:2], ["docker", "exec"])
+        self.assertEqual(argv[-3:], [run.box, "/person/hands.sh", "sign_in"])
+        # The display and nothing else of the runner's: no engine's home, no passphrase.
+        flags = argv[2:-3]
+        self.assertEqual([flags[at + 1] for at, flag in enumerate(flags) if flag == "-e"], ["DISPLAY=:99"])
+        self.assertNotIn("-d", flags)
+        self.assertIn("-d", run.hands_argv(["/person/hands.sh"], detach=True))
+        for wrong in ([], ["person/hands.sh"], "/person/hands.sh", ["/person/hands.sh", ""], ["/bin/sh", "a\0b"]):
+            with self.assertRaises(copy_test.CannotRun):
+                run.hands_argv(wrong)
+
     def test_a_desktop_recipe_is_held_to_the_box_s_refusals(self):
         recipe = {"system": {**DESKTOP, "box_desktop": {"application": ["/usr/bin/example-desk", "--no-sandbox"]}}}
         self.assertTrue(copy_test.sandbox_off_in(recipe))

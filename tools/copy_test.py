@@ -71,6 +71,17 @@ and `note`:
                                       accessibility registry lists, one line each:
                                       `A2M_APPLICATION <bus name> <program> <name>`, asked of
                                       the bus by the runner and never through the product
+    "hands":   [argv]                 (needs `box_desktop`) the person's own hands at the box's
+                                      display: a program of the box's image or of `box_mounts`,
+                                      such as a script of `xdotool` that types and presses keys
+                                      in a window of the engine's browser as a person does. It
+                                      runs in the box as the box's user with the session's
+                                      `DISPLAY` and nothing else of the runner's, so it reaches
+                                      the product only through what the display shows and
+                                      takes; `"seconds"` beside it bounds it (default 300).
+                                      With `"detach": true` it is started and not waited for, as a
+                                      person who waits at the display for a window the next step
+                                      opens, such as the sign-in window a press of `person` opens
 
 `expect` may hold `ok` (true or false), `code` (the failure code of a product
 command), `status` (of a request), `contains` and `lacks` (text in the output),
@@ -266,6 +277,8 @@ HARNESS_READY = "the local engine is ready"
 # How long the runner waits for the harness to serve, and for a prompt after a press.
 HARNESS_WAIT = 120
 PROMPT_WAIT = 60
+# How long a `hands` step may take unless it says.
+HANDS_WAIT = 300
 # The characters of a hash or an act's identifier that a prompt shows.
 SHORT_HASH = 12
 PROXY_PORT = 8080
@@ -706,6 +719,20 @@ class Run:
                     f"after {wait} seconds: {said.strip()[-800:]}"
                 )
             pause(1)
+
+    def hands_argv(self, argv, detach=False):
+        """The person's hands at the box's display: `argv` in the box, as the box's user, with
+        the session's `DISPLAY` alone of its environment. Refused when `argv` is not an
+        argument list whose first part is an absolute path."""
+        if (
+            not isinstance(argv, list)
+            or not argv
+            or not all(isinstance(part, str) and part and "\0" not in part for part in argv)
+            or not argv[0].startswith("/")
+        ):
+            raise CannotRun(f"A `hands` step is an argument list whose first part is an absolute path: {argv!r}")
+        flags = ["-d"] if detach else []
+        return ["docker", "exec", *flags, "-w", "/", "-e", f"DISPLAY={DESKTOP_ENV['DISPLAY']}", self.box, *argv]
 
     def exec_argv(self, env, cwd, argv):
         """One command of the product, inside the binary's container."""
@@ -1177,6 +1204,12 @@ def do_step(step, names, env, active, proxy=None, harness=None, secrets=None):
         code, out, err = run(active.desktop_argv("list"))
         listed = [line for line in out.splitlines() if line.startswith("A2M_APPLICATION ")]
         return {"ok": code == 0 and bool(listed), "output": "\n".join(listed) or (out + err)[-2000:]}
+    if "hands" in step:
+        if not active.desktop_up:
+            raise CannotRun("A `hands` step needs the box's desktop session, which a recipe asks for with `box_desktop`.")
+        detach = step.get("detach") is True
+        code, out, err = run(active.hands_argv(step["hands"], detach), seconds=int(step.get("seconds", HANDS_WAIT)))
+        return {"ok": code == 0, "output": "started, not waited for" if detach and code == 0 else (out + err)[-2000:]}
     if "a2m" in step:
         if harness is not None and harness.alive() is False and harness.process is not None:
             raise CannotRun(
