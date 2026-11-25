@@ -1152,29 +1152,64 @@ async fn draft(
             .iter()
             .map(|path| path.as_str().to_owned())
             .collect();
-        // The findings a rule covers and drafted nothing from, each with
-        // the finding's own words (looked up by its id) and the reason the
-        // rule gave (roadmap package FT11).
-        let not_drafted: Vec<Json> = report
-            .not_drafted
-            .iter()
-            .map(|left| {
-                let description = findings
-                    .iter()
-                    .find(|finding| finding.id() == left.finding)
-                    .map_or(Json::Null, |finding| untrusted(json!(finding.found())));
-                json!({
-                    "finding": left.finding.to_string(),
-                    "description": description,
-                    "pack": left.pack,
-                    "reason": if left.reason.is_empty() {
-                        "the rule gave no reason"
-                    } else {
-                        left.reason.as_str()
-                    },
-                })
-            })
-            .collect();
+        // The findings a rule covers and drafted nothing from, each once,
+        // with the finding's own words (looked up by its id) and the
+        // reasons its rules gave (roadmap package FT11). Two rules of one
+        // pack that cover the same kind each leave the finding; it is
+        // listed once, with each reason once (package 5.6c).
+        let mut not_drafted: Vec<Json> = Vec::new();
+        for left in &report.not_drafted {
+            let id = left.finding.to_string();
+            let reason = left.reason.trim();
+            if let Some(listed) = not_drafted
+                .iter_mut()
+                .find(|listed| listed["finding"] == id.as_str() && listed["pack"] == left.pack.as_str())
+            {
+                if let Some(reasons) = listed["reasons"].as_array_mut()
+                    && !reason.is_empty()
+                    && !reasons.iter().any(|known| known == reason)
+                {
+                    reasons.push(json!(reason));
+                }
+                continue;
+            }
+            let found = findings.iter().find(|finding| finding.id() == left.finding);
+            let description = found.map_or(Json::Null, |finding| untrusted(json!(finding.found())));
+            let kind = found.map(|finding| finding.kind().as_str().to_owned());
+            not_drafted.push(json!({
+                "finding": id,
+                "kind": kind,
+                "description": description,
+                "pack": left.pack,
+                "reasons": if reason.is_empty() { json!([]) } else { json!([reason]) },
+            }));
+        }
+        // The reason the entry is read by: the rules' own, joined, or,
+        // where no rule gave one, what the report knows of it.
+        for listed in &mut not_drafted {
+            let reasons: Vec<String> = listed["reasons"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Json::as_str)
+                .map(str::to_owned)
+                .collect();
+            listed["reason"] = json!(if reasons.is_empty() {
+                format!(
+                    "No rule of the `{}` pack{} drafts a file from one of this shape, and none said why. No draft waits on it: it is listed under `found`, and a draft over it is written by hand.",
+                    listed["pack"].as_str().unwrap_or_default(),
+                    listed["kind"]
+                        .as_str()
+                        .map(|kind| format!(" for `{kind}` findings"))
+                        .unwrap_or_default()
+                )
+            } else {
+                reasons.join(" ")
+            });
+            if let Json::Object(map) = listed {
+                map.remove("reasons");
+            }
+        }
         Ok((
             json!({
                 "written": files,

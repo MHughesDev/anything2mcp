@@ -143,13 +143,42 @@ handler!(
             .await?;
         let mut out = described(&found);
         mark(&mut out, unavailable.get(&found.tool.name));
+        // The call is shown with every required input, each a placeholder
+        // an agent puts its own value in (package 5.6c).
+        let input = example_input(&out["input_schema"]);
+        let when = if holds_placeholder(&input) {
+            "to call it, with a value of yours in place of each `<...>`"
+        } else {
+            "to call it"
+        };
         Ok(Output::ok(out).then(Next::new(
             "tool.call",
-            json!({"tool": found.tool.name.as_str(), "input": {}}),
-            "to call it",
+            json!({"tool": found.tool.name.as_str(), "input": input}),
+            when,
         )))
     }
 );
+
+/// An input that holds every input a tool's input schema requires, each as
+/// the placeholder `<name>`, in place of a value only the caller knows. A
+/// schema that requires nothing gives an empty input.
+pub(crate) fn example_input(schema: &Json) -> Json {
+    let required = schema["required"].as_array().into_iter().flatten();
+    Json::Object(
+        required
+            .filter_map(Json::as_str)
+            .map(|name| (name.to_owned(), json!(format!("<{name}>"))))
+            .collect(),
+    )
+}
+
+/// Whether an input [`example_input`] made holds a placeholder.
+pub(crate) fn holds_placeholder(input: &Json) -> bool {
+    input.as_object().is_some_and(|map| {
+        map.iter()
+            .any(|(name, value)| value.as_str() == Some(format!("<{name}>").as_str()))
+    })
+}
 
 /// The most bytes of rows a call may carry inline. A larger input is a
 /// file.

@@ -53,6 +53,7 @@ mod renewal;
 mod runtime_folder;
 mod scout_files;
 mod screen_drift;
+mod second_measurement;
 mod serve_stop;
 mod shadow;
 mod shared_session;

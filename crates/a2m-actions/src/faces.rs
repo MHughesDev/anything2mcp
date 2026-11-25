@@ -469,8 +469,8 @@ pub struct Shortcut {
     pub word: &'static str,
     /// What it does, in a sentence.
     pub does: &'static str,
-    /// The actions, in order. Empty for `init`, which has no action beneath
-    /// it yet.
+    /// The actions, in order. Empty for `init`, which the command carries
+    /// out itself (decision 0164).
     pub steps: &'static [ShortcutStep],
     /// The flags it takes beside its one argument, each filling one field
     /// of one step. Without them, a shortcut of several actions takes no
@@ -547,7 +547,7 @@ const fn step(action: &'static str, argument: Option<&'static str>) -> ShortcutS
 pub const SHORTCUTS: &[Shortcut] = &[
     Shortcut {
         word: "init",
-        does: "Create a project and the guidance file; choose a profile.",
+        does: "Make the folder it is run in, or the one `--project` names, a project: write the project file `anything2mcp.toml`, the guidance for agents as `AGENTS.md` (the page `docs get guidance` prints), the `targets` folder, and a `.gitignore`, each only where it is not there yet; what is there is kept. Run it first, in a folder of your own.",
         steps: &[],
         options: &[],
     },

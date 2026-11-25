@@ -1636,6 +1636,15 @@ pub(crate) async fn run_gates(
                     .collect()
             })
             .unwrap_or_default();
+        // A publish of some tools compiled only their files (decision
+        // 0998): the files loaded are taken the same way before their
+        // digest is held to the one compiled.
+        let loaded = loaded.and_then(|loaded| {
+            if loaded.digest == sources {
+                return Some(loaded);
+            }
+            crate::handlers::build::chosen_sources(loaded, &compiled_tools).ok()
+        });
         let tied = loaded.is_some_and(|loaded| tested_as_compiled(&held, &loaded, sources, set));
         Ok((fixtures, tied, file_modes))
     })

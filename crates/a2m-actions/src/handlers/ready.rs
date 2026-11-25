@@ -420,6 +420,27 @@ fn summary(ready: &[Json], left: &[Json], failed: &[Json], publish: &Json) -> St
             .join(", ")
     };
     let mut text = Vec::new();
+    // An answer that waits for a person says first that it succeeded
+    // (decision 0999).
+    if publish["state"] == "needs_person" {
+        text.push(
+            "Succeeded: every step before the publish is done, and the publish waits for a person."
+                .to_owned(),
+        );
+    }
+    let holds = || {
+        publish["tools"]
+            .as_array()
+            .map(|tools| {
+                tools
+                    .iter()
+                    .filter_map(Json::as_str)
+                    .map(|tool| format!("`{tool}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default()
+    };
     if ready.is_empty() {
         text.push("No read was made ready.".to_owned());
     } else {
@@ -432,10 +453,14 @@ fn summary(ready: &[Json], left: &[Json], failed: &[Json], publish: &Json) -> St
         text.push(format!("Failed: {}.", names(failed)));
     }
     text.push(match publish["state"].as_str() {
-        Some("needs_person") => "The publish waits for a person: give them the link under `publish`, and stop until they have carried it out. Nothing else is left to do before then.".to_owned(),
+        Some("needs_person") => format!(
+            "The version asked for holds {}. Give the person the link under `publish`, and stop until they have carried it out. Nothing else is left to do before then.",
+            holds()
+        ),
         Some("published") => format!(
-            "Version {} is published: the person carried out the publish.",
-            publish["version"].as_str().unwrap_or("?")
+            "Version {} is published, holding {}: the person carried out the publish.",
+            publish["version"].as_str().unwrap_or("?"),
+            holds()
         ),
         _ => "No publish was asked for: the publish gates did not pass.".to_owned(),
     });
@@ -462,16 +487,15 @@ handler!(
         .await?
         .map_err(Failure::from)?;
         let mut tools = drafted(&compiled.compiled_target);
-        let named: Option<Vec<String>> =
-            call.input
-                .get("tools")
-                .and_then(Json::as_array)
-                .map(|list| {
-                    list.iter()
-                        .filter_map(Json::as_str)
-                        .map(str::to_owned)
-                        .collect()
-                });
+        let named = super::build::chosen_tools(&call);
+        // The tools the version asked for holds: those named, or every
+        // drafted tool (decision 0998).
+        let published: Vec<String> = named.clone().unwrap_or_else(|| {
+            tools
+                .iter()
+                .map(|tool| tool.tool.as_str().to_owned())
+                .collect()
+        });
         if let Some(named) = &named {
             if let Some(missing) = named
                 .iter()
@@ -533,9 +557,12 @@ handler!(
         }
 
         let (mut ready, mut failed) = (Vec::new(), Vec::new());
-        // The call a published read is called with, for `next`: the first
-        // read made ready whose input the report carries, else the first.
-        let mut first_call: Option<(String, Option<Json>)> = None;
+        // The call a published read is called with, for `next`: of the
+        // reads named, the first named that was made ready; with none
+        // named, the first read made ready whose input the report carries,
+        // else the first. An input the report does not carry is shown as
+        // an example of every required input (package 5.6c).
+        let mut made: Vec<(String, Option<Json>)> = Vec::new();
         for plan in &plans {
             let Plan::Make(drafted, source, done) = plan else {
                 continue;
@@ -546,26 +573,42 @@ handler!(
                         Some(Source::Report(input)) => Some(input.clone()),
                         _ => None,
                     };
-                    if first_call
-                        .as_ref()
-                        .is_none_or(|(_, held)| held.is_none() && input.is_some())
-                    {
-                        first_call = Some((drafted.tool.as_str().to_owned(), input));
-                    }
+                    made.push((drafted.tool.as_str().to_owned(), input));
                     ready.push(entry);
                 }
                 Err(entry) => failed.push(entry),
             }
         }
+        let first_call: Option<(String, Json)> = match &named {
+            Some(named) => named
+                .iter()
+                .find_map(|name| made.iter().find(|(tool, _)| tool == name)),
+            None => made
+                .iter()
+                .find(|(_, input)| input.is_some())
+                .or_else(|| made.first()),
+        }
+        .map(|(tool, input)| {
+            let input = input.clone().unwrap_or_else(|| {
+                compiled
+                    .compiled_target
+                    .tools
+                    .iter()
+                    .find(|compiled| compiled.name.as_str() == tool)
+                    .and_then(|compiled| {
+                        serde_json::from_slice::<Json>(compiled.input_schema.as_bytes()).ok()
+                    })
+                    .map_or_else(|| json!({}), |schema| super::tools::example_input(&schema))
+            });
+            (tool.clone(), input)
+        });
 
         // The publish gates, as `test.run` runs them.
-        let tested = step(
-            kernel,
-            &call,
-            "test.run",
-            json!({"target": target.as_str()}),
-        )
-        .await;
+        let mut gates_input = json!({"target": target.as_str()});
+        if let Some(named) = &named {
+            gates_input["tools"] = json!(named);
+        }
+        let tested = step(kernel, &call, "test.run", gates_input).await;
         let gates = tested.result.clone().unwrap_or(Json::Null);
         let passed = tested.ok && gates["passed"] == true;
         let mut shown = json!({
@@ -587,6 +630,7 @@ handler!(
                 &publish
             ));
             shown["publish"] = publish;
+            shown["state"] = json!("not_asked");
             // The drafts with no offline test, when each is one left alone:
             // the gate stays whole, and removing them is one way on.
             let missing: Vec<String> = shown["gates"]["missing"]
@@ -631,6 +675,9 @@ handler!(
         if let Some(version) = call.text("version") {
             input["version"] = json!(version);
         }
+        if let Some(named) = &named {
+            input["tools"] = json!(named);
+        }
         let asked = step(kernel, &call, "publish.request", input).await;
         let answer = asked.result.clone().unwrap_or(Json::Null);
         let publish = match (asked.exit, &asked.error) {
@@ -642,11 +689,13 @@ handler!(
                         publish.insert(key.to_owned(), value.clone());
                     }
                 }
+                publish.insert("tools".to_owned(), json!(published));
                 Json::Object(publish)
             }
             (ExitClass::Succeeded, None) => json!({
                 "state": "published",
                 "version": answer["version"],
+                "tools": answer.get("tools").cloned().unwrap_or_else(|| json!(published)),
             }),
             _ => json!({"state": "not_asked", "error": step_failure(&asked)}),
         };
@@ -658,13 +707,15 @@ handler!(
         ));
         let state = publish["state"].as_str().unwrap_or("").to_owned();
         shown["publish"] = publish;
+        shown["state"] = json!(state);
         let called = |when: &str| match &first_call {
             Some((tool, input)) => {
-                let mut args = json!({"tool": tool});
-                if let Some(input) = input {
-                    args["input"] = input.clone();
-                }
-                Next::new("tool.call", args, when)
+                let when = if super::tools::holds_placeholder(input) {
+                    format!("{when}; with a value of yours in place of each `<...>`")
+                } else {
+                    when.to_owned()
+                };
+                Next::new("tool.call", json!({"tool": tool, "input": input}), &when)
             }
             None => Next::new(
                 "tool.search",
