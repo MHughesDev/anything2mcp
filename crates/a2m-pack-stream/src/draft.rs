@@ -153,9 +153,21 @@ impl DraftingRule for ChannelDraft {
                 "key",
                 DraftValue::map(vec![("field", DraftValue::text(field))]),
             ));
+        } else if found.json.get("key_from_subject").and_then(Json::as_bool) == Some(true) {
+            // The broker keys a message by the last token of its subject,
+            // as the channel's configuration states: that is the key, and
+            // no field of the message is (finding 44 of the field tests).
+            body.push((
+                "key",
+                DraftValue::map(vec![(
+                    "from",
+                    DraftValue::text(crate::channel::KEY_FROM_SUBJECT),
+                )]),
+            ));
         } else if shape == Shape::Retained {
             // A retained channel keeps one value per key, and the broker
-            // does not say which field of a message the key is.
+            // says neither which field of a message the key is nor that it
+            // keys by subject.
             body.push((
                 "key",
                 cx.open_question(&format!(

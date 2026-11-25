@@ -377,9 +377,11 @@ impl Protocol for NatsProtocol {
         deadline: Deadline,
     ) -> Wire<'a, Box<dyn Link>> {
         Box::pin(async move {
-            // Plain TCP carries the session's credentials in the clear, so it
-            // goes to this machine's own loopback address and nowhere else.
-            let resolved = crate::wire::plain_tcp_address(address)?;
+            // Plain TCP carries the session's credential in the clear, so a
+            // connection that carries one goes to this machine's own
+            // loopback address and nowhere else; one that carries none goes
+            // to the surface's address (decision 0435).
+            let dial = crate::wire::plain_tcp_dial(address, credential.is_some())?;
             let unreachable = || {
                 error(
                     WireErrorKind::Unreachable,
@@ -387,7 +389,7 @@ impl Protocol for NatsProtocol {
                     "the broker did not accept a connection",
                 )
             };
-            let stream = tokio::time::timeout_at(deadline.at(), TcpStream::connect(resolved))
+            let stream = tokio::time::timeout_at(deadline.at(), dial.connect())
                 .await
                 .map_err(|_| unreachable())?
                 .map_err(|_| unreachable())?;
@@ -1020,12 +1022,27 @@ impl NatsLink {
             Some("limits")
         );
         let may_lose_inside = !per_subject_unlimited || ttl || removes_read;
+        // The server keys a stored message by its whole subject, and the
+        // channel's key is the token below the channel's subject: the
+        // stream keys by subject where it stores a subject below it.
+        let key_from_subject =
+            config
+                .get("subjects")
+                .and_then(Json::as_list)
+                .is_some_and(|subjects| {
+                    subjects.iter().any(|s| {
+                        s.as_str()
+                            .and_then(|s| s.strip_prefix(subject))
+                            .is_some_and(|rest| rest.starts_with('.'))
+                    })
+                });
         let last = number(state, "last_seq")?;
         let first = number(state, "first_seq")?;
         Ok(ChannelFacts {
             address,
             shape,
             key_field: None,
+            key_from_subject: within && key_from_subject,
             schema: None,
             dedupe_header: (window_ns > 0).then(|| MSG_ID.to_owned()),
             dedupe_window_ms: Some(window_ns / 1_000_000),
@@ -1262,6 +1279,7 @@ impl Link for NatsLink {
                         address: address.to_owned(),
                         shape: (!stored).then_some(Shape::Topic),
                         key_field: None,
+                        key_from_subject: false,
                         schema: None,
                         dedupe_header: None,
                         dedupe_window_ms: None,
@@ -2035,6 +2053,24 @@ mod tests {
             (far.kind, far.sent),
             (WireErrorKind::Transport, Sent::NotSent)
         );
+        // A name is not a loopback address, even one that leads to the
+        // server (decision 0197): with a credential, it is refused before
+        // the server hears anything; with none, it is reached (decision
+        // 0435), as `tests/nats.rs` shows through the driver.
+        let named = format!("localhost:{}", stand.address().port());
+        let before = stand.connects().len();
+        for credential in [token("example-token-for-tests"), user] {
+            let refused = NatsProtocol::new(DEFAULT_CEILING)
+                .connect(&named, Some(&credential), deadline)
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(
+                (refused.kind, refused.sent),
+                (WireErrorKind::Transport, Sent::NotSent)
+            );
+        }
+        assert_eq!(stand.connects().len(), before);
     }
 
     /// A server that states a payload limit no real one has, and then a
