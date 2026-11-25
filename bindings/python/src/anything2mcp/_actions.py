@@ -43,6 +43,7 @@ ACTIONS = (
     "draft.delete",
     "draft.lint",
     "draft.read",
+    "draft.ready",
     "draft.try",
     "draft.write",
     "endpoints.infer",
@@ -526,6 +527,32 @@ class Actions:
             {
                 "file": file,
                 "target": target,
+            },
+            idempotency_key,
+        )
+
+    def draft_ready(
+        self,
+        *,
+        target: str,
+        tools: Optional[List[str]] = None,
+        version: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Make every drafted read a trial in this project read a value through
+        ready to publish: record its offline test and fixture, promote its first
+        binding, run the publish gates, and ask a person to publish, each step
+        by its own action. A write, a pipeline, and a read with no trial are
+        left alone, each with its reason.
+
+        The engine action is ``draft.ready``.
+        """
+        return self._action(
+            "draft.ready",
+            {
+                "target": target,
+                "tools": tools,
+                "version": version,
             },
             idempotency_key,
         )

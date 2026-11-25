@@ -12,6 +12,7 @@ mod meta;
 mod promote;
 mod provider;
 mod reach;
+mod ready;
 mod scout;
 pub(crate) mod scout_report;
 pub(crate) mod sessions;
@@ -90,6 +91,7 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "client.connect" => client::client_connect,
         "test.run" => drafts::test_run,
         "fixture.record" => crate::fixture::fixture_record,
+        "draft.ready" => ready::draft_ready,
         "draft.lint" => build::draft_lint,
         "version.publish" => build::version_publish,
         "publish.request" => build::publish_request,

@@ -392,7 +392,7 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0398 | [The review shows a launched program as a launcher, and says what nothing pins](0398-the-review-shows-a-launched-program-as-a-launcher-and-says-what-nothing-pins.md) | Accepted (design decision) |
 | 0399 | [The desktop pack writes on Windows and macOS through a closed list of its own on each](0399-the-desktop-pack-writes-on-windows-and-macos-through-a-closed-list-of-its-own-on-each.md) | Accepted (design decision) |
 | 0400 | [A capture ends as a scout does](0400-a-capture-ends-as-a-scout-does.md) | Accepted (design decision) |
-| 0401 | [The steps between a proven read and a publish are one action](0401-the-steps-between-a-proven-read-and-a-publish-are-one-action.md) | Accepted (design decision) |
+| 0401 | [The steps between a proven read and a publish are one action](0401-the-steps-between-a-proven-read-and-a-publish-are-one-action.md) | Accepted (design decision); points 1 and 4 superseded by 0443 |
 | 0402 | [The rename sweep renames every name, and keeps what is stored](0402-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md) | Accepted (design decision) |
 | 0403 | [A renewal opens the saved state first when its runner holds nothing](0403-a-renewal-opens-the-saved-state-first-when-its-runner-holds-nothing.md) | Accepted (design decision) |
 | 0404 | [One closed shape of a body in the provider contract, and the stricter refusal where the two copies differed](0404-one-closed-shape-of-a-body-in-the-provider-contract-and-the-stricter-refusal-where-the-two-copies-differed.md) | Accepted (design decision) |
@@ -434,3 +434,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0440 | [An operation no binding of which may act is warned of, and a call of one fails for good](0440-an-operation-no-binding-of-which-may-act-is-warned-of-and-a-call-of-one-fails-for-good.md) | Accepted (design decision) |
 | 0441 | [A device draft states its places, drafts no empty map, and its update's fixture is documented](0441-a-device-draft-states-its-places-drafts-no-empty-map-and-its-update-fixture-is-documented.md) | Accepted (design decision) |
 | 0442 | [A person's use is watched by `web_use`, and what it saw twice in one shape is drafted, held](0442-a-persons-use-is-watched-by-web-use-and-what-it-saw-twice-is-drafted-held.md) | Accepted (design decision) |
+| 0443 | [`draft.ready` asks for the publish, and takes the caller's own trial](0443-draft-ready-asks-for-the-publish-and-takes-the-callers-own-trial.md) | Accepted (design decision) |
