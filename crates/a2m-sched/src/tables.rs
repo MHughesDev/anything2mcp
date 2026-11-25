@@ -18,10 +18,10 @@ use serde::{Deserialize, Serialize};
 use crate::budget::{self, Take};
 use crate::failure;
 use crate::types::{
-    Admitted, BudgetKey, CancelOutcome, Directive, Enqueue, HealthState, HoldScope, JobEnd,
-    JobKind, JobLease, JobRequirements, JobRow, JobState, LeaseRef, OsName, PROTOCOL_VERSION,
-    Priority, Reconciling, Renewal, ResourceKey, Resumed, RunnerOffer, RunnerTerms, SchedSettings,
-    Slots, Submission,
+    Admitted, BudgetKey, CancelOutcome, Directive, Enqueue, HealthState, JobEnd, JobKind, JobLease,
+    JobRequirements, JobRow, JobState, LeaseRef, OsName, PROTOCOL_VERSION, PauseScope, Priority,
+    Reconciling, Renewal, ResourceKey, Resumed, RunnerOffer, RunnerTerms, SchedSettings, Slots,
+    Submission,
 };
 
 /// The most keys a job may name as exclusive, and the most modes.
@@ -393,12 +393,12 @@ fn missing_runner(
 // ---- holds on scopes -----------------------------------------------------
 
 #[derive(Debug, Clone)]
-pub(crate) struct Hold {
-    pub(crate) scope: HoldScope,
+pub(crate) struct Pause {
+    pub(crate) scope: PauseScope,
     held_at: Timestamp,
 }
 
-pub(crate) fn scope_holds(tx: &mut Tx<'_>) -> Result<Vec<Hold>, Failure> {
+pub(crate) fn scope_pauses(tx: &mut Tx<'_>) -> Result<Vec<Pause>, Failure> {
     let rows = tx.tables(Owner::Sched).query(
         "SELECT scope, workspace_id, name, held_at FROM scheduler_holds ORDER BY scope, workspace_id, name",
         &[],
@@ -406,17 +406,17 @@ pub(crate) fn scope_holds(tx: &mut Tx<'_>) -> Result<Vec<Hold>, Failure> {
     rows.iter()
         .map(|row| {
             let scope = match row.text(0)? {
-                "everything" => HoldScope::Everything,
-                "workspace" => HoldScope::Workspace(stored(row.text(1)?)?),
-                "target" => HoldScope::Target(stored(row.text(1)?)?, stored(row.text(2)?)?),
-                "caller" => HoldScope::Caller(stored(row.text(1)?)?, stored(row.text(2)?)?),
+                "everything" => PauseScope::Everything,
+                "workspace" => PauseScope::Workspace(stored(row.text(1)?)?),
+                "target" => PauseScope::Target(stored(row.text(1)?)?, stored(row.text(2)?)?),
+                "caller" => PauseScope::Caller(stored(row.text(1)?)?, stored(row.text(2)?)?),
                 _ => {
                     return Err(failure::corrupt(
                         "a hold on a scope that is not in the list",
                     ));
                 }
             };
-            Ok(Hold {
+            Ok(Pause {
                 scope,
                 held_at: Timestamp::from_unix_millis(row.int(3)?),
             })
@@ -425,32 +425,32 @@ pub(crate) fn scope_holds(tx: &mut Tx<'_>) -> Result<Vec<Hold>, Failure> {
 }
 
 fn covers(
-    scope: &HoldScope,
+    scope: &PauseScope,
     workspace: WorkspaceId,
     target: &TargetName,
     caller: PrincipalId,
 ) -> bool {
     match scope {
-        HoldScope::Everything => true,
-        HoldScope::Workspace(held) => *held == workspace,
-        HoldScope::Target(held, name) => *held == workspace && name == target,
-        HoldScope::Caller(held, principal) => *held == workspace && *principal == caller,
+        PauseScope::Everything => true,
+        PauseScope::Workspace(held) => *held == workspace,
+        PauseScope::Target(held, name) => *held == workspace && name == target,
+        PauseScope::Caller(held, principal) => *held == workspace && *principal == caller,
     }
 }
 
-fn hold_on<'h>(
-    holds: &'h [Hold],
+fn paused_on<'h>(
+    holds: &'h [Pause],
     workspace: WorkspaceId,
     target: &TargetName,
     caller: PrincipalId,
-) -> Option<&'h Hold> {
+) -> Option<&'h Pause> {
     holds
         .iter()
         .find(|hold| covers(&hold.scope, workspace, target, caller))
 }
 
 /// Puts a scope on hold. A scope that is on hold already keeps its moment.
-pub(crate) fn hold(tx: &mut Tx<'_>, scope: &HoldScope) -> Result<(), Failure> {
+pub(crate) fn pause(tx: &mut Tx<'_>, scope: &PauseScope) -> Result<(), Failure> {
     let (word, workspace, name) = scope.stored();
     let now = tx.now();
     tx.tables(Owner::Sched).execute(
@@ -463,8 +463,8 @@ pub(crate) fn hold(tx: &mut Tx<'_>, scope: &HoldScope) -> Result<(), Failure> {
 
 /// Releases a hold. The jobs it covered are given back the time they could
 /// not be handed out, so that the hold does not use up their queue limit.
-pub(crate) fn release_hold(tx: &mut Tx<'_>, scope: &HoldScope) -> Result<bool, Failure> {
-    let holds = scope_holds(tx)?;
+pub(crate) fn release_pause(tx: &mut Tx<'_>, scope: &PauseScope) -> Result<bool, Failure> {
+    let holds = scope_pauses(tx)?;
     let Some(held) = holds.iter().find(|hold| hold.scope == *scope) else {
         return Ok(false);
     };
@@ -815,9 +815,9 @@ pub(crate) fn admit(
         ));
     }
     check_health(&health, job.writes)?;
-    let holds = scope_holds(tx)?;
-    if let Some(held) = hold_on(&holds, run.workspace, &run.target, run.principal) {
-        return Err(failure::on_hold(held.scope.word()));
+    let holds = scope_pauses(tx)?;
+    if let Some(held) = paused_on(&holds, run.workspace, &run.target, run.principal) {
+        return Err(failure::scheduler_paused(held.scope.word()));
     }
     let (workspace, principal) = (run.workspace, run.principal);
     let opened = match tx.ledger().open_run(run)? {
@@ -875,9 +875,9 @@ pub(crate) fn enqueue(
             "a second job for a run that already has one waiting or leased",
         ));
     }
-    let holds = scope_holds(tx)?;
-    if let Some(held) = hold_on(&holds, run.workspace, &run.target, run.principal) {
-        return Err(failure::on_hold(held.scope.word()));
+    let holds = scope_pauses(tx)?;
+    if let Some(held) = paused_on(&holds, run.workspace, &run.target, run.principal) {
+        return Err(failure::scheduler_paused(held.scope.word()));
     }
     let now = tx.now();
     let new = NewJob {
@@ -1062,7 +1062,7 @@ pub(crate) fn claim(
         // A runner that drains takes no new work.
         return Ok(leased);
     }
-    let scope_holds = scope_holds(tx)?;
+    let scope_pauses = scope_pauses(tx)?;
     while free.total > 0 || free.keeper > 0 {
         let now = tx.now();
         let rows = tx.tables(Owner::Sched).query(
@@ -1080,7 +1080,7 @@ pub(crate) fn claim(
         for row in &rows {
             let job = job_of(row)?;
             let target = &job.requirements.target;
-            if hold_on(&scope_holds, job.workspace, target, job.principal).is_some() {
+            if paused_on(&scope_pauses, job.workspace, target, job.principal).is_some() {
                 continue;
             }
             let waits = blocked(tx, &job, &holds, &spoken_for)?.is_some();
@@ -1265,8 +1265,8 @@ pub(crate) fn heartbeat(
         seen(tx, runner)?;
         draining = find_runner(tx, runner)?.is_some_and(|runner| runner.state == "draining");
     }
-    let holds = scope_holds(tx)?;
-    let on_hold = hold_on(
+    let holds = scope_pauses(tx)?;
+    let on_hold = paused_on(
         &holds,
         job.workspace,
         &job.requirements.target,
@@ -1769,7 +1769,7 @@ pub(crate) fn sweep(
     }
 
     // Queue limits. A job on hold is not counted out while it is held.
-    let scope_holds = scope_holds(tx)?;
+    let scope_pauses = scope_pauses(tx)?;
     let rows = tx.tables(Owner::Sched).query(
         select_jobs!("WHERE j.state = 'pending' AND j.queue_until <= ?1 ORDER BY j.seq"),
         &[now.into()],
@@ -1777,8 +1777,8 @@ pub(crate) fn sweep(
     let holds = resource_holds(tx)?;
     for row in &rows {
         let job = job_of(row)?;
-        if hold_on(
-            &scope_holds,
+        if paused_on(
+            &scope_pauses,
             job.workspace,
             &job.requirements.target,
             job.principal,
@@ -1867,15 +1867,15 @@ pub(crate) fn next_due(
             settings.lost_after,
         )));
     }
-    let scope_holds = scope_holds(tx)?;
+    let scope_pauses = scope_pauses(tx)?;
     let rows = tx.tables(Owner::Sched).query(
         select_jobs!("WHERE j.state = 'pending' ORDER BY j.seq"),
         &[],
     )?;
     for row in &rows {
         let job = job_of(row)?;
-        if hold_on(
-            &scope_holds,
+        if paused_on(
+            &scope_pauses,
             job.workspace,
             &job.requirements.target,
             job.principal,

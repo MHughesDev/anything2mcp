@@ -10,9 +10,10 @@ use a2m_core::{Failure, FailureClass, FailureCode};
 use crate::types::Reconciling;
 
 pub use crate::codes::{
-    CALLER_QUEUE_FULL, ENGINE_DEGRADED, LEASE_SUPERSEDED, NOT_FOUND, ON_HOLD, QUEUE_FULL,
-    RATE_LIMITED, RECORD_LOCKED, RESOURCE_IN_USE, RESOURCE_ORDER, RUN_RECONCILING, RUNNER_LOST,
-    RUNNER_NOT_ENROLLED, RUNNER_PROTOCOL_UNSUPPORTED, RUNNER_UNAVAILABLE, SESSION_IN_USE,
+    CALLER_QUEUE_FULL, ENGINE_DEGRADED, LEASE_SUPERSEDED, NOT_FOUND, QUEUE_FULL, RATE_LIMITED,
+    RECORD_LOCKED, RESOURCE_IN_USE, RESOURCE_ORDER, RUN_RECONCILING, RUNNER_LOST,
+    RUNNER_NOT_ENROLLED, RUNNER_PROTOCOL_UNSUPPORTED, RUNNER_UNAVAILABLE, SCHEDULER_PAUSED,
+    SESSION_IN_USE,
 };
 
 /// "in about N seconds", rounded up to a whole second and never zero.
@@ -113,11 +114,11 @@ pub(crate) fn rate_limited(retry: Duration) -> Failure {
     .with_retry_after(retry)
 }
 
-pub(crate) fn on_hold(scope: &str) -> Failure {
+pub(crate) fn scheduler_paused(scope: &str) -> Failure {
     busy(
-        ON_HOLD,
-        format!("No work is handed out for this {scope} while it is on hold."),
-        "Release the hold, then try again.",
+        SCHEDULER_PAUSED,
+        format!("No work is handed out for this {scope} while it is paused."),
+        "Release the pause, then try again.",
     )
 }
 

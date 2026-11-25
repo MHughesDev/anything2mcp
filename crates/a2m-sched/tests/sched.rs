@@ -15,9 +15,8 @@ use std::time::Duration;
 use a2m_core::{Epoch, FailureClass, FailureCode, RunState, Timestamp};
 use a2m_ledger::{Durability, Fence};
 use a2m_sched::{
-    Admitted, BudgetKey, CancelOutcome, Directive, Enqueue, HealthState, HoldScope, JobEnd,
-    JobKind, JobState, Priority, RateLimit, ResourceKey, Resumed, SchedSettings, SessionNeed,
-    codes,
+    Admitted, BudgetKey, CancelOutcome, Directive, Enqueue, HealthState, JobEnd, JobKind, JobState,
+    PauseScope, Priority, RateLimit, ResourceKey, Resumed, SchedSettings, SessionNeed, codes,
 };
 use common::*;
 
@@ -963,7 +962,7 @@ async fn what_was_queued_or_leased_is_found_again_after_a_restart() {
     assert_eq!(lease.job, leased_job);
     stand
         .sched
-        .hold(HoldScope::Caller(workspace(), principal(9)))
+        .pause(PauseScope::Caller(workspace(), principal(9)))
         .await
         .unwrap();
 
@@ -971,8 +970,8 @@ async fn what_was_queued_or_leased_is_found_again_after_a_restart() {
     // The runner is known, the hold is kept, the queued job is handed out,
     // and the lease given before the restart is still the job's.
     assert_eq!(
-        stand.sched.holds().await.unwrap(),
-        vec![HoldScope::Caller(workspace(), principal(9))]
+        stand.sched.pauses().await.unwrap(),
+        vec![PauseScope::Caller(workspace(), principal(9))]
     );
     stand.sched.heartbeat(&lease.lease_ref()).await.unwrap();
     let after = stand.claim_one(one).await;
@@ -1074,8 +1073,11 @@ async fn the_stop_everything_switch_hands_out_nothing_and_pauses_what_runs() {
     let lease = stand.claim_one(one).await;
     let (waiting_run, waiting_job) = stand.admit(read(1, "b")).await;
 
-    stand.sched.hold(HoldScope::Everything).await.unwrap();
-    refused(stand.sched.submit(read(2, "c")).await, &codes::ON_HOLD);
+    stand.sched.pause(PauseScope::Everything).await.unwrap();
+    refused(
+        stand.sched.submit(read(2, "c")).await,
+        &codes::SCHEDULER_PAUSED,
+    );
     assert!(stand.claim(one, 1).await.is_empty());
     let renewal = stand.sched.heartbeat(&lease.lease_ref()).await.unwrap();
     assert_eq!(renewal.directive, Directive::Pause);
@@ -1085,7 +1087,7 @@ async fn the_stop_everything_switch_hands_out_nothing_and_pauses_what_runs() {
             &lease.lease_ref(),
             JobEnd::Stopped {
                 class: FailureClass::Busy,
-                code: codes::ON_HOLD,
+                code: codes::SCHEDULER_PAUSED,
                 in_doubt: false,
             },
         )
@@ -1099,7 +1101,7 @@ async fn the_stop_everything_switch_hands_out_nothing_and_pauses_what_runs() {
     assert!(
         stand
             .sched
-            .release_hold(HoldScope::Everything)
+            .release_pause(PauseScope::Everything)
             .await
             .unwrap()
     );
@@ -1110,10 +1112,13 @@ async fn the_stop_everything_switch_hands_out_nothing_and_pauses_what_runs() {
     // A hold on one caller leaves the others alone.
     stand
         .sched
-        .hold(HoldScope::Caller(workspace(), principal(1)))
+        .pause(PauseScope::Caller(workspace(), principal(1)))
         .await
         .unwrap();
-    refused(stand.sched.submit(read(1, "d")).await, &codes::ON_HOLD);
+    refused(
+        stand.sched.submit(read(1, "d")).await,
+        &codes::SCHEDULER_PAUSED,
+    );
     stand.admit(read(2, "d")).await;
 }
 

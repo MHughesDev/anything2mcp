@@ -592,12 +592,12 @@ pub(crate) fn sched_health(kernel: &Kernel) -> SchedHealth {
 /// A kill switch is the policy engine's (spec section 212): it is checked
 /// first on every decision about work on a system, and its refusal is
 /// `policy`, `kill_switch_on`. The scheduler's hold is the same switch seen
-/// from the queue, so its `busy`, `on_hold` is not passed on. The question
+/// from the queue, so its `busy`, `scheduler_paused` is not passed on. The question
 /// is put to the policy engine, which records its refusal, and that refusal
 /// is the answer: a caller sees one code for a kill switch, wherever it
 /// was met.
 async fn held(kernel: &Kernel, call: &Call, work: &HeldWork<'_>, refused: Failure) -> Failure {
-    if refused.code() != &a2m_sched::codes::ON_HOLD {
+    if refused.code() != &a2m_sched::codes::SCHEDULER_PAUSED {
         return refused;
     }
     let switched = || {

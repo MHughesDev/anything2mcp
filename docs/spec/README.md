@@ -1,14 +1,14 @@
 # Anything2MCP specification
 
-What Anything2MCP does and why, one section per file, in seven parts. Each section states the design as it stands, and no section outranks another: when two disagree, one of them is out of date and is corrected. Read part 1 the first time. After that, open only the sections a task touches.
+What Anything2MCP does and why, one section per file, in seven chapters. Each section states the design as it stands, and no section outranks another: when two disagree, one of them is out of date and is corrected. Read chapter 1 the first time. After that, open only the sections a task touches.
 
 The specification describes the design, not the code. Much of it is built: the first paragraph of each section says whether what it describes is built today, and [section 704](7-project/704-readiness.md) gives the state of every section in one table, with where the detail is kept.
 
 How the code is arranged is in [the architecture](../architecture/README.md). Interfaces, once settled, are in the [technical reference](../reference/technical-reference.md). The order of work is the [roadmap](../plan/roadmap.md). Why each choice was made is in the [decision records](../decisions/README.md).
 
-A section's number has three digits, and the first is its part. Sections written before 2026-11-17 had other numbers; the [archive](../archive/README.md) has the key from the old numbers to these, and keeps the sections that were consolidated.
+A section's number has three digits, and the first is its chapter. Sections written before 2026-11-17 had other numbers; the [archive](../archive/README.md) has the key from the old numbers to these, and keeps the sections that were consolidated.
 
-## Part 1: Product
+## Chapter 1: Product
 
 What Anything2MCP is, what it promises, and what it reaches.
 
@@ -22,7 +22,7 @@ What Anything2MCP is, what it promises, and what it reaches.
 | 106 | [What it latches onto](1-product/106-what-it-latches-onto.md) |
 | 107 | [The bar: what the best means](1-product/107-the-bar.md) |
 
-## Part 2: Kernel
+## Chapter 2: Kernel
 
 What is the same whatever kind of system is integrated.
 
@@ -55,7 +55,7 @@ What is the same whatever kind of system is integrated.
 | 225 | [Performance](2-kernel/225-performance.md) |
 | 226 | [Configuration](2-kernel/226-configuration.md) |
 
-## Part 3: Packs
+## Chapter 3: Packs
 
 Knowledge of one kind of system each.
 
@@ -72,7 +72,7 @@ Knowledge of one kind of system each.
 | 309 | [The stream pack](3-packs/309-the-stream-pack.md) |
 | 310 | [The device pack](3-packs/310-the-device-pack.md) |
 
-## Part 4: Building tools
+## Chapter 4: Building tools
 
 How an existing system comes to have verified tools laid over it.
 
@@ -83,7 +83,7 @@ How an existing system comes to have verified tools laid over it.
 | 403 | [Testing and publish gates](4-building-tools/403-testing-and-publish-gates.md) |
 | 404 | [Setup and ease of use](4-building-tools/404-setup-and-ease-of-use.md) |
 
-## Part 5: Security
+## Chapter 5: Security
 
 What is defended, against whom, and how.
 
@@ -93,7 +93,7 @@ What is defended, against whom, and how.
 | 502 | [Defending against a manipulated agent](5-security/502-defending-against-a-manipulated-agent.md) |
 | 503 | [Approval and sign-in surfaces](5-security/503-approval-and-sign-in-surfaces.md) |
 
-## Part 6: Running it
+## Chapter 6: Running it
 
 Deployment, networks, operation, and release.
 
@@ -105,7 +105,7 @@ Deployment, networks, operation, and release.
 | 604 | [Management and operations](6-running-it/604-management-and-operations.md) |
 | 605 | [Packaging and release](6-running-it/605-packaging-and-release.md) |
 
-## Part 7: Project
+## Chapter 7: Project
 
 Where the design stands and what it rests on.
 
