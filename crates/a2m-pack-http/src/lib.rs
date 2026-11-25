@@ -48,7 +48,7 @@ mod xml;
 
 use std::sync::Arc;
 
-use a2m_core::{Failure, Mode};
+use a2m_core::{Failure, FindingKind, Mode};
 use a2m_files::{JsonSchema, SurfaceKindSpec};
 /// The closed shape of a body, which this pack reads in its endpoint
 /// entries and checks against answers, is the provider contract's, shared
@@ -163,6 +163,14 @@ impl Pack for HttpPack {
                 clock,
             )?),
             Arc::new(discover::HttpDescriber),
+        )?;
+        to.key_rule(
+            FindingKind::new("endpoint")?,
+            Arc::new(discover::EndpointKey),
+        )?;
+        to.key_rule(
+            openapi::described_operation()?,
+            Arc::new(discover::EndpointKey),
         )?;
         Ok(())
     }
