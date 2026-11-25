@@ -292,6 +292,10 @@ struct Session {
     /// since. Empty until such a `goto`, and after a `goto` in the acting
     /// tab.
     since_goto: Vec<(Step, Values)>,
+    /// Whether the last step in the observing tab lost its page or its
+    /// browser: the browser is asked for a word before the next step there
+    /// uses it, since a browser can be dead before the tab sees it.
+    unsure: bool,
 }
 
 /// What opens the observing tab again, in a new browser started from the
@@ -436,6 +440,12 @@ fn sent(error: &BrowserError, failure: Failure) -> StepFailure {
         Dispatch::NotSent => StepFailure::not_sent(failure),
         Dispatch::Sent | Dispatch::Unknown => StepFailure::unknown(failure),
     }
+}
+
+/// Whether a step's failure says it lost its page or its browser: the
+/// browser it ran in may be dead before its tab has seen it.
+pub(crate) fn lost_page(failed: &StepFailure) -> bool {
+    *failed.failure.code() == a2m_provider::codes::CONNECTION_LOST
 }
 
 /// The failure of a step for an error of the base, where the step has no
@@ -756,7 +766,10 @@ impl Session {
     }
 
     /// When the browser of the observing tab is lost and `step` runs in
-    /// that tab: places the session's state into a new browser started from
+    /// that tab: lost by what the tab has seen, or, after a step there that
+    /// lost its page or its browser, by giving no answer when it is asked
+    /// for one, since a browser can be dead before the tab sees it. Then it
+    /// places the session's state into a new browser started from
     /// the same profile, opens the observing tab there, and, for a step that
     /// is not a `goto`, brings its page back where it was by the `goto` and
     /// the `wait` steps that brought it there, done again (decision 0424).
@@ -767,9 +780,15 @@ impl Session {
     /// never helped: that tab was in the lost browser too, and a write is
     /// never sent again.
     async fn recover(&mut self, step: &Step, input: &StepInput<'_>) -> Result<(), StepFailure> {
-        if !self.looking.browser_lost() || !self.in_observing_tab(step)? {
+        let mut lost = self.looking.browser_lost();
+        if !lost && self.unsure && self.in_observing_tab(step)? {
+            self.unsure = false;
+            lost = !self.looking.browser_answers(input.deadline).await;
+        }
+        if !lost || !self.in_observing_tab(step)? {
             return Ok(());
         }
+        self.unsure = false;
         self.looking = self
             .reopen
             .observing_tab(&self.asserted.safe_requests(&self.origin), input.deadline)
@@ -2581,6 +2600,7 @@ impl UiDriver {
             }),
             reopen: Reopen::new(self.browsers.clone(), setup),
             since_goto: Vec::new(),
+            unsure: false,
             gotos,
             origin,
             sections,
@@ -2623,7 +2643,10 @@ impl Driver for UiDriver {
             }
             // A read goes on in a new browser of the same profile when the
             // observing tab's browser was lost (decision 0424).
-            session.recover(step, input).await?;
+            if let Err(failed) = session.recover(step, input).await {
+                session.unsure |= lost_page(&failed);
+                return Err(failed);
+            }
             let done = if step.kind == GOTO {
                 session.goto(step, input).await
             } else if step.kind == WAIT {
@@ -2642,6 +2665,11 @@ impl Driver for UiDriver {
                     step.kind
                 )));
             };
+            if matches!(&done, Err(failed) if lost_page(failed))
+                && session.in_observing_tab(step).unwrap_or(false)
+            {
+                session.unsure = true;
+            }
             // And what it refused during this step undoes the step's
             // outcome: what was read may be of a page on its way out, and
             // a save it followed is in doubt.

@@ -616,6 +616,14 @@ async fn a_browser_lost_under_a_read_is_started_again_from_its_profile_and_the_r
 /// a group of its own.
 #[cfg(target_os = "linux")]
 fn renderers_of(browser: u32) -> Vec<u32> {
+    processes_of(browser, b"--type=renderer")
+}
+
+/// The processes of the browser whose process is `browser` that were
+/// started with `argument`, each in the browser's process group.
+#[cfg(target_os = "linux")]
+fn processes_of(browser: u32, argument: &[u8]) -> Vec<u32> {
+    let wanted = argument;
     let group_of = |process: u32| -> Option<u32> {
         let stat = std::fs::read_to_string(format!("/proc/{process}/stat")).ok()?;
         // The name, in brackets, may hold spaces; after it come the state,
@@ -633,7 +641,7 @@ fn renderers_of(browser: u32) -> Vec<u32> {
                     // The browser rewrites the arguments of its processes
                     // as one line, split by spaces.
                     line.split(|&byte| byte == 0 || byte == b' ')
-                        .any(|argument| argument == b"--type=renderer")
+                        .any(|argument| argument == wanted)
                 })
         })
         .collect()
@@ -845,6 +853,228 @@ async fn a_browser_lost_under_a_page_request_read_is_started_again_from_its_prof
     assert!(world.person.asked.lock().unwrap().is_empty());
 
     // And no browser process is left.
+    assert!(handle.release(prepared, false).await.complete);
+    world.app.clear_faults().await.unwrap();
+    world.end().await;
+    assert!(supervisor.list().is_empty());
+}
+
+/// The order Windows can give a killed browser, forced on Linux for the
+/// page request read: the observing tab sees its page lost under the
+/// read's `goto` while the engine's link to its browser is still open, and
+/// the browser then answers nothing. The engine's retry of the `goto` must
+/// not run in that browser, and the read's `request` is made from inside
+/// the orders page in a new browser of the same profile, signed in as
+/// before.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_request_read_whose_tab_sees_its_page_lost_before_the_link_ends_is_done_in_a_new_browser()
+ {
+    let world = World::new("signin-lost-request-first", true).await;
+    assert_eq!(world.sign_in().await.unwrap(), SessionState::Valid);
+    let lease = world.lease().await.unwrap();
+    let scene = &world.scene;
+    let mode = page_http_mode();
+    let supervisor = scene.stand.supervisor.clone();
+    let browsers = scene.stand.browsers.get().unwrap();
+    let (handle, mut prepared) = scene
+        .try_prepare_leased(&mode, None, Posture::Live, Some(&lease))
+        .await
+        .unwrap();
+    let steps = scene
+        .binding_in("example_order_totals_get", &mode)
+        .act
+        .clone();
+    world
+        .app
+        .set_fault(&Fault::once(FaultKind::Delay { ms: 600_000 }).on_paths("/secure/orders"))
+        .await
+        .unwrap();
+    let kill = async {
+        while !world.app.faults().await.unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let running = supervisor.list();
+        assert_eq!(running.len(), 1);
+        let renderers = renderers_of(running[0].process);
+        assert!(!renderers.is_empty());
+        for renderer in renderers {
+            common::kill(renderer);
+        }
+        running[0].process
+    };
+    let (lost, first) = tokio::join!(
+        one_request_step(scene, &handle, &mut prepared, &steps[0]),
+        async {
+            tokio::time::timeout(Duration::from_secs(60), kill)
+                .await
+                .unwrap()
+        }
+    );
+    let lost = lost.unwrap_err();
+    assert_eq!(
+        (lost.failure.class(), lost.failure.code().as_str()),
+        (FailureClass::Transient, "connection_lost")
+    );
+    // The order is the one asked for: the link is open when the step that
+    // saw the loss has ended.
+    assert!(
+        browsers
+            .list()
+            .iter()
+            .all(|open| open.health != a2m_pack_web_browser::BrowserHealth::Exited)
+    );
+    let stopped = std::process::Command::new("kill")
+        .args(["-STOP", &first.to_string()])
+        .status()
+        .unwrap();
+    assert!(stopped.success());
+
+    // The engine's retry is done in a new browser of the same profile, and
+    // the request is made from inside the orders page there.
+    one_request_step(scene, &handle, &mut prepared, &steps[0])
+        .await
+        .unwrap();
+    let running = supervisor.list();
+    assert_eq!(running.len(), 1);
+    assert_ne!(running[0].process, first);
+    let read = one_request_step(scene, &handle, &mut prepared, &steps[1])
+        .await
+        .unwrap();
+    let StepOutcome::Done(observed) = read else {
+        panic!("the read found its record absent");
+    };
+    // The value the stand stored, asked of the stand.
+    let stored = world.app.stored_order("A-100").await.unwrap().unwrap();
+    let quantity: u32 = stored.items.values().map(|item| item.quantity).sum();
+    assert_eq!(
+        observed.values.get("total_quantity"),
+        Some(&Value::Int(i64::from(quantity)))
+    );
+    world.keeper.idle().await;
+    let report = world.app.auth_report().await.unwrap();
+    assert_eq!((report.sign_in_attempts, report.sign_ins), (1, 1));
+
+    assert!(handle.release(prepared, false).await.complete);
+    world.app.clear_faults().await.unwrap();
+    world.end().await;
+    assert!(supervisor.list().is_empty());
+}
+
+/// The order Windows can give a killed browser, forced on Linux for the
+/// page request read: the page is lost under the read's `goto` for a
+/// reason the tab cannot tell from a browser that is going, here its
+/// network service ended, and the browser's process then ends while the
+/// engine's end of its pipe stays open, as it can on Windows, so that the
+/// tab has heard nothing of the loss. The engine's retry of the `goto`
+/// must not run in that browser, which would find its pipe broken and fail
+/// as not sent: the browser is asked for a word, gives none, and the read
+/// is done in a new browser of the same profile, signed in as before.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_page_request_read_whose_browser_dies_unseen_after_its_page_was_lost_is_done_in_a_new_browser()
+ {
+    let world = World::new("signin-lost-request-unseen", true).await;
+    assert_eq!(world.sign_in().await.unwrap(), SessionState::Valid);
+    let lease = world.lease().await.unwrap();
+    let scene = &world.scene;
+    let mode = page_http_mode();
+    let supervisor = scene.stand.supervisor.clone();
+    let browsers = scene.stand.browsers.get().unwrap();
+    let (handle, mut prepared) = scene
+        .try_prepare_leased(&mode, None, Posture::Live, Some(&lease))
+        .await
+        .unwrap();
+    let steps = scene
+        .binding_in("example_order_totals_get", &mode)
+        .act
+        .clone();
+    world
+        .app
+        .set_fault(&Fault::once(FaultKind::Delay { ms: 600_000 }).on_paths("/secure/orders"))
+        .await
+        .unwrap();
+    let kill = async {
+        while !world.app.faults().await.unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let running = supervisor.list();
+        assert_eq!(running.len(), 1);
+        let network = processes_of(
+            running[0].process,
+            b"--utility-sub-type=network.mojom.NetworkService",
+        );
+        assert_eq!(network.len(), 1);
+        common::kill(network[0]);
+        running[0].process
+    };
+    let (lost, first) = tokio::join!(
+        one_request_step(scene, &handle, &mut prepared, &steps[0]),
+        async {
+            tokio::time::timeout(Duration::from_secs(60), kill)
+                .await
+                .unwrap()
+        }
+    );
+    let lost = lost.unwrap_err();
+    assert_eq!(
+        (lost.failure.class(), lost.failure.code().as_str()),
+        (FailureClass::Transient, "connection_lost")
+    );
+    // The browser's end of the pipe it answers on is held open here, so
+    // that the engine hears no end of it, and the browser's process is
+    // ended: what it reads from is gone with it.
+    let held = std::fs::OpenOptions::new()
+        .write(true)
+        .open(format!("/proc/{first}/fd/4"))
+        .unwrap();
+    common::kill(first);
+    let ended = async {
+        while std::fs::read_to_string(format!("/proc/{first}/stat")).is_ok_and(|stat| {
+            !stat[stat.rfind(')').unwrap() + 1..]
+                .trim_start()
+                .starts_with(['Z', 'X'])
+        }) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(60), ended)
+        .await
+        .unwrap();
+    // The tab has heard nothing of it: the link is open.
+    assert!(
+        browsers
+            .list()
+            .iter()
+            .all(|open| open.health != a2m_pack_web_browser::BrowserHealth::Exited)
+    );
+
+    // The engine's retry is done in a new browser of the same profile, and
+    // the request is made from inside the orders page there.
+    one_request_step(scene, &handle, &mut prepared, &steps[0])
+        .await
+        .unwrap();
+    drop(held);
+    let running = supervisor.list();
+    assert_eq!(running.len(), 1);
+    assert_ne!(running[0].process, first);
+    let read = one_request_step(scene, &handle, &mut prepared, &steps[1])
+        .await
+        .unwrap();
+    let StepOutcome::Done(observed) = read else {
+        panic!("the read found its record absent");
+    };
+    // The value the stand stored, asked of the stand.
+    let stored = world.app.stored_order("A-100").await.unwrap().unwrap();
+    let quantity: u32 = stored.items.values().map(|item| item.quantity).sum();
+    assert_eq!(
+        observed.values.get("total_quantity"),
+        Some(&Value::Int(i64::from(quantity)))
+    );
+    world.keeper.idle().await;
+    let report = world.app.auth_report().await.unwrap();
+    assert_eq!((report.sign_in_attempts, report.sign_ins), (1, 1));
+
     assert!(handle.release(prepared, false).await.complete);
     world.app.clear_faults().await.unwrap();
     world.end().await;
