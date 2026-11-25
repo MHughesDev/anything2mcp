@@ -2616,10 +2616,12 @@ impl<'a> Compiler<'a> {
             return None;
         }
         // A binding that states no status is `draft`, and neither a draft
-        // nor a retired binding acts in a published version: a version in
-        // which no binding of an operation may act publishes a tool no
-        // call of can ever run (field test 7, finding 47). A draft is
-        // warned, as a test rule is; a publish is refused.
+        // nor a retired binding acts in a published version: an operation
+        // with no other publishes a tool no call of can ever run (field
+        // test 7, finding 47). It is a warning in every compile, so `lint`
+        // says it and the person publishing sees it; it is not an error,
+        // because the offline tests that earn a draft binding its promotion
+        // are run on a publish compile (decision 0998).
         if !bindings.iter().any(|binding| {
             !matches!(
                 binding.status,
@@ -2630,20 +2632,19 @@ impl<'a> Compiler<'a> {
                 .get("bindings")
                 .map_or(&doc.at, |bindings| &bindings.at)
                 .clone();
-            let problem = Diagnostic::error(
-                kernel(codes::NO_BINDING_MAY_ACT),
-                Stage::Lint,
-                &at,
-                format!(
-                    "No binding of `{}` may act once it is published: a binding with no `status` is `draft`, and a `draft` or `retired` binding never acts.",
-                    info.name
-                ),
-                "Promote the binding with `anything2mcp binding promote` once its offline test passes, or write `status: verified` on a binding you have proven.",
+            self.problems.push(
+                Diagnostic::error(
+                    kernel(codes::NO_BINDING_MAY_ACT),
+                    Stage::Lint,
+                    &at,
+                    format!(
+                        "No binding of `{}` may act once it is published: a binding with no `status` is `draft`, and a `draft` or `retired` binding never acts, so a call of the tool fails.",
+                        info.name
+                    ),
+                    "Promote the binding with `anything2mcp binding promote` once its offline test passes, or write `status: verified` on a binding you have proven.",
+                )
+                .as_warning(),
             );
-            self.problems.push(match self.mode {
-                CompileMode::Publish => problem,
-                CompileMode::Draft => problem.as_warning(),
-            });
         }
         // The order of the bindings is the file's where the operation says
         // `binding_order: listed`; otherwise each mode's rank in its

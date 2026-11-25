@@ -915,10 +915,12 @@ fn test_rules_are_warnings_for_a_draft_and_errors_for_a_publish() {
 }
 
 /// Field test 7, finding 47: an operation whose bindings state no status
-/// is all `draft`, and a published version in which no binding of an
-/// operation may act is refused; a draft is warned.
+/// is all `draft`, and an operation of which no binding may act once
+/// published is warned of in every compile: by `lint`, and on the compile
+/// a publish and its offline tests run on, which must still run a draft
+/// binding to earn its promotion (decision 0998).
 #[test]
-fn an_operation_with_no_binding_that_may_act_is_warned_in_a_draft_and_refused_at_publish() {
+fn an_operation_with_no_binding_that_may_act_is_warned_of_in_a_draft_and_at_publish() {
     let set = stand_set().unwrap();
     for (find, replace) in [
         ("    status: verified\n", ""),
@@ -926,21 +928,21 @@ fn an_operation_with_no_binding_that_may_act_is_warned_in_a_draft_and_refused_at
         ("    status: verified\n", "    status: retired\n"),
     ] {
         let files = changed(&Case::Edit(ORDER_GET, find, replace));
-        let draft = problems_with(&files, &set, CompileMode::Draft);
-        assert!(!draft.has_errors(), "{draft}");
-        let warned = draft
-            .find("kernel.no_binding_may_act")
-            .unwrap_or_else(|| panic!("not warned:\n{draft}"));
-        assert_eq!(warned.level, Level::Warning);
-        assert_eq!(warned.at.file.as_str(), ORDER_GET);
-        let publish = problems_with(&files, &set, CompileMode::Publish);
-        let refused = publish
-            .find("kernel.no_binding_may_act")
-            .unwrap_or_else(|| panic!("not refused:\n{publish}"));
-        assert_eq!(refused.level, Level::Error);
-        assert!(refused.message.contains("example_order_get"), "{refused:?}");
+        for mode in [CompileMode::Draft, CompileMode::Publish] {
+            let problems = problems_with(&files, &set, mode);
+            let warned = problems
+                .find("kernel.no_binding_may_act")
+                .unwrap_or_else(|| panic!("not warned:\n{problems}"));
+            assert_eq!(warned.level, Level::Warning);
+            assert_eq!(warned.at.file.as_str(), ORDER_GET);
+            assert!(warned.message.contains("example_order_get"), "{warned:?}");
+            if replace != "    status: retired\n" {
+                // A draft is tested to be promoted: its compile stands.
+                assert!(!problems.has_errors(), "{problems}");
+            }
+        }
     }
-    // A shadow binding beside nothing verified is not refused here: the
+    // A shadow binding beside nothing verified is not warned of here: the
     // example keeps one, and the engine fails its call for good.
     let clean = problems_with(&example_files(), &set, CompileMode::Publish);
     assert!(clean.find("kernel.no_binding_may_act").is_none(), "{clean}");
