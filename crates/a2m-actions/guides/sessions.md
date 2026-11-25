@@ -13,7 +13,7 @@ A session is the signed-in state of one identity on one target in one environmen
 
 ## Signing in, step by step
 
-1. Declare the sign-in in `auth.yaml` with `draft.write`: the surface, the provider, a probe (a drafted read, with `probe_inputs` if it takes any), and a vault reference for each credential, such as `token: "vault://example/service/token"`. No value goes in the file. A probe must be an operation that compiles, so a first scout comes before it.
+1. Declare the sign-in in `auth.yaml` with `draft.write`: the surface, the provider, a session check (a drafted read, with `probe_inputs` if it takes any), and a vault reference for each credential, such as `token: "vault://example/service/token"`. No value goes in the file. A session check must be an operation that compiles, so a first scout comes before it.
 2. Call `session.login` with the target. If every credential is stored and the provider needs no person, the keeper signs in at once. Otherwise you get `state: needs_person` and a `link`: give the link to your person. On that page they read what will be done, type each credential that is not stored, press Carry out, and answer this machine's own prompt. If the system then asks for a one-time code, the page asks them for it.
 3. Call `session.login` again. It says `signed_in`, for whom, the environment, until when, and the `level`: `confirmed` when the system accepted the credential, `held` when the provider only holds it and the first use tests it.
 4. Call `scout.run` again. A scout that stopped with `state: needs_sign_in` goes on under the session. A run that rests at `needs_login` is resumed with `run.resume`.
@@ -35,7 +35,7 @@ A map with one key, `auth`: a list, one entry per group of surfaces that share a
 | `surfaces` | The surfaces this entry covers |
 | `mode` | `use_existing`, `managed_session`, or `custom` |
 | `provider` | An auth provider, such as `form_login` |
-| `probe` | A cheap signed-in read: an operation of the target. Name `probe_inputs` for it |
+| `probe` | The session check, a cheap signed-in read: an operation of the target. Name `probe_inputs` for it |
 | `expiry_signals` | Signs that the session ended: `redirect_host`, `status` with `path`, or `visible`; on a web surface, `screen`, a screen whose `ready` shows |
 | `timeouts` | `idle_ms` and `absolute_ms`, when known |
 | `settings` | The provider's own names and plain values. Never a credential |
@@ -65,7 +65,7 @@ auth:
 
 For `form_login`, every setting names a part of a screen model in `screens/`: the sign-in screen, its two fields, the action that submits, and the variant that shows a refused credential. No locator goes in `auth.yaml`. Every credential reference starts with `vault://` and the target's own name.
 
-`auth.detect` says how each surface signs in, as claims for a person to confirm: whether the surface's kind keeps a session, which mode and provider `auth.yaml` declares for it, and whether its probe was answered or met a sign-in it needs. It recommends no mode or provider the files do not declare; those are named as unknown. A person confirms it by signing in.
+`auth.detect` says how each surface signs in, as claims for a person to confirm: whether the surface's kind keeps a session, which mode and provider `auth.yaml` declares for it, and whether its session check was answered or met a sign-in it needs. It recommends no mode or provider the files do not declare; those are named as unknown. A person confirms it by signing in.
 
 ## Rules
 

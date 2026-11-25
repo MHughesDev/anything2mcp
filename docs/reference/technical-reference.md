@@ -308,7 +308,7 @@ The design of [`a2m-auth`](../architecture/crates/a2m-auth.md) gives the interfa
 
 - **`Keeper`** answers a **`LeaseRequest`** with a **`SessionLease`**, takes a driver's report of an **`ExpirySign`**, signs in, gives a session's status, and revokes. Nothing else calls an **`AuthProvider`**.
 - **`ProviderSet`** holds the providers handed to the keeper, by name.
-- **`KeeperWork`** is how a probe, a renewal, or a sign-in runs on a session's home runner. **`InProcessWork`** is the same for one process.
+- **`KeeperWork`** is how a session check, a renewal, or a sign-in runs on a session's home runner. **`InProcessWork`** is the same for one process.
 - **`CredentialSink`** is what `inject` places credentials into. No method of it returns a value.
 
 ## Source reader interface

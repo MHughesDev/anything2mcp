@@ -23,9 +23,9 @@ use std::time::Duration;
 
 use a2m_auth::{
     AskPerson, AuthEntry, CredentialRef, EntrySurfaces, ExpirySign, InProcessWork, Keeper,
-    KeeperWorker, LeaseRequest, PersonAnswer, PersonAsk, ProbeOutcome, ProviderSet, Purpose,
-    Returned, RunProbe, SessionKey, SessionLease, SessionRef, SessionStore, StoredCredentials,
-    Wait, WeakKeeper,
+    KeeperWorker, LeaseRequest, PersonAnswer, PersonAsk, ProviderSet, Purpose, Returned,
+    RunSessionCheck, SessionCheckOutcome, SessionKey, SessionLease, SessionRef, SessionStore,
+    StoredCredentials, Wait, WeakKeeper,
 };
 use a2m_core::{
     CompiledTarget, DecisionId, Environment, Failure, FailureClass, Identity, PrincipalId, Redact,
@@ -103,29 +103,29 @@ struct Probe {
     world: OnceLock<(Weak<Scene>, WeakKeeper, Arc<AuthEntry>)>,
 }
 
-impl RunProbe for Probe {
-    fn probe<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
+impl RunSessionCheck for Probe {
+    fn check_session<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, SessionCheckOutcome> {
         Box::pin(async move {
             let Some((scene, keeper, entry)) = self.world.get() else {
-                return ProbeOutcome::Unknown;
+                return SessionCheckOutcome::Unknown;
             };
             let Some(scene) = scene.upgrade() else {
-                return ProbeOutcome::Unknown;
+                return SessionCheckOutcome::Unknown;
             };
             let Some(keeper) = keeper.upgrade() else {
-                return ProbeOutcome::Unknown;
+                return SessionCheckOutcome::Unknown;
             };
             let mut asked = request(entry, Wait::NoWait);
             asked.purpose = Purpose::Probe;
             let Ok(lease) = keeper.lease(asked).await else {
-                return ProbeOutcome::Unknown;
+                return SessionCheckOutcome::Unknown;
             };
             match read(&scene, &lease).await {
-                Ok(_) => ProbeOutcome::SignedIn,
+                Ok(_) => SessionCheckOutcome::SignedIn,
                 Err(failure) if failure.failure.class() == FailureClass::SessionExpired => {
-                    ProbeOutcome::SignedOut
+                    SessionCheckOutcome::SignedOut
                 }
-                Err(_) => ProbeOutcome::Unknown,
+                Err(_) => SessionCheckOutcome::Unknown,
             }
         })
     }

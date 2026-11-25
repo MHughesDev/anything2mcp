@@ -374,9 +374,9 @@ impl ControlPort for InProcessControl {
             // The session is checked with the probe of the published
             // version a run last leased it under.
             if published && self.purpose == Purpose::Run {
-                self.kernel.note_probe(
+                self.kernel.note_session_check(
                     lease.session(),
-                    crate::keeper::ProbeSource {
+                    crate::keeper::SessionCheckSource {
                         target: self.run.target.clone(),
                         compiled_target: self.run.target_version,
                         probe: auth.probe.clone(),

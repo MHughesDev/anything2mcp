@@ -851,8 +851,9 @@ pub(crate) mod review_shown {
 
     use a2m_core::AddressScope;
     use a2m_files::{
-        AssertedReview, BindingStates, Change, ProbeReview, ProgramRun, Reach, ReachGroup,
-        ReviewItem, ReviewSummary, SentTo, SignInReview, ToolChange, VariableValue, VersionChanges,
+        AssertedReview, BindingStates, Change, ProgramRun, Reach, ReachGroup, ReviewItem,
+        ReviewSummary, SentTo, SessionCheckReview, SignInReview, ToolChange, VariableValue,
+        VersionChanges,
     };
 
     use super::escape;
@@ -911,7 +912,7 @@ pub(crate) mod review_shown {
 
     fn sign_in_html(sign_in: &SignInReview) -> String {
         let mut out = String::from("<li>");
-        if let ProbeReview::Pending { name, says } = &sign_in.probe {
+        if let SessionCheckReview::Pending { name, says } = &sign_in.probe {
             let _ = write!(
                 out,
                 "<p><strong>Not confirmed: {}</strong> (the read {})</p>",
@@ -946,7 +947,7 @@ pub(crate) mod review_shown {
                 credentials.join("; ")
             );
         }
-        if let ProbeReview::Declared { name } = &sign_in.probe {
+        if let SessionCheckReview::Declared { name } = &sign_in.probe {
             let _ = write!(out, " The read {} checks the session.", code(name));
         }
         out.push_str("</p><ul>");

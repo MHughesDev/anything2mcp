@@ -524,7 +524,7 @@ pub struct AddressOverride {
 /// sign-in holds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CompiledProbe {
+pub enum CompiledSessionCheck {
     /// A read operation of the target, run through the engine as any read
     /// is, with these inputs.
     Operation {
@@ -585,7 +585,7 @@ pub struct CompiledAuth {
     /// The auth provider that signs in.
     pub provider: AuthProviderName,
     /// The read that shows the sign-in still holds.
-    pub probe: CompiledProbe,
+    pub probe: CompiledSessionCheck,
     /// The signs that the session has ended, in declared order, each in the
     /// form the surface's pack defines. Opaque here.
     pub expiry_signals: Vec<PackPayload>,
@@ -1375,14 +1375,16 @@ impl CompiledTarget {
                 signed_in.push(*index);
             }
             match &entry.probe {
-                CompiledProbe::Operation { operation, .. } => {
+                CompiledSessionCheck::Operation { operation, .. } => {
                     within("operation", operation.get(), self.operations.len())?;
                 }
-                CompiledProbe::Entry(reference) => {
+                CompiledSessionCheck::Entry(reference) => {
                     within("pack section", reference.section.get(), self.packs.len())?;
                 }
                 // The draft version is `0.0.0` (`a2m-files`' `DRAFT_VERSION`).
-                CompiledProbe::Pending { .. } if self.header.version != Version::new(0, 0, 0) => {
+                CompiledSessionCheck::Pending { .. }
+                    if self.header.version != Version::new(0, 0, 0) =>
+                {
                     return Err(refused(
                         FailureCode::COMPILED_TARGET_UNREADABLE,
                         format!(
@@ -1391,7 +1393,7 @@ impl CompiledTarget {
                         ),
                     ));
                 }
-                CompiledProbe::Pending { .. } => {}
+                CompiledSessionCheck::Pending { .. } => {}
             }
         }
         for environment in &self.environments {
@@ -1870,7 +1872,7 @@ mod tests {
                 surfaces: vec![SurfaceIndex::new(0)],
                 mode: SignInKind::Custom,
                 provider: AuthProviderName::new("api_key").unwrap(),
-                probe: CompiledProbe::Operation {
+                probe: CompiledSessionCheck::Operation {
                     operation: OperationIndex::new(0),
                     inputs: Values::new().with("order_id", "SO-1001"),
                 },
@@ -2238,13 +2240,13 @@ mod tests {
                 compiled_target.auth.push(compiled_target.auth[0].clone());
             }),
             ("operation", |compiled_target| {
-                compiled_target.auth[0].probe = CompiledProbe::Operation {
+                compiled_target.auth[0].probe = CompiledSessionCheck::Operation {
                     operation: OperationIndex::new(1),
                     inputs: Values::new(),
                 };
             }),
             ("pack section", |compiled_target| {
-                compiled_target.auth[0].probe = CompiledProbe::Entry(PackRef {
+                compiled_target.auth[0].probe = CompiledSessionCheck::Entry(PackRef {
                     section: SectionIndex::new(1),
                     entry: "order".to_owned(),
                 });
@@ -2305,7 +2307,7 @@ mod tests {
     #[test]
     fn a_probe_not_yet_drafted_stands_only_in_a_draft() {
         let mut compiled_target = sample();
-        compiled_target.auth[0].probe = CompiledProbe::Pending {
+        compiled_target.auth[0].probe = CompiledSessionCheck::Pending {
             name: "order_get".to_owned(),
         };
         let failure = compiled_target.encode().unwrap_err();

@@ -15,10 +15,10 @@ use crate::{
     compile, lint_one, load, load_files,
 };
 use a2m_core::{
-    ApproveWrites, CaptureLevel, CompiledProbe, CompiledTarget, DecimalMark, DeclaredProgram,
-    Digest, DriftRisk, EffectClass, FailsAs, FailureClass, FailureCode, FieldFormat, FileKindName,
-    Mode, PackPayload, RecordKey, RecordMatching, SignInKind, Stands, Step, StepArg, StepKind,
-    SurfaceIndex, SurfaceKind, SurfaceName, Value, Verb, Version,
+    ApproveWrites, CaptureLevel, CompiledSessionCheck, CompiledTarget, DecimalMark,
+    DeclaredProgram, Digest, DriftRisk, EffectClass, FailsAs, FailureClass, FailureCode,
+    FieldFormat, FileKindName, Mode, PackPayload, RecordKey, RecordMatching, SignInKind, Stands,
+    Step, StepArg, StepKind, SurfaceIndex, SurfaceKind, SurfaceName, Value, Verb, Version,
 };
 
 const VERSION: Version = Version::new(1, 0, 0);
@@ -369,7 +369,7 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
-            "kernel.probe_invalid",
+            "kernel.session_check_invalid",
             Case::Edit(
                 "auth.yaml",
                 "probe: example_order_get",
@@ -377,7 +377,7 @@ fn cases() -> Vec<(&'static str, Case)> {
             ),
         ),
         (
-            "kernel.probe_pending",
+            "kernel.session_check_pending",
             Case::Elsewhere(
                 "a_sign_in_may_name_its_probe_before_the_read_is_drafted_in_a_draft_only",
             ),
@@ -601,7 +601,7 @@ fn the_example_target_compiles_clean_and_holds_every_kernel_file_kind() {
         auth.credentials[0].reference.as_str(),
         "vault://example/service/password"
     );
-    let CompiledProbe::Operation { operation, inputs } = &auth.probe else {
+    let CompiledSessionCheck::Operation { operation, inputs } = &auth.probe else {
         panic!("the probe is an operation");
     };
     assert_eq!(
@@ -1642,14 +1642,14 @@ fn the_compiled_target_carries_what_the_run_time_needs_from_every_target_file() 
 }
 
 #[test]
-fn a_probe_is_a_read_operation_with_its_inputs_or_an_entry_of_a_pack() {
+fn a_session_check_is_a_read_operation_with_its_inputs_or_an_entry_of_a_pack() {
     // A call the stand pack defines on the entry's surface.
     let compiled = compiled_target_with(&[Case::Edit(
         "auth.yaml",
         "    probe: example_order_get\n    probe_inputs: {order_id: \"SO-1001\"}\n",
         "    probe: line_item_get\n",
     )]);
-    let CompiledProbe::Entry(reference) = &compiled.compiled_target.auth[0].probe else {
+    let CompiledSessionCheck::Entry(reference) = &compiled.compiled_target.auth[0].probe else {
         panic!("the probe is a pack's entry");
     };
     assert_eq!(reference.entry, "line_item_get");
@@ -1674,7 +1674,7 @@ fn a_probe_is_a_read_operation_with_its_inputs_or_an_entry_of_a_pack() {
     refused(
         "    probe_inputs: {order_id: \"SO-1001\"}\n",
         "",
-        "kernel.probe_invalid",
+        "kernel.session_check_invalid",
         "order_id",
     );
     refused(
@@ -1699,7 +1699,7 @@ fn a_probe_is_a_read_operation_with_its_inputs_or_an_entry_of_a_pack() {
     refused(
         "surfaces: [desk]",
         "surfaces: [desk, desk]",
-        "kernel.probe_invalid",
+        "kernel.session_check_invalid",
         "twice",
     );
 }

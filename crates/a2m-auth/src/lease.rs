@@ -40,7 +40,7 @@ impl Wait {
 pub enum Purpose {
     /// A run.
     Run,
-    /// The keeper's own probe, run as a read. It is granted while the
+    /// The keeper's own session check, run as a read. It is granted while the
     /// session is `valid`, `suspect`, or `renewing`.
     Probe,
 }

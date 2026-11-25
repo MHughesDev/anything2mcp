@@ -131,7 +131,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Proper name | The one name of a part: a noun or a short noun phrase from this glossary, from the code, or coined. A description is not a name ([decision 0301](../decisions/0301-every-part-has-a-proper-name.md)) |
 | Protected setting | A setting that only a person can loosen, through a channel an agent cannot reach: on one machine a user-presence prompt; on a server the operator's file or the console after sign-in |
 | Provider | Anything that supplies capabilities to the runtime: a pack, a plug-in, or an upstream MCP server |
-| Probe | For a session: a cheap signed-in read. For a target: the first inspection of a system's surfaces |
+| Probe | The first inspection of a target's surfaces (`target.probe`). The old name of the session check when it named a session's read ([decision 0330](../decisions/0330-every-name-says-what-the-part-is-in-plain-words.md)); `auth.yaml` keeps the key `probe`, and the setting `sessions.probe_minutes` its name |
 | Process mark | A value the supervisor places in a child process's environment so that it can prove the process is its own before stopping it |
 | Profile | A deployment shape, such as Solo or Company server. Also a browser's data directory; context makes clear which |
 | Project | A folder with a `anything2mcp.toml` holding target files |
@@ -156,6 +156,7 @@ One meaning per word. Code, files, messages, and documents use these terms and n
 | Scout | The fixed pipeline that identifies a target, runs its discoverers, drafts what follows by rule, tries the drafted reads, and reports. It runs no model and never tries a write |
 | Screen model | A named page or window: how to reach it, its fields, and how to know it is ready |
 | Session | The signed-in state of one identity on one target in one environment |
+| Session check | The cheap signed-in read that shows a session is alive, declared under the key `probe` of an `auth.yaml` entry and run by the session keeper through the engine at half the idle timeout |
 | Session keeper | The only part that signs in, checks, renews, and ends sessions |
 | Session owner | The person a user session belongs to. Only that person, or an agent acting for them, may use it; a session they end themselves is stored with the cause `revoked_by_owner` |
 | Shadow | A binding that predicts what it would do without acting, to earn promotion |

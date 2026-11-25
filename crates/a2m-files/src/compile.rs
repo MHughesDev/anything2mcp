@@ -8,15 +8,15 @@ use a2m_core::{
     AddressOverride, ApproveWrites, AuthProviderName, AuthSetting, BindingStatus,
     COMPILED_TARGET_FORMAT, CanonicalJson, CaptureLevel, Checkpoint, CompiledAuth, CompiledBinding,
     CompiledEnvironment, CompiledIdentity, CompiledInput, CompiledOperation, CompiledOutput,
-    CompiledPipeline, CompiledProbe, CompiledRate, CompiledSource, CompiledSurface, CompiledTarget,
-    CompiledTargetHeader, CompiledTest, CompiledTool, CredentialRef, CredentialUse, Date, Decimal,
-    DeclaredProgram, DescriptionBy, Digest, DriftRisk, EffectClass, EncodedCompiledTarget,
-    Environment, EnvironmentIndex, EnvironmentKind, FieldOf, FieldTypeIndex, FileKindName, Hazard,
-    InputIndex, LintCode, Millis, Mode, OperationIndex, OperationName, PackPayload, PackRef,
-    PackSection, PermissionManifest, PipelineIndex, PipelineLimits, PipelineStep, RecordKey,
-    RecordMatching, RunQuestion, SectionIndex, SignInKind, Stands, Step, StepArg, StepKind,
-    SurfaceIndex, SurfaceKind, SurfaceName, TargetName, TargetSection, TestKind, ToolAnnotations,
-    ToolIndex, ToolRuns, Value, ValueType, Values, Verb, Version, WriteEvidence,
+    CompiledPipeline, CompiledRate, CompiledSessionCheck, CompiledSource, CompiledSurface,
+    CompiledTarget, CompiledTargetHeader, CompiledTest, CompiledTool, CredentialRef, CredentialUse,
+    Date, Decimal, DeclaredProgram, DescriptionBy, Digest, DriftRisk, EffectClass,
+    EncodedCompiledTarget, Environment, EnvironmentIndex, EnvironmentKind, FieldOf, FieldTypeIndex,
+    FileKindName, Hazard, InputIndex, LintCode, Millis, Mode, OperationIndex, OperationName,
+    PackPayload, PackRef, PackSection, PermissionManifest, PipelineIndex, PipelineLimits,
+    PipelineStep, RecordKey, RecordMatching, RunQuestion, SectionIndex, SignInKind, Stands, Step,
+    StepArg, StepKind, SurfaceIndex, SurfaceKind, SurfaceName, TargetName, TargetSection, TestKind,
+    ToolAnnotations, ToolIndex, ToolRuns, Value, ValueType, Values, Verb, Version, WriteEvidence,
 };
 use a2m_expr::{TypeEnv, names};
 
@@ -1305,7 +1305,7 @@ impl<'a> Compiler<'a> {
                     named.as_text().unwrap_or_default()
                 );
                 self.error(
-                    codes::PROBE_INVALID,
+                    codes::SESSION_CHECK_INVALID,
                     Stage::Resolve,
                     &named.at,
                     message,
@@ -1425,13 +1425,17 @@ impl<'a> Compiler<'a> {
     /// The probe of one entry of `auth.yaml`: a read operation of the
     /// target, with the inputs the entry gives it, or an entry of a pack's
     /// file kind on one of the entry's surfaces.
-    fn probe(&mut self, entry: &Located<Doc>, surfaces: &[SurfaceIndex]) -> Option<CompiledProbe> {
+    fn probe(
+        &mut self,
+        entry: &Located<Doc>,
+        surfaces: &[SurfaceIndex],
+    ) -> Option<CompiledSessionCheck> {
         let named = entry.get("probe")?;
         let name = named.as_text()?;
         let given = entry.get("probe_inputs");
         let invalid = |this: &mut Self, at: &Place, message: String, fix: &str| {
             this.error(
-                codes::PROBE_INVALID,
+                codes::SESSION_CHECK_INVALID,
                 Stage::Resolve,
                 at,
                 message,
@@ -1524,7 +1528,7 @@ impl<'a> Compiler<'a> {
                     fine = false;
                 }
             }
-            return fine.then(|| CompiledProbe::Operation {
+            return fine.then(|| CompiledSessionCheck::Operation {
                 operation: OperationIndex::new(index(position)),
                 inputs,
             });
@@ -1564,7 +1568,7 @@ impl<'a> Compiler<'a> {
                     );
                     return None;
                 }
-                Some(CompiledProbe::Entry(PackRef {
+                Some(CompiledSessionCheck::Entry(PackRef {
                     section: *section,
                     entry: name.to_owned(),
                 }))
@@ -1581,7 +1585,7 @@ impl<'a> Compiler<'a> {
                 // never may, and the compiled target's own check refuses one.
                 self.problems.push(
                     Diagnostic::error(
-                        kernel(codes::PROBE_PENDING),
+                        kernel(codes::SESSION_CHECK_PENDING),
                         Stage::Resolve,
                         &named.at,
                         format!(
@@ -1592,7 +1596,7 @@ impl<'a> Compiler<'a> {
                     )
                     .as_warning(),
                 );
-                Some(CompiledProbe::Pending {
+                Some(CompiledSessionCheck::Pending {
                     name: name.to_owned(),
                 })
             }

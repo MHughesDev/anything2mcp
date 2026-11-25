@@ -56,8 +56,8 @@ The file is a map with one key, `auth`: a list with one entry per group of surfa
 | `surfaces` (required) | The surfaces this entry covers |
 | `mode` (required) | `use_existing`, `managed_session`, or `custom` |
 | `provider` (required) | An auth provider from the technical reference |
-| `probe` (required) | A cheap signed-in read: a `read` operation of the target, or an entry of a pack's file kind on one of the entry's surfaces, such as an endpoint. Any other name does not compile, except in a draft: there a probe that names nothing, where no operation file has that name, compiles as not yet drafted, with the warning `kernel.probe_pending`, and the sign-in is marked as not confirmed ([decision 0252](../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)) |
-| `probe_inputs` | For a probe that is an operation: the inputs it is called with. Every required input with no default is given here, so the probe can be run as written |
+| `probe` (required) | A cheap signed-in read: a `read` operation of the target, or an entry of a pack's file kind on one of the entry's surfaces, such as an endpoint. Any other name does not compile, except in a draft: there a session check that names nothing, where no operation file has that name, compiles as not yet drafted, with the warning `kernel.session_check_pending`, and the sign-in is marked as not confirmed ([decision 0252](../decisions/0252-a-fixed-place-a-review-that-shows-what-runs-and-a-sign-in-before-its-probe.md)) |
+| `probe_inputs` | For a session check that is an operation: the inputs it is called with. Every required input with no default is given here, so the session check can be run as written |
 | `expiry_signals` | List of signals that the session has ended: `redirect_host`, `status` with `path`, or `visible` with a locator |
 | `timeouts` | Declared `idle_ms` and `absolute_ms` durations, in milliseconds, when known |
 | `sign_out` | An endpoint or action that ends the session |

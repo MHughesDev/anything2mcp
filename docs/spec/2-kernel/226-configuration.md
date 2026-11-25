@@ -79,7 +79,7 @@ A setting is how this installation behaves. A target file is what a system is: i
 | Operation | Effect class, hazard, time limits, record limit, binding order | The target's files | The target's author | A 30-second limit on one save |
 | Caller or grant | Highest effect class, identity kind, scope, quota | The store | An administrator, through `grant.add`, which is not built | An agent may read `example` only |
 | Provider or pack | Enabled or not; the pack's own group | Layers 1 to 8 for the group; `provider.enable` for enabling | The installer; enabling some providers is protected | `packs.http.max_response_bytes = 1000000` |
-| Session | Nothing is set on a session directly. Its keep-alive, probe, and attempt limit come from settings, the toolset, and the target's auth file | Derived | Nobody; `session.revoke` ends one | |
+| Session | Nothing is set on a session directly. Its keep-alive, session check, and attempt limit come from settings, the toolset, and the target's auth file | Derived | Nobody; `session.revoke` ends one | |
 | Run | Per-call options the operation offers and policy allows | The call | The caller, within policy | Pin the `http` mode |
 
 ## Protected settings
@@ -350,7 +350,7 @@ What a system is, and how it must be treated, is configured in its target files,
 | Time limits | Per step and per operation, within each pack's ceiling; the installation's own ceiling, `engine.time_limit_ceiling_seconds`, is not built |
 | Record limits | Per pipeline, within the installation's and the toolset's |
 | Effect class and hazard | Derived by the compiler from the files |
-| Sign-in, the probe, the idle timeout | The auth file |
+| Sign-in, the session check, the idle timeout | The auth file |
 
 A ceiling is checked twice. The compiler refuses a value above the ceilings of the installation where it compiles, today for the ceilings a pack checks when it compiles, not for the step time-limit ceiling; importing a version into an installation with lower ceilings checks it again, and an operation above them is refused with a named failure, never cut silently. At run time the lower of the target's value and the setting applies.
 

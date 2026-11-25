@@ -20,7 +20,7 @@ use a2m_core::{
     Address, ApprovalId, AuthProviderName, BindingStatus, COMPILED_TARGET_FORMAT, CanonicalJson,
     CompiledAuth, CompiledBinding, CompiledEnvironment, CompiledExpr, CompiledFieldType,
     CompiledIdentity, CompiledInput, CompiledOperation, CompiledOutput, CompiledPipeline,
-    CompiledProbe, CompiledSource, CompiledSurface, CompiledTarget, CompiledTargetHeader,
+    CompiledSessionCheck, CompiledSource, CompiledSurface, CompiledTarget, CompiledTargetHeader,
     CompiledTool, Digest, EffectClass, Environment, EnvironmentIndex, EnvironmentKind, Epoch,
     EvidenceLevel, ExprIndex, FailsAs, Failure, FailureClass, FailureCode, FieldFormat,
     FieldTypeIndex, Finding, FindingKind, Hazard, InputIndex, Mode, OperationIndex, OperationName,
@@ -1675,7 +1675,7 @@ pub fn compiled_target(address: &str) -> CompiledTarget {
         surfaces: vec![SurfaceIndex::new(1)],
         mode: SignInKind::ManagedSession,
         provider: AuthProviderName::new("example_login").unwrap(),
-        probe: CompiledProbe::Operation {
+        probe: CompiledSessionCheck::Operation {
             operation: OperationIndex::new(0),
             inputs: Values::new().with("order_id", "A-100"),
         },

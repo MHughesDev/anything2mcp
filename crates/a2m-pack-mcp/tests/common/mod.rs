@@ -501,8 +501,9 @@ pub async fn token(store: &Store, fence: Fence, record_seq: u32, name: &str) -> 
 
 use a2m_auth::{
     AskPerson, AuthEntry, AuthProvider, CredentialRef, InProcessWork, Keeper, KeeperWorker,
-    LeaseRequest, PersonAnswer, PersonAsk, ProbeOutcome, ProviderSet, Purpose, RunProbe,
-    SessionKey, SessionLease, SessionRef, SessionStore, StoredCredentials, Wait,
+    LeaseRequest, PersonAnswer, PersonAsk, ProviderSet, Purpose, RunSessionCheck,
+    SessionCheckOutcome, SessionKey, SessionLease, SessionRef, SessionStore, StoredCredentials,
+    Wait,
 };
 use a2m_core::{AccountName, DecisionId, Identity, Secret};
 
@@ -520,9 +521,12 @@ impl AskPerson for NoPerson {
 
 struct AlwaysSignedIn;
 
-impl RunProbe for AlwaysSignedIn {
-    fn probe<'a>(&'a self, _session: &'a SessionRef) -> a2m_auth::BoxFuture<'a, ProbeOutcome> {
-        Box::pin(async { ProbeOutcome::SignedIn })
+impl RunSessionCheck for AlwaysSignedIn {
+    fn check_session<'a>(
+        &'a self,
+        _session: &'a SessionRef,
+    ) -> a2m_auth::BoxFuture<'a, SessionCheckOutcome> {
+        Box::pin(async { SessionCheckOutcome::SignedIn })
     }
 }
 

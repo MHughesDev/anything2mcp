@@ -58,7 +58,7 @@ pub use compiled_target::{
     AddressOverride, ApproveWrites, AuthSetting, COMPILED_TARGET_FORMAT, CaptureLevel, Checkpoint,
     CodeLabel, CompiledAuth, CompiledBinding, CompiledEnvironment, CompiledExpr, CompiledFieldType,
     CompiledIdentity, CompiledInput, CompiledOperation, CompiledOutput, CompiledPipeline,
-    CompiledProbe, CompiledRate, CompiledSource, CompiledSurface, CompiledTarget,
+    CompiledRate, CompiledSessionCheck, CompiledSource, CompiledSurface, CompiledTarget,
     CompiledTargetHeader, CompiledTest, CompiledTool, CredentialUse, DecimalMark, DeclaredProgram,
     DescriptionBy, DriftRisk, EncodedCompiledTarget, EnvironmentIndex, EnvironmentKind, ExprIndex,
     FailsAs, FieldBase, FieldFormat, FieldTypeIndex, InputIndex, OperationIndex, PackRef,

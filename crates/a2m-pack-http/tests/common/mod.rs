@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use a2m_auth::{
     AskPerson, AuthEntry, CredentialRef, InProcessWork, Keeper, KeeperWorker, LeaseRequest,
-    PersonAnswer, PersonAsk, ProbeOutcome, ProviderSet, Purpose, RunProbe, SessionKey,
-    SessionLease, SessionRef, SessionStore, StoredCredentials, Wait,
+    PersonAnswer, PersonAsk, ProviderSet, Purpose, RunSessionCheck, SessionCheckOutcome,
+    SessionKey, SessionLease, SessionRef, SessionStore, StoredCredentials, Wait,
 };
 use a2m_core::{
     AccountName, CompiledBinding, CompiledTarget, DecisionId, Digest, EffectClass, Environment,
@@ -527,11 +527,11 @@ impl AskPerson for NoPerson {
     }
 }
 
-struct SignedInProbe;
+struct SignedInCheck;
 
-impl RunProbe for SignedInProbe {
-    fn probe<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
-        Box::pin(async { ProbeOutcome::SignedIn })
+impl RunSessionCheck for SignedInCheck {
+    fn check_session<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, SessionCheckOutcome> {
+        Box::pin(async { SessionCheckOutcome::SignedIn })
     }
 }
 
@@ -561,7 +561,7 @@ impl Signed {
         let work = Arc::new(InProcessWork::new(
             Arc::clone(&worker),
             Arc::new(NoPerson),
-            Arc::new(SignedInProbe),
+            Arc::new(SignedInCheck),
         ));
         let keeper = Keeper::builder(sessions, providers, work, clock)
             .local_worker(worker)

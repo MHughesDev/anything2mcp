@@ -34,7 +34,7 @@ use tokio::task::JoinHandle;
 use crate::codes;
 use crate::dispatch::Principal;
 use crate::health::{Health, Impaired, Part};
-use crate::keeper::{PersonBridge, ProbeBridge};
+use crate::keeper::{PersonBridge, SessionCheckBridge};
 use crate::paths::Paths;
 use crate::person::{ApprovalDesk, PersonSurface};
 use crate::registry::ActionRegistry;
@@ -202,7 +202,7 @@ pub(crate) struct Inner {
     desk_reach: Option<crate::person::DeskReach>,
     pub(crate) keeper: Option<Keeper>,
     /// The keeper's way to run a session's probe through the engine.
-    pub(crate) probes: Arc<ProbeBridge>,
+    pub(crate) probes: Arc<SessionCheckBridge>,
     pub(crate) credentials: Option<Arc<StoredCredentials>>,
     pub(crate) sched: Option<Scheduler>,
     pub(crate) providers: a2m_provider::Registry,
@@ -398,7 +398,7 @@ impl Kernel {
         let mut policy = None;
         let mut desk_reach = None;
         let mut keeper = None;
-        let probes = Arc::new(ProbeBridge::default());
+        let probes = Arc::new(SessionCheckBridge::default());
         let mut credentials = None;
         let mut sched = None;
         if let Some(store) = &prepared.store {
@@ -507,7 +507,7 @@ impl Kernel {
                 let work = Arc::new(InProcessWork::new(
                     Arc::clone(&held),
                     Arc::new(PersonBridge::new(Arc::clone(&person))),
-                    Arc::clone(&probe) as Arc<dyn a2m_auth::RunProbe>,
+                    Arc::clone(&probe) as Arc<dyn a2m_auth::RunSessionCheck>,
                 ));
                 let hours = prepared
                     .settings
@@ -519,7 +519,7 @@ impl Kernel {
                     .unwrap_or(15);
                 let keeper_settings = KeeperSettings {
                     keep_alive: seconds(hours.saturating_mul(3600)),
-                    probe_every: seconds(minutes.saturating_mul(60)),
+                    check_every: seconds(minutes.saturating_mul(60)),
                     ..KeeperSettings::default()
                 };
                 keeper = Some(
@@ -921,10 +921,10 @@ impl Kernel {
 
     /// Notes the published version a run leased `session` under, whose
     /// probe the keeper's checks of it then run.
-    pub(crate) fn note_probe(
+    pub(crate) fn note_session_check(
         &self,
         session: a2m_core::SessionId,
-        source: crate::keeper::ProbeSource,
+        source: crate::keeper::SessionCheckSource,
     ) {
         self.inner.probes.note(session, source);
     }
@@ -1012,7 +1012,7 @@ impl Kernel {
         let weak = Arc::downgrade(&self.inner);
         let clock = Arc::clone(&self.inner.clock);
         let wake = Arc::clone(&self.inner.wake);
-        let probe_every = self
+        let check_every = self
             .inner
             .settings
             .int("sessions.probe_minutes")
@@ -1036,9 +1036,9 @@ impl Kernel {
                             .as_unix_millis()
                             .saturating_sub(clock.now().as_unix_millis());
                         std::time::Duration::from_millis(u64::try_from(ahead).unwrap_or(0))
-                            .min(probe_every)
+                            .min(check_every)
                     }
-                    _ => probe_every,
+                    _ => check_every,
                 };
                 tokio::select! {
                     alive = due.changed() => {

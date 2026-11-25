@@ -51,7 +51,7 @@ Where there is no identity, nothing proves who is at the other end, and the weig
 
 ## Ways of signing in
 
-Each entry of a target's `auth.yaml` covers a group of surfaces that share a sign-in, and names a sign-in kind, an auth provider, and a probe ([file formats](../../reference/file-formats.md)).
+Each entry of a target's `auth.yaml` covers a group of surfaces that share a sign-in, and names a sign-in kind, an auth provider, and a session check ([file formats](../../reference/file-formats.md)).
 
 | Mode | What it uses | Typical case |
 | --- | --- | --- |
@@ -98,9 +98,9 @@ The recommendation is mechanical: a fixed table maps findings to a mode, a provi
 
 ## Where the keeper runs
 
-The keeper is one component with two halves. Its decisions are made in the control plane: which sessions are wanted, when to check, when to ask a person, and who may use a session. Its work runs as jobs on the session's home runner: the probe, a renewal, a sign-in. In a single process the two halves are the same code calling itself.
+The keeper is one component with two halves. Its decisions are made in the control plane: which sessions are wanted, when to check, when to ask a person, and who may use a session. Its work runs as jobs on the session's home runner: the session check, a renewal, a sign-in. In a single process the two halves are the same code calling itself.
 
-**The keeper never calls upward.** A check or a renewal that needs the target, or a sign-in on the home runner, goes through an interface the keeper is handed, `KeeperWork`. `a2m-actions` turns each request into a job for the scheduler, with the session's home runner as a requirement. The runner runs a probe as an ordinary read through the engine, with a lease of purpose "probe", which the keeper grants in `valid`, `suspect`, and `renewing`; it runs a renewal or a sign-in through the keeper's worker half, the only caller of an auth provider. Keeper jobs have a reserved slot, so a run waiting for a renewal can never hold the only slot the renewal needs. A probe's lease starts no sign-in and waits for none; outside those three states it is refused with `needs_login`. A probe that could not be made, or whose run ended for another reason than the session, changes no state ([decision 0353](../../decisions/0353-a-session-is-probed-by-a-keeper-job-run-through-the-engine-in-a-slot-kept-for-it.md)).
+**The keeper never calls upward.** A check or a renewal that needs the target, or a sign-in on the home runner, goes through an interface the keeper is handed, `KeeperWork`. `a2m-actions` turns each request into a job for the scheduler, with the session's home runner as a requirement. The runner runs a session check as an ordinary read through the engine, with a lease of purpose "session check", which the keeper grants in `valid`, `suspect`, and `renewing`; it runs a renewal or a sign-in through the keeper's worker half, the only caller of an auth provider. Keeper jobs have a reserved slot, so a run waiting for a renewal can never hold the only slot the renewal needs. A session check's lease starts no sign-in and waits for none; outside those three states it is refused with `needs_login`. A session check that could not be made, or whose run ended for another reason than the session, changes no state ([decision 0353](../../decisions/0353-a-session-is-probed-by-a-keeper-job-run-through-the-engine-in-a-slot-kept-for-it.md)).
 
 ## States
 
@@ -137,7 +137,7 @@ The third clock is set by the organization, not the system. Under Microsoft Entr
 
 ## Checks
 
-- **The probe.** Each target declares one cheap signed-in read in its auth file. The keeper runs it at half the idle timeout, declared or learned, 15 minutes by default, with jitter.
+- **The session check.** Each target declares one cheap signed-in read in its auth file. The keeper runs it at half the idle timeout, declared or learned, 15 minutes by default, with jitter.
 - **Only while wanted.** A session is kept alive for a window after its last use: 8 hours by default on one machine, set per toolset on servers. After that the keeper stops checking and lets it lapse. Standing access nobody is using is a risk with no benefit.
 - **Signs of expiry.** A redirect to an identity provider's host, a 401 or 403 that matches the target's declared pattern, a sign-in form appearing, a token past its expiry, a challenge demanding fresh claims, an authorization refusal on a connection that worked a moment ago, or an exit a command target declares as `session_expired`. A target's auth file lists its `expiry_signals`. Every driver reports these to the keeper instead of acting on them.
 
@@ -151,7 +151,7 @@ The keeper climbs a ladder and never repeats a rung:
 
 **One renewal at a time.** Only the keeper renews, and only once per session however many runs noticed the expiry ([decision 0032](../../decisions/0032-one-live-session-per-identity-shared-by-tabs-with-a-single-renewer.md)). Two simultaneous refreshes with a rotating refresh token invalidate each other; a single renewer makes that impossible. A renewal starts only when the keeper moves the session's row from `valid` or `suspect` to `renewing` by a compare-and-set on its epoch, in one transaction. The one caller that wins submits the work; everyone else waits on the outcome. This holds across processes, because the row is in the store. Runs that hit an expired session wait for the one renewal, then retry once if they are reads or idempotent writes. Nothing else is retried.
 
-**No loops, no lockouts.** A stored credential is tried at most `attempt_limit` times, 1 by default, counted until the other side confirms it: a successful exchange, or a passed probe. If it is refused, the session goes to `needs_person` and an alert is raised. Repeated automatic attempts are how service accounts get locked out. The count is kept in the session's record against the credential as it is stored, so a restart does not clear it, and only the person storing the credential again or signing in themself does; a sign-in that ends in an answer nobody can read counts; and a session is signed in without its person at most four times in an hour before it waits for the person ([decision 0269](../../decisions/0269-a-stored-credentials-attempts-outlive-a-restart-and-sign-ins-without-the-person-are-limited.md)).
+**No loops, no lockouts.** A stored credential is tried at most `attempt_limit` times, 1 by default, counted until the other side confirms it: a successful exchange, or a passed session check. If it is refused, the session goes to `needs_person` and an alert is raised. Repeated automatic attempts are how service accounts get locked out. The count is kept in the session's record against the credential as it is stored, so a restart does not clear it, and only the person storing the credential again or signing in themself does; a sign-in that ends in an answer nobody can read counts; and a session is signed in without its person at most four times in an hour before it waits for the person ([decision 0269](../../decisions/0269-a-stored-credentials-attempts-outlive-a-restart-and-sign-ins-without-the-person-are-limited.md)).
 
 ## Asking a person
 
@@ -228,7 +228,7 @@ A first sign-in in the engine's browser may therefore be needed even on a device
 
 **Runs share a live session in tabs.** Runs on the same session work in separate tabs of that session's one browser profile, sharing its live cookie store the way a person's tabs do. Tabs share cookies and local storage, and each has its own session storage, as in an ordinary browser. Each identity has its own browser process and profile directory. HTTP-mode runs on a browser session share one cookie store and token cache per session, read by many and written only by the keeper.
 
-**Signing in.** The keeper's worker has the pack's provider open a visible window of the engine's own browser, in the profile for that identity, at the system's sign-in page. The person signs in as they always do; password managers, second factors, and passkeys work as in any browser window. The window shows which system and which identity it is for. The keeper watches for the probe to succeed, then the window is closed or left for the first run.
+**Signing in.** The keeper's worker has the pack's provider open a visible window of the engine's own browser, in the profile for that identity, at the system's sign-in page. The person signs in as they always do; password managers, second factors, and passkeys work as in any browser window. The window shows which system and which identity it is for. The keeper watches for the session check to succeed, then the window is closed or left for the first run.
 
 **Silent renewal** in the browser means loading the system in a background tab so that its own silent renewal runs.
 
@@ -236,7 +236,7 @@ A first sign-in in the engine's browser may therefore be needed even on a device
 
 **Sessions bound to the device.** Chrome ships Device Bound Session Credentials, which tie renewing a session's cookies to a key that cannot leave the machine: the site opts in at sign-in with a response header, and the browser proves the key to renew a short-lived cookie. Such a session cannot be moved, and the keeper marks it not movable. What [research note 35](../../research/35-web-sign-in-methods-and-engine-owned-profiles.md) found, from search summaries only and so not built on: that it is generally available in Chrome on Windows, behind a rollout on macOS, and absent on Linux; and that a cookie exported from a bound session stops working at its next renewal. Whether an engine-owned profile, a browser under the debugging protocol, or a machine with no hardware key store gets a bound session at all is not established. Until a run settles it, a restored session the system refuses is handled as the paragraph above says, and is also marked not movable, so that it is never restored on another runner; the person signs in again here ([decision 0321](../../decisions/0321-a-sign-in-method-is-found-from-addresses-and-a-passkey-or-a-mailed-link-is-the-persons.md)).
 
-**Systems that allow one session per account.** The probe checks whether signing in from the engine signs the person out of their own browser. If so, the target is marked exclusive and the person is told before they first sign in. The remedies are a service account, working outside the person's hours, or accepting the trade. A browser extension that works inside the person's own profile with their consent would remove the conflict; it is noted as a possible later mode, not designed.
+**Systems that allow one session per account.** The session check tells whether signing in from the engine signs the person out of their own browser. If so, the target is marked exclusive and the person is told before they first sign in. The remedies are a service account, working outside the person's hours, or accepting the trade. A browser extension that works inside the person's own profile with their consent would remove the conflict; it is noted as a possible later mode, not designed.
 
 ## Open points
 

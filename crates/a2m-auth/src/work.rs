@@ -1,7 +1,7 @@
 //! The keeper's work: what must run on a session's home runner, and the
 //! half of the keeper that runs it there.
 //!
-//! The keeper never calls upward. A probe, a renewal, or a sign-in goes
+//! The keeper never calls upward. A session check, a renewal, or a sign-in goes
 //! through [`KeeperWork`], which the crate above implements by submitting a
 //! job to the session's home runner. The runner hands the job to
 //! [`KeeperWorker`], the only caller of an auth provider's `sign_in`,
@@ -89,9 +89,9 @@ pub enum WorkOutcome {
     Failed(Failure),
 }
 
-/// What the target's probe showed.
+/// What the target's session check showed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProbeOutcome {
+pub enum SessionCheckOutcome {
     /// The cheap signed-in read worked.
     SignedIn,
     /// The read was refused as not signed in.
@@ -105,9 +105,9 @@ pub enum ProbeOutcome {
 /// as a requirement, and waiting for the outcome. The keeper is handed one
 /// and has no other way out.
 pub trait KeeperWork: Send + Sync {
-    /// Runs the target's declared probe as an ordinary read through the
+    /// Runs the target's declared session check as an ordinary read through the
     /// engine, with a lease of purpose `Probe`.
-    fn probe<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome>;
+    fn check_session<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, SessionCheckOutcome>;
 
     /// Runs a sign-in, a renewal, a sign-out, or a restore, through
     /// [`KeeperWorker::run`] on the home runner.
@@ -494,11 +494,11 @@ fn seal_context(key: &SessionKey, session: SessionId) -> Result<SealContext, Fai
     })
 }
 
-/// Runs the target's probe for [`InProcessWork`]. The crate above supplies
+/// Runs the target's session check for [`InProcessWork`]. The crate above supplies
 /// one that runs the declared read through the engine.
-pub trait RunProbe: Send + Sync {
+pub trait RunSessionCheck: Send + Sync {
     /// Whether the cheap signed-in read works for the session.
-    fn probe<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome>;
+    fn check_session<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, SessionCheckOutcome>;
 }
 
 /// [`KeeperWork`] for one process: the job goes straight to the worker, with
@@ -507,17 +507,17 @@ pub trait RunProbe: Send + Sync {
 pub struct InProcessWork {
     worker: Arc<KeeperWorker>,
     person: Arc<dyn AskPerson>,
-    probe: Arc<dyn RunProbe>,
+    probe: Arc<dyn RunSessionCheck>,
 }
 
 impl InProcessWork {
-    /// Work that runs on `worker`, asks through `person`, and probes
+    /// Work that runs on `worker`, asks through `person`, and session checks
     /// through `probe`.
     #[must_use]
     pub fn new(
         worker: Arc<KeeperWorker>,
         person: Arc<dyn AskPerson>,
-        probe: Arc<dyn RunProbe>,
+        probe: Arc<dyn RunSessionCheck>,
     ) -> Self {
         Self {
             worker,
@@ -528,8 +528,8 @@ impl InProcessWork {
 }
 
 impl KeeperWork for InProcessWork {
-    fn probe<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
-        self.probe.probe(session)
+    fn check_session<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, SessionCheckOutcome> {
+        self.probe.check_session(session)
     }
 
     fn perform(&self, job: KeeperJob) -> BoxFuture<'_, WorkOutcome> {

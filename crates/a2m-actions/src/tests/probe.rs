@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use a2m_auth::{SessionKey, SignInBy};
-use a2m_core::{CompiledProbe, Environment, Identity, SessionState, TargetName, Values};
+use a2m_core::{CompiledSessionCheck, Environment, Identity, SessionState, TargetName, Values};
 use serde_json::json;
 
 use super::kernel::engine::{self, SECURE_GET};
@@ -149,7 +149,7 @@ fn probed_compiled_target(address: &str, idle: Option<Duration>) -> a2m_core::Co
         .and_then(|at| u32::try_from(at).ok())
         .map(a2m_core::OperationIndex::new)
         .unwrap();
-    compiled_target.auth[0].probe = CompiledProbe::Operation {
+    compiled_target.auth[0].probe = CompiledSessionCheck::Operation {
         operation,
         inputs: Values::new().with("order_id", "A-100"),
     };

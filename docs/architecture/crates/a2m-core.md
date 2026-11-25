@@ -258,7 +258,7 @@ pub enum Stands { Alone, Beneath(SurfaceIndex) }
 pub struct CompiledAuth {                       // one entry of `auth.yaml`
     pub surfaces: Vec<SurfaceIndex>,        // no surface is in two entries
     pub mode: SignInKind, pub provider: AuthProviderName,
-    pub probe: CompiledProbe,
+    pub probe: CompiledSessionCheck,
     pub expiry_signals: Vec<PackPayload>,   // each in the form the surface's pack defines
     pub idle_ms: Option<u64>, pub absolute_ms: Option<u64>,
     pub sign_out: Option<String>,           // a name the provider resolves
@@ -266,7 +266,7 @@ pub struct CompiledAuth {                       // one entry of `auth.yaml`
     pub credentials: Vec<CredentialUse>,    // role, reference: CredentialRef; sorted by role
     pub attempt_limit: u32, pub movable: bool,
 }
-pub enum CompiledProbe {
+pub enum CompiledSessionCheck {
     Operation { operation: OperationIndex, inputs: Values },   // a read, run through the engine
     Entry(PackRef),                                            // an entry of a pack section, such as an endpoint
 }
@@ -475,7 +475,7 @@ It produces no other class. The codes are declared in this crate's own `failure_
 8. Done: `Redact` with `contains_secret` and its helpers, `NoSecrets`, `KeyedDigest`, `keyed_digest_under`.
 9. Done: `Identity`, `RunId`, and the other identifiers the store, the scheduler, and policy share; `Epoch`; `Version`.
 10. Done: `SubsystemState`, `SubsystemMove`, `DoctorState`.
-11. Done: what the run time needs from target files and the compiled target lacked ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)): `TargetSection`, `CompiledAuth` with `CompiledProbe`, `AuthProviderName`, and `CredentialRef`, `Stands`, an environment's test records and approval rule, an operation's examples and run questions, a tool's module, `FieldFormat` and a field type's step; with `SignInKind`, `DriftRisk`, `CaptureLevel`, `ApproveWrites`, `WhitespaceRule`, and `DecimalMark`, each held to its document.
+11. Done: what the run time needs from target files and the compiled target lacked ([decision 0121](../../decisions/0121-the-plan-carries-what-the-run-time-needs-from-target-files.md)): `TargetSection`, `CompiledAuth` with `CompiledSessionCheck`, `AuthProviderName`, and `CredentialRef`, `Stands`, an environment's test records and approval rule, an operation's examples and run questions, a tool's module, `FieldFormat` and a field type's step; with `SignInKind`, `DriftRisk`, `CaptureLevel`, `ApproveWrites`, `WhitespaceRule`, and `DecimalMark`, each held to its document.
 12. Done: the public `checked_name!` with `fixed`, `FieldHasher`, and `Secret` wiped when dropped ([decision 0122](../../decisions/0122-small-things-the-core-crate-gives-its-builders-and-a-secret-is-wiped-when-dropped.md)).
 13. Done: `DeclaredProgram` and `CompiledSurface::programs`, the programs a surface's driver may start, in the compiled target's bytes and under its hash ([decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md)).
 14. Done: `AddressScope` and `ScopedHost`, the reading of where an address is and the one question of a plain link ([decision 0240](../../decisions/0240-one-typed-reading-of-where-an-address-is-and-one-question-of-a-plain-link.md)). Not done: a place in the sense of [decision 0223](../../decisions/0223-a-network-is-a-place-a-recognized-network-and-a-reach.md), which needs the machine's own state.

@@ -25,9 +25,9 @@ use crate::failure;
 use crate::{
     AskPerson, AuthEntry, AuthProvider, ChallengeScheme, CredentialRef, CredentialSink, ExpirySign,
     InProcessWork, Keeper, KeeperJob, KeeperWork, KeeperWorker, LeaseRequest, Material,
-    PersonAnswer, PersonAsk, ProbeOutcome, ProviderName, ProviderNeeds, ProviderSet, Purpose,
-    RawSign, RunProbe, SessionKey, SessionLease, SessionRef, SessionStore, SignInContext, SignedIn,
-    StoredCredentials, Wait, Work, WorkOutcome,
+    PersonAnswer, PersonAsk, ProviderName, ProviderNeeds, ProviderSet, Purpose, RawSign,
+    RunSessionCheck, SessionCheckOutcome, SessionKey, SessionLease, SessionRef, SessionStore,
+    SignInContext, SignedIn, StoredCredentials, Wait, Work, WorkOutcome,
 };
 
 /// The start of every test's clock.
@@ -271,8 +271,8 @@ impl Relay {
 }
 
 impl KeeperWork for Relay {
-    fn probe<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
-        self.work.probe(session)
+    fn check_session<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, SessionCheckOutcome> {
+        self.work.check_session(session)
     }
 
     fn perform(&self, job: KeeperJob) -> BoxFuture<'_, WorkOutcome> {
@@ -354,11 +354,11 @@ impl AskPerson for Person {
     }
 }
 
-/// The target's probe, with the outcome the test sets.
+/// The target's session check, with the outcome the test sets.
 pub(super) struct Probe {
-    pub(super) outcome: Mutex<ProbeOutcome>,
+    pub(super) outcome: Mutex<SessionCheckOutcome>,
     calls: AtomicU32,
-    /// A probe waits here, after it is counted, while the test holds it.
+    /// A session check waits here, after it is counted, while the test holds it.
     pub(super) gate: Gate,
 }
 
@@ -368,8 +368,8 @@ impl Probe {
     }
 }
 
-impl RunProbe for Probe {
-    fn probe<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
+impl RunSessionCheck for Probe {
+    fn check_session<'a>(&'a self, _session: &'a SessionRef) -> BoxFuture<'a, SessionCheckOutcome> {
         Box::pin(async move {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.gate.pass().await;
@@ -645,7 +645,7 @@ impl World {
             Arc::new(Fake::new(needs)),
             Arc::new(Person::new()),
             Arc::new(Probe {
-                outcome: Mutex::new(ProbeOutcome::SignedIn),
+                outcome: Mutex::new(SessionCheckOutcome::SignedIn),
                 calls: AtomicU32::new(0),
                 gate: Gate::new(),
             }),
@@ -738,7 +738,7 @@ impl World {
 
     /// A second engine over the same store: a keeper and its worker of its
     /// own, sharing only the store's rows, the clock, the key store, and
-    /// the world outside (the system, the person, the probe). What two
+    /// the world outside (the system, the person, the session check). What two
     /// keepers know of each other is what the store's compare-and-set on
     /// the session's state and epoch tells them.
     pub(super) fn second_engine(&self) -> Keeper {

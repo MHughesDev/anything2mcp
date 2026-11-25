@@ -255,7 +255,7 @@ The rules for sessions are the kernel's ([section 215](../2-kernel/215-sessions-
 - **Each identity has its own browser process and profile.** Two identities never share either.
 - **Where the person signs in** is a visible window of the engine's own browser on one machine, and a sign-in page that shows the server runner's browser for a hosted user session ([section 503](../5-security/503-approval-and-sign-in-surfaces.md), [section 602](../6-running-it/602-identity-on-a-shared-server.md)).
 - **Sessions that end with the browser.** Where an organization does not let a browser session survive closing the browser, the keeper keeps the browser running for the keep-alive window instead of saving and restoring state.
-- **One session per account.** The probe checks whether signing in from the engine signs the person out of their own browser. If it does, the target is marked exclusive and the person is told before they first sign in.
+- **One session per account.** The session check tells whether signing in from the engine signs the person out of their own browser. If it does, the target is marked exclusive and the person is told before they first sign in.
 - **On revoke** the keeper closes the tabs, calls the application's sign-out if one is declared, and has the base delete the profile directory and the saved state.
 
 Other ways of signing in to a web application, such as a token from the operating system's broker for a backend the pages call, are held by providers in `a2m-auth` and used through `page_http` or `http`.
@@ -429,7 +429,7 @@ The test application ([test application plan](../../plan/test-application.md)) i
 | Cases | What they prove for this pack |
 | --- | --- |
 | 6 to 12 | Locating without generated identifiers, widget escalation, in-page navigation, grids by key, custom controls (built: the page `/cases/controls`, [decision 0351](../../decisions/0351-the-remaining-widget-drivers-built-from-what-a-page-says-of-its-controls-a-staged-file-a-grid-cell-by-its-rows-key.md)), declared dialogs, frames and shadow trees |
-| 13 to 15 | The auth providers, sign-in detection, the keeper's probes, exclusive sessions |
+| 13 to 15 | The auth providers, sign-in detection, the keeper's session checks, exclusive sessions |
 | 16 to 21 | Normalization, `possible_commit` after a crash, record matchings, dependent records, no duplicate send, `changed_since_preview` |
 | 22 to 24 | Mining stopping at shadow; edge blocks; long jobs and downloads |
 | 25 to 27 | Variants, locale, untrusted text |

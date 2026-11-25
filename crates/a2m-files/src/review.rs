@@ -11,9 +11,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use a2m_core::{
-    AddressScope, AuthProviderName, CompiledProbe, CompiledTarget, CredentialRef, DeclaredProgram,
-    Digest, EffectClass, Environment, Hazard, Mode, OperationName, ScopedHost, SignInKind,
-    SurfaceIndex, SurfaceName,
+    AddressScope, AuthProviderName, CompiledSessionCheck, CompiledTarget, CredentialRef,
+    DeclaredProgram, Digest, EffectClass, Environment, Hazard, Mode, OperationName, ScopedHost,
+    SignInKind, SurfaceIndex, SurfaceName,
 };
 use serde::Serialize;
 
@@ -39,9 +39,9 @@ pub const SENT_TO_NOT_STATED: &str =
 /// What the summary says of a sign-in whose provider this engine does not
 /// hold.
 pub const PROVIDER_NOT_HELD: &str = "the provider is not held by this engine, so where it would send is not known; it signs in nowhere until a pack that provides it is enabled";
-/// What the summary says of a sign-in whose probe is named and not yet
+/// What the summary says of a sign-in whose session check is named and not yet
 /// drafted.
-pub const PROBE_PENDING: &str = "the read that checks this sign-in is not drafted yet: a session it makes is not confirmed until that read exists and passes, and no version can be published with it";
+pub const SESSION_CHECK_PENDING: &str = "the read that checks this sign-in is not drafted yet: a session it makes is not confirmed until that read exists and passes, and no version can be published with it";
 /// What the summary says beside each asserted read (decision 0394, point 5).
 pub const ASSERTED_NOTICE: &str =
     "the person's word is the only evidence that this request changes nothing";
@@ -166,7 +166,7 @@ pub struct ReviewSummary {
     /// they expose (an unknown reach, then a reach off the machine, then
     /// what they start), then name.
     pub items: Vec<ReviewItem>,
-    /// Each entry of `auth.yaml`: a probe not yet drafted first, then in the
+    /// Each entry of `auth.yaml`: a session check not yet drafted first, then in the
     /// file's order. A page shows these before the tools: a credential sent
     /// to an address is a risk to every tool of the surfaces it covers.
     pub sign_ins: Vec<SignInReview>,
@@ -329,7 +329,7 @@ pub struct SignInReview {
     /// Each stored credential, by role and reference. Never a value.
     pub credentials: Vec<CredentialShown>,
     /// The read that checks the session.
-    pub probe: ProbeReview,
+    pub probe: SessionCheckReview,
     /// For each environment of the target: every address a credential or a
     /// token of it is sent to.
     pub sent_to: Vec<SentToReview>,
@@ -347,17 +347,17 @@ pub struct CredentialShown {
 /// The read that checks a session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "probe", rename_all = "snake_case")]
-pub enum ProbeReview {
-    /// A probe that compiles.
+pub enum SessionCheckReview {
+    /// A session check that compiles.
     Declared {
         /// Its name: an operation, or an entry of a pack's file.
         name: String,
     },
-    /// A probe named and not drafted yet, in a draft only.
+    /// A session check named and not drafted yet, in a draft only.
     Pending {
         /// The name the entry gives it.
         name: String,
-        /// [`PROBE_PENDING`].
+        /// [`SESSION_CHECK_PENDING`].
         says: &'static str,
     },
 }
@@ -417,7 +417,7 @@ pub struct SentAddress {
 impl ReviewSummary {
     /// The summary with every text it holds passed through `f`: each
     /// address, path, argument, variable's name and value, place, file
-    /// name, credential's role, probe's name, and what a sign-in sends
+    /// name, credential's role, session check's name, and what a sign-in sends
     /// where. A caller passes the redactor, so that no secret a target's
     /// file happens to quote reaches a page. The fixed sentences are this
     /// module's constants and stay as they are; checked names (tools,
@@ -554,8 +554,10 @@ impl ReviewSummary {
                     })
                     .collect(),
                 probe: match &sign_in.probe {
-                    ProbeReview::Declared { name } => ProbeReview::Declared { name: f(name) },
-                    ProbeReview::Pending { name, says } => ProbeReview::Pending {
+                    SessionCheckReview::Declared { name } => {
+                        SessionCheckReview::Declared { name: f(name) }
+                    }
+                    SessionCheckReview::Pending { name, says } => SessionCheckReview::Pending {
                         name: f(name),
                         says,
                     },
@@ -916,18 +918,18 @@ pub(crate) fn review_of(
                 })
                 .collect(),
             probe: match &auth.probe {
-                CompiledProbe::Operation { operation, .. } => ProbeReview::Declared {
+                CompiledSessionCheck::Operation { operation, .. } => SessionCheckReview::Declared {
                     name: compiled_target
                         .operation(*operation)
                         .map(|found| found.name.to_string())
                         .unwrap_or_default(),
                 },
-                CompiledProbe::Entry(reference) => ProbeReview::Declared {
+                CompiledSessionCheck::Entry(reference) => SessionCheckReview::Declared {
                     name: reference.entry.clone(),
                 },
-                CompiledProbe::Pending { name } => ProbeReview::Pending {
+                CompiledSessionCheck::Pending { name } => SessionCheckReview::Pending {
                     name: name.clone(),
-                    says: PROBE_PENDING,
+                    says: SESSION_CHECK_PENDING,
                 },
             },
             sent_to: compiled_target
@@ -967,7 +969,7 @@ pub(crate) fn in_review_order(items: &mut [ReviewItem]) {
 pub(crate) fn sign_ins_in_review_order(sign_ins: &mut [SignInReview]) {
     sign_ins.sort_by_key(|sign_in| {
         (
-            !matches!(sign_in.probe, ProbeReview::Pending { .. }),
+            !matches!(sign_in.probe, SessionCheckReview::Pending { .. }),
             sign_in.entry,
         )
     });

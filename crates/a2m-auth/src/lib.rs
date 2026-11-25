@@ -63,7 +63,8 @@ pub use state::{CallRule, call_rule, legal_move};
 pub use store::{EventKind, SessionEvent, SessionRow, SessionStore};
 pub use surfaces::{EntrySurfaces, SignInDestinations};
 pub use work::{
-    InProcessWork, KeeperJob, KeeperWork, KeeperWorker, ProbeOutcome, RunProbe, Work, WorkOutcome,
+    InProcessWork, KeeperJob, KeeperWork, KeeperWorker, RunSessionCheck, SessionCheckOutcome, Work,
+    WorkOutcome,
 };
 
 /// The boxed future the traits of this crate return, so that each can be

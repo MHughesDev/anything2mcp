@@ -1,18 +1,20 @@
 //! What the session keeper is handed: the way to a session's own person,
-//! and the probe.
+//! and the session check.
 //!
 //! The keeper never calls upward. Its requests to a person go through
-//! [`PersonBridge`] to the role's person surface, and its probe goes
-//! through [`ProbeBridge`] to the engine.
+//! [`PersonBridge`] to the role's person surface, and its session check goes
+//! through [`SessionCheckBridge`] to the engine.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 use std::time::Duration;
 
-use a2m_auth::{AskPerson, BoxFuture, PersonAnswer, PersonAsk, ProbeOutcome, RunProbe, SessionRef};
+use a2m_auth::{
+    AskPerson, BoxFuture, PersonAnswer, PersonAsk, RunSessionCheck, SessionCheckOutcome, SessionRef,
+};
 use a2m_core::{
-    CompiledProbe, Digest, EffectClass, FailureClass, FieldHasher, Identity, RunState, SessionId,
-    TargetName, ToolRuns,
+    CompiledSessionCheck, Digest, EffectClass, FailureClass, FieldHasher, Identity, RunState,
+    SessionId, TargetName, ToolRuns,
 };
 use a2m_engine::encode_values;
 use a2m_ledger::{BlobKind, Durability, NewBlob, NewRun, RetentionClass, ToolKind};
@@ -24,11 +26,11 @@ use crate::kernel::{Inner, Kernel};
 use crate::person::{PersonSurface, SessionAsk};
 use crate::runner::{CallerFacts, keep_run_call};
 
-/// How long a probe's run may take, from its admission to its end, before
-/// the probe counts as one that could not be made.
-const PROBE_WAIT: Duration = Duration::from_secs(120);
+/// How long a session check's run may take, from its admission to its end, before
+/// the session check counts as one that could not be made.
+const SESSION_CHECK_WAIT: Duration = Duration::from_secs(120);
 
-/// What makes a probe's run another run than the person's own call of the
+/// What makes a session check's run another run than the person's own call of the
 /// same read with the same input (ledger rule 6).
 const PROBE_PURPOSE: &[u8] = b"anything2mcp session probe 1";
 
@@ -61,46 +63,46 @@ impl AskPerson for PersonBridge {
 }
 
 /// The published version a session was last leased under by a run, whose
-/// auth file entry's probe checks it.
+/// auth file entry's session check checks it.
 #[derive(Debug, Clone)]
-pub(crate) struct ProbeSource {
+pub(crate) struct SessionCheckSource {
     pub(crate) target: TargetName,
     pub(crate) compiled_target: Digest,
-    pub(crate) probe: CompiledProbe,
+    pub(crate) probe: CompiledSessionCheck,
 }
 
-/// [`RunProbe`] for the keeper of one process: the entry's `probe`
+/// [`RunSessionCheck`] for the keeper of one process: the entry's `probe`
 /// operation, run as an ordinary read through the engine, under a lease of
 /// purpose `Probe` (spec section 215, decision 0121).
 ///
-/// The probe of a session is the one of the published version a run last
+/// The session check of a session is the one of the published version a run last
 /// leased it under, noted in memory as the lease is given. A session no run
-/// has leased since the engine started, a probe that is an entry of a pack's
+/// has leased since the engine started, a session check that is an entry of a pack's
 /// file kind, an operation that no tool of the compiled target runs, and a
 /// run that cannot be made or does not end in time, each answer that nothing
 /// is known: the keeper changes no state for it.
 #[derive(Default)]
-pub(crate) struct ProbeBridge {
+pub(crate) struct SessionCheckBridge {
     kernel: OnceLock<Weak<Inner>>,
-    sources: Mutex<BTreeMap<SessionId, ProbeSource>>,
+    sources: Mutex<BTreeMap<SessionId, SessionCheckSource>>,
 }
 
-impl ProbeBridge {
-    /// Joins the bridge to the kernel it runs probes through. It holds the
+impl SessionCheckBridge {
+    /// Joins the bridge to the kernel it runs session checks through. It holds the
     /// kernel weakly: the keeper's work must not keep a closed engine alive.
     pub(crate) fn bind(&self, kernel: &Arc<Inner>) {
         let _ = self.kernel.set(Arc::downgrade(kernel));
     }
 
-    /// Notes the version a run leased `session` under, and its probe.
-    pub(crate) fn note(&self, session: SessionId, source: ProbeSource) {
+    /// Notes the version a run leased `session` under, and its session check.
+    pub(crate) fn note(&self, session: SessionId, source: SessionCheckSource) {
         self.sources
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(session, source);
     }
 
-    fn source(&self, session: SessionId) -> Option<ProbeSource> {
+    fn source(&self, session: SessionId) -> Option<SessionCheckSource> {
         self.sources
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -109,50 +111,54 @@ impl ProbeBridge {
     }
 }
 
-impl RunProbe for ProbeBridge {
-    fn probe<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, ProbeOutcome> {
+impl RunSessionCheck for SessionCheckBridge {
+    fn check_session<'a>(&'a self, session: &'a SessionRef) -> BoxFuture<'a, SessionCheckOutcome> {
         Box::pin(async move {
             let Some(inner) = self.kernel.get().and_then(Weak::upgrade) else {
-                return ProbeOutcome::Unknown;
+                return SessionCheckOutcome::Unknown;
             };
             let Some(source) = self.source(session.session) else {
-                return ProbeOutcome::Unknown;
+                return SessionCheckOutcome::Unknown;
             };
-            Kernel { inner }.run_probe(session, &source).await
+            Kernel { inner }.run_session_check(session, &source).await
         })
     }
 }
 
 impl Kernel {
-    /// Runs a session's probe through the engine and reads how its run
+    /// Runs a session's session check through the engine and reads how its run
     /// ended: completed is signed in; stopped because the session has ended
     /// is signed out; anything else says nothing.
-    async fn run_probe(&self, session: &SessionRef, source: &ProbeSource) -> ProbeOutcome {
+    async fn run_session_check(
+        &self,
+        session: &SessionRef,
+        source: &SessionCheckSource,
+    ) -> SessionCheckOutcome {
         let Identity::Person(person) = session.key.identity else {
-            return ProbeOutcome::Unknown;
+            return SessionCheckOutcome::Unknown;
         };
         if !self.runner_running() {
-            return ProbeOutcome::Unknown;
+            return SessionCheckOutcome::Unknown;
         }
-        let CompiledProbe::Operation { operation, inputs } = &source.probe else {
-            return ProbeOutcome::Unknown;
+        let CompiledSessionCheck::Operation { operation, inputs } = &source.probe else {
+            return SessionCheckOutcome::Unknown;
         };
         let Ok(compiled_target) = self
             .compiled_target_by_hash(&source.target, &source.compiled_target)
             .await
         else {
-            return ProbeOutcome::Unknown;
+            return SessionCheckOutcome::Unknown;
         };
         let Some(tool) = compiled_target
             .tools
             .iter()
             .find(|tool| tool.runs == ToolRuns::Operation(*operation))
         else {
-            return ProbeOutcome::Unknown;
+            return SessionCheckOutcome::Unknown;
         };
         let (Ok(store), Ok(sched), Ok(bytes)) = (self.store(), self.sched(), encode_values(inputs))
         else {
-            return ProbeOutcome::Unknown;
+            return SessionCheckOutcome::Unknown;
         };
         let workspace = session.key.workspace;
         let Ok(stored) = store
@@ -166,7 +172,7 @@ impl Kernel {
             })
             .await
         else {
-            return ProbeOutcome::Unknown;
+            return SessionCheckOutcome::Unknown;
         };
         let mut hasher = FieldHasher::new();
         hasher.field("purpose", PROBE_PURPOSE);
@@ -206,7 +212,7 @@ impl Kernel {
             .await
             .is_err()
         {
-            return ProbeOutcome::Unknown;
+            return SessionCheckOutcome::Unknown;
         }
         let admitted = sched
             .submit(Submission {
@@ -230,19 +236,19 @@ impl Kernel {
                 run,
                 priority: Priority::Interactive,
                 health: crate::handlers::tools::sched_health(self),
-                queue_wait: Some(PROBE_WAIT),
+                queue_wait: Some(SESSION_CHECK_WAIT),
                 budgets: Vec::new(),
             })
             .await;
         let run = match admitted {
             Ok(Admitted::New { run, .. } | Admitted::Existing { run }) => run,
-            Err(_) => return ProbeOutcome::Unknown,
+            Err(_) => return SessionCheckOutcome::Unknown,
         };
-        let Ok(row) = self.wait_for_rest(run, PROBE_WAIT).await else {
-            return ProbeOutcome::Unknown;
+        let Ok(row) = self.wait_for_rest(run, SESSION_CHECK_WAIT).await else {
+            return SessionCheckOutcome::Unknown;
         };
-        // A probe's run never waits for anyone: one that rests, or is still
-        // under way, is ended, so that the next probe is a run of its own.
+        // A session check's run never waits for anyone: one that rests, or is still
+        // under way, is ended, so that the next session check is a run of its own.
         if !row.state.is_final() {
             let _ = sched.cancel(run).await;
         }
@@ -250,14 +256,14 @@ impl Kernel {
     }
 }
 
-/// What a probe's run says of the session, from how it ended.
-fn outcome_of(state: RunState, class: Option<FailureClass>) -> ProbeOutcome {
+/// What a session check's run says of the session, from how it ended.
+fn outcome_of(state: RunState, class: Option<FailureClass>) -> SessionCheckOutcome {
     match (state, class) {
-        (RunState::Completed, _) => ProbeOutcome::SignedIn,
+        (RunState::Completed, _) => SessionCheckOutcome::SignedIn,
         (RunState::NeedsLogin, _) | (_, Some(FailureClass::SessionExpired)) => {
-            ProbeOutcome::SignedOut
+            SessionCheckOutcome::SignedOut
         }
-        _ => ProbeOutcome::Unknown,
+        _ => SessionCheckOutcome::Unknown,
     }
 }
 
@@ -270,15 +276,15 @@ mod tests {
     {
         assert_eq!(
             outcome_of(RunState::Completed, None),
-            ProbeOutcome::SignedIn
+            SessionCheckOutcome::SignedIn
         );
         assert_eq!(
             outcome_of(RunState::NeedsLogin, Some(FailureClass::SessionExpired)),
-            ProbeOutcome::SignedOut
+            SessionCheckOutcome::SignedOut
         );
         assert_eq!(
             outcome_of(RunState::Failed, Some(FailureClass::SessionExpired)),
-            ProbeOutcome::SignedOut
+            SessionCheckOutcome::SignedOut
         );
         for (state, class) in [
             (RunState::Failed, Some(FailureClass::Policy)),
@@ -286,7 +292,11 @@ mod tests {
             (RunState::Cancelled, None),
             (RunState::Stopped, Some(FailureClass::Busy)),
         ] {
-            assert_eq!(outcome_of(state, class), ProbeOutcome::Unknown, "{state:?}");
+            assert_eq!(
+                outcome_of(state, class),
+                SessionCheckOutcome::Unknown,
+                "{state:?}"
+            );
         }
     }
 }
