@@ -371,6 +371,7 @@ impl Scene {
             destinations: &Destinations::default(),
             paths,
             supervisor: &supervisor,
+            confirmed: a2m_provider::ConfirmedReads::none(),
         };
         handle.prepare(&cx, None).await
     }

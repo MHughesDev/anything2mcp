@@ -57,9 +57,10 @@ pub use discover::{
     SurfaceDescription,
 };
 pub use driver::{
-    Authority, Capture, ChoiceReason, Deadline, Destinations, Driver, DriverHandle, DriverHealth,
-    Observed, OtherRecords, Posture, PrepareContext, Prepared, ProviderChoice, ReadOnlyPort,
-    RecordedElsewhere, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef, recorded_digest,
+    Authority, Capture, ChoiceReason, ConfirmedReads, Deadline, Destinations, Driver, DriverHandle,
+    DriverHealth, Observed, OtherRecords, Posture, PrepareContext, Prepared, ProviderChoice,
+    ReadOnlyPort, RecordedElsewhere, Sent, StepFailure, StepInput, StepOutcome, SurfaceRef,
+    recorded_digest,
 };
 pub use entry_point::{ENTRY_POINT_GROUP, EntryPointSearch, PythonProvider, find_python_providers};
 pub use manifest::{

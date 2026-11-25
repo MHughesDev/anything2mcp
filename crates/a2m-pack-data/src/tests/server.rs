@@ -294,6 +294,7 @@ impl ServerScene {
             destinations: &destinations,
             paths: &CheckedPaths::none(),
             supervisor: &supervisor,
+            confirmed: a2m_provider::ConfirmedReads::none(),
         };
         handle.prepare(&cx, Some(&lease)).await
     }
@@ -864,6 +865,7 @@ async fn a_server_off_the_loopback_address_or_with_no_session_is_refused_before_
             destinations: &destinations,
             paths: &CheckedPaths::none(),
             supervisor: &supervisor,
+            confirmed: a2m_provider::ConfirmedReads::none(),
         };
         let failure = handle.prepare(&cx, None).await.map(|_| ()).unwrap_err();
         assert_eq!(failure.failure.code(), code, "{address}");

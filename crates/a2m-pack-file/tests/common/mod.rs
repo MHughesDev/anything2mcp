@@ -246,6 +246,7 @@ impl Scene {
             destinations: &Destinations::default(),
             paths,
             supervisor: &supervisor,
+            confirmed: a2m_provider::ConfirmedReads::none(),
         };
         let prepared = handle.prepare(&cx, None).await?;
         Ok((handle, prepared))

@@ -955,6 +955,7 @@ async fn a_commit_not_marked_as_the_commit_point_is_refused_and_nothing_lands() 
         destinations: &a2m_provider::Destinations::default(),
         paths: &scene.paths,
         supervisor: &supervisor,
+        confirmed: a2m_provider::ConfirmedReads::none(),
     };
     let mut prepared = a2m_provider::Driver::prepare(&driver, &cx, None)
         .await

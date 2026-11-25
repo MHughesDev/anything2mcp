@@ -770,6 +770,7 @@ impl<'a> Run<'a> {
             destinations: &destinations,
             paths: &self.paths,
             supervisor: &supervisor,
+            confirmed: self.control.confirmed_reads(&self.loaded.hash),
         };
         // It is safe to drop the future of `prepare`, so it runs under its
         // deadline.

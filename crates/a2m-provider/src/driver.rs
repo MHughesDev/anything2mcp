@@ -170,6 +170,62 @@ pub struct PrepareContext<'a> {
     /// Starts only what the manifest and the published compiled target
     /// declare.
     pub supervisor: &'a ScopedSupervisor,
+    /// The asserted reads of the drafts that their person confirmed on the
+    /// engine's page, for a try of the drafts (decision 0999). Empty for a
+    /// published compiled target, which has its own rule, and wherever the
+    /// control plane does not say.
+    pub confirmed: ConfirmedReads,
+}
+
+/// The asserted reads a person confirmed on the engine's page for a try of
+/// the drafts (decision 0999), each by the file kind that asserts it, its
+/// surface, and its entry. The kernel puts in an entry only when the
+/// confirmation's digest covers the entry as the compiled target holds it,
+/// so a name here is the compiled target's own entry, unchanged since the
+/// person read it. A pack that reads it lets a confirmed entry through only
+/// where its own rule says; a pack that does not read it is unchanged.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConfirmedReads {
+    entries: BTreeSet<(String, String, String)>,
+}
+
+impl ConfirmedReads {
+    /// None confirmed.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            entries: BTreeSet::new(),
+        }
+    }
+
+    /// The entries given, each `(file kind, surface, entry)`.
+    #[must_use]
+    pub fn of(entries: impl IntoIterator<Item = (String, String, String)>) -> Self {
+        Self {
+            entries: entries.into_iter().collect(),
+        }
+    }
+
+    /// Whether the entry `entry` of the file kind `kind` on `surface` was
+    /// confirmed.
+    #[must_use]
+    pub fn covers(&self, kind: &str, surface: &str, entry: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|(k, s, e)| k == kind && s == surface && e == entry)
+    }
+
+    /// Whether none is confirmed.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// How many are confirmed.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 impl fmt::Debug for PrepareContext<'_> {

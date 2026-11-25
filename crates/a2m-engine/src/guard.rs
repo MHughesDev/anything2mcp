@@ -191,6 +191,10 @@ impl ControlPort for Timed<'_> {
         self.inner.project_folder()
     }
 
+    fn confirmed_reads(&self, hash: &Digest) -> a2m_provider::ConfirmedReads {
+        self.inner.confirmed_reads(hash)
+    }
+
     fn discovery_files(&self) -> std::collections::BTreeMap<String, String> {
         self.inner.discovery_files()
     }
