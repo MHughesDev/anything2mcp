@@ -37,6 +37,12 @@ A second alternative: the kernel reads the `method` and `path` of each finding's
 
 5. **Where it runs.** The scout's stage 3 (compare) runs it over the findings stage 2 stored, whether or not the call is made in a project, and keeps it under `described_against_observed`: the counts by result, and each entry with its result, its level, its finding identifiers, its reason or coverage, and its verb and path under the mark of the system's words (decision 0171). The report shows it, as it shows the whole stage. Each entry that is not `matched` opens one question in the unknowns ledger, asked once, scoped to the entry's first finding: for `described_only`, whether the endpoint works as described; for `observed_only`, what it is; for `unknown`, that it could not be compared and why. The question names no path, so it quotes nothing the system said.
 
+## What the build showed
+
+- The comparison is described against the whole origin. The test application's description states its JSON interface only, so the pages a capture loads at the same origin are `observed_only` beside the requests they make. That is true (no description states them) and section 218 already says it must not be read as undocumented by intent; a description that states its own base path (a `servers` entry) could narrow the place, which is not built.
+- A request a capture saw once keeps its literal path, and it fits a described template: the summary pages' totals matched `/api/orders/{order_id}/totals` at `discovered`.
+- A scout of an HTTP target alone compares the description with the surface's own look at its root, which covers the origin: every described operation is `described_only`, and the root's `GET` and `OPTIONS` are `observed_only`. The first hour's scout therefore asks one question more for each, about a dozen; no test counted them.
+
 ## Choices
 
 - **A function, not a discoverer.** Given above: a comparison is not an observation.
@@ -50,5 +56,5 @@ A second alternative: the kernel reads the `method` and `path` of each finding's
 | The four results, the key's fit and its most-literal preference, the side by source, the level of each result, and the reasons of `unknown` | `crates/a2m-provider/tests/compare.rs` |
 | A key rule for a kind the manifest does not own, or a second for one kind, is refused; `Registry::compare` routes by kind and leaves out a kind with no rule | `crates/a2m-provider/tests/compare.rs` |
 | The vocabularies are section 218's | `crates/a2m-core/tests/documents.rs` |
-| Against the test application, through the product's registry: the description read by `http_description` and two summary pages and a lengths page looked at by `web_capture`; the totals the pages ask for are `matched` at `discovered`; every other described endpoint is `described_only` at `inferred`; the undescribed lengths request is `observed_only`, named `GET` with its path | `crates/anything2mcp/tests/described.rs` |
+| Against the test application, through the product's registry: the description read by `http_description` and two summary pages and a lengths page looked at by `web_capture`; the totals the pages ask for are `matched` at `discovered`; every other described endpoint is `described_only` at `inferred`; the undescribed lengths request, seen once, is `observed_only`, named `GET /api/orders/A-100/lengths`; the pages themselves, which the description of the JSON interface does not state, are named `observed_only` too | `crates/anything2mcp/tests/described.rs` |
 | A scout of the test application keeps the comparison in its stage 3 and its report, and opens a question for each entry that is not `matched` | `crates/anything2mcp/tests/described.rs` |
