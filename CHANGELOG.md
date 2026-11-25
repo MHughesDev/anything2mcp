@@ -6,6 +6,8 @@ The design's own history is in the [decision records](docs/decisions/README.md),
 
 ## [Unreleased]
 
+- A capture of a person's use puts each request a page sent to the screen of the page that sent it, also when the person moves on before the page is quiet; the screen they left is counted as missed, and no longer gets the next page's snapshot ([decision 0999](docs/decisions/0999-a-watching-tab-hands-out-each-screen-with-its-document-and-a-request-goes-to-the-screen-of-its-own-document.md)).
+
 ## [0.1.0] - 2026-11-25
 
 The first published version, a **preview**, before version 1.0 ([decision 0476](docs/decisions/0476-version-0-1-is-a-preview-and-the-checks-a-person-makes-move-to-before-1-0.md)). Built and tested against the built-in test stands on Windows, macOS, and Linux. Until 1.0 a minor version may break. What this preview has not had yet:

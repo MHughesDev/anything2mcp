@@ -121,12 +121,18 @@ impl WatchTab {
     pub fn blocked(&self) -> Vec<RequestShape>;            // NAVIGATION, OUTSIDE, POPUP, DOWNLOAD, a socket: never a method
     pub async fn exchanges(&self, deadline: Deadline) -> PageExchanges;   // every method, with the body by structure
     pub fn screens(&self) -> WatchedScreens;               // a snapshot of each screen, no value kept, taken out
+    pub fn next_screen(&self) -> Option<WatchedScreen>;    // the oldest screen not handed out, with its document
+    pub async fn exchanges_through(&self, through: Option<DocumentMark>, deadline: Deadline) -> PageExchanges;
+                                                           // only the requests of the documents up to `through`
     pub fn changes(&self) -> u64; pub async fn changed_since(&self, seen: u64, deadline: Deadline) -> Result<(), BrowserError>;
     pub fn looked_at(&self) -> usize; pub async fn looked_at_since(&self, seen: usize, deadline: Deadline) -> bool;
     pub fn is_open(&self) -> bool; pub async fn closed(&self, deadline: Deadline) -> bool;   // the person closed it
 }
 impl TrafficCapture for WatchTab { /* records from the moment it opens; take_recorded: exchanges, as CapturedTraffic */ }
 pub struct WatchedScreens { pub snapshots: Vec<Snapshot>, pub bound_hit: bool, pub missed: usize }
+pub struct WatchedScreen { pub address: String, pub document: DocumentMark, pub snapshot: Option<Snapshot>,
+                           pub past_bound: bool }        // one screen; no snapshot when missed or past the bound
+pub struct DocumentMark;                                  // a document of the tab's frame, by the order it was parsed
 pub const LONGEST_WATCHED_BODY: usize;   // 64 KiB: a longer body is recorded by its media type alone
 pub const SCREENS_KEPT: usize;           // 40
 pub const SETTLE_BOUND: Duration;        // 10 s: how long a screen waits for its requests to end
@@ -327,7 +333,7 @@ A `WatchTab` ([decision 0392](../../decisions/0392-a-page-that-reads-by-a-method
 | --- | --- |
 | A request of the page, whatever its method | Not failed: every request in the tab is the person's. Only documents and what a page loads with no body are held, to the tab's origins, as in a sign-in tab; a move to another origin is ended and reported as `NAVIGATION` |
 | What is recorded | Every request to one of the tab's origins that a script or a beacon sends, and a document's request that carries a body (a form the person posts), from the browser's network events (`Network.requestWillBeSent`), as a `PageExchange`: its names and kinds as an observing tab keeps them, and its body's media type and, for JSON or a form given whole up to `LONGEST_WATCHED_BODY`, the names and kinds of its fields by the rule of an answer's. The bytes are dropped when the names are read. A request the document left behind unanswered when the next document of the tab loads is closed then: one whose answer's head came is an exchange with no answer fields, one with none is forgotten, and one whose answer came whole and is being read is left to the read, which records it once ([decision 0415](../../decisions/0415-a-request-whose-answer-is-being-read-is-closed-by-the-read-alone.md)) |
-| A screen | When the address of the tab's document changes, by a new document or in the same one, and is on its origins, the tab waits until the browser says the document is idle on the network and no recorded request awaits its answer, or `SETTLE_BOUND`, and takes a snapshot, at most `SCREENS_KEPT`. Every element's value is dropped but a password's `MASK`; names are kept as in any snapshot, and the web probe keeps them as types where they are data |
+| A screen | One address of one document of the tab's frame: the last document parsed, at the address the browser said it is at (its request, redirects followed, and each move within it), when that is on its origins. The tab waits until the browser says that document is idle on the network and no recorded request awaits its answer, or `SETTLE_BOUND`, and stops waiting when another document is parsed; it keeps the snapshot only when the same document is still the last parsed after it and its address is the screen's, at most `SCREENS_KEPT`. A screen is handed out with its document whatever came of its snapshot, and `exchanges_through` takes only the requests of the documents up to a screen's, so that `web_use` puts each request to the screen of its own document ([decision 0999](../../decisions/0999-a-watching-tab-hands-out-each-screen-with-its-document-and-a-request-goes-to-the-screen-of-its-own-document.md)). Every element's value is dropped but a password's `MASK`; names are kept as in any snapshot, and the web probe keeps them as types where they are data |
 | Workers and frames | Not attached to: their requests are not recorded |
 | The service worker | Passed by, so that the page's requests reach the network and are seen | An observing tab's safe requests are a list every caller leaves empty today; package E7c has the drivers fill it from the asserted reads of a published version. Since package E7b ([decision 0394](../../decisions/0394-an-asserted-read-of-a-web-surface-is-a-page-request-matched-by-one-shared-shape-and-shown-at-publish.md), point 3) a safe request is matched by template and body, and the match by prefix is gone.
 
