@@ -366,6 +366,20 @@ async fn engine_lock_held(paths: &Paths) -> Result<bool, Failure> {
         })?
 }
 
+/// The refusal of an engine lock held by an engine of another runtime
+/// directory, which no wait here makes answer (decision 0432).
+async fn engine_lock_elsewhere(paths: &Paths) -> Result<Option<Failure>, Failure> {
+    let paths = paths.clone();
+    tokio::task::spawn_blocking(move || EngineLock::elsewhere(&paths))
+        .await
+        .map_err(|_| {
+            codes::unavailable(
+                "The engine's lock file",
+                &std::io::Error::other("the look stopped"),
+            )
+        })?
+}
+
 /// Starts the engine on a blocking thread, which owns the `Launch`:
 /// making the output file, starting the process, and writing its input
 /// are calls that wait on the operating system, and none of them runs on
@@ -405,6 +419,8 @@ impl Connector {
     /// What [`Connector::connect`] answers for an engine that cannot be
     /// used; `busy`/`engine_unreachable` when nothing answered in time, or
     /// the engine started ended before it answered, with the log to read;
+    /// `busy`/`engine_running` when the engine lock is held by an engine
+    /// whose record names another runtime directory, which is named;
     /// `busy`/`channel_unavailable` when a lock file cannot be opened.
     pub async fn connect_or_start(
         &self,
@@ -478,7 +494,14 @@ impl Connector {
             // The engine lock is asked about only when no engine of this
             // client's is starting, so that the question never takes the
             // lock from under it.
-            if child.is_none() && !engine_lock_held(paths).await? {
+            if child.is_none() && engine_lock_held(paths).await? {
+                // An engine of another runtime directory never answers
+                // here: the refusal says where it is, and nothing is
+                // started to be refused in turn.
+                if let Some(refused) = engine_lock_elsewhere(paths).await? {
+                    return Err(refused);
+                }
+            } else if child.is_none() {
                 if ours_ended {
                     return Err(ended_early(&start.log, ended_process));
                 }
