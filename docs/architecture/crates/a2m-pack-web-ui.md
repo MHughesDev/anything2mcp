@@ -222,6 +222,7 @@ As built. Every failure says whether input reached the page.
 | `drift` | `anti_forgery_not_found` | A `page_http` write's page holds no anti-forgery token where its entry says | Not sent |
 | `unknown_variant` | `anti_forgery_unreadable` | The page holds two different tokens where the entry says, or one not of a form a token is sent in | Not sent |
 | `unknown_variant` | `browser_not_owned` | The base's: what started is not a browser the engine can own | Not sent |
+| `busy` | `browser_stopped_at_start` | The base's: the browser stopped as it started, and wrote why, such as a sandbox it cannot make (decision 0450) | Not sent |
 | `rejected` | `app_validation_error` | The page shows a variant with handling `stop`: at `wait`, after a click that did not show it before, or before a click, which is then not made. Not a `page_http` write's declared refusal, which is in doubt | Answered; not sent before a click |
 | `session_expired` | `needs_login` | A `ui` wait, or a `page_http` `goto` that lands elsewhere, finds a screen the target declares as a sign of expiry (not sent); a `page_http` read is answered with a status the target declares (answered); a sign-in window is not finished | Not sent, or answered |
 | `edge_blocked` | `sign_in_blocked` | `form_login`: the sign-in page shows the block the entry names | Answered |

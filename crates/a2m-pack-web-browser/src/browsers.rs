@@ -1146,10 +1146,19 @@ impl Browsers {
                 // is no secret, so the folder itself is what keeps them.
                 .and_then(|directory| launch::make_private(&directory).map(|()| directory))
                 .map_err(LaunchReason::DataDirectory)?;
-            Ok::<_, LaunchReason>((program, directory))
+            // What an earlier start wrote is not this start's. A file that
+            // cannot be removed is written on; what is shown of it is still
+            // what the browser wrote.
+            let log = directory
+                .join(launch::LOG_FILE)
+                .map_err(LaunchReason::DataDirectory)?;
+            if log.exists() {
+                let _ = log.remove_file();
+            }
+            Ok::<_, LaunchReason>((program, (directory, log)))
         })
         .await;
-        let (program, directory) = match found {
+        let (program, (directory, log)) = match found {
             Ok(found) => found.map_err(failed)?,
             Err(_) => {
                 return Err(failed(LaunchReason::DataDirectory(Failure::new(
@@ -1161,7 +1170,7 @@ impl Browsers {
             }
         };
         #[allow(unused_mut, reason = "only a test build adds an argument")]
-        let mut args = launch::arguments(directory.as_path(), window);
+        let mut args = launch::arguments(directory.as_path(), log.as_path(), window);
         #[cfg(any(test, feature = "test-support"))]
         if shared.settings.without_sandbox {
             args.push(crate::test_support::WITHOUT_SANDBOX.into());
@@ -1256,10 +1265,27 @@ impl Browsers {
                     );
                     // Silence with the pipe still open is not proof of
                     // anything but slowness: a browser on a cold machine
-                    // can take longer than any deadline. Everything else
+                    // can take longer than any deadline. A pipe that ended
+                    // after the program wrote why in its log is a browser
+                    // that could not start here, such as one that cannot
+                    // make its sandbox (decision 0450). Everything else
                     // is a program that is not a browser.
                     Err(match error {
                         ClientError::Timeout { .. } => LaunchReason::NoAnswer(why),
+                        ClientError::Closed {
+                            why: Why::Ended, ..
+                        } => {
+                            let read = log.clone();
+                            let redact = Arc::clone(&shared.redact);
+                            match tokio::task::spawn_blocking(move || {
+                                launch::what_it_wrote(&read, redact.as_ref())
+                            })
+                            .await
+                            {
+                                Ok(Some(wrote)) => LaunchReason::Stopped(wrote),
+                                _ => LaunchReason::NotOwned(why),
+                            }
+                        }
                         _ => LaunchReason::NotOwned(why),
                     })
                 }
@@ -1273,6 +1299,9 @@ impl Browsers {
                 return Err(failed(reason));
             }
         };
+        // A browser that answered needs its log no more. Where the system
+        // keeps an open file from being removed, the next start removes it.
+        let _ = tokio::task::spawn_blocking(move || log.remove_file()).await;
         // Every tab is opened in a context of the browser's own making,
         // which keeps what pages store in memory: no cookie and no page
         // storage is written to the data directory (decision 0245).
