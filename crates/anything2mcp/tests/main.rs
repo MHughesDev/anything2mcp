@@ -38,6 +38,7 @@ mod file_write;
 mod first_hour;
 mod first_hour_faults;
 mod first_hour_signed_in;
+mod first_hour_words;
 mod first_read;
 mod first_run;
 mod forgery_write;
