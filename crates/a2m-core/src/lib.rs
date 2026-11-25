@@ -86,7 +86,7 @@ pub use ident::{
     WorkspaceId,
 };
 pub use kind::{Archetype, Mode};
-pub use name::{InvalidName, UnknownName};
+pub use name::{InvalidName, UnknownName, is_kept_for_a_device};
 pub use notice::SurfaceNotice;
 pub use redact::{
     DigestPurpose, KeyedDigest, NoSecrets, REDACTED, Redact, hmac_sha256, keyed_digest_under,
