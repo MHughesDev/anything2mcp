@@ -482,8 +482,9 @@ jobs:
     if: needs.decide.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Add required reviewers to this environment in the repository's settings to
-    # make GitHub ask a person before the release page is made.
+    # This environment is the gate (decision 0999): its required reviewer makes
+    # GitHub ask a person before the release page is made. Its deployment rule
+    # allows only main and v* tags. The refusals in `decide` are a second barrier.
     environment: release
     permissions:
       # The release page, and the tag when the run was started by hand.
@@ -544,8 +545,9 @@ jobs:
     if: needs.decide.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Add required reviewers to this environment in the repository's settings to
-    # make GitHub ask a person before every publish.
+    # This environment is the gate (decision 0999): its required reviewer makes
+    # GitHub ask a person before every publish. Its deployment rule
+    # allows only main and v* tags. The refusals in `decide` are a second barrier.
     environment: pypi
     permissions:
       # The short-lived credential that PyPI's trusted publishing exchanges. No
@@ -567,8 +569,9 @@ jobs:
     if: needs.decide.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Add required reviewers to this environment in the repository's settings to
-    # make GitHub ask a person before every publish.
+    # This environment is the gate (decision 0999): its required reviewer makes
+    # GitHub ask a person before every publish. Its deployment rule
+    # allows only main and v* tags. The refusals in `decide` are a second barrier.
     environment: npm
     permissions:
       # The short-lived credential that npm's trusted publishing exchanges, and
