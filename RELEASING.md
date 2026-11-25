@@ -56,7 +56,7 @@ Everything an agent can build for it is built; these steps are the owner's, beca
 2. On PyPI, add the pending publisher for `anything2mcp` (workflow `release.yml`, environment `pypi`).
 3. On npm, create the organization `anything2mcp`, publish each of the nine packages once from a rehearsal run's `npm-package-*` artifacts, and add a trusted publisher to each (workflow `release.yml`, environment `npm`), allowing `npm publish`.
 4. Rehearse: run the "Release" workflow by hand on `main` with no version, and see every job pass, `release-files` among them.
-5. Set the version to 0.1.0 in every place, write the changelog's section, keep the contract (steps 2 to 5 of "Before a release"), merge, and push the tag `v0.1.0` or start the workflow by hand with `0.1.0`.
+5. The version 0.1.0, its changelog section, and its kept contract are on main already, in the commit that prepared them ([decision 0479](docs/decisions/0479-agents-keep-building-while-0-1-waits-and-0-1-is-released-from-its-prepared-commit.md)). Push the tag `v0.1.0` on that commit; later commits on main hold work for the next version under Unreleased.
 6. Approve `publish-release`, then `publish-pypi` and `publish-npm`, and do the steps below.
 
 ## After a release
