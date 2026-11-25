@@ -1202,7 +1202,7 @@ class Actions:
         target: str,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        part: Optional[Literal["surfaces", "found", "compared.differs", "compared.would_draft", "compared.not_covered", "drafted.written", "drafted.held_back", "drafted.not_drafted", "drafted.conflicts", "drafted.refused", "checked.problems", "checked.tools", "tried.tools", "tried.left_out", "open", "not_looked_at"]] = None,
+        part: Optional[Literal["surfaces", "found", "compared.differs", "compared.would_draft", "compared.not_covered", "compared.described_against_observed.entries", "drafted.written", "drafted.held_back", "drafted.not_drafted", "drafted.conflicts", "drafted.refused", "checked.problems", "checked.tools", "tried.tools", "tried.left_out", "open", "not_looked_at"]] = None,
         scout: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
