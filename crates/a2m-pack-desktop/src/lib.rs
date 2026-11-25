@@ -53,6 +53,7 @@ mod lower;
 mod members;
 mod model;
 mod plist;
+mod probe;
 mod propose;
 mod roles;
 mod screens;
@@ -86,6 +87,10 @@ pub const ADDRESS_KEY: &str = "program";
 
 /// The name of the pack's discoverer of windows.
 pub const SNAPSHOT_DISCOVERER: &str = "desktop_snapshot";
+
+/// The name of the pack's discoverer of what the declared application is
+/// and how far the pack reaches it (decision 0999).
+pub const PROBE_DISCOVERER: &str = "desktop_probe";
 
 /// The name of the pack's discoverer of a service on the session bus.
 pub const SERVICE_DISCOVERER: &str = "desktop_service";
@@ -227,6 +232,16 @@ impl Pack for DesktopPack {
                 clock: cx.logs_and_traces().clock(),
             }),
             Arc::new(discover::DesktopDescriber { kind: window }),
+        )?;
+        let surface_kind = FindingKind::new(probe::SURFACE_FINDING)?;
+        to.discoverer(
+            Arc::new(probe::DesktopProbe {
+                name: DiscovererName::new(PROBE_DISCOVERER)?,
+                kind: surface_kind.clone(),
+                version: version(),
+                clock: cx.logs_and_traces().clock(),
+            }),
+            Arc::new(probe::ProbeDescriber { kind: surface_kind }),
         )?;
         to.discoverer(
             Arc::new(service::DesktopService {

@@ -359,20 +359,23 @@ impl Scene {
     }
 
     async fn discovered(&self) -> Result<Vec<Finding>, String> {
+        self.discover_with("desktop_snapshot").await
+    }
+
+    /// The pack's discoverer `name`, run against the session.
+    pub async fn discover_with(&self, name: &str) -> Result<Vec<Finding>, String> {
         let description = SurfaceDescription {
             kind: SurfaceKind::new("desktop").unwrap(),
             access_kind: AccessKind::Interface,
             address: self.surface.surface.address.clone(),
             facts: Values::new(),
         };
-        // The window's: the pack has another, of services, which a test of
-        // its own runs.
         let discoverer = self
             .registry
             .discoverers_for(&description)
             .into_iter()
-            .find(|found| found.declared().name.as_str() == "desktop_snapshot")
-            .expect("the pack registers a discoverer of windows");
+            .find(|found| found.declared().name.as_str() == name)
+            .expect("the pack registers the discoverer");
         let (handle, prepared) = self
             .prepare(a2m_provider::Posture::Discovery)
             .await

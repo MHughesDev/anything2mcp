@@ -1122,11 +1122,53 @@ impl Held {
         let shape = json!({
             "format": SNAPSHOT_FORMAT,
             "windows": shapes,
+            // The digest of the program's file at the path the surface
+            // declares, which the process was proven to run, for the
+            // probe (decision 0999).
+            "program_digest": file_digest(&self.program).await,
         });
         Ok(Observed {
             values: Values::new().with("shape", shape.to_string()),
             ..Observed::default()
         })
+    }
+}
+
+/// The digest of the file at `path`, as `sha256:` and its hexadecimal
+/// form, read off the async threads; `None` when it cannot be read.
+async fn file_digest(path: &str) -> Option<String> {
+    #[cfg(any(target_os = "linux", windows, target_os = "macos"))]
+    {
+        use sha2::Digest as _;
+        use std::io::Read as _;
+        let path = path.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let mut file = std::fs::File::open(path).ok()?;
+            let mut hasher = sha2::Sha256::new();
+            let mut buffer = vec![0_u8; 64 * 1024];
+            loop {
+                match file.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(read) => hasher.update(&buffer[..read]),
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => return None,
+                }
+            }
+            let hex: String = hasher
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            Some(format!("sha256:{hex}"))
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+    #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
+    {
+        let _ = path;
+        None
     }
 }
 
