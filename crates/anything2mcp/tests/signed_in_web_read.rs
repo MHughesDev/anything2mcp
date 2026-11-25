@@ -32,7 +32,7 @@
     reason = "a test file: a helper that cannot do its work stops the test"
 )]
 
-mod common;
+use crate::common;
 
 use std::process::{Command, Output};
 use std::sync::Arc;
@@ -343,8 +343,7 @@ async fn a_person_signs_in_on_the_engines_page_by_form_once_and_a_ui_read_then_w
 }
 
 /// The name of the test that runs in the child process below.
-const WINDOW_CHILD: &str =
-    "a_person_signs_in_in_a_window_and_a_read_then_works_on_the_display_it_is_given";
+const WINDOW_CHILD: &str = "signed_in_web_read::a_person_signs_in_in_a_window_and_a_read_then_works_on_the_display_it_is_given";
 
 /// The sign-in of the project in a window of the engine's own browser, in
 /// place of the form the engine fills.

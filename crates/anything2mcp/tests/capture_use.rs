@@ -31,7 +31,7 @@
     reason = "a test file: a helper that cannot do its work stops the test"
 )]
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -65,8 +65,7 @@ const ITEM: &str = "/api/orders/A-100/items/L-101";
 const LAST: &str = "/orders";
 
 /// The child test that runs with a display.
-const WINDOW_CHILD: &str =
-    "a_person_s_use_is_captured_in_a_watching_tab_and_drafted_held_on_the_display_it_is_given";
+const WINDOW_CHILD: &str = "capture_use::a_person_s_use_is_captured_in_a_watching_tab_and_drafted_held_on_the_display_it_is_given";
 
 /// A presence prompt that a person passes, and that counts.
 struct Passed(AtomicU32);

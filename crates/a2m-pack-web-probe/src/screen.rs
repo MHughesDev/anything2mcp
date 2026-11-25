@@ -292,7 +292,13 @@ pub(crate) fn placeholder(segments: &[&str], at: usize) -> String {
 pub fn matched(pages: &[(&str, &str, &Json)]) -> Vec<Matched> {
     use std::collections::BTreeMap;
     let mut groups: BTreeMap<(String, usize, Vec<&str>, String), Vec<usize>> = BTreeMap::new();
+    // A page at an address given before is that page again, not a second
+    // page of a screen: one address never stands for a key.
+    let mut addresses = std::collections::BTreeSet::new();
     for (at, (origin, path, found)) in pages.iter().enumerate() {
+        if !addresses.insert((*origin, *path)) {
+            continue;
+        }
         let Some(signature) = signature(found) else {
             continue;
         };

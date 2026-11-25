@@ -87,11 +87,28 @@ fn not_a_held_draft(path: &RelPath) -> Failure {
     )
 }
 
+/// The fix of a refusal of a name, with how a list is written when the
+/// name holds a comma or reads as a list, and so was most likely meant as
+/// several (package 5.6b).
+fn fix_for_name(path: &RelPath, fix: &str) -> String {
+    let text = path.as_str();
+    if text.contains(',') || text.starts_with('[') {
+        format!(
+            "If several files were meant, name each one: on the command line, repeat the flag for each (`--files a --files b`) or give one JSON array of text; in an action's input, `files` is a JSON array. {fix}"
+        )
+    } else {
+        fix.to_owned()
+    }
+}
+
 fn no_such_file(target: &TargetName, path: &RelPath) -> Failure {
     codes::input(
         codes::NOT_FOUND,
         format!("The target `{target}` has no draft file `{path}`."),
-        "Call `target.status` to see the target's files, or write the file with `draft.write`.",
+        fix_for_name(
+            path,
+            "Call `target.status` to see the target's files, or write the file with `draft.write`.",
+        ),
     )
 }
 
@@ -424,7 +441,7 @@ handler!(
                     return Err(codes::input(
                         codes::PATH_NOT_ALLOWED,
                         format!("`{at}` is one of the target's own files, not a draft in one of its folders, and is not removed."),
-                        "Name a draft inside one of the target's folders, such as `operations/stock_get.yaml`.",
+                        fix_for_name(at, "Name a draft inside one of the target's folders, such as `operations/stock_get.yaml`."),
                     ));
                 }
                 no_link_on_the_way(&folder, at)?;
@@ -772,11 +789,15 @@ handler!(
             output.failed(gates.refusal(&target))
         };
         Ok(output.then(if all_passed {
-            Next::new(
-                "publish.request",
-                json!({"target": target.as_str()}),
-                "when a person should review the drafts",
-            )
+            // A draft binding that would act is promoted first: the
+            // publish request comes after it (package 5.6b).
+            super::build::promote_next(&target, &compiled).unwrap_or_else(|| {
+                Next::new(
+                    "publish.request",
+                    json!({"target": target.as_str()}),
+                    "when a person should review the drafts",
+                )
+            })
         } else {
             Next::new(
                 "draft.read",
