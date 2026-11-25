@@ -40,7 +40,8 @@ async fn scene(name: &str, app: &TestApp, profile: Option<&str>) -> Scene {
 
 /// What the application was told, once it has been told at least `count`
 /// things: a page's tell is a request of its own and may land a moment after
-/// the step ends.
+/// the step ends. Ask it before the run's tab is released: releasing closes
+/// the tab, and a tell still on its way is lost with it.
 async fn told(app: &TestApp, count: usize) -> Vec<String> {
     let started = std::time::Instant::now();
     loop {
@@ -110,11 +111,11 @@ async fn a_plain_page_is_told_of_a_change_when_the_control_loses_the_focus() {
     )
     .await;
     let ran = ran.unwrap();
-    assert!(handle.release(prepared, false).await.complete);
     assert_eq!(strategy(&ran), "blur");
     // Nothing was saved: the page heard of the value from its control
     // losing the focus, and from nothing else.
     assert_eq!(told(&app, 1).await, ["changed: R-200"]);
+    assert!(handle.release(prepared, false).await.complete);
     scene.stand.end().await;
 }
 
@@ -134,11 +135,11 @@ async fn a_controlled_input_takes_the_value_typed_and_nothing_set_before_it() {
     )
     .await;
     let ran = ran.unwrap();
-    assert!(handle.release(prepared, false).await.complete);
     assert_eq!(strategy(&ran), "type_then_blur");
     // No `ignored` event: nothing was set without key presses first, as the
     // rule of no profile would have done.
     assert_eq!(told(&app, 1).await, ["reference: R-300"]);
+    assert!(handle.release(prepared, false).await.complete);
     scene.stand.end().await;
 }
 
@@ -157,7 +158,6 @@ async fn a_controlled_input_under_the_wrong_profile_is_a_named_stop() {
     )
     .await;
     let failure = ran.unwrap_err();
-    handle.release(prepared, false).await;
     assert_eq!(
         (failure.failure.class(), failure.failure.code().as_str()),
         (FailureClass::UnknownVariant, "unexpected_control"),
@@ -167,6 +167,7 @@ async fn a_controlled_input_under_the_wrong_profile_is_a_named_stop() {
     assert!(failure.failure.message().contains("blur"), "{failure:?}");
     // The page was told once that it ignored a value, and saved nothing.
     assert_eq!(told(&app, 1).await, ["ignored: not typed"]);
+    handle.release(prepared, false).await;
     scene.stand.end().await;
 }
 
@@ -186,9 +187,9 @@ async fn a_post_back_page_receives_the_change_and_the_value_is_read_from_the_for
     )
     .await;
     let ran = ran.unwrap();
-    assert!(handle.release(prepared, false).await.complete);
     assert_eq!(strategy(&ran), "blur_then_wait_ready");
     assert_eq!(told(&app, 1).await, ["posted: 12"]);
+    assert!(handle.release(prepared, false).await.complete);
     scene.stand.end().await;
 }
 
@@ -207,7 +208,6 @@ async fn a_post_back_that_never_redraws_is_a_named_stop_with_its_fate_unknown() 
     )
     .await;
     let failure = ran.unwrap_err();
-    handle.release(prepared, false).await;
     assert_eq!(
         (failure.failure.class(), failure.failure.code().as_str()),
         (FailureClass::UnknownVariant, "commit_not_redrawn"),
@@ -216,6 +216,7 @@ async fn a_post_back_that_never_redraws_is_a_named_stop_with_its_fate_unknown() 
     assert_eq!(failure.sent, Sent::Unknown);
     // The application did receive it: the stop is not a claim it did not.
     assert_eq!(told(&app, 1).await, ["posted: 13"]);
+    handle.release(prepared, false).await;
     scene.stand.end().await;
 }
 
@@ -233,11 +234,11 @@ async fn a_surface_of_auto_sets_a_text_control_by_the_rule_of_no_profile() {
     )
     .await;
     let ran = ran.unwrap();
-    assert!(handle.release(prepared, false).await.complete);
     assert_eq!(strategy(&ran), "type");
     assert_eq!(
         told(&app, 2).await,
         ["ignored: not typed", "reference: R-500"]
     );
+    assert!(handle.release(prepared, false).await.complete);
     scene.stand.end().await;
 }
