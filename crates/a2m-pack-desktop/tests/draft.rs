@@ -349,3 +349,266 @@ fn a_column_or_a_control_named_as_a_secret_is_never_a_drafted_output() {
     common::compile_at(&registry, folder.path())
         .unwrap_or_else(|problems| panic!("{}", common::shown(&problems)));
 }
+
+/// Field test 10's window, twice: windows of one record each, titled by
+/// the order they show, as a GTK 3 dialog program shows one (findings 57,
+/// 59, and 60; decision 0462). The two titles that differ in one word make
+/// one screen reached by a pattern; the table with no name and no rows is
+/// drafted and read by the column count it states; the labelled spin
+/// button is drafted; and each read takes the order as its input and reads
+/// only that order's window.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_window_of_one_record_is_drafted_whole_and_read_by_the_pattern_its_titles_show() {
+    use example_desk::RecordWindow;
+    let Some(mut scene) = Scene::start("record-window").await else {
+        return;
+    };
+    let first = RecordWindow::order("1001", "Ash and Co", "Northtown");
+    let second = RecordWindow::order("1002", "Birch Ltd", "Southtown");
+    scene.desk().open_record_window(&first).await.unwrap();
+    scene.desk().open_record_window(&second).await.unwrap();
+    let findings = scene.discover().await;
+    // The stand's own window, and one finding for the two record windows.
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    let record = findings
+        .iter()
+        .find(|finding| finding.found().contains("Order {order_id}"))
+        .unwrap_or_else(|| panic!("no window titled by a pattern in {findings:?}"));
+    let found = record.found();
+    assert!(found.contains(r#""windows":2"#), "{found}");
+    assert!(found.contains(r#""columns":3"#), "{found}");
+    for value in ["1001", "1002", "Ash and Co", "Northtown", "1001-A"] {
+        assert!(!found.contains(value), "{value} in {found}");
+    }
+    let (root, report) = scene.draft(&findings);
+    let written: Vec<&str> = report.written.iter().map(|path| path.as_str()).collect();
+    for expected in [
+        "screens/order_values.yaml",
+        "screens/order_table.yaml",
+        "operations/order_values_get.yaml",
+        "operations/order_table_list.yaml",
+    ] {
+        assert!(written.contains(&expected), "{expected} not in {written:?}");
+    }
+    let read = |file: &str| std::fs::read_to_string(root.path().join(file)).unwrap();
+    let values = read("screens/order_values.yaml");
+    assert!(values.contains("spin_button"), "{values}");
+    assert!(values.contains("Order {order_id}"), "{values}");
+    let table = read("screens/order_table.yaml");
+    // No name to locate it by: its headings find it.
+    assert!(!table.contains("locate"), "{table}");
+    let get = read("operations/order_values_get.yaml");
+    assert!(get.contains("order_id"), "{get}");
+    assert!(!get.contains("1001"), "{get}");
+    scene.compiled_target = match compile_at(&scene.registry, root.path()) {
+        Ok(compiled) => compiled.compiled_target,
+        Err(problems) => panic!("the drafts do not compile:\n{}", common::shown(&problems)),
+    };
+    scene.surface = common::surface_of(&scene.compiled_target, &scene.program);
+    let order = |number: &str| a2m_core::Values::new().with("order_id", number);
+    let text = |values: &a2m_core::Values, name: &str| {
+        values
+            .get(name)
+            .and_then(Value::as_text)
+            .unwrap_or_else(|| panic!("no `{name}` in {values:?}"))
+            .to_owned()
+    };
+    for window in [&first, &second] {
+        let number = window.title.trim_start_matches("Order ");
+        let got = scene
+            .read_with("example_order_get", &order(number), Duration::from_secs(10))
+            .await
+            .unwrap_or_else(|failure| panic!("{}", failure.failure));
+        assert_eq!(text(&got, "customer"), window.customer);
+        assert_eq!(text(&got, "city"), window.city);
+        assert_eq!(text(&got, "lines"), window.lines);
+        let rows = scene
+            .read_with(
+                "example_order_table_list",
+                &order(number),
+                Duration::from_secs(10),
+            )
+            .await
+            .unwrap_or_else(|failure| panic!("{}", failure.failure));
+        let items: Vec<String> = rows
+            .get("item")
+            .and_then(Value::as_list)
+            .unwrap()
+            .iter()
+            .map(|value| value.as_text().unwrap().to_owned())
+            .collect();
+        let want: Vec<String> = window.rows.iter().map(|row| row[1].clone()).collect();
+        assert_eq!(items, want);
+    }
+    // An order no window shows is a stop, never another order's window.
+    let none = scene
+        .read_with("example_order_get", &order("1003"), Duration::from_secs(2))
+        .await
+        .unwrap_err();
+    assert_eq!(none.failure.code().as_str(), "unexpected_page");
+    let truth = scene.desk().truth();
+    // The column count is the one the table stated, asked of the stand.
+    assert!(
+        truth.asked.contains_key("Table.NColumns"),
+        "{:?}",
+        truth.asked
+    );
+    assert_eq!(truth.writes, 0);
+    assert!(!truth.acted(), "{:?}", truth.asked);
+}
+
+/// The same window once, its table stating no column count: one title is
+/// never a pattern, the table is not drafted, and a screen written by hand
+/// that reads it by its headings stops and says why (finding 57; rule 7).
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_table_whose_cells_are_its_own_children_and_that_states_no_column_count_is_never_read() {
+    use example_desk::RecordWindow;
+    let Some(mut scene) = Scene::start("record-silent").await else {
+        return;
+    };
+    let mut window = RecordWindow::order("1001", "Ash and Co", "Northtown");
+    window.states_columns = false;
+    scene.desk().open_record_window(&window).await.unwrap();
+    let findings = scene.discover().await;
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.found().contains(r#""title":"Order 1001""#)),
+        "{findings:?}"
+    );
+    let (root, report) = scene.draft(&findings);
+    let written: Vec<&str> = report.written.iter().map(|path| path.as_str()).collect();
+    assert!(
+        written.contains(&"operations/order_1001_values_get.yaml"),
+        "{written:?}"
+    );
+    assert!(
+        !written.iter().any(|path| path.contains("order_1001_table")),
+        "{written:?}"
+    );
+    let get =
+        std::fs::read_to_string(root.path().join("operations/order_1001_values_get.yaml")).unwrap();
+    assert!(get.contains("has a number in it"), "{get}");
+    std::fs::write(
+        root.path().join("screens/order_rows.yaml"),
+        "screen: order_rows\nsurface: desk\nreach:\n  window: {role: frame, title: Order 1001}\nready:\n  visible: {role: table_column_header, name: Line}\nrows:\n  header: [Line, Item, Count]\n  columns:\n    item: {header: Item, type: untrusted_text}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join("operations/order_rows_list.yaml"),
+        "operation: example_order_rows_list\neffect: read\ninputs: {}\noutputs:\n  item: {type: untrusted_text, list: true}\nbindings:\n  - mode: desktop\n    verb: list\n    screen: order_rows\ndescription: Lists the items of the order window.\n",
+    )
+    .unwrap();
+    scene.compiled_target = match compile_at(&scene.registry, root.path()) {
+        Ok(compiled) => compiled.compiled_target,
+        Err(problems) => panic!("the files do not compile:\n{}", common::shown(&problems)),
+    };
+    scene.surface = common::surface_of(&scene.compiled_target, &scene.program);
+    let stopped = scene
+        .read("example_order_rows_list", Duration::from_secs(5))
+        .await
+        .unwrap_err();
+    assert_eq!(stopped.failure.code().as_str(), "fingerprint_mismatch");
+    assert!(
+        stopped
+            .failure
+            .message()
+            .contains("does not state how many columns"),
+        "{}",
+        stopped.failure
+    );
+    assert!(!scene.desk().truth().acted());
+}
+
+/// Every finding the window rules cover and draft nothing from is listed
+/// with a reason, for each early stop (finding 58).
+#[test]
+fn every_window_finding_the_rules_draft_nothing_from_says_why() {
+    use a2m_core::{Address, Coverage, FindingKind, ProducedBy, Source, Subject, Timestamp};
+    use a2m_files::{Drafter, TargetRoot};
+    let folder = common::Folder::new("reasons");
+    let engine = common::Folder::new("reasons-engine");
+    let registry = common::registry(engine.path(), None);
+    std::fs::copy(
+        common::fixture().join("target.yaml"),
+        folder.path().join("target.yaml"),
+    )
+    .unwrap();
+    let finding =
+        |at: usize, cut: bool, program: &str, title: &str, elements: serde_json::Value| {
+            let found = serde_json::json!({
+                "format": "1",
+                "cut": cut,
+                "program": program,
+                "window": {"role": "frame", "title": title},
+                "elements": elements,
+            });
+            a2m_core::Finding::about(
+                Subject::Address(Address::new("desktop://desk", &format!("/window/{at}")).unwrap()),
+                FindingKind::new("window").unwrap(),
+                found.to_string(),
+                Source::LiveSystem,
+                ProducedBy {
+                    provider: "desktop".to_owned(),
+                    version: "0".to_owned(),
+                    component: None,
+                },
+                Timestamp::from_unix_millis(0),
+            )
+            .level(EvidenceLevel::Discovered)
+            .coverage(Coverage::Complete)
+            .build()
+            .unwrap()
+        };
+    let program = "/opt/example/bin/example-desk";
+    // A table of cells with no rows and no column count, as field test 10
+    // saw, and nothing else.
+    let silent_table = serde_json::json!([
+        {"depth": 0, "role": "panel"},
+        {"depth": 1, "role": "table"},
+        {"depth": 2, "role": "table_column_header", "name": "Order"},
+        {"depth": 2, "role": "table_cell"},
+    ]);
+    let entry = serde_json::json!([{"depth": 0, "role": "entry", "name": "Customer"}]);
+    let numbers = serde_json::json!([{"depth": 0, "role": "spin_button", "name": "Lines"}]);
+    let findings = [
+        finding(0, false, program, "Open orders", silent_table),
+        finding(1, true, program, "Open orders", entry.clone()),
+        finding(
+            2,
+            false,
+            "/opt/example/bin/another",
+            "Open orders",
+            entry.clone(),
+        ),
+        finding(3, false, program, "\u{202e}Orders", entry),
+        finding(4, false, program, "Order lines", numbers),
+    ];
+    let report = Drafter::new(registry.compiler_set(), &TargetRoot::new(folder.path()))
+        .draft(&findings)
+        .unwrap();
+    assert!(report.written.is_empty(), "{report:?}");
+    for (finding, words) in findings.iter().zip([
+        "states how many columns",
+        "cut short",
+        "`desktop` surface",
+        "title",
+        "no value as text",
+    ]) {
+        let reasons: Vec<&str> = report
+            .not_drafted
+            .iter()
+            .filter(|left| left.finding == finding.id())
+            .map(|left| left.reason.as_str())
+            .collect();
+        // Both rules of the pack cover the finding; each says why.
+        assert_eq!(reasons.len(), 2, "{:?}", report.not_drafted);
+        assert!(
+            reasons.iter().all(|reason| reason.contains(words)),
+            "`{words}` not in {reasons:?}"
+        );
+    }
+}

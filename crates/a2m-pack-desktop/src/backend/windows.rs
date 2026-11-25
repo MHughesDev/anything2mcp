@@ -804,6 +804,8 @@ impl Uia {
             secret: secret.as_bool(),
             has_text,
             labels: false,
+            // This system's tables are read by their rows only.
+            columns: None,
             children: Vec::new(),
             el: El {
                 bus: String::new(),
