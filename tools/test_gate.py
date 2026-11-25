@@ -371,5 +371,31 @@ class FlakyRun(unittest.TestCase):
         self.assertIn("0 failed", done.stdout)
 
 
+class Limits(unittest.TestCase):
+    """A test program past its limit is stopped, and the tests that had
+    not ended are named, so a hang on CI says where it is."""
+
+    def test_a_program_past_its_limit_is_stopped_and_says_so(self):
+        started = __import__("time").monotonic()
+        done = gate.run_limited([sys.executable, "-c", "import time; print('begun', flush=True); time.sleep(30)"], None, dict(os.environ), 1)
+        self.assertIsNone(done.returncode)
+        self.assertIn("begun", done.stdout)
+        self.assertLess(__import__("time").monotonic() - started, 20)
+
+    def test_a_program_within_its_limit_gives_its_code(self):
+        done = gate.run_limited([sys.executable, "-c", "import sys; print('x'); sys.exit(3)"], None, dict(os.environ), 30)
+        self.assertEqual(done.returncode, 3)
+        self.assertEqual(done.stdout.strip(), "x")
+
+    def test_the_tests_still_running_are_those_with_no_result(self):
+        out = (
+            "test a::slow has been running for over 60 seconds\n"
+            "test b::stuck has been running for over 60 seconds\n"
+            "test a::slow ... ok\n"
+            "test c::fast ... ok\n"
+        )
+        self.assertEqual(gate.still_running(out), ["b::stuck"])
+
+
 if __name__ == "__main__":
     unittest.main()

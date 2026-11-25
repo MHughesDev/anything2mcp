@@ -54,6 +54,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 import time
 
@@ -79,6 +80,44 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # The variable the lint-only stand-ins in tools/cross/ refuse to run without.
 LINT_ONLY = "A2M_LINT_ONLY_STUBS"
 
+
+
+# The longest one test program may run before the gate stops it. The
+# slowest program, the product's, takes under five minutes on CI.
+PROGRAM_LIMIT = 15 * 60
+
+
+class Limited:
+    """What a program run with a limit left: its exit code, or None when
+    the limit stopped it, and what it wrote."""
+
+    def __init__(self, returncode, stdout, stderr):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def run_limited(command, cwd, env, limit):
+    """Runs `command`, stopping it once `limit` seconds have passed. Its
+    output goes to files, not pipes, so a process it started that still
+    holds them cannot keep the gate waiting."""
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        child = subprocess.Popen(command, cwd=cwd, env=env, stdout=out, stderr=err)
+        try:
+            code = child.wait(timeout=limit)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait()
+            code = None
+        out.seek(0)
+        err.seek(0)
+        return Limited(code, out.read().decode(errors="replace"), err.read().decode(errors="replace"))
+
+
+def still_running(stdout):
+    """The tests libtest said had been running for over a minute and never
+    reported a result."""
+    slow = re.findall(r"^test (\S+) has been running for over", stdout, re.M)
+    ended = set(re.findall(r"^test (\S+) \.\.\. ", stdout, re.M))
+    return [name for name in dict.fromkeys(slow) if name not in ended]
 
 def weights():
     """Each workspace package and how many tests its files hold."""
@@ -145,10 +184,18 @@ def shard_tests(k, n, env, verbose=False):
             output.append(listed.stdout[-4000:] + listed.stderr[-2000:])
         ran += [(program_key(executable), name) for name in listed_names(listed.stdout)]
         program_started = time.monotonic()
-        done = subprocess.run([executable], cwd=folder, env=run_env, capture_output=True, text=True)
+        done = run_limited([executable], folder, run_env, PROGRAM_LIMIT)
         if verbose:
             print(f"  {round(time.monotonic() - program_started):>4}s {'ok  ' if done.returncode == 0 else 'FAIL'} {label}", flush=True)
-        if done.returncode != 0:
+        if done.returncode is None:
+            # A program that ran past its limit: say which tests had not
+            # ended, from libtest's own lines, so a hang can be found.
+            failed.append(f"{label} (ran past {PROGRAM_LIMIT // 60} minutes and was stopped)")
+            failed += [f"  {t} (still running)" for t in still_running(done.stdout)][:20]
+            if verbose:
+                print(done.stdout + done.stderr, flush=True)
+            output.append(done.stdout[-4000:] + done.stderr[-2000:])
+        elif done.returncode != 0:
             failed.append(label)
             failed += [f"  {t}" for t in re.findall(r"^    (\S+)$", done.stdout, re.M)][:20]
             if verbose:
