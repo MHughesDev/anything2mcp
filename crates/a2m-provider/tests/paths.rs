@@ -988,8 +988,8 @@ const RESOLVES_A_PATH: &[(&str, usize, &str)] = &[
     ),
     (
         "a2m-pack-desktop/src/backend/linux.rs",
-        2,
-        "the declared program of a desktop application and the program a running process of the engine's own user runs (`/proc/<id>/exe`), compared to prove which process is the application; nothing is read",
+        3,
+        "the declared program of a desktop application and the program a running process of the engine's own user runs (`/proc/<id>/exe`), compared to prove which process is the application, and, before a start, whether any process of that user already runs it, so no second copy is started (decision 0467); nothing is read",
     ),
     (
         "a2m-pack-command/src/safety/before_0250.rs",
@@ -1010,6 +1010,11 @@ const RESOLVES_A_PATH: &[(&str, usize, &str)] = &[
         "a2m-pack-desktop/tests/read.rs",
         1,
         "a test that names the program it starts as the driver will see it",
+    ),
+    (
+        "a2m-pack-desktop/tests/start.rs",
+        1,
+        "a test that asks the system which program the process the driver started runs",
     ),
     (
         "a2m-pack-mcp/tests/launcher.rs",
