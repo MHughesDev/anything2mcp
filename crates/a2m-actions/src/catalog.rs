@@ -228,6 +228,40 @@ fn watch_output() -> JsonSchema {
         .required("resource", text())
 }
 
+/// The words of a canary's state, as the scheduler keeps them.
+const CANARY_STATES: &[&str] = a2m_sched::CanaryState::NAMES;
+
+/// The field of a canary's identifier.
+const CANARY: &str = "The canary's identifier, as `canary.create` gave it.";
+
+/// A canary, as every `canary.*` action returns it (decision 0482). It
+/// holds no value the read returned and not its input.
+fn canary_output() -> JsonSchema {
+    JsonSchema::object()
+        .required("canary_id", text())
+        .required("tool", text())
+        .required("target", text())
+        .required("environment", text())
+        .required("compiled_target_hash", text())
+        .required("state", JsonSchema::words(CANARY_STATES))
+        .optional("ended", JsonSchema::words(a2m_sched::CanaryEnd::NAMES))
+        .required("interval_seconds", JsonSchema::int())
+        .required("ends_at", JsonSchema::int())
+        .required("asked_at", JsonSchema::int())
+        .optional("confirmed_at", JsonSchema::int())
+        .optional("next_due_at", JsonSchema::int())
+        .required("checks", JsonSchema::int())
+        .required("missed", JsonSchema::int())
+        .optional(
+            "outcome",
+            JsonSchema::words(a2m_sched::CanaryOutcome::NAMES),
+        )
+        .optional("failure", any_map())
+        .optional("outcome_at", JsonSchema::int())
+        .required("surface", text())
+        .required("requests_per_check", JsonSchema::int())
+}
+
 /// The URI of a watch's MCP resource, the template of `watch.changes`
 /// (decision 0478), with `{watch_id}` for the watch.
 pub(crate) const WATCH_RESOURCE: &str = "a2m://watches/{watch_id}/changes";
@@ -546,6 +580,44 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .pos("watch_id", TEXT, WATCH)
             .writes()
             .output(watch_output())
+            .done(),
+        // Canaries on a schedule of their own (decision 0482). None is
+        // listed: the `use` toolset is full (decision 0280).
+        act("canary.create", "Ask for a canary: one published read, called with one fixed input at a fixed interval until an end, to find whether what it goes through still fits the system. Its drift stops every tool that relies on the same knowledge before anything is sent, and its pass lifts that. It sends nothing until the caller's person confirms it on the engine's page.", VIEWER, No, "9", Change)
+            .pos("tool", TEXT, "The read's full name, as tool.search gives it: a published operation whose effect is read.")
+            .opt("input", MAP, "The read's own input, as its schema describes. Fixed for the life of the canary.")
+            .opt("environment", TEXT, "The environment to read in. The target's default when left out.")
+            .req("interval_seconds", FieldType::Int { min: 60, max: 86_400 }, "Seconds between checks: at least `watch.shortest_interval_seconds`, and within the share of the surface's rate that watches and canaries may take.")
+            .req("ends_at", FieldType::Int { min: 0, max: 99_999_999_999_999 }, "When the canary ends, in whole milliseconds since 1970 in UTC: at most `watch.longest_days` from now.")
+            .writes()
+            .output(canary_output()
+                .optional("act", text())
+                .optional("link", text())
+                .optional("person", text())
+                .optional("expires_at", JsonSchema::int()))
+            .example(r#"{"tool": "example_order_get", "input": {"order_id": "A-100"}, "interval_seconds": 3600, "ends_at": 1800086400000}"#)
+            .done(),
+        act("canary.confirm", "Confirm a canary the caller's person was asked for, so that its checks begin. A person's act, carried out on the engine's page, never an agent's.", Who::Person, No, "9", Change)
+            .pos("canary_id", TEXT, CANARY)
+            .writes()
+            .person(PersonNeed::Presence)
+            .output(canary_output())
+            .done(),
+        act("canary.get", "One canary of the caller's person: its read, interval, end, state, how many checks it made, and what the last one found. Never a value the read returned.", VIEWER, No, "9", Inspect)
+            .pos("canary_id", TEXT, CANARY)
+            .output(canary_output())
+            .done(),
+        act("canary.list", "The canaries of the caller's person, oldest first.", VIEWER, No, "9", List)
+            .opt("open_only", BOOL, "Only canaries that have not ended.")
+            .output(JsonSchema::object()
+                .required("canaries", list_of(canary_output()))
+                .required("complete", JsonSchema::bool()))
+            .example("{}")
+            .done(),
+        act("canary.end", "End a canary, by its person or by the caller that asked for it. A check under way is let go.", VIEWER, No, "9", Change)
+            .pos("canary_id", TEXT, CANARY)
+            .writes()
+            .output(canary_output())
             .done(),
         // Building a target.
         act("target.add", "Register a target in the project: makes its folder and a first target file, with one surface where an address and its kind are given.", BUILDER, No, "5", Change)

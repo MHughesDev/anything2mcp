@@ -445,7 +445,7 @@ async fn a_store_from_before_the_mark_opens_and_its_sessions_count_as_made_under
     // the migration, and none of the migrations after it, which an engine
     // that old never had. A store that holds a later migration without an
     // earlier one is refused, rightly, so each later migration is undone
-    // here too; one added after 0029 fails the count below until it is.
+    // here too; one added after 0030 fails the count below until it is.
     let raw = world.raw();
     let latest: i64 = raw
         .query_row("SELECT MAX(number) FROM schema_migrations", [], |row| {
@@ -453,11 +453,13 @@ async fn a_store_from_before_the_mark_opens_and_its_sessions_count_as_made_under
         })
         .unwrap();
     assert_eq!(
-        latest, 29,
-        "a migration after 0029 exists: undo it here as well"
+        latest, 30,
+        "a migration after 0030 exists: undo it here as well"
     );
     raw.execute_batch(
         "BEGIN IMMEDIATE;
+         DROP TABLE canaries;
+         DELETE FROM schema_migrations WHERE number = 30;
          DROP TRIGGER runs_result_coverage_is_final;
          ALTER TABLE runs DROP COLUMN result_coverage;
          DELETE FROM schema_migrations WHERE number = 29;

@@ -33,6 +33,9 @@ This is a design draft. The list is settled action by action as each phase build
 | `watch.confirm` | Confirm a watch, so that its checks begin: a person's act on the engine's page, never an agent's | The person | No | 5 |
 | `watch.get`, `watch.list`, `watch.changes` | One watch, the person's watches, and the changes a watch recorded after a number, each with the runs of its checks and never a value | Viewer | No | 5 |
 | `watch.pause`, `watch.resume`, `watch.end` | Pause, go on with, or end a watch: its person, or for `watch.end` also the caller that asked for it | Viewer | No | 5 |
+| `canary.create` | Ask for a canary: one published read with one fixed input, sent at an interval until an end, whose drift stops every tool that relies on the same knowledge before anything is sent and whose pass lifts that ([decision 0380](../decisions/0380-a-drift-marks-the-knowledge-it-was-seen-in-and-stops-every-binding-that-relies-on-it.md)); nothing is sent until the caller's person confirms it ([decision 0482](../decisions/0482-a-canary-runs-on-a-schedule-its-person-confirmed-and-sends-only-a-published-read.md)) | Viewer | No | 9 |
+| `canary.confirm` | Confirm a canary, so that its checks begin: a person's act on the engine's page, never an agent's | The person | No | 9 |
+| `canary.get`, `canary.list`, `canary.end` | One canary, the person's canaries, each with how many checks it made and what the last found and never a value; or end one: its person, or the caller that asked for it | Viewer | No | 9 |
 
 ## Building a target
 

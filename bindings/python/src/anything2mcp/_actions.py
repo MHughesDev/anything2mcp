@@ -28,6 +28,11 @@ ACTIONS = (
     "audit.query",
     "auth.detect",
     "binding.promote",
+    "canary.confirm",
+    "canary.create",
+    "canary.end",
+    "canary.get",
+    "canary.list",
     "capture.start",
     "capture.stop",
     "client.connect",
@@ -277,6 +282,89 @@ class Actions:
             },
             idempotency_key,
         )
+
+    def canary_confirm(
+        self,
+        *,
+        canary_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Confirm a canary the caller's person was asked for, so that its checks
+        begin. A person's act, carried out on the engine's page, never an
+        agent's.
+
+        The engine action is ``canary.confirm``.
+        """
+        return self._action("canary.confirm", {"canary_id": canary_id}, idempotency_key)
+
+    def canary_create(
+        self,
+        *,
+        ends_at: int,
+        interval_seconds: int,
+        tool: str,
+        environment: Optional[str] = None,
+        input: Optional[Dict[str, Any]] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Ask for a canary: one published read, called with one fixed input at a
+        fixed interval until an end, to find whether what it goes through still
+        fits the system. Its drift stops every tool that relies on the same
+        knowledge before anything is sent, and its pass lifts that. It sends
+        nothing until the caller's person confirms it on the engine's page.
+
+        The engine action is ``canary.create``.
+        """
+        return self._action(
+            "canary.create",
+            {
+                "ends_at": ends_at,
+                "interval_seconds": interval_seconds,
+                "tool": tool,
+                "environment": environment,
+                "input": input,
+            },
+            idempotency_key,
+        )
+
+    def canary_end(
+        self,
+        *,
+        canary_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """End a canary, by its person or by the caller that asked for it. A check
+        under way is let go.
+
+        The engine action is ``canary.end``.
+        """
+        return self._action("canary.end", {"canary_id": canary_id}, idempotency_key)
+
+    def canary_get(
+        self,
+        *,
+        canary_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """One canary of the caller's person: its read, interval, end, state, how
+        many checks it made, and what the last one found. Never a value the read
+        returned.
+
+        The engine action is ``canary.get``.
+        """
+        return self._action("canary.get", {"canary_id": canary_id}, idempotency_key)
+
+    def canary_list(
+        self,
+        *,
+        open_only: Optional[bool] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """The canaries of the caller's person, oldest first.
+
+        The engine action is ``canary.list``.
+        """
+        return self._action("canary.list", {"open_only": open_only}, idempotency_key)
 
     def capture_start(
         self,

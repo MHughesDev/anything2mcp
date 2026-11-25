@@ -15,6 +15,11 @@ const ACTIONS = Object.freeze([
   "audit.query",
   "auth.detect",
   "binding.promote",
+  "canary.confirm",
+  "canary.create",
+  "canary.end",
+  "canary.get",
+  "canary.list",
   "capture.start",
   "capture.stop",
   "client.connect",
@@ -166,6 +171,51 @@ class Actions {
    */
   bindingPromote(input, options = {}) {
     return this.call("binding.promote", input, options);
+  }
+
+  /**
+   * Confirm a canary the caller's person was asked for, so that its checks begin. A
+   * person's act, carried out on the engine's page, never an agent's. The engine action
+   * is `canary.confirm`.
+   */
+  canaryConfirm(input, options = {}) {
+    return this.call("canary.confirm", input, options);
+  }
+
+  /**
+   * Ask for a canary: one published read, called with one fixed input at a fixed
+   * interval until an end, to find whether what it goes through still fits the system.
+   * Its drift stops every tool that relies on the same knowledge before anything is
+   * sent, and its pass lifts that. It sends nothing until the caller's person confirms
+   * it on the engine's page. The engine action is `canary.create`.
+   */
+  canaryCreate(input, options = {}) {
+    return this.call("canary.create", input, options);
+  }
+
+  /**
+   * End a canary, by its person or by the caller that asked for it. A check under way
+   * is let go. The engine action is `canary.end`.
+   */
+  canaryEnd(input, options = {}) {
+    return this.call("canary.end", input, options);
+  }
+
+  /**
+   * One canary of the caller's person: its read, interval, end, state, how many checks
+   * it made, and what the last one found. Never a value the read returned. The engine
+   * action is `canary.get`.
+   */
+  canaryGet(input, options = {}) {
+    return this.call("canary.get", input, options);
+  }
+
+  /**
+   * The canaries of the caller's person, oldest first. The engine action is
+   * `canary.list`.
+   */
+  canaryList(input = {}, options = {}) {
+    return this.call("canary.list", input, options);
   }
 
   /**

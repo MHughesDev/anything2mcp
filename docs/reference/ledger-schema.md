@@ -225,6 +225,7 @@ The scheduler's other tables ([`a2m-sched`](../architecture/crates/a2m-sched.md)
 | `caller_turns` | `workspace_id`, `principal_id` (primary key), `served` | The number of the dispatch that last gave this caller a job; the lowest goes first |
 | `scheduler_holds` | `scope`, `workspace_id`, `name` (primary key), `held_at` | Scopes no job is handed out for: `everything`, `workspace`, `target`, `caller` |
 | `budgets` | `budget_key` (primary key), `capacity`, `refill`, `per_ms`, `level`, `updated_at` | Token buckets. `level` is in requests times `per_ms`, so no fraction is lost |
+| `canaries` | `id` (primary key), `workspace_id`, `target`, `environment`, `operation`, `target_version_hash`, `input_hash`, `input_ref`, `surface`, `requests_per_check`, `interval_seconds`, `ends_at`, `asked_by`, `acts_for`, `asked_at`, `confirmed_by`, `confirmed_at`, `phase_ms`, `state`, `ended_reason`, `next_due_index`, `not_before`, `running_run`, `opened_run`, `checks`, `missed`, `outcome`, `outcome_class`, `outcome_code`, `outcome_at` | One canary on a schedule of its own: one published read with a fixed input, at an interval until an end. `asked`, then `confirmed` by `acts_for` alone, `running` while one check is under way, and `ended` for good (`end_reached`, `ended_by_person`, `ended_by_caller`, `version_changed`). Its last check's `outcome` is `passed`, `drifted`, `failed`, or `rested`, with the failure; never a value ([decision 0482](../decisions/0482-a-canary-runs-on-a-schedule-its-person-confirmed-and-sends-only-a-published-read.md)) |
 
 ## sessions
 

@@ -769,3 +769,156 @@ async fn a_tool_a_drift_stopped_is_listed_marked_and_listed_available_after_the_
     }
     stand.close().await;
 }
+
+impl Stand {
+    /// A canary of the read of line item L-101, asked for by an agent on the
+    /// command line, every minute for an hour, with no watch (package 9.1b,
+    /// decision 0482). Gives its identifier; it is not confirmed.
+    async fn ask_canary(&self) -> String {
+        let input = json!({"order_id": "A-100", "item_code": "L-101"}).to_string();
+        let ends_at = (self.clock.now().as_unix_millis() + 3_600_000).to_string();
+        let asked = self
+            .world
+            .agent(&[
+                "canary",
+                "create",
+                GET,
+                "--input",
+                &input,
+                "--interval-seconds",
+                "60",
+                "--ends-at",
+                &ends_at,
+            ])
+            .await;
+        assert_eq!(asked.result()["state"], "asked", "{}", asked.json);
+        asked.result()["canary_id"].as_str().unwrap().to_owned()
+    }
+
+    async fn canary_of(&self, id: &str) -> Json {
+        self.world.ok(&["canary", "get", id]).await
+    }
+
+    /// The canary's person confirms it on the page they were shown, then
+    /// the clock moves by `by` and the engine tends until its check ends.
+    async fn confirmed_canary(&self, id: &str, by: Duration) -> Json {
+        let ask = self
+            .pages
+            .acts
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|ask| {
+                ask.action.as_str() == "canary.confirm"
+                    && ask.input.iter().any(|field| field.value == id)
+            })
+            .cloned()
+            .expect("the person was shown the canary's confirmation");
+        let proof = PresenceProof::new(PresenceCheck::OsPrompt, self.person().id, self.clock.now())
+            .for_act(ask.act);
+        let done = self.desk().carry_out(ask.act, proof).await.unwrap();
+        assert!(done.ok, "{done:?}");
+        self.clock.advance(by);
+        let started = std::time::Instant::now();
+        while started.elapsed() < CHECK_WAIT {
+            self.world.engine.kernel().tend().await;
+            let canary = self.canary_of(id).await;
+            if canary["checks"] == 1 && canary["state"] != "running" {
+                return canary;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!(
+            "the canary's check never ended in {CHECK_WAIT:?}: {}",
+            self.canary_of(id).await
+        );
+    }
+}
+
+/// Package 9.1b in a real browser, through the product's commands: the
+/// test application's form of a line item is changed on purpose. A canary
+/// an agent asked for and nobody confirmed sends nothing however long it
+/// waits, and the write through the form is not stopped by it; once its
+/// person confirms it, its first check finds the change, and the write
+/// through the same form is refused as drift, naming the tool, before
+/// anything reaches the application. There is no watch. The application is
+/// asked what it heard and what it stored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_canary_nobody_confirmed_sends_nothing_and_a_confirmed_one_stops_the_write_before_any_call()
+ {
+    let stand = Stand::published().await;
+    stand
+        .app
+        .change_screen(ChangedPage::LineItem, ScreenChange::Reword)
+        .await
+        .unwrap();
+    let before = stand.app.seen().await.unwrap();
+    let id = stand.ask_canary().await;
+
+    // Ten of its intervals pass, with the engine tending: nothing is sent.
+    for _ in 0..10 {
+        stand.clock.advance(Duration::from_secs(60));
+        stand.world.engine.kernel().tend().await;
+    }
+    let canary = stand.canary_of(&id).await;
+    assert_eq!(canary["state"], "asked", "{canary}");
+    assert_eq!(canary["checks"], 0, "{canary}");
+    let heard = stand.app.heard_since(&before).await.unwrap();
+    assert!(
+        !heard.iter().any(|line| line.contains("L-101")),
+        "{heard:?}"
+    );
+    let runs = stand.world.ok(&["run", "list", "--tool", GET]).await;
+    assert_eq!(runs["runs"].as_array().unwrap().len(), 0, "{runs}");
+
+    // Its person confirms it: its first check finds the form changed, and
+    // the canary goes on.
+    let canary = stand.confirmed_canary(&id, Duration::from_secs(10)).await;
+    assert_eq!(canary["state"], "confirmed", "{canary}");
+    assert_eq!(canary["outcome"], "drifted", "{canary}");
+    assert_eq!(canary["failure"]["class"], "drift", "{canary}");
+    let watches = stand.world.ok(&["watch", "list"]).await;
+    assert_eq!(watches["watches"].as_array().unwrap().len(), 0, "{watches}");
+
+    // The write through the same form is refused before anything is sent:
+    // nobody is asked to approve it, and the application heard nothing of
+    // the line item and stored nothing.
+    let before = stand.app.seen().await.unwrap();
+    let input = json!({
+        "order_id": "A-100",
+        "item_code": "L-102",
+        "description": "Oak rail",
+        "quantity": 6,
+        "length_in": "12.5",
+    })
+    .to_string();
+    let refused = stand
+        .world
+        .agent(&["tool", "call", UPDATE, "--input", &input])
+        .await;
+    assert_eq!(
+        refused.error()["code"],
+        "binding_drifted",
+        "{}",
+        refused.json
+    );
+    assert_eq!(refused.result()["status"], "stopped", "{}", refused.json);
+    assert!(
+        refused.error()["message"]
+            .as_str()
+            .unwrap()
+            .contains(UPDATE)
+    );
+    assert!(stand.pages.approvals.lock().unwrap().is_empty());
+    let heard = stand.app.heard_since(&before).await.unwrap();
+    assert!(
+        !heard.iter().any(|line| line.contains("L-102")),
+        "{heard:?}"
+    );
+    assert!(stand.app.writes().await.unwrap().is_empty());
+
+    // Its person ends it.
+    let ended = stand.world.person(&["canary", "end", &id]).await;
+    assert_eq!(ended.result()["ended"], "ended_by_person", "{}", ended.json);
+    stand.close().await;
+}

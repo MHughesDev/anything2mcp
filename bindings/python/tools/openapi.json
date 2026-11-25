@@ -2293,6 +2293,2151 @@
     "x-sdk": false
    }
   },
+  "/api/v1/actions/canary.confirm": {
+   "post": {
+    "operationId": "canary_confirm",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "canary_id": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "canary_id"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": false,
+             "properties": {
+              "asked_at": {
+               "type": "integer"
+              },
+              "canary_id": {
+               "type": "string"
+              },
+              "checks": {
+               "type": "integer"
+              },
+              "compiled_target_hash": {
+               "type": "string"
+              },
+              "confirmed_at": {
+               "type": "integer"
+              },
+              "ended": {
+               "enum": [
+                "end_reached",
+                "ended_by_person",
+                "ended_by_caller",
+                "version_changed"
+               ]
+              },
+              "ends_at": {
+               "type": "integer"
+              },
+              "environment": {
+               "type": "string"
+              },
+              "failure": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "interval_seconds": {
+               "type": "integer"
+              },
+              "missed": {
+               "type": "integer"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "next_due_at": {
+               "type": "integer"
+              },
+              "outcome": {
+               "enum": [
+                "passed",
+                "drifted",
+                "failed",
+                "rested"
+               ]
+              },
+              "outcome_at": {
+               "type": "integer"
+              },
+              "requests_per_check": {
+               "type": "integer"
+              },
+              "state": {
+               "enum": [
+                "asked",
+                "confirmed",
+                "running",
+                "ended"
+               ]
+              },
+              "surface": {
+               "type": "string"
+              },
+              "target": {
+               "type": "string"
+              },
+              "tool": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "canary_id",
+              "tool",
+              "target",
+              "environment",
+              "compiled_target_hash",
+              "state",
+              "interval_seconds",
+              "ends_at",
+              "asked_at",
+              "checks",
+              "missed",
+              "surface",
+              "requests_per_check"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "anyOf": [
+            {
+             "additionalProperties": false,
+             "properties": {
+              "asked_at": {
+               "type": "integer"
+              },
+              "canary_id": {
+               "type": "string"
+              },
+              "checks": {
+               "type": "integer"
+              },
+              "compiled_target_hash": {
+               "type": "string"
+              },
+              "confirmed_at": {
+               "type": "integer"
+              },
+              "ended": {
+               "enum": [
+                "end_reached",
+                "ended_by_person",
+                "ended_by_caller",
+                "version_changed"
+               ]
+              },
+              "ends_at": {
+               "type": "integer"
+              },
+              "environment": {
+               "type": "string"
+              },
+              "failure": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "interval_seconds": {
+               "type": "integer"
+              },
+              "missed": {
+               "type": "integer"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "next_due_at": {
+               "type": "integer"
+              },
+              "outcome": {
+               "enum": [
+                "passed",
+                "drifted",
+                "failed",
+                "rested"
+               ]
+              },
+              "outcome_at": {
+               "type": "integer"
+              },
+              "requests_per_check": {
+               "type": "integer"
+              },
+              "state": {
+               "enum": [
+                "asked",
+                "confirmed",
+                "running",
+                "ended"
+               ]
+              },
+              "surface": {
+               "type": "string"
+              },
+              "target": {
+               "type": "string"
+              },
+              "tool": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "canary_id",
+              "tool",
+              "target",
+              "environment",
+              "compiled_target_hash",
+              "state",
+              "interval_seconds",
+              "ends_at",
+              "asked_at",
+              "checks",
+              "missed",
+              "surface",
+              "requests_per_check"
+             ],
+             "type": "object"
+            },
+            {
+             "additionalProperties": false,
+             "properties": {
+              "act": {
+               "type": "string"
+              },
+              "action": {
+               "type": "string"
+              },
+              "breaking": {
+               "items": {
+                "additionalProperties": false,
+                "properties": {
+                 "changes": {
+                  "items": {
+                   "additionalProperties": {},
+                   "properties": {},
+                   "required": [],
+                   "type": "object"
+                  },
+                  "type": "array"
+                 },
+                 "class": {
+                  "enum": [
+                   "breaking",
+                   "compatible",
+                   "unchanged"
+                  ]
+                 },
+                 "tool": {
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "tool",
+                 "class",
+                 "changes"
+                ],
+                "type": "object"
+               },
+               "type": "array"
+              },
+              "compared_with": {
+               "type": "string"
+              },
+              "expires_at": {
+               "type": "integer"
+              },
+              "link": {
+               "type": "string"
+              },
+              "next": {
+               "additionalProperties": false,
+               "properties": {
+                "action": {
+                 "type": "string"
+                },
+                "args": {
+                 "additionalProperties": {},
+                 "properties": {},
+                 "required": [],
+                 "type": "object"
+                },
+                "tool": {
+                 "type": "string"
+                },
+                "when": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "action",
+                "tool",
+                "args",
+                "when"
+               ],
+               "type": "object"
+              },
+              "person": {
+               "type": "string"
+              },
+              "state": {
+               "enum": [
+                "needs_person"
+               ]
+              }
+             },
+             "required": [
+              "state",
+              "act",
+              "action",
+              "person",
+              "expires_at"
+             ],
+             "type": "object"
+            }
+           ]
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Confirm a canary the caller's person was asked for, so that its checks begin. A person's act, carried out on the engine's page, never an agent's.",
+    "x-action": "canary.confirm",
+    "x-sdk": true
+   }
+  },
+  "/api/v1/actions/canary.create": {
+   "post": {
+    "operationId": "canary_create",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "ends_at": {
+          "maximum": 99999999999999,
+          "minimum": 0,
+          "type": "integer"
+         },
+         "environment": {
+          "type": "string"
+         },
+         "input": {
+          "additionalProperties": {},
+          "properties": {},
+          "required": [],
+          "type": "object"
+         },
+         "interval_seconds": {
+          "maximum": 86400,
+          "minimum": 60,
+          "type": "integer"
+         },
+         "tool": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tool",
+         "interval_seconds",
+         "ends_at"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "act": {
+             "type": "string"
+            },
+            "asked_at": {
+             "type": "integer"
+            },
+            "canary_id": {
+             "type": "string"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compiled_target_hash": {
+             "type": "string"
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ended": {
+             "enum": [
+              "end_reached",
+              "ended_by_person",
+              "ended_by_caller",
+              "version_changed"
+             ]
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "expires_at": {
+             "type": "integer"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "link": {
+             "type": "string"
+            },
+            "missed": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "outcome": {
+             "enum": [
+              "passed",
+              "drifted",
+              "failed",
+              "rested"
+             ]
+            },
+            "outcome_at": {
+             "type": "integer"
+            },
+            "person": {
+             "type": "string"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "canary_id",
+            "tool",
+            "target",
+            "environment",
+            "compiled_target_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "missed",
+            "surface",
+            "requests_per_check"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "act": {
+             "type": "string"
+            },
+            "asked_at": {
+             "type": "integer"
+            },
+            "canary_id": {
+             "type": "string"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compiled_target_hash": {
+             "type": "string"
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ended": {
+             "enum": [
+              "end_reached",
+              "ended_by_person",
+              "ended_by_caller",
+              "version_changed"
+             ]
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "expires_at": {
+             "type": "integer"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "link": {
+             "type": "string"
+            },
+            "missed": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "outcome": {
+             "enum": [
+              "passed",
+              "drifted",
+              "failed",
+              "rested"
+             ]
+            },
+            "outcome_at": {
+             "type": "integer"
+            },
+            "person": {
+             "type": "string"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "canary_id",
+            "tool",
+            "target",
+            "environment",
+            "compiled_target_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "missed",
+            "surface",
+            "requests_per_check"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "Ask for a canary: one published read, called with one fixed input at a fixed interval until an end, to find whether what it goes through still fits the system. Its drift stops every tool that relies on the same knowledge before anything is sent, and its pass lifts that. It sends nothing until the caller's person confirms it on the engine's page.",
+    "x-action": "canary.create",
+    "x-sdk": true
+   }
+  },
+  "/api/v1/actions/canary.end": {
+   "post": {
+    "operationId": "canary_end",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "canary_id": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "canary_id"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "asked_at": {
+             "type": "integer"
+            },
+            "canary_id": {
+             "type": "string"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compiled_target_hash": {
+             "type": "string"
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ended": {
+             "enum": [
+              "end_reached",
+              "ended_by_person",
+              "ended_by_caller",
+              "version_changed"
+             ]
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "missed": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "outcome": {
+             "enum": [
+              "passed",
+              "drifted",
+              "failed",
+              "rested"
+             ]
+            },
+            "outcome_at": {
+             "type": "integer"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "canary_id",
+            "tool",
+            "target",
+            "environment",
+            "compiled_target_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "missed",
+            "surface",
+            "requests_per_check"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "asked_at": {
+             "type": "integer"
+            },
+            "canary_id": {
+             "type": "string"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compiled_target_hash": {
+             "type": "string"
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ended": {
+             "enum": [
+              "end_reached",
+              "ended_by_person",
+              "ended_by_caller",
+              "version_changed"
+             ]
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "missed": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "outcome": {
+             "enum": [
+              "passed",
+              "drifted",
+              "failed",
+              "rested"
+             ]
+            },
+            "outcome_at": {
+             "type": "integer"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "canary_id",
+            "tool",
+            "target",
+            "environment",
+            "compiled_target_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "missed",
+            "surface",
+            "requests_per_check"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "End a canary, by its person or by the caller that asked for it. A check under way is let go.",
+    "x-action": "canary.end",
+    "x-sdk": true
+   }
+  },
+  "/api/v1/actions/canary.get": {
+   "post": {
+    "operationId": "canary_get",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "canary_id": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "canary_id"
+        ],
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "asked_at": {
+             "type": "integer"
+            },
+            "canary_id": {
+             "type": "string"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compiled_target_hash": {
+             "type": "string"
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ended": {
+             "enum": [
+              "end_reached",
+              "ended_by_person",
+              "ended_by_caller",
+              "version_changed"
+             ]
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "missed": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "outcome": {
+             "enum": [
+              "passed",
+              "drifted",
+              "failed",
+              "rested"
+             ]
+            },
+            "outcome_at": {
+             "type": "integer"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "canary_id",
+            "tool",
+            "target",
+            "environment",
+            "compiled_target_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "missed",
+            "surface",
+            "requests_per_check"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "asked_at": {
+             "type": "integer"
+            },
+            "canary_id": {
+             "type": "string"
+            },
+            "checks": {
+             "type": "integer"
+            },
+            "compiled_target_hash": {
+             "type": "string"
+            },
+            "confirmed_at": {
+             "type": "integer"
+            },
+            "ended": {
+             "enum": [
+              "end_reached",
+              "ended_by_person",
+              "ended_by_caller",
+              "version_changed"
+             ]
+            },
+            "ends_at": {
+             "type": "integer"
+            },
+            "environment": {
+             "type": "string"
+            },
+            "failure": {
+             "additionalProperties": {},
+             "properties": {},
+             "required": [],
+             "type": "object"
+            },
+            "interval_seconds": {
+             "type": "integer"
+            },
+            "missed": {
+             "type": "integer"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            },
+            "next_due_at": {
+             "type": "integer"
+            },
+            "outcome": {
+             "enum": [
+              "passed",
+              "drifted",
+              "failed",
+              "rested"
+             ]
+            },
+            "outcome_at": {
+             "type": "integer"
+            },
+            "requests_per_check": {
+             "type": "integer"
+            },
+            "state": {
+             "enum": [
+              "asked",
+              "confirmed",
+              "running",
+              "ended"
+             ]
+            },
+            "surface": {
+             "type": "string"
+            },
+            "target": {
+             "type": "string"
+            },
+            "tool": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "canary_id",
+            "tool",
+            "target",
+            "environment",
+            "compiled_target_hash",
+            "state",
+            "interval_seconds",
+            "ends_at",
+            "asked_at",
+            "checks",
+            "missed",
+            "surface",
+            "requests_per_check"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "One canary of the caller's person: its read, interval, end, state, how many checks it made, and what the last one found. Never a value the read returned.",
+    "x-action": "canary.get",
+    "x-sdk": true
+   }
+  },
+  "/api/v1/actions/canary.list": {
+   "post": {
+    "operationId": "canary_list",
+    "parameters": [
+     {
+      "description": "Makes a repeated write the same write.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "open_only": {
+          "type": "boolean"
+         }
+        },
+        "required": [],
+        "type": "object"
+       }
+      }
+     },
+     "required": false
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "canaries": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "asked_at": {
+                "type": "integer"
+               },
+               "canary_id": {
+                "type": "string"
+               },
+               "checks": {
+                "type": "integer"
+               },
+               "compiled_target_hash": {
+                "type": "string"
+               },
+               "confirmed_at": {
+                "type": "integer"
+               },
+               "ended": {
+                "enum": [
+                 "end_reached",
+                 "ended_by_person",
+                 "ended_by_caller",
+                 "version_changed"
+                ]
+               },
+               "ends_at": {
+                "type": "integer"
+               },
+               "environment": {
+                "type": "string"
+               },
+               "failure": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "interval_seconds": {
+                "type": "integer"
+               },
+               "missed": {
+                "type": "integer"
+               },
+               "next_due_at": {
+                "type": "integer"
+               },
+               "outcome": {
+                "enum": [
+                 "passed",
+                 "drifted",
+                 "failed",
+                 "rested"
+                ]
+               },
+               "outcome_at": {
+                "type": "integer"
+               },
+               "requests_per_check": {
+                "type": "integer"
+               },
+               "state": {
+                "enum": [
+                 "asked",
+                 "confirmed",
+                 "running",
+                 "ended"
+                ]
+               },
+               "surface": {
+                "type": "string"
+               },
+               "target": {
+                "type": "string"
+               },
+               "tool": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "canary_id",
+               "tool",
+               "target",
+               "environment",
+               "compiled_target_hash",
+               "state",
+               "interval_seconds",
+               "ends_at",
+               "asked_at",
+               "checks",
+               "missed",
+               "surface",
+               "requests_per_check"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "complete": {
+             "type": "boolean"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            }
+           },
+           "required": [
+            "canaries",
+            "complete"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The action did what was asked."
+     },
+     "202": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "action": {
+           "type": "string"
+          },
+          "decision": {
+           "type": "string"
+          },
+          "error": {
+           "$ref": "#/components/schemas/Error"
+          },
+          "next": {
+           "$ref": "#/components/schemas/Next"
+          },
+          "ok": {
+           "type": "boolean"
+          },
+          "result": {
+           "additionalProperties": false,
+           "properties": {
+            "canaries": {
+             "items": {
+              "additionalProperties": false,
+              "properties": {
+               "asked_at": {
+                "type": "integer"
+               },
+               "canary_id": {
+                "type": "string"
+               },
+               "checks": {
+                "type": "integer"
+               },
+               "compiled_target_hash": {
+                "type": "string"
+               },
+               "confirmed_at": {
+                "type": "integer"
+               },
+               "ended": {
+                "enum": [
+                 "end_reached",
+                 "ended_by_person",
+                 "ended_by_caller",
+                 "version_changed"
+                ]
+               },
+               "ends_at": {
+                "type": "integer"
+               },
+               "environment": {
+                "type": "string"
+               },
+               "failure": {
+                "additionalProperties": {},
+                "properties": {},
+                "required": [],
+                "type": "object"
+               },
+               "interval_seconds": {
+                "type": "integer"
+               },
+               "missed": {
+                "type": "integer"
+               },
+               "next_due_at": {
+                "type": "integer"
+               },
+               "outcome": {
+                "enum": [
+                 "passed",
+                 "drifted",
+                 "failed",
+                 "rested"
+                ]
+               },
+               "outcome_at": {
+                "type": "integer"
+               },
+               "requests_per_check": {
+                "type": "integer"
+               },
+               "state": {
+                "enum": [
+                 "asked",
+                 "confirmed",
+                 "running",
+                 "ended"
+                ]
+               },
+               "surface": {
+                "type": "string"
+               },
+               "target": {
+                "type": "string"
+               },
+               "tool": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "canary_id",
+               "tool",
+               "target",
+               "environment",
+               "compiled_target_hash",
+               "state",
+               "interval_seconds",
+               "ends_at",
+               "asked_at",
+               "checks",
+               "missed",
+               "surface",
+               "requests_per_check"
+              ],
+              "type": "object"
+             },
+             "type": "array"
+            },
+            "complete": {
+             "type": "boolean"
+            },
+            "next": {
+             "additionalProperties": false,
+             "properties": {
+              "action": {
+               "type": "string"
+              },
+              "args": {
+               "additionalProperties": {},
+               "properties": {},
+               "required": [],
+               "type": "object"
+              },
+              "tool": {
+               "type": "string"
+              },
+              "when": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "action",
+              "tool",
+              "args",
+              "when"
+             ],
+             "type": "object"
+            }
+           },
+           "required": [
+            "canaries",
+            "complete"
+           ],
+           "type": "object"
+          },
+          "warnings": {
+           "items": {
+            "type": "string"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "ok",
+          "action",
+          "warnings"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "The run rests until a person answers: a sign-in, an approval, or presence."
+     },
+     "default": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Failed"
+        }
+       }
+      },
+      "description": "A failure: its class, code, message, and fix."
+     }
+    },
+    "summary": "The canaries of the caller's person, oldest first.",
+    "x-action": "canary.list",
+    "x-sdk": true
+   }
+  },
   "/api/v1/actions/capture.start": {
    "post": {
     "operationId": "capture_start",
