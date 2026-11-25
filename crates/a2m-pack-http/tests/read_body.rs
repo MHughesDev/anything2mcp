@@ -235,7 +235,9 @@ async fn a_search_that_takes_its_filter_in_a_body_returns_what_the_application_h
 
     // What the read returns follows what the application holds.
     app.reset().await.unwrap();
-    let archived = reqwest::Client::new()
+    let archived = example_app::harness::client_builder()
+        .build()
+        .unwrap()
         .post(app.url("/api/cases/rows/count"))
         .json(&serde_json::json!({"status": "open", "op": "archive"}))
         .send()
