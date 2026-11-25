@@ -67,6 +67,7 @@ mod site_tools;
 mod start_on_demand;
 mod stream_write;
 mod target_add;
+mod tool_digest;
 mod trust_roots;
 mod vault_restart;
 mod verified_write;

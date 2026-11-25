@@ -25118,6 +25118,9 @@
             "description_by": {
              "type": "string"
             },
+            "digest": {
+             "type": "string"
+            },
             "effect": {
              "type": "string"
             },
@@ -25206,6 +25209,7 @@
             "effect",
             "hazard",
             "compiled_target_hash",
+            "digest",
             "title",
             "description",
             "description_by",
@@ -25275,6 +25279,9 @@
             "description_by": {
              "type": "string"
             },
+            "digest": {
+             "type": "string"
+            },
             "effect": {
              "type": "string"
             },
@@ -25363,6 +25370,7 @@
             "effect",
             "hazard",
             "compiled_target_hash",
+            "digest",
             "title",
             "description",
             "description_by",
@@ -25402,7 +25410,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "The full description, input schema, and output schema of one published tool, by its name.",
+    "summary": "The full description, input schema, and output schema of one published tool, by its name, and its digest, which changes when and only when its definition does.",
     "x-action": "tool.describe",
     "x-sdk": true
    }
@@ -25539,6 +25547,9 @@
                 "type": "string"
                },
                "description_by": {
+                "type": "string"
+               },
+               "digest": {
                 "type": "string"
                },
                "effect": {
@@ -25709,6 +25720,9 @@
                 "type": "string"
                },
                "description_by": {
+                "type": "string"
+               },
+               "digest": {
                 "type": "string"
                },
                "effect": {
@@ -35160,6 +35174,9 @@
                "description_by": {
                 "type": "string"
                },
+               "digest": {
+                "type": "string"
+               },
                "effect": {
                 "type": "string"
                },
@@ -35328,6 +35345,9 @@
                 "type": "string"
                },
                "description_by": {
+                "type": "string"
+               },
+               "digest": {
                 "type": "string"
                },
                "effect": {

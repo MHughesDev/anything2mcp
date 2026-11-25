@@ -1205,7 +1205,8 @@ export declare abstract class Actions {
 
   /**
    * The full description, input schema, and output schema of one published tool, by its
-   * name. The engine action is `tool.describe`.
+   * name, and its digest, which changes when and only when its definition does. The
+   * engine action is `tool.describe`.
    */
   toolDescribe(input: ToolDescribeInput, options?: CallOptions): Promise<Response>;
 

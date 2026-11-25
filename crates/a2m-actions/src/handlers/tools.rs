@@ -549,6 +549,9 @@ fn described(found: &FoundTool) -> Json {
         "target": found.target.as_str(),
         "version": found.compiled_target.header.version.to_string(),
         "compiled_target_hash": found.compiled_target_hash.to_string(),
+        // What the tool is, exactly, so that a client can pin it and see
+        // that it changed (decision 0439, point 1).
+        "digest": a2m_files::tool_digest(&found.tool).map(|digest| digest.to_string()),
         "kind": found.kind(),
         "effect": effect.to_string(),
         "hazard": hazard.to_string(),

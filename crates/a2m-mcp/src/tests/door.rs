@@ -1188,8 +1188,9 @@ async fn a_listed_tool_says_its_target_and_version_in_its_meta_and_no_client_cha
     let tools = http.post(&list("one")).await.only()["result"]["tools"].clone();
     let tools = tools.as_array().unwrap();
 
-    // A published tool carries its target and its version, and who wrote
-    // its description, under the product's own prefix, and nothing else.
+    // A published tool carries its target and its version, who wrote its
+    // description, and its digest, under the product's own prefix, and
+    // nothing else.
     let published = tools
         .iter()
         .find(|tool| tool["name"] == ORDER_FILL)
@@ -1206,7 +1207,17 @@ async fn a_listed_tool_says_its_target_and_version_in_its_meta_and_no_client_cha
         meta["anything2mcp/description_by"], "builder",
         "{published}"
     );
-    assert_eq!(meta.len(), 3, "{published}");
+    // The digest is the SHA-256 of the tool's definition (decision 0439).
+    assert!(
+        meta["anything2mcp/digest"]
+            .as_str()
+            .is_some_and(|digest| digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))),
+        "{published}"
+    );
+    assert_eq!(meta.len(), 4, "{published}");
     // The description is the compiled target's own words, as published.
     assert!(!published["description"].as_str().unwrap().is_empty());
     // A control tool belongs to no target and carries no `_meta`.
