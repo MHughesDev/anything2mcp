@@ -1,4 +1,4 @@
-//! The product's end-to-end tests, in one test program (decision 0999).
+//! The product's end-to-end tests, in one test program (decision 0446).
 //!
 //! Each file beside this one is a module of it, so that the whole product
 //! is linked once for all of them, not once for each. A test's name is its

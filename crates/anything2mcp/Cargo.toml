@@ -11,7 +11,7 @@ publish.workspace = true
 default-run = "anything2mcp"
 # The end-to-end tests are one test program, `tests/main.rs`, with each
 # file beside it a module of it, so that the product is linked once for
-# them all (decision 0999).
+# them all (decision 0446).
 autotests = false
 
 [features]

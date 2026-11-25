@@ -1,4 +1,4 @@
-# 0999. The product's end-to-end tests are one test program
+# 0446. The product's end-to-end tests are one test program
 
 **Status:** Accepted. Design decision, made by the agent that merged the product crate's tests. The owner had not read this record when it was merged.
 
