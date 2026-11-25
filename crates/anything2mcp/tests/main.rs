@@ -39,6 +39,7 @@ mod first_read;
 mod first_run;
 mod forgery_write;
 mod home;
+mod learn;
 mod local_engine;
 mod net_tools;
 mod normalized_write;

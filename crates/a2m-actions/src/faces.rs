@@ -478,72 +478,42 @@ pub struct Shortcut {
     pub options: &'static [ShortcutOption],
 }
 
-/// What a shortcut does on this engine: the steps to carry out, and where it
-/// stops when a step is not built yet.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ShortcutRun {
-    /// The steps to carry out, in order: the shortcut's steps up to the
-    /// first whose action is not built.
-    pub steps: Vec<ShortcutStep>,
-    /// The first action that is not built. The shortcut stops before it and
-    /// carries out no step after it.
-    pub stops_before: Option<&'static str>,
-    /// What to print when the shortcut stops early: what was done, what it
-    /// stopped before, and what was left undone. `None` when every step is
-    /// built.
-    pub note: Option<String>,
+impl Shortcut {
+    /// Whether this shortcut is offered where `built` says which actions
+    /// have a handler: only when every one of its steps is built (decision
+    /// 0456), so that no shortcut stops before a step that is not. `init`,
+    /// which has no step, always is. A shortcut whose last step gains a
+    /// handler is offered from then on, with no other change.
+    #[must_use]
+    pub fn offered_where(&self, built: impl Fn(&str) -> bool) -> bool {
+        self.steps.iter().all(|step| built(step.action))
+    }
+
+    /// Whether this shortcut is offered on an engine whose registry is
+    /// `registry`.
+    #[must_use]
+    pub fn offered(&self, registry: &ActionRegistry) -> bool {
+        self.offered_where(|action| registry.find(action).is_some_and(ActionDef::built))
+    }
 }
 
-impl Shortcut {
-    /// What this shortcut does with the actions `registry` holds. A
-    /// shortcut never begins a step that is not built: it stops before it,
-    /// whatever was done already stays done, and the note says so.
-    #[must_use]
-    pub fn on(&self, registry: &ActionRegistry) -> ShortcutRun {
-        let built = |step: &&ShortcutStep| registry.find(step.action).is_some_and(ActionDef::built);
-        let steps: Vec<ShortcutStep> = self.steps.iter().take_while(built).copied().collect();
-        let rest = &self.steps[steps.len()..];
-        let Some(first) = rest.first() else {
-            return ShortcutRun {
-                steps,
-                stops_before: None,
-                note: None,
-            };
-        };
-        let names = |steps: &[ShortcutStep]| {
-            steps
-                .iter()
-                .map(|step| format!("`{}`", step.action))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let note = if steps.is_empty() {
-            format!(
-                "`{}` does nothing yet: its first step, `{}`, is not built. Call `action.search` to see which actions are built.",
-                self.word, first.action
-            )
-        } else {
-            format!(
-                "`{}` stopped before `{}`, which is not built yet. Done: {}. Not done: {}.",
-                self.word,
-                first.action,
-                names(&steps),
-                names(rest)
-            )
-        };
-        ShortcutRun {
-            steps,
-            stops_before: Some(first.action),
-            note: Some(note),
-        }
-    }
+/// The shortcuts offered with the actions `registry` holds, in the order of
+/// the action catalog: the command tree, its help, and its completions hold
+/// these and no other.
+#[must_use]
+pub fn shortcuts_offered(registry: &ActionRegistry) -> Vec<&'static Shortcut> {
+    SHORTCUTS
+        .iter()
+        .filter(|shortcut| shortcut.offered(registry))
+        .collect()
 }
 
 const fn step(action: &'static str, argument: Option<&'static str>) -> ShortcutStep {
     ShortcutStep { action, argument }
 }
 
-/// Every shortcut, in the order of the action catalog.
+/// Every shortcut defined, in the order of the action catalog. Only those
+/// whose every step is built are offered ([`shortcuts_offered`]).
 pub const SHORTCUTS: &[Shortcut] = &[
     Shortcut {
         word: "init",
@@ -585,12 +555,8 @@ pub const SHORTCUTS: &[Shortcut] = &[
     },
     Shortcut {
         word: "learn",
-        does: "Record a session and infer endpoints from it.",
-        steps: &[
-            step("capture.start", Some("target")),
-            step("capture.stop", Some("target")),
-            step("endpoints.infer", Some("target")),
-        ],
+        does: "Ask for a capture of your person's own use of a target, and give the page where they begin and end it. Once they have used the system, `capture stop` says how it ended and scouts what it found.",
+        steps: &[step("capture.start", Some("target"))],
         options: &[],
     },
     Shortcut {

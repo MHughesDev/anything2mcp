@@ -27,7 +27,7 @@ Every way into the kernel, defined once. An action is a name, an input schema, a
 - The recorded catalog: the list of actions with a digest, from which every face is generated and checked.
 - The scout pipeline, as the handler of `scout.run`.
 - The held drafts as a person is shown them ([decision 0298](../../decisions/0298-a-draft-with-an-open-question-waits-in-a-holding-folder.md)): `draft.lint` answers `held`, each held file with its questions and their places, whatever its own `ok`; `draft.try` refuses a tool whose draft is held by name, quoting the question; `draft.read`, `draft.write`, and `draft.delete` take a path under `held/`; and when a compile has failed and the target has held drafts, the answer of `draft.lint`, `draft.try`, `version.publish`, `draft.write`, and `draft.delete` says once, in the product's words, that the target has N held drafts, one of which may define a name that was not found. No file is named and no diagnostic is changed; the compiler is given no held file.
-- Shortcuts, as data: a word and a fixed list of actions.
+- Shortcuts, as data: a word and a fixed list of actions. A shortcut is offered only when every one of its steps is built, so none can stop before a step that is not ([decision 0456](../../decisions/0456-the-first-release-leaves-out-what-its-first-hour-never-meets-and-a-shortcut-is-offered-only-when-built.md)); one whose last step gains a handler is offered from then on with no other change.
 
 It must never: decide whether something may happen (that is `a2m-policy`); sign in or renew (that is the keeper in `a2m-auth`); carry out a step (that is `a2m-engine`); name a pack, a mode, or a make of client; open a socket or a port; accept an approval through any action.
 
@@ -295,12 +295,15 @@ impl McpResultFace {
 }
 pub const SHORTCUTS: &[Shortcut];
 impl Shortcut {
-    /// The steps to carry out on this engine: those before the first action that is
-    /// not built, that action, and the sentence to print when it stops early.
-    pub fn on(&self, registry: &ActionRegistry) -> ShortcutRun;
+    /// Offered only when every one of its steps is built (decision 0456); `init`,
+    /// with no step, always is. `offered_where` takes what says an action is built,
+    /// so a test can ask it of the recorded catalog.
+    pub fn offered(&self, registry: &ActionRegistry) -> bool;
+    pub fn offered_where(&self, built: impl Fn(&str) -> bool) -> bool;
 }
-pub struct ShortcutRun { pub steps: Vec<ShortcutStep>, pub stops_before: Option<&'static str>,
-                         pub note: Option<String> }
+/// The shortcuts offered on this registry, in catalog order: the command tree,
+/// its help, and its completions hold these and no other.
+pub fn shortcuts_offered(registry: &ActionRegistry) -> Vec<&'static Shortcut>;
 pub const PROCESS_COMMANDS: &[&str];
 ```
 

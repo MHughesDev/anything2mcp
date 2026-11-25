@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use a2m_actions::{
     Caller, CloseReason, ExitClass, FrontDoor, McpResultFace, ProjectFolder, Request, Response,
-    RunsInHand, SHORTCUTS, command_faces,
+    RunsInHand, SHORTCUTS, Shortcut, command_faces, shortcuts_offered,
 };
 use a2m_core::{FailureClass, RunId, RunState};
 use serde_json::{Value as Json, json};
@@ -463,7 +463,7 @@ async fn a_result_shows_exact_numbers_as_text_and_carries_its_next_step() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_secret_comes_from_standard_input_and_a_shortcut_stops_before_what_is_not_built() {
+async fn a_secret_comes_from_standard_input_and_only_a_shortcut_whose_steps_are_built_is_offered() {
     let world = World::ready().await;
     let registry = world.kernel.actions();
 
@@ -510,76 +510,38 @@ async fn a_secret_comes_from_standard_input_and_a_shortcut_stops_before_what_is_
         assert!(!refused.to_json().to_string().contains("secret-for-tests"));
     }
 
+    // A shortcut is offered only when every one of its steps is built
+    // (decision 0456): each step of each offered shortcut has a handler,
+    // and no offered shortcut can stop before a step that is not.
+    let offered = shortcuts_offered(registry);
+    for shortcut in &offered {
+        for step in shortcut.steps {
+            let def = registry.find(step.action).unwrap();
+            assert!(def.built(), "`{}` offers `{}`", shortcut.word, step.action);
+        }
+    }
+    // The ones not offered today: each runs one action of a version that
+    // is not built. Each is offered by itself once its action is.
+    let words = |list: &[&Shortcut]| list.iter().map(|s| s.word).collect::<Vec<_>>();
+    let withheld: Vec<&Shortcut> = SHORTCUTS
+        .iter()
+        .filter(|shortcut| !shortcut.offered(registry))
+        .collect();
+    assert_eq!(words(&withheld), ["bundle", "rollback", "migrate"]);
     // `add` registers the target, scouts it, and shows the report, which
-    // asks for a sign-in only where a read waits for one (decision 0306):
-    // every step is built.
-    let add = SHORTCUTS
-        .iter()
-        .find(|shortcut| shortcut.word == "add")
-        .unwrap();
-    let run = add.on(registry);
-    let steps: Vec<&str> = run.steps.iter().map(|step| step.action).collect();
-    assert_eq!(steps, ["target.add", "scout.run", "scout.report"]);
-    assert_eq!((run.stops_before, run.note), (None, None));
-    // `diff` is built (package YL1), and runs its one step.
-    let diff = SHORTCUTS
-        .iter()
-        .find(|shortcut| shortcut.word == "diff")
-        .unwrap();
-    let run = diff.on(registry);
-    let steps: Vec<&str> = run.steps.iter().map(|step| step.action).collect();
-    assert_eq!(steps, ["version.diff"]);
-    assert_eq!((run.stops_before, run.note), (None, None));
-    // A shortcut whose first step is not built does nothing, and says so.
-    let bundle = SHORTCUTS
-        .iter()
-        .find(|shortcut| shortcut.word == "bundle")
-        .unwrap();
-    let run = bundle.on(registry);
-    assert!(run.steps.is_empty());
-    assert_eq!(run.stops_before, Some("version.bundle"));
-    let note = run.note.unwrap();
-    assert!(note.contains("`bundle` does nothing yet"), "{note}");
-    // One whose first steps are built runs them and stops before the
-    // first that is not: `learn` asks for a capture, which waits for its
-    // person, and stops before the inference.
-    let learn = SHORTCUTS
+    // asks for a sign-in only where a read waits for one (decision 0306);
+    // `diff` is built (package YL1); `init` has no step and is offered.
+    for word in ["init", "add", "diff", "learn", "ready"] {
+        assert!(words(&offered).contains(&word), "{word}");
+    }
+    // `learn` is `capture.start` alone: it asks for a capture, which waits
+    // for its person; it never ends the capture it asked for.
+    let learn = offered
         .iter()
         .find(|shortcut| shortcut.word == "learn")
         .unwrap();
-    let run = learn.on(registry);
-    let steps: Vec<&str> = run.steps.iter().map(|step| step.action).collect();
-    assert_eq!(steps, ["capture.start", "capture.stop"]);
-    assert_eq!(run.stops_before, Some("endpoints.infer"));
-    let note = run.note.unwrap();
-    assert!(note.contains("stopped before `endpoints.infer`"), "{note}");
-    // A shortcut whose steps are all built runs them all and says nothing.
-    let lint = SHORTCUTS
-        .iter()
-        .find(|shortcut| shortcut.word == "lint")
-        .unwrap();
-    let run = lint.on(registry);
-    assert_eq!(
-        (run.steps.len(), run.stops_before, run.note),
-        (1, None, None)
-    );
-    // One whose first step is not built does nothing, and says that.
-    let bundle = SHORTCUTS
-        .iter()
-        .find(|shortcut| shortcut.word == "bundle")
-        .unwrap();
-    let run = bundle.on(registry);
-    assert!(run.steps.is_empty());
-    assert!(run.note.unwrap().contains("does nothing yet"));
-    // Every shortcut's steps are a prefix of its own, whatever is built.
-    for shortcut in SHORTCUTS {
-        let run = shortcut.on(registry);
-        assert_eq!(run.steps, shortcut.steps[..run.steps.len()]);
-        assert_eq!(
-            run.stops_before.is_some(),
-            run.steps.len() < shortcut.steps.len()
-        );
-    }
+    let steps: Vec<&str> = learn.steps.iter().map(|step| step.action).collect();
+    assert_eq!(steps, ["capture.start"]);
     world.kernel.close(CloseReason::Asked).await;
 }
 
