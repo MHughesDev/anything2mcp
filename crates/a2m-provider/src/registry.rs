@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use a2m_auth::AuthProvider;
 use a2m_core::{
-    AccessKind, Availability, Digest, EffectClass, Failure, FailureClass, FailureCode, Mode,
-    Redact, SurfaceKind, Values, Version,
+    AccessKind, Availability, Digest, EffectClass, Failure, FailureClass, FailureCode, Finding,
+    FindingKind, Mode, Redact, SurfaceKind, Values, Version,
 };
 use a2m_files::CompilerSet;
 use a2m_logs::LogsAndTraces;
@@ -23,6 +23,7 @@ use a2m_sources::{ReaderName, SourceReader};
 use crate::action::ProviderAction;
 use crate::capture::CaptureHandle;
 use crate::codes;
+use crate::compare::{Comparison, KeyRule, compare_findings};
 use crate::discover::{CaptureStop, DiscovererHandle, SurfaceDescription};
 use crate::driver::{ChoiceReason, Driver, DriverHandle, HandleFacts, ProviderChoice};
 use crate::manifest::{DrivenBy, KindOf, Manifest, ModeDecl, ModeDefaults, ProviderKind};
@@ -636,6 +637,7 @@ impl RegistryBuilder {
         let mut actions = BTreeMap::new();
         let mut discoverers = Vec::new();
         let mut captures = Vec::new();
+        let mut key_rules: BTreeMap<FindingKind, Vec<Arc<dyn KeyRule>>> = BTreeMap::new();
         let mut problems: Vec<RegistryProblem> = unnamed
             .iter()
             .map(|refused| RegistryProblem {
@@ -768,6 +770,10 @@ impl RegistryBuilder {
                     redact: Arc::clone(&host.redact),
                 });
             }
+            for (kind, rule) in collected.key_rules {
+                names.push(format!("key_rule:{}", kind.as_str()));
+                key_rules.entry(kind).or_default().push(rule);
+            }
             for provider in collected.auth_providers {
                 names.push(format!("auth:{}", provider.name().as_str()));
                 auth_providers.push(provider);
@@ -861,6 +867,7 @@ impl RegistryBuilder {
                 actions,
                 discoverers,
                 captures,
+                key_rules,
                 compiler,
                 choices: settings.mode_providers,
                 host,
@@ -904,6 +911,7 @@ struct Inner {
     actions: BTreeMap<ActionName, (Arc<dyn ProviderAction>, EffectClass)>,
     discoverers: Vec<DiscovererHandle>,
     captures: Vec<CaptureHandle>,
+    key_rules: BTreeMap<FindingKind, Vec<Arc<dyn KeyRule>>>,
     compiler: CompilerSet,
     choices: BTreeMap<Mode, ProviderName>,
     host: HostServices,
@@ -1221,6 +1229,18 @@ impl Registry {
     #[must_use]
     pub fn capture_discoverers_for(&self, surface: &SurfaceDescription) -> Vec<DiscovererHandle> {
         self.driven_for(surface, DrivenBy::Person)
+    }
+
+    /// Compares what is described with what is observed among `findings`
+    /// (decision 0999): each finding of a kind a key rule was registered
+    /// for is keyed by the first of its rules that gives a key, and a
+    /// finding of a kind with no rule is left out.
+    #[must_use]
+    pub fn compare(&self, findings: &[Finding]) -> Comparison {
+        compare_findings(findings.iter().filter_map(|finding| {
+            let rules = self.inner.key_rules.get(finding.kind())?;
+            Some((rules.iter().find_map(|rule| rule.key(finding)), finding))
+        }))
     }
 
     fn driven_for(&self, surface: &SurfaceDescription, by: DrivenBy) -> Vec<DiscovererHandle> {

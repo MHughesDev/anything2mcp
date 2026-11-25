@@ -76,8 +76,8 @@ pub use failure::{
     said_cut, said_hides, said_neutral, said_quoted, said_shown,
 };
 pub use finding::{
-    Address, Finding, FindingBuilder, FindingKind, InvalidFinding, Limitation, LimitationCode,
-    ProducedBy, Source, Subject, Timestamp, UnknownReason,
+    Address, ComparisonResult, Finding, FindingBuilder, FindingKind, InvalidFinding, Limitation,
+    LimitationCode, NotCompared, ProducedBy, Source, Subject, Timestamp, UnknownReason,
 };
 pub use ident::{
     AccountName, ApprovalId, AuthProviderName, ControlName, CredentialRef, DecisionId, Environment,

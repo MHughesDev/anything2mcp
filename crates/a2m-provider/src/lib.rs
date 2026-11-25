@@ -26,6 +26,7 @@
 mod action;
 mod capture;
 pub mod codes;
+mod compare;
 pub mod decompiler;
 mod discover;
 mod driver;
@@ -51,6 +52,7 @@ pub use capture::{
     FIELD_KINDS, LONGEST_CAPTURED_WORD, LONGEST_HEX_RUN, MOST_CAPTURED_DIGITS, TrafficCapture,
     is_captured_word, kept_by_structure, take_capture,
 };
+pub use compare::{Compared, Comparison, ComparisonKey, KeyRule, KeySegment, compare_findings};
 pub use discover::{
     CAPTURE_END_GRACE, CaptureEnd, CaptureStop, DescribeForm, Describer, Description, Discoverer,
     DiscovererHandle, DiscoveryReport, DiscoveryScope, FindingSink, SandboxPort,

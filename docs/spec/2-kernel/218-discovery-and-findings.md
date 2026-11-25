@@ -91,7 +91,9 @@ Each limitation is a code from a closed list and a sentence. The list below and 
 
 ## Comparing what is described with what is observed
 
-Two discoverers often look at the same thing from two sides: one reads a description or the code, the other watches the system in use. Comparing them is a discoverer of its own, and the idea is taken directly from REA.
+Two discoverers often look at the same thing from two sides: one reads a description or the code, the other watches the system in use. The idea of comparing them is taken directly from REA. The comparison is not a discoverer and makes no finding: it is a statement about two sets of findings, worked out where they are read, and kept with what ran it, which is the scout's compare stage ([section 402](../4-building-tools/402-the-scout-and-who-does-what.md); [decision 0999](../../decisions/0999-what-a-description-says-is-compared-with-what-was-observed-by-place-verb-and-path.md)).
+
+A finding's side is its source: `live_system` is observed; `published_description` and `artifact` are described; the rest are not compared. The pack that owns a finding kind gives the key of a finding of it, through a key rule of the provider contract; a kind with no key rule is not compared. A key is a place (the origin), a verb (for the request access kind, the method), and a path of literal segments and placeholders, without its query. A described key and an observed key fit when the place and the verb are equal, the segments are as many, and each pair is two equal literals or has a placeholder on the described side; an observed key that fits several described keys belongs to those with the most literal segments. Built for the HTTP pack's `described_operation` and `endpoint`, the second also as the web probe makes it.
 
 | Result | Meaning | What it must not be read as |
 | --- | --- | --- |
@@ -100,7 +102,15 @@ Two discoverers often look at the same thing from two sides: one reads a descrip
 | `observed_only` | Seen, and not in any description | Undocumented by intent. Descriptions are often incomplete |
 | `unknown` | The comparison could not be made, with a reason | Either of the above |
 
-`described_only` is reported only when the observation covered the same origin and its coverage is known.
+`described_only` is reported only when the observation covered the same origin and its coverage is known. A `matched` endpoint is at the strongest level of the observed findings it matched, never above `discovered`; a `described_only` or `unknown` one is `inferred`; an `observed_only` one is at its observed level, and is named by its verb and path. An `unknown` result carries one reason:
+
+| Reason | Meaning |
+| --- | --- |
+| `not_observed` | No observation looked at the place the description names |
+| `coverage_unknown` | The observation of the place does not say how much it covered |
+| `no_key` | The finding's pack gave no key for it |
+
+The scout opens one question in the unknowns ledger for each result that is not `matched`.
 
 ## The unknowns ledger
 

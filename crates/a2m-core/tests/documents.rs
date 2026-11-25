@@ -5,9 +5,9 @@
 use std::path::Path;
 
 use a2m_core::{
-    AccessKind, Availability, BindingStatus, Checkpoint, Coverage, DoctorState, EffectClass,
-    EnvironmentKind, EvidenceLevel, FailureClass, FieldBase, Hazard, LimitationCode,
-    RecordMatching, RecordState, RunState, Sensitivity, SessionState, Source, Subject,
+    AccessKind, Availability, BindingStatus, Checkpoint, ComparisonResult, Coverage, DoctorState,
+    EffectClass, EnvironmentKind, EvidenceLevel, FailureClass, FieldBase, Hazard, LimitationCode,
+    NotCompared, RecordMatching, RecordState, RunState, Sensitivity, SessionState, Source, Subject,
     SubsystemMove, SubsystemState, TestKind, WriteEvidence,
 };
 
@@ -232,6 +232,13 @@ fn each_source_supports_the_level_the_discovery_section_gives() {
 fn limitation_codes_are_the_ones_in_the_discovery_section() {
     let spec = document("spec/2-kernel/218-discovery-and-findings.md");
     assert_eq!(column(&spec, "| Code |", 0), LimitationCode::NAMES);
+}
+
+#[test]
+fn comparison_results_and_their_reasons_are_the_ones_in_the_discovery_section() {
+    let spec = document("spec/2-kernel/218-discovery-and-findings.md");
+    assert_eq!(column(&spec, "| Result |", 0), ComparisonResult::NAMES);
+    assert_eq!(column(&spec, "| Reason |", 0), NotCompared::NAMES);
 }
 
 #[test]
