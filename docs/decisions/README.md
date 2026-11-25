@@ -438,3 +438,4 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0444 | [A result's decimal is padded to the places its field type states](0444-a-results-decimal-is-padded-to-the-places-its-field-type-states.md) | Accepted (design decision) |
 | 0445 | [The first hour's faults: a list on the command line, a key off a list, and a project held to one store](0445-the-first-hours-faults-a-list-on-the-command-line-a-key-off-a-list-and-a-project-held-to-one-store.md) | Accepted (design decision) |
 | 0446 | [The product's end-to-end tests are one test program](0446-the-products-end-to-end-tests-are-one-test-program.md) | Accepted (design decision) |
+| 0447 | [The field test's box takes a pinned image, a user that is not root, and a named filter for the browser's sandbox](0447-the-field-test-box-takes-a-pinned-image-a-user-that-is-not-root-and-a-named-filter-for-the-browsers-sandbox.md) | Accepted (design decision) |

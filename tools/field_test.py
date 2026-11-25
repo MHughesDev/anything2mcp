@@ -63,6 +63,10 @@ and `note`:
                                       the page of `session.login`
     "unseen":  "name"                 the secret kept as `{name}` is in no file under the
                                       engine's home, the project, or the harness's log
+    "sandboxed": {}                   a browser runs in the box with its sandbox: at least
+                                      one renderer, each in a user namespace that is not the
+                                      box's own, and no process of the box carrying a flag
+                                      that switches the sandbox off
 
 `expect` may hold `ok` (true or false), `code` (the failure code of a product
 command), `status` (of a request), `contains` and `lacks` (text in the output),
@@ -164,6 +168,29 @@ service:
   field harness is built with, such as a store a pack speaks to only behind a feature. The
   report states them, because a run with them is not a run of the product as it is shipped.
 
+The box's three options (decision 0447), for a browser in the box:
+
+- `"box_image": "name@sha256:<64 hex>"`: the image the box runs in place of the runner's own,
+  named by its digest and no other way, such as one that holds a browser at one of the web
+  pack's known places. Its entry point is never run. Its glibc must be at least as new as
+  the one the product's binary was built against, and it must hold `sh`, `bash`, `timeout`,
+  and `getent`, or the closed-network check cannot prove the network closed and stops.
+- `"box_user": "uid:gid"`: the user the box runs as, in numbers, never root (`0`). The
+  runner gives it the engine's home and the project, before the first step and after every
+  step that writes in them from this machine, which only a runner that is root can do; a
+  runner that is not root may name only its own user. Without it the box runs as the
+  runner's user, as before, which is root on a machine where the runner is.
+- `"box_seccomp": "browser_sandbox"`: the box's system-call filter, by a name from the
+  runner's own list, `BOX_FILTERS`. `browser_sandbox` is the container engine's default
+  filter, kept in `tools/field-box/seccomp-default.json` and checked against its hash, plus
+  two rules: `clone` may make a user, a process, and a network namespace, and `unshare` a
+  user namespace, and neither any other. It is refused for a box whose user is root. No name
+  means unconfined, and a recipe cannot give a filter of its own.
+
+Whatever the options, a recipe that holds a flag that switches a browser's sandbox off
+(`SANDBOX_OFF`), in its own text or in a file it gives the box, is refused before anything
+is started. The report states the box's image, user, and filter.
+
 A recipe whose system is a folder of files, not a program, says `"system": {"kind": "folder"}`
 and names no image: no system's container is started, and the folder is made by the recipe's
 own steps (`python`, `copy`) under `{project}` or `{data}`. The steps `exec` and `http`, and a
@@ -176,6 +203,7 @@ which leaves them running and prints their names so they can be removed.
 import argparse
 import base64
 import glob
+import hashlib
 import html
 import json
 import os
@@ -222,6 +250,61 @@ RUN_LABEL = "a2m-field-run"
 FEATURE = re.compile(r"^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_-]*$")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# The box's three options (decision 0447). An image in place of BOX_IMAGE is named by its
+# digest, in this form and no other.
+PINNED_IMAGE = re.compile(r"^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$")
+# A box user is numbers, `uid:gid`, so that the runner can give it the engine's home and the
+# project without asking the image who a name is.
+BOX_USER = re.compile(r"^([0-9]{1,9}):([0-9]{1,9})$")
+# The container engine's own default system-call filter, kept unchanged in the repository,
+# and its hash: a file that no longer has it is refused, so that the base cannot be widened
+# by an edit nobody sees. tools/field-box/NOTICE says where it came from.
+SECCOMP_DEFAULT = os.path.join(REPO, "tools", "field-box", "seccomp-default.json")
+SECCOMP_DEFAULT_SHA256 = "3320527d4568265ac97a077609b1bfd4cfd0d789eeb9239b7e094b1526675406"
+# The flags of clone and unshare that make a namespace, and the three the browser's sandbox
+# makes: a user namespace, and in it a process and a network namespace.
+CLONE_NAMESPACES = 0x7E020000
+CLONE_NEWUSER = 0x10000000
+CLONE_NEWPID = 0x20000000
+CLONE_NEWNET = 0x40000000
+
+
+def namespace_rule(name, allowed):
+    """A rule that lets `name` make the namespaces in `allowed` and no other: the call is let
+    through when its flags, masked by every other namespace flag, are zero. Not on s390,
+    whose clone takes its flags in another place."""
+    return {
+        "names": [name],
+        "action": "SCMP_ACT_ALLOW",
+        "args": [{"index": 0, "value": CLONE_NAMESPACES & ~allowed, "valueTwo": 0, "op": "SCMP_CMP_MASKED_EQ"}],
+        "excludes": {"caps": ["CAP_SYS_ADMIN"], "arches": ["s390", "s390x"]},
+        "comment": f"decision 0447: {name} may make only the namespaces the browser's sandbox makes",
+    }
+
+
+# The named filters a recipe may give the box, each the default above plus these rules and
+# nothing else. Measured on 2026-11-25 (decision 0447): the browser's sandbox starts under the
+# default plus these two, and under the default plus any one of them alone, or with clone
+# kept from the process or the network namespace, it does not.
+BOX_FILTERS = {
+    "browser_sandbox": [
+        namespace_rule("clone", CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET),
+        namespace_rule("unshare", CLONE_NEWUSER),
+    ],
+}
+# Flags that switch a browser's sandbox off, in whole or in part. A recipe that holds one, in
+# its own text or in a file it gives the box, is refused: the product never passes one
+# (rule 5), and a recipe cannot pass one for it, through a wrapper program for one.
+SANDBOX_OFF = (
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-namespace-sandbox",
+    "--disable-seccomp-filter-sandbox",
+    "--disable-gpu-sandbox",
+    "--single-process",
+    "--no-zygote",
+)
 NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -258,6 +341,128 @@ def file_mounts(mounts, recipe):
             raise CannotRun(f"A mount's file, `{source}`, is not in the recipe folder.")
         argv += ["-v", f"{resolved}:{inside}:ro"]
     return argv
+
+
+def box_options(system, runner_user):
+    """The box's image, user, and system-call filter, from a recipe's `system` (decision 0447),
+    as `{"image", "user", "filter"}`. `runner_user` is `uid:gid` of this runner. Each is
+    refused, before anything is started, when it is not one the runner allows."""
+    image = system.get("box_image", BOX_IMAGE)
+    if not isinstance(image, str) or not PINNED_IMAGE.match(image):
+        raise CannotRun(f"The recipe's `box_image` is not an image named by its digest, `name@sha256:<64 hex>`: {image!r}")
+    user = system.get("box_user", runner_user)
+    match = BOX_USER.match(user) if isinstance(user, str) else None
+    if not match:
+        raise CannotRun(f"The recipe's `box_user` is not `uid:gid` in numbers: {user!r}")
+    if "box_user" in system and match.group(1) == "0":
+        raise CannotRun("The recipe's `box_user` is root. Name a user that is not, or leave it out.")
+    if user != runner_user and not runner_user.startswith("0:"):
+        raise CannotRun(
+            f"The recipe's `box_user` {user} is not this runner's user {runner_user}, and only a "
+            "runner that is root can give the engine's home and the project to another user."
+        )
+    name = system.get("box_seccomp")
+    if name is not None:
+        if not isinstance(name, str) or name not in BOX_FILTERS:
+            raise CannotRun(
+                f"The recipe's `box_seccomp` is {name!r}. A box's filter is named from the "
+                f"runner's own list, {sorted(BOX_FILTERS)}; none is unconfined, and a recipe "
+                "cannot give a filter of its own."
+            )
+        if match.group(1) == "0":
+            raise CannotRun(
+                f"The filter `{name}` is given only to a box whose user is not root; name a "
+                "`box_user`."
+            )
+    return {"image": image, "user": user, "filter": name}
+
+
+def box_filter(name, default_path=None):
+    """The system-call filter of that name: the container engine's default, checked against
+    its hash, plus the filter's own rules. Returns the profile, a JSON value."""
+    default_path = default_path or SECCOMP_DEFAULT
+    with open(default_path, "rb") as handle:
+        raw = handle.read()
+    if hashlib.sha256(raw).hexdigest() != SECCOMP_DEFAULT_SHA256:
+        raise CannotRun(
+            f"The default system-call filter {default_path} is not the file the runner was "
+            "written for: its hash differs. Restore it, or record its replacement in a decision."
+        )
+    profile = json.loads(raw)
+    profile["syscalls"] = profile["syscalls"] + BOX_FILTERS[name]
+    return profile
+
+
+def sandbox_off_in(recipe, files=()):
+    """Where a flag that switches a browser's sandbox off is found: in the recipe's own text,
+    or in a file it gives the box. Returns the places, empty when there is none."""
+    found = []
+    text = json.dumps(recipe)
+    found += [f"the recipe: {flag}" for flag in SANDBOX_OFF if flag in text]
+    for path in files:
+        with open(path, "rb") as handle:
+            content = handle.read()
+        found += [f"{path}: {flag}" for flag in SANDBOX_OFF if flag.encode() in content]
+    return found
+
+
+def give_to(paths, user):
+    """Give every file and folder under `paths` to the box's user, `uid:gid`, so that the
+    engine in the box owns its home and the project as a person owns theirs."""
+    uid, gid = (int(part) for part in user.split(":"))
+    for top in paths:
+        os.chown(top, uid, gid)
+        for folder, dirs, files in os.walk(top):
+            for name in dirs + files:
+                os.chown(os.path.join(folder, name), uid, gid, follow_symlinks=False)
+
+
+def mounted_files(flags):
+    """The files of the recipe folder that `-v` flags of `file_mounts` mount."""
+    return [flags[i + 1].split(":")[0] for i in range(0, len(flags), 2) if flags[i] == "-v"]
+
+
+def sandboxed_script():
+    """A shell script, run in the box, that says whether the browser's renderers run in its
+    sandbox: each renderer's user namespace is not the box's own, and no process of the box
+    carries a flag that switches the sandbox off."""
+    # A flag is matched as a whole argument: the browser starts its own unsandboxed zygote,
+    # for the processes its design leaves outside the sandbox, with `--no-zygote-sandbox`,
+    # which is not `--no-zygote`.
+    off = "".join(
+        f'case "$c" in *" {flag} "*) echo "A2M_SANDBOX_OFF {flag} in ${{c# }}" | cut -c1-160;; esac; '
+        for flag in SANDBOX_OFF
+    )
+    return (
+        'box=$(readlink /proc/1/ns/user); n=0; shared=0; '
+        "for p in /proc/[0-9]*; do "
+        'c=" $(tr "\\0" " " < "$p/cmdline" 2>/dev/null)" || continue; '
+        # The check itself, whose own text holds every flag it looks for.
+        'case "$c" in *A2M_RENDERERS*) continue;; esac; '
+        'case "$c" in *" --type=renderer "*) n=$((n+1)); '
+        '[ "$(readlink "$p/ns/user")" = "$box" ] && shared=$((shared+1));; esac; '
+        f"{off}"
+        "done; "
+        'echo "A2M_RENDERERS $n SHARING_THE_BOX_NAMESPACE $shared"'
+    )
+
+
+def sandboxed_verdict(code, out):
+    """What the sandbox check showed: ok, and a line saying why."""
+    if code != 0:
+        return False, f"the check did not run (exit {code})"
+    off = [line for line in out.splitlines() if line.startswith("A2M_SANDBOX_OFF")]
+    if off:
+        return False, "a process of the box carries a flag that switches the sandbox off: " + "; ".join(off)
+    found = re.search(r"A2M_RENDERERS (\d+) SHARING_THE_BOX_NAMESPACE (\d+)", out)
+    if not found:
+        return False, "the check gave no verdict"
+    renderers, shared = int(found.group(1)), int(found.group(2))
+    if renderers == 0:
+        return False, "no renderer of a browser runs in the box"
+    if shared:
+        return False, f"{shared} of {renderers} renderers run in the box's own user namespace: unsandboxed"
+    return True, f"{renderers} renderers, each in a user namespace of its own"
 
 
 def fill(value, names):
@@ -328,6 +533,9 @@ class Run:
         # the product starts on this machine, such as a command-line program or a local MCP
         # server's program (`system.box_mounts`).
         self.box_mounts = []
+        # The box's image, and the flags of its system-call filter (decision 0447).
+        self.box_image = BOX_IMAGE
+        self.box_security = []
 
     def network_argv(self):
         return ["docker", "network", "create", "--internal", "--label", self.label, self.network]
@@ -356,11 +564,13 @@ class Run:
         if harness:
             mounts += ["-v", f"{harness}:{BOX_HARNESS}:ro"]
         mounts += self.box_mounts
+        # The image's own entry point is never run: a box image with a browser may start
+        # programs of its own from one, and the box runs only what the runner starts in it.
         return [
             "docker", "run", "-d", "--init", "--name", self.box, "--network", self.network,
-            "--label", self.label, "--user", user, "-e", f"HOME={home}",
+            "--label", self.label, "--user", user, "-e", f"HOME={home}", *self.box_security,
             *mounts, "-v", f"{home}:{home}", "-v", f"{project}:{project}",
-            BOX_IMAGE, "sleep", "infinity",
+            "--entrypoint", "", self.box_image, "sleep", "infinity",
         ]
 
     def proxy_argv(self, system_port):
@@ -842,6 +1052,12 @@ def do_step(step, names, env, active, proxy=None, harness=None, secrets=None):
         return {"ok": not holding, "output": "in none of the files" if not holding else "held by: " + ", ".join(holding)}
     if "person" in step:
         return press(step["person"], active, harness)
+    if "sandboxed" in step:
+        if not active.box_up:
+            raise CannotRun("A `sandboxed` step needs the box, which starts with the first `a2m` step.")
+        code, out, err = run(["docker", "exec", active.box, "sh", "-c", sandboxed_script()])
+        ok, why = sandboxed_verdict(code, out + err)
+        return {"ok": ok, "output": why}
     if "a2m" in step:
         if harness is not None and harness.alive() is False and harness.process is not None:
             raise CannotRun(
@@ -970,6 +1186,14 @@ def main():
         system_env(system, {})
         file_mounts(system.get("mounts", {}), recipe_dir)
         box_mounts = file_mounts(system.get("box_mounts", {}), recipe_dir)
+        box = box_options(system, f"{os.getuid()}:{os.getgid()}")
+        off = sandbox_off_in(recipe, mounted_files(box_mounts))
+        if off:
+            raise CannotRun(
+                "The recipe holds a flag that switches a browser's sandbox off, which no field "
+                "test may pass (rule 5): " + "; ".join(off)
+            )
+        profile = box_filter(box["filter"]) if box["filter"] else None
     except CannotRun as stop:
         print(f"The field test could not be run: {stop}")
         return 2
@@ -977,6 +1201,7 @@ def main():
     run_dir = os.path.join(recipe_dir, "runs", time.strftime("%Y%m%d-%H%M%S"))
     active = Run(recipe["name"])
     active.box_mounts = box_mounts
+    active.box_image = box["image"]
     names = {
         "recipe": recipe_dir,
         "project": os.path.join(run_dir, "project"),
@@ -995,6 +1220,15 @@ def main():
     home = os.path.abspath(args.home) if args.home else os.path.join(run_dir, "home")
     os.makedirs(home, exist_ok=True)
     names["home"] = home
+    if profile is not None:
+        filter_path = os.path.join(run_dir, "box-seccomp.json")
+        with open(filter_path, "w", encoding="utf-8") as handle:
+            json.dump(profile, handle, indent=1)
+        active.box_security = ["--security-opt", f"seccomp={filter_path}"]
+    # The engine's home and the project belong to the box's user, as a person's own do.
+    handed = box["user"] != f"{os.getuid()}:{os.getgid()}"
+    if handed:
+        give_to([home, names["project"]], box["user"])
     env = dict(os.environ)
     env.update(
         A2M_HOME=home,
@@ -1009,6 +1243,14 @@ def main():
         "field_test": recipe["name"],
         "image": system.get("image", "none: the system is a folder"),
         "harness_features": system.get("harness_features", []),
+        "box": {
+            "image": box["image"],
+            "user": box["user"],
+            "filter": box["filter"] or "the container engine's own default",
+            "filter_sha256": (
+                hashlib.sha256(json.dumps(profile, indent=1).encode()).hexdigest() if profile else None
+            ),
+        },
         "steps": [],
     }
     failed = 0
@@ -1016,7 +1258,7 @@ def main():
     def start_engine(harness_binary):
         """The box, the closed-network check, and the field harness serving in the box."""
         active.ensure_box(
-            env["A2M_BINARY"], home, names["project"], f"{os.getuid()}:{os.getgid()}", harness=harness_binary
+            env["A2M_BINARY"], home, names["project"], box["user"], harness=harness_binary
         )
         started = Harness(active.harness_argv(product_env(env), names["project"]), os.path.join(run_dir, "harness.log"))
         started.start()
@@ -1032,7 +1274,7 @@ def main():
             # The box first, and the closed-network check with it, so that the system's
             # container can join the box's network.
             active.ensure_box(
-                env["A2M_BINARY"], home, names["project"], f"{os.getuid()}:{os.getgid()}", harness=harness_binary
+                env["A2M_BINARY"], home, names["project"], box["user"], harness=harness_binary
             )
         if not a_folder:
             code, _, err = run(active.system_argv(system, names["data"], system_env(system, names), recipe_dir))
@@ -1058,6 +1300,8 @@ def main():
             if "a2m" in step and harness is None:
                 harness = start_engine(harness_binary)
             shown = do_step(step, names, env, active, proxy, harness, secrets)
+            if handed and any(kind in step for kind in ("copy", "replace", "python")):
+                give_to([home, names["project"]], box["user"])
             answer = shown.pop("answer", None)
             for name, path in step.get("keep", {}).items():
                 value = kept(answer or {}, path)
