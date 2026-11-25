@@ -192,7 +192,7 @@ Each table gives the key, its type or values, its default on one machine, its sc
 | `ledger.intent_window.<mode>` (not built) | 1 up to the manifest's value | The mode's `intent_window` in its manifest | U | no |
 | `modes.disabled` (not built) | Modes that may not be used here | None | U | no |
 
-The order of bindings is not a setting. It is the operation's, or each mode's rank in its provider's manifest ([section 201](201-archetypes-and-modes.md)). A disabled mode makes its bindings unhealthy, and reads fall to the next verified binding as for any unhealthy one.
+The order of bindings is not a setting. It is the operation's, or each mode's rank in its provider's manifest ([section 201](201-access-kinds-and-modes.md)). A disabled mode makes its bindings unhealthy, and reads fall to the next verified binding as for any unhealthy one.
 
 **Scheduling.** Defaults per mode come from each mode's manifest ([section 211](211-concurrency.md)).
 

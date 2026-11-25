@@ -12,12 +12,12 @@ dependencies = [
  "a2m-expr",
  "a2m-files",
  "a2m-ledger",
+ "a2m-logs",
  "a2m-netstate",
  "a2m-policy",
  "a2m-provider",
  "a2m-sched",
  "a2m-sources",
- "a2m-logs",
  "a2m-vault",
  "example-app",
  "reqwest",
@@ -39,10 +39,10 @@ dependencies = [
  "a2m-engine",
  "a2m-expr",
  "a2m-ledger",
+ "a2m-logs",
  "a2m-policy",
  "a2m-provider",
  "a2m-sources",
- "a2m-logs",
  "a2m-vault",
  "axum",
  "example-app",
@@ -82,14 +82,23 @@ dependencies = [
  "a2m-actions",
  "a2m-auth",
  "a2m-core",
- "a2m-policy",
  "a2m-logs",
+ "a2m-policy",
  "a2m-vault",
  "anything2mcp",
  "example-app",
  "reqwest",
  "serde",
  "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "a2m-copy-test-harness"
+version = "0.0.1"
+dependencies = [
+ "a2m-local",
+ "anything2mcp",
  "tokio",
 ]
 
@@ -112,9 +121,9 @@ dependencies = [
  "a2m-core",
  "a2m-expr",
  "a2m-ledger",
+ "a2m-logs",
  "a2m-provider",
  "a2m-sources",
- "a2m-logs",
  "a2m-vault",
  "example-app",
  "example-decompiler",
@@ -130,15 +139,6 @@ version = "0.0.1"
 dependencies = [
  "a2m-core",
  "unicode-normalization",
-]
-
-[[package]]
-name = "a2m-copy-test-harness"
-version = "0.0.1"
-dependencies = [
- "a2m-local",
- "anything2mcp",
- "tokio",
 ]
 
 [[package]]
@@ -176,10 +176,10 @@ dependencies = [
  "a2m-expr",
  "a2m-files",
  "a2m-ledger",
+ "a2m-logs",
  "a2m-policy",
  "a2m-provider",
  "a2m-sources",
- "a2m-logs",
  "a2m-vault",
  "axum",
  "block2",
@@ -201,6 +201,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "a2m-logs"
+version = "0.0.1"
+dependencies = [
+ "a2m-core",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "a2m-mcp"
 version = "0.0.1"
 dependencies = [
@@ -210,10 +220,10 @@ dependencies = [
  "a2m-engine",
  "a2m-expr",
  "a2m-ledger",
+ "a2m-logs",
  "a2m-policy",
  "a2m-provider",
  "a2m-sources",
- "a2m-logs",
  "a2m-vault",
  "axum",
  "example-app",
@@ -244,8 +254,8 @@ dependencies = [
  "a2m-core",
  "a2m-files",
  "a2m-ledger",
- "a2m-provider",
  "a2m-logs",
+ "a2m-provider",
  "a2m-vault",
  "example-cli",
  "miniz_oxide",
@@ -268,8 +278,8 @@ dependencies = [
  "a2m-expr",
  "a2m-files",
  "a2m-ledger",
- "a2m-provider",
  "a2m-logs",
+ "a2m-provider",
  "a2m-vault",
  "bytes",
  "example-db",
@@ -290,8 +300,8 @@ dependencies = [
  "a2m-expr",
  "a2m-files",
  "a2m-ledger",
- "a2m-provider",
  "a2m-logs",
+ "a2m-provider",
  "a2m-vault",
  "example-desk",
  "futures-core",
@@ -317,8 +327,8 @@ dependencies = [
  "a2m-expr",
  "a2m-files",
  "a2m-ledger",
- "a2m-provider",
  "a2m-logs",
+ "a2m-provider",
  "a2m-vault",
  "example-device",
  "serde",
@@ -335,9 +345,9 @@ dependencies = [
  "a2m-expr",
  "a2m-files",
  "a2m-ledger",
+ "a2m-logs",
  "a2m-provider",
  "a2m-sources",
- "a2m-logs",
  "a2m-vault",
  "example-files",
  "getrandom 0.4.3",
@@ -354,8 +364,8 @@ dependencies = [
  "a2m-core",
  "a2m-files",
  "a2m-ledger",
- "a2m-provider",
  "a2m-logs",
+ "a2m-provider",
  "a2m-vault",
  "example-app",
  "quick-xml",
@@ -374,8 +384,8 @@ dependencies = [
  "a2m-core",
  "a2m-files",
  "a2m-ledger",
- "a2m-provider",
  "a2m-logs",
+ "a2m-provider",
  "a2m-vault",
  "example-app",
  "example-mcp",
@@ -394,8 +404,8 @@ dependencies = [
  "a2m-expr",
  "a2m-files",
  "a2m-ledger",
- "a2m-provider",
  "a2m-logs",
+ "a2m-provider",
  "a2m-vault",
  "example-broker",
  "example-nats",
@@ -409,9 +419,9 @@ name = "a2m-pack-web-browser"
 version = "0.0.1"
 dependencies = [
  "a2m-core",
+ "a2m-logs",
  "a2m-netstate",
  "a2m-provider",
- "a2m-logs",
  "example-app",
  "libc",
  "serde",
@@ -425,9 +435,9 @@ name = "a2m-pack-web-probe"
 version = "0.0.1"
 dependencies = [
  "a2m-core",
+ "a2m-logs",
  "a2m-pack-web-browser",
  "a2m-provider",
- "a2m-logs",
  "axum",
  "example-app",
  "reqwest",
@@ -444,9 +454,9 @@ dependencies = [
  "a2m-expr",
  "a2m-files",
  "a2m-ledger",
+ "a2m-logs",
  "a2m-pack-web-browser",
  "a2m-provider",
- "a2m-logs",
  "a2m-vault",
  "example-app",
  "regex",
@@ -478,9 +488,9 @@ dependencies = [
  "a2m-core",
  "a2m-files",
  "a2m-ledger",
+ "a2m-logs",
  "a2m-netstate",
  "a2m-sources",
- "a2m-logs",
  "a2m-vault",
  "command-fds",
  "example-cli",
@@ -524,16 +534,6 @@ dependencies = [
  "example-files",
  "miniz_oxide",
  "serde",
-]
-
-[[package]]
-name = "a2m-logs"
-version = "0.0.1"
-dependencies = [
- "a2m-core",
- "serde",
- "serde_json",
- "tracing",
 ]
 
 [[package]]
@@ -590,6 +590,7 @@ dependencies = [
  "a2m-files",
  "a2m-ledger",
  "a2m-local",
+ "a2m-logs",
  "a2m-mcp",
  "a2m-pack-command",
  "a2m-pack-data",
@@ -604,7 +605,6 @@ dependencies = [
  "a2m-pack-web-ui",
  "a2m-policy",
  "a2m-provider",
- "a2m-logs",
  "a2m-vault",
  "axum",
  "example-app",

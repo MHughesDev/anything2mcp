@@ -288,7 +288,7 @@ fn planned(
         let address = address_in(compiled_target, environment, at);
         let description = SurfaceDescription {
             kind: surface.kind.clone(),
-            archetype: entry.archetype,
+            access_kind: entry.access_kind,
             address: address.clone(),
             facts: Values::new(),
         };

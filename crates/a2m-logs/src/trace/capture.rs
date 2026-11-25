@@ -1,4 +1,4 @@
-//! Artifacts: the large pieces of evidence a driver returns, and the rule
+//! Captures: the large pieces of evidence a driver returns, and the rule
 //! that says which of them a capture level keeps.
 
 use a2m_core::Digest;
@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use super::CaptureLevel;
 
-/// What kind of artifact a piece of evidence is.
+/// What kind of capture a piece of evidence is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ArtifactKind {
+pub enum CaptureKind {
     /// A compact snapshot of what a surface showed, as text.
     Snapshot,
     /// A request and its answer, as text.
@@ -20,8 +20,8 @@ pub enum ArtifactKind {
     WindowTree,
 }
 
-impl ArtifactKind {
-    /// Whether the artifact is text, which can be redacted and checked. An
+impl CaptureKind {
+    /// Whether the capture is text, which can be redacted and checked. An
     /// image cannot; it is masked by the pack that took it.
     #[must_use]
     pub const fn is_text(self) -> bool {
@@ -29,7 +29,7 @@ impl ArtifactKind {
     }
 }
 
-/// Where in a run an artifact was taken.
+/// Where in a run a capture was taken.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapturePoint {
@@ -51,11 +51,11 @@ pub struct MaskReport {
     pub fields: Vec<String>,
 }
 
-/// An artifact a driver returned, offered to the trace.
+/// A capture a driver returned, offered to the trace.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OfferedArtifact {
+pub struct OfferedCapture {
     /// What kind it is.
-    pub kind: ArtifactKind,
+    pub kind: CaptureKind,
     /// Where it was taken.
     pub at: CapturePoint,
     /// Its content.
@@ -64,20 +64,20 @@ pub struct OfferedArtifact {
     pub masked: Option<MaskReport>,
 }
 
-/// What became of an offered artifact.
+/// What became of an offered capture.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ArtifactOutcome {
+pub enum CaptureOutcome {
     /// It is kept: here are its redacted bytes, for the store.
-    Kept(KeptArtifact),
+    Kept(RedactedCapture),
     /// It is not kept.
     Dropped(DropReason),
 }
 
-/// An artifact that is kept, ready for the store to seal.
+/// A capture that is kept, ready for the store to seal.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeptArtifact {
+pub struct RedactedCapture {
     /// What kind it is.
-    pub kind: ArtifactKind,
+    pub kind: CaptureKind,
     /// Where it was taken.
     pub at: CapturePoint,
     /// Its content, redacted and checked.
@@ -86,7 +86,7 @@ pub struct KeptArtifact {
     pub masked: Option<MaskReport>,
 }
 
-/// Why an artifact was not kept.
+/// Why a capture was not kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DropReason {
     /// The run's capture level does not keep this kind at this point. This
@@ -94,18 +94,18 @@ pub enum DropReason {
     Level,
     /// An image arrived without a report of what was masked.
     Unmasked,
-    /// The artifact still held a registered secret after redaction.
+    /// The capture still held a registered secret after redaction.
     HeldSecret,
-    /// An artifact of a text kind was not UTF-8 text, so it could not be
+    /// A capture of a text kind was not UTF-8 text, so it could not be
     /// redacted or checked.
     NotText,
 }
 
-/// The reference a step record holds to an artifact the store kept.
+/// The reference a step record holds to a capture the store kept.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ArtifactRef {
+pub struct CaptureRef {
     /// What kind it is.
-    pub kind: ArtifactKind,
+    pub kind: CaptureKind,
     /// Where it was taken.
     pub at: CapturePoint,
     /// The name the store gave the blob.
@@ -113,20 +113,20 @@ pub struct ArtifactRef {
 }
 
 impl CaptureLevel {
-    /// Whether this level keeps an artifact of `kind` taken at `at` (section
+    /// Whether this level keeps a capture of `kind` taken at `at` (section
     /// 217, "Capture levels"). The engine asks before it has a driver take
     /// evidence nobody will keep.
     #[must_use]
-    pub const fn keeps(self, kind: ArtifactKind, at: CapturePoint) -> bool {
+    pub const fn keeps(self, kind: CaptureKind, at: CapturePoint) -> bool {
         match self {
             Self::Minimal => false,
             Self::Standard => match kind {
-                ArtifactKind::Snapshot | ArtifactKind::WindowTree => {
+                CaptureKind::Snapshot | CaptureKind::WindowTree => {
                     matches!(at, CapturePoint::Checkpoint | CapturePoint::Failure)
                 }
                 // Outside `full`, a screenshot is kept only at a failure.
-                ArtifactKind::Screenshot => matches!(at, CapturePoint::Failure),
-                ArtifactKind::Exchange => false,
+                CaptureKind::Screenshot => matches!(at, CapturePoint::Failure),
+                CaptureKind::Exchange => false,
             },
             Self::Full => true,
         }

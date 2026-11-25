@@ -28,7 +28,7 @@ What is the same whatever kind of system is integrated.
 
 | # | Section |
 | --- | --- |
-| 201 | [Archetypes and modes](2-kernel/201-archetypes-and-modes.md) |
+| 201 | [Access kinds and modes](2-kernel/201-access-kinds-and-modes.md) |
 | 202 | [Kernel and packs](2-kernel/202-kernel-and-packs.md) |
 | 203 | [The provider contract](2-kernel/203-the-provider-contract.md) |
 | 204 | [Supervising subsystems](2-kernel/204-supervising-subsystems.md) |

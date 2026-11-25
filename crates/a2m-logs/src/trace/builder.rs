@@ -14,8 +14,8 @@ use super::wire::{
     EndLine, HeaderLine, Held, PassLine, StepLine, TRACE_SCHEMA, TraceLine, ValueLine,
 };
 use super::{
-    Acting, ArtifactOutcome, CaptureLevel, Detail, DropReason, KeptArtifact, Locating, MaskReport,
-    OfferedArtifact, StepRecord, TraceIdentity, TraceOutcome, TracedValue,
+    Acting, CaptureLevel, CaptureOutcome, Detail, DropReason, Locating, MaskReport, OfferedCapture,
+    RedactedCapture, StepRecord, TraceIdentity, TraceOutcome, TracedValue,
 };
 use crate::clock::micros;
 use crate::codes::TRACE_HOLDS_SECRET;
@@ -69,7 +69,7 @@ pub struct FinishedTrace {
     pub records: u32,
     /// How many of them are in `bytes`.
     pub kept: u32,
-    /// What is weak about this trace: a cut, a dropped artifact.
+    /// What is weak about this trace: a cut, a dropped capture.
     pub limitations: Vec<Limitation>,
 }
 
@@ -269,28 +269,28 @@ impl TraceBuilder {
             }),
             values,
             outcome: step.outcome,
-            artifacts: step.artifacts,
+            captures: step.captures,
             sig,
         }));
         self.append(&line);
     }
 
-    /// Offers an artifact a driver returned. The level decides whether it is
-    /// kept. A kept artifact comes back as redacted, checked bytes for the
+    /// Offers a capture a driver returned. The level decides whether it is
+    /// kept. A kept capture comes back as redacted, checked bytes for the
     /// store; the name the store gives it goes into the step's record.
-    pub fn artifact(&mut self, offered: OfferedArtifact) -> ArtifactOutcome {
+    pub fn capture(&mut self, offered: OfferedCapture) -> CaptureOutcome {
         if !self.level.keeps(offered.kind, offered.at) {
-            return ArtifactOutcome::Dropped(DropReason::Level);
+            return CaptureOutcome::Dropped(DropReason::Level);
         }
         if offered.kind.is_text() {
-            return self.text_artifact(offered);
+            return self.text_capture(offered);
         }
         let Some(masked) = offered.masked else {
             self.limit_once(
                 LimitationCode::Redacted,
                 "An image arrived without a report of what was masked, and was dropped.",
             );
-            return ArtifactOutcome::Dropped(DropReason::Unmasked);
+            return CaptureOutcome::Dropped(DropReason::Unmasked);
         };
         let masked = MaskReport {
             fields: masked
@@ -299,7 +299,7 @@ impl TraceBuilder {
                 .map(|field| limit_text(&self.safe(field), LABEL_LIMIT))
                 .collect(),
         };
-        ArtifactOutcome::Kept(KeptArtifact {
+        CaptureOutcome::Kept(RedactedCapture {
             kind: offered.kind,
             at: offered.at,
             bytes: offered.bytes,
@@ -307,13 +307,13 @@ impl TraceBuilder {
         })
     }
 
-    fn text_artifact(&mut self, offered: OfferedArtifact) -> ArtifactOutcome {
+    fn text_capture(&mut self, offered: OfferedCapture) -> CaptureOutcome {
         let Ok(text) = String::from_utf8(offered.bytes) else {
             self.limit_once(
                 LimitationCode::Redacted,
-                "An artifact that should be text was not, could not be checked, and was dropped.",
+                "A capture that should be text was not, could not be checked, and was dropped.",
             );
-            return ArtifactOutcome::Dropped(DropReason::NotText);
+            return CaptureOutcome::Dropped(DropReason::NotText);
         };
         let redacted = self.redact.redact(&text);
         // The check on the way out, for this piece. The bytes that are kept
@@ -323,7 +323,7 @@ impl TraceBuilder {
         // it. The text is therefore checked as it is kept, as it reads
         // once its markup and hidden characters are taken out, and as both
         // read with their character references written out. A hit in any
-        // form drops the artifact: what is kept cannot be cleaned without
+        // form drops the capture: what is kept cannot be cleaned without
         // ceasing to be the snapshot.
         let cleaned = clean_text(&redacted);
         let held = self.redact.contains_secret(&redacted)
@@ -333,16 +333,16 @@ impl TraceBuilder {
         if held {
             self.limit_once(
                 LimitationCode::Redacted,
-                "An artifact still held a registered secret after redaction, and was dropped.",
+                "A capture still held a registered secret after redaction, and was dropped.",
             );
             tracing::error!(
                 target: "a2m_logs",
                 run = %self.identity.run,
-                "an artifact held a registered secret after redaction and was dropped"
+                "a capture held a registered secret after redaction and was dropped"
             );
-            return ArtifactOutcome::Dropped(DropReason::HeldSecret);
+            return CaptureOutcome::Dropped(DropReason::HeldSecret);
         }
-        ArtifactOutcome::Kept(KeptArtifact {
+        CaptureOutcome::Kept(RedactedCapture {
             kind: offered.kind,
             at: offered.at,
             bytes: redacted.into_bytes(),

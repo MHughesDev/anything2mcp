@@ -1,5 +1,5 @@
 //! The registry: one immutable snapshot of every provider, its modes with
-//! their archetypes, and the objects each supplied.
+//! their access kinds, and the objects each supplied.
 //!
 //! The product crate builds it once at start, with one call per pack, and
 //! builds a new one when a provider is enabled or disabled. It is never
@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use a2m_auth::AuthProvider;
 use a2m_core::{
-    Archetype, Availability, Digest, EffectClass, Failure, FailureClass, FailureCode, Mode, Redact,
-    SurfaceKind, Values, Version,
+    AccessKind, Availability, Digest, EffectClass, Failure, FailureClass, FailureCode, Mode,
+    Redact, SurfaceKind, Values, Version,
 };
 use a2m_files::CompilerSet;
 use a2m_logs::LogsAndTraces;
@@ -111,8 +111,8 @@ pub struct ProviderListing {
 /// A registered surface kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfaceKindEntry {
-    /// Its archetype.
-    pub archetype: Archetype,
+    /// Its access kind.
+    pub access_kind: AccessKind,
     /// Whether the keeper holds a session on a surface of this kind.
     pub session: bool,
     /// The provider that serves it.
@@ -415,7 +415,7 @@ impl RegistryBuilder {
 
         let usable = |p: &Pending| p.collected.is_some() && p.problems.is_empty();
 
-        // Modes and surface kinds agree on their archetype; a kind has one
+        // Modes and surface kinds agree on their access kind; a kind has one
         // owner for a surface kind.
         let mut conflicts: Vec<(usize, Failure)> = Vec::new();
         for (index, one) in pending.iter().enumerate().filter(|(_, p)| usable(p)) {
@@ -428,14 +428,14 @@ impl RegistryBuilder {
                     let differs = other
                         .manifest
                         .mode(&mode.name)
-                        .is_some_and(|theirs| theirs.archetype != mode.archetype);
+                        .is_some_and(|theirs| theirs.access_kind != mode.access_kind);
                     if differs {
                         conflicts.push((
                             index,
                             codes::failure(
                                 &codes::row::MODE_CONFLICT,
                                 format!(
-                                    "The mode `{}` is registered with two archetypes, here and by `{other_name}`.",
+                                    "The mode `{}` is registered with two access kinds, here and by `{other_name}`.",
                                     mode.name
                                 ),
                                 "Disable one of the two providers.",
@@ -659,7 +659,7 @@ impl RegistryBuilder {
                 surface_kinds.insert(
                     kind.name.clone(),
                     SurfaceKindEntry {
-                        archetype: kind.archetype,
+                        access_kind: kind.access_kind,
                         session: kind.session,
                         provider: name.clone(),
                     },
@@ -681,7 +681,7 @@ impl RegistryBuilder {
                 modes
                     .entry(decl.name.clone())
                     .or_insert_with(|| ModeEntry {
-                        archetype: decl.archetype,
+                        access_kind: decl.access_kind,
                         candidates: Vec::new(),
                     })
                     .candidates
@@ -850,7 +850,7 @@ struct Candidate {
 }
 
 struct ModeEntry {
-    archetype: Archetype,
+    access_kind: AccessKind,
     candidates: Vec<Candidate>,
 }
 
@@ -939,10 +939,10 @@ impl Registry {
         self.inner.digest
     }
 
-    /// The archetype of a registered mode.
+    /// The access kind of a registered mode.
     #[must_use]
-    pub fn archetype(&self, mode: &Mode) -> Option<Archetype> {
-        self.inner.modes.get(mode).map(|entry| entry.archetype)
+    pub fn access_kind(&self, mode: &Mode) -> Option<AccessKind> {
+        self.inner.modes.get(mode).map(|entry| entry.access_kind)
     }
 
     /// Every registered mode, in order of name.
@@ -1076,7 +1076,7 @@ impl Registry {
         };
         let facts = HandleFacts {
             mode: mode.clone(),
-            archetype: entry.archetype,
+            access_kind: entry.access_kind,
             steps: candidate.decl.steps.iter().cloned().collect(),
             commit_steps: candidate.decl.commit_steps.iter().cloned().collect(),
             absence_steps: candidate.decl.absence_steps.iter().cloned().collect(),
@@ -1116,7 +1116,7 @@ impl Registry {
         let (entry, candidate, reason) = self.chosen(mode)?;
         let facts = HandleFacts {
             mode: mode.clone(),
-            archetype: entry.archetype,
+            access_kind: entry.access_kind,
             steps: candidate.decl.steps.iter().cloned().collect(),
             commit_steps: candidate.decl.commit_steps.iter().cloned().collect(),
             absence_steps: candidate.decl.absence_steps.iter().cloned().collect(),

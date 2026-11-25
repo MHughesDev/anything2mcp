@@ -14,7 +14,7 @@ use a2m_auth::{
     SessionLease, SessionRef, SessionStore, StoredCredentials, Wait,
 };
 use a2m_core::{
-    AccountName, Archetype, CompiledBinding, CompiledTarget, Decimal, DecisionId, Environment,
+    AccessKind, AccountName, CompiledBinding, CompiledTarget, Decimal, DecisionId, Environment,
     Epoch, FailureClass, Finding, Identity, NoSecrets, PackPayload, RecordKey, RunId, Secret,
     TargetName, Value, Values, WorkspaceId,
 };
@@ -1199,7 +1199,7 @@ async fn discovery_reads_the_servers_catalog_and_drafts_reads_only() {
     };
     let description = SurfaceDescription {
         kind: DATABASE_SERVER,
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -1299,7 +1299,7 @@ async fn the_drafted_list_returns_the_servers_rows_column_by_column_through_the_
     };
     let description = SurfaceDescription {
         kind: DATABASE_SERVER,
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -1420,7 +1420,7 @@ async fn a_table_of_moments_drafts_its_reads_and_a_missing_row_is_found_false() 
         .unwrap();
     let description = SurfaceDescription {
         kind: DATABASE_SERVER,
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };

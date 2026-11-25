@@ -619,7 +619,7 @@ pub fn signature_with(
             })
             .collect(),
         outcome: TraceOutcome::Done,
-        artifacts: Vec::new(),
+        captures: Vec::new(),
     });
     trace.finish().unwrap().signature
 }

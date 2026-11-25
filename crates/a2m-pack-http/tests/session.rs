@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, EvidenceLevel, Failure, FailureClass, Finding, Redact, Source, Value, Values,
+    AccessKind, EvidenceLevel, Failure, FailureClass, Finding, Redact, Source, Value, Values,
 };
 use a2m_files::{Drafter, TargetRoot};
 use a2m_provider::{
@@ -523,7 +523,7 @@ async fn discover_with(
 ) -> Vec<(String, Result<Vec<Finding>, Failure>)> {
     let description = SurfaceDescription {
         kind: scene.surface.surface.kind.clone(),
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -738,7 +738,7 @@ async fn a_published_description_becomes_claims_and_a_read_is_drafted_only_for_a
     // The describer counts, and keeps the system's own text apart.
     let description = scene.registry.discoverers_for(&SurfaceDescription {
         kind: scene.surface.surface.kind.clone(),
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: service.address.clone(),
         facts: Values::new(),
     })[0]
@@ -1477,7 +1477,7 @@ async fn the_description_reader_reads_the_file_it_is_handed_under_its_declared_n
     let scene = Scene::new("secured", &service.address);
     let description = SurfaceDescription {
         kind: scene.surface.surface.kind.clone(),
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };

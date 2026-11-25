@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, Environment, EvidenceLevel, Finding, NoSecrets, Redact, Source, SurfaceKind, Values,
+    AccessKind, Environment, EvidenceLevel, Finding, NoSecrets, Redact, Source, SurfaceKind, Values,
 };
 use a2m_pack_command::codes;
 use a2m_provider::{
@@ -60,7 +60,7 @@ fn source(name: &str) -> Vec<u8> {
 fn description(surface: &SurfaceRef) -> SurfaceDescription {
     SurfaceDescription {
         kind: SurfaceKind::new("program").unwrap(),
-        archetype: Archetype::Command,
+        access_kind: AccessKind::Command,
         address: surface.surface.address.clone(),
         facts: Values::new(),
     }

@@ -32,7 +32,7 @@ The eight items of section 202. A pack that cannot clear item 2 for its writes m
 **The manifest**, `anything2mcp-provider.toml`, is included by the crate (`MANIFEST` in `src/lib.rs`). The registry refuses anything the pack registers that the manifest does not declare. Its sections, as the file pack and the command pack use them:
 
 - `[provider]`: name, version, publisher, `kind = "pack"`.
-- `[[modes]]`: the mode's name, archetype, verbs, the step kinds, and which of them are `commit_steps`; its rank, its intent window, and the key it is `exclusive` on.
+- `[[modes]]`: the mode's name, access kind, verbs, the step kinds, and which of them are `commit_steps`; its rank, its intent window, and the key it is `exclusive` on.
 - `[[surface_kinds]]`, `[[file_kinds]]`, `[[finding_kinds]]`: the words the pack adds. A file kind has one owning pack per surface kind ([decision 0062](../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)); the web and desktop packs each own `screens/` for their own surfaces ([0203](../decisions/0203-two-packs-may-each-draft-a-file-kind-of-one-name-for-their-own-surfaces.md)).
 - `[points]`, `[[discoverers]]`, `[[drafting_rules]]`: what it observes, with a bound on time and bytes and a ceiling on the evidence level, and which findings become which files.
 - `[[lint_rules]]` with stable codes; `[[failure_codes]]`, each with exactly one class.

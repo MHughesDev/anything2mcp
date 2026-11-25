@@ -209,7 +209,7 @@ Contracts that the signatures do not show:
 | --- | --- |
 | `a2m-ledger` | `seal` and `open` for blobs and ledger values; `Sealed::to_bytes` and `from_bytes`; implements `KeyRecords`; the `VaultDigest`, as a `KeyedDigest`, for blob names |
 | `a2m-auth` | `seal` and `open_secret` for saved session state and stored credentials; `register` for a secret a sign-in returns; `OwnerRef::of` an identity; the `Redactor` on a provider's failure |
-| `a2m-logs` | The `Redactor`, as a `Redact`, for every record, artifact, span, and log line; `contains_secret` for the check on the way out; the `VaultDigest` for restricted values |
+| `a2m-logs` | The `Redactor`, as a `Redact`, for every record, capture, span, and log line; `contains_secret` for the check on the way out; the `VaultDigest` for restricted values |
 | Every front door | The `Redactor`, as a `Redact`, on every result and error |
 | `a2m-actions` | A back end and `Vault::with_random` at start, with the engine's random source; `keyed_digest` and `redactor` to hand on; `seal` for `secret.set`; `health` for `doctor` and the kernel's health state; later `rotate` for `vault.rotate` |
 | `a2m-provider` | A `KeyStore` adapter for a key-service back end that a plug-in supplies, joined by `a2m-actions` |
@@ -253,7 +253,7 @@ A failure from this crate never names a key, a value, or a byte of either, and n
 
 | Must always hold | Proven by |
 | --- | --- |
-| A planted secret appears in no result, log, trace, or artifact | The planted-secret test of package 2.1, against the test application. Not written yet: it needs `a2m-logs` and a front door |
+| A planted secret appears in no result, log, trace, or capture | The planted-secret test of package 2.1, against the test application. Not written yet: it needs `a2m-logs` and a front door |
 | A registered secret never survives `redact` in any encoded form | `tests/redactor.rs`: sixteen forms of one secret, and a secret inside a larger base64 value at every alignment; `a_secret_in_base64_broken_into_lines_is_masked`, `a_secret_written_with_character_references_is_masked`, `a_secret_written_out_in_hexadecimal_is_masked` |
 | A secret whose form is case-insensitive is masked in any letter case | `a_hexadecimal_secret_is_masked_in_any_letter_case` |
 | A secret divided between the pieces of a stream is masked, and a stream lets out what `redact` gives for the whole text | `a_secret_split_across_the_pieces_of_a_stream_is_masked`: twenty-three forms, each divided in two at every place and into pieces of eight sizes; `a_stream_lets_text_out_as_it_goes_and_changes_nothing_without_a_secret` |

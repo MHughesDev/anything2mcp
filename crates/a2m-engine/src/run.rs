@@ -13,8 +13,8 @@ use a2m_core::{
 };
 use a2m_ledger::{IntentToken, RecordRef};
 use a2m_logs::{
-    ArtifactKind, ArtifactOutcome, ArtifactRef, CapturePoint, ChoiceReason, OfferedArtifact,
-    PassStart, Phase, StepRecord, TraceBuilder, TraceOutcome, TracedValue,
+    CaptureKind, CaptureOutcome, CapturePoint, CaptureRef, ChoiceReason, OfferedCapture, PassStart,
+    Phase, StepRecord, TraceBuilder, TraceOutcome, TracedValue,
 };
 use a2m_provider::{
     Access, Authority, CheckedPaths, Deadline, Destinations, DriverHandle, DriverHealth, Observed,
@@ -1085,8 +1085,8 @@ impl<'a> Run<'a> {
                     Err(_) => {}
                 }
             }
-            let artifacts = self.keep_captures(&cx, &result).await;
-            self.traced(&cx, &result, took, artifacts);
+            let captures = self.keep_captures(&cx, &result).await;
+            self.traced(&cx, &result, took, captures);
             // The step a drift was seen at names the knowledge that no
             // longer fits (decision 0380).
             if let Err(failure) = &result
@@ -1123,7 +1123,7 @@ impl<'a> Run<'a> {
         &mut self,
         cx: &StepCx<'_>,
         result: &Result<StepOutcome, StepFailure>,
-    ) -> Vec<ArtifactRef> {
+    ) -> Vec<CaptureRef> {
         let Ok(StepOutcome::Done(observed) | StepOutcome::Absent(observed)) = result else {
             return Vec::new();
         };
@@ -1136,9 +1136,9 @@ impl<'a> Run<'a> {
                 break;
             };
             let kind = if capture.media_type.starts_with("image/") {
-                ArtifactKind::Screenshot
+                CaptureKind::Screenshot
             } else {
-                ArtifactKind::Exchange
+                CaptureKind::Exchange
             };
             // Bytes that are text are redacted once more; an image cannot
             // be, and arrives with no report of what was masked, so the
@@ -1148,7 +1148,7 @@ impl<'a> Run<'a> {
                 Ok(text) => redact.redact(text).into_bytes(),
                 Err(_) => capture.bytes.clone(),
             };
-            let ArtifactOutcome::Kept(artifact) = trace.artifact(OfferedArtifact {
+            let CaptureOutcome::Kept(redacted) = trace.capture(OfferedCapture {
                 kind,
                 at: CapturePoint::Step,
                 bytes,
@@ -1163,12 +1163,12 @@ impl<'a> Run<'a> {
                 step: u32::try_from(cx.position).unwrap_or(u32::MAX),
                 name: redact.redact(&capture.name),
                 media_type: capture.media_type.clone(),
-                bytes: artifact.bytes,
+                bytes: redacted.bytes,
             };
             if let Ok(blob) = self.control.keep_capture(keeping).await {
-                kept.push(ArtifactRef {
-                    kind: artifact.kind,
-                    at: artifact.at,
+                kept.push(CaptureRef {
+                    kind: redacted.kind,
+                    at: redacted.at,
                     blob: blob.digest(),
                 });
             }
@@ -1182,7 +1182,7 @@ impl<'a> Run<'a> {
         cx: &StepCx<'_>,
         result: &Result<StepOutcome, StepFailure>,
         took: Duration,
-        artifacts: Vec<ArtifactRef>,
+        captures: Vec<CaptureRef>,
     ) {
         let begins = self.begins.take().map(|info| {
             let held = &self.held[cx.held];
@@ -1238,7 +1238,7 @@ impl<'a> Run<'a> {
             acting,
             values,
             outcome,
-            artifacts,
+            captures,
         });
     }
 

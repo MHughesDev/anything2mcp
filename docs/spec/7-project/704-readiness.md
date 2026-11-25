@@ -28,7 +28,7 @@ In short, as of 2026-11-18: the kernel, nine packs, the local engine with its co
 | [105](../1-product/105-core-concepts.md). Core concepts | Designed | Not applicable | Use the words as the glossary defines them | Introduce a synonym |
 | [106](../1-product/106-what-it-latches-onto.md). What it latches onto | A statement of scope and a catalog | Not applicable; the README's table of packs says which kinds are built | Decide whether something belongs; pick the next pack | Treat a kind of system as supported because it is named, or start a pack from a row in a table |
 | [107](../1-product/107-the-bar.md). The bar | Designed | Its scorecard says, row by row | Hold a change to the bar's targets | Move a row forward without its proof |
-| [201](../2-kernel/201-archetypes-and-modes.md). Archetypes and modes | Designed in outline | Partly built: the archetypes are types in `a2m-core` and each pack registers its modes; shadow and promotion are package 4.3 | Classify a new mode; see what its driver must supply | Build a mode whose steps are not yet fixed without fixing them first |
+| [201](../2-kernel/201-access-kinds-and-modes.md). Access kinds and modes | Designed in outline | Partly built: the access kinds are types in `a2m-core` and each pack registers its modes; shadow and promotion are package 4.3 | Classify a new mode; see what its driver must supply | Build a mode whose steps are not yet fixed without fixing them first |
 | [202](../2-kernel/202-kernel-and-packs.md). Kernel and packs | Designed | Built: the boundary is enforced by the audit's layering rules | Draw the crate boundary and enforce it; apply the entry bar | Let a pack reach the kernel outside its registrations |
 | [203](../2-kernel/203-the-provider-contract.md). The provider contract | Designed | Built for packs compiled in (package B3); plug-ins in another process are package F3 | Extend it by decision record | Add an extension point without a decision record |
 | [204](../2-kernel/204-supervising-subsystems.md). Supervising subsystems | Designed as rules | Partly built; the design of `a2m-provider` says what | Build the supervisor against the rules | Promise confinement of plug-ins before the research is done |
@@ -102,7 +102,7 @@ Every bet is in the [hypothesis register](../../hypotheses/README.md). These are
 | Sign-in in an engine-owned profile works on managed machines | H-05 | Research brief 30, then package 2.3 |
 | A person can approve quickly and an agent with a shell cannot | H-12 | Research brief 27, then package 3.6 |
 | The kernel is neutral | H-26 | Packages D3 and D4 |
-| Seven archetypes are enough | H-29 | Each pack's design and build |
+| Seven access kinds are enough | H-29 | Each pack's design and build |
 | Two interface packs share their formats through documents alone | H-37 | Package 8.3 |
 | Drafts written by rule save work | H-31 | Package E5 |
 | An outside discovery provider is worth its cost | H-27 | None: package E6 is withdrawn ([decision 0279](../../decisions/0279-what-the-three-surveys-left-open-against-decision-0276-is-settled.md)) |

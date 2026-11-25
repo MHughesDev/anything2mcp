@@ -85,7 +85,7 @@ pub use ident::{
     RunnerId, SessionId, StepKind, SurfaceKind, SurfaceName, TargetName, Verb, Version,
     WorkspaceId,
 };
-pub use kind::{Archetype, Mode};
+pub use kind::{AccessKind, Mode};
 pub use name::{InvalidName, UnknownName, is_kept_for_a_device};
 pub use notice::SurfaceNotice;
 pub use redact::{

@@ -419,7 +419,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .pos("run_id", TEXT, RUN)
             .writes()
             .done(),
-        act("run.trace", "A summary of one run's trace, with references to its kept artifacts.", VIEWER, No, "1", Trace)
+        act("run.trace", "A summary of one run's trace, with references to its kept captures.", VIEWER, No, "1", Trace)
             .pos("run_id", TEXT, RUN)
             .done(),
         act("session.status", "Whether each target is signed in for the caller. Shows states and times, never a credential.", VIEWER, Use, "2", Inspect)
@@ -1257,7 +1257,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .writes()
             .example(r#"{"client": "generic"}"#)
             .done(),
-        act("trace.show", "View one run's evidence: its trace lines and artifact references.", AUDITOR, No, "1", Trace)
+        act("trace.show", "View one run's evidence: its trace lines and capture references.", AUDITOR, No, "1", Trace)
             .pos("run_id", TEXT, RUN)
             .output(JsonSchema::object()
                 .required("run_id", text())

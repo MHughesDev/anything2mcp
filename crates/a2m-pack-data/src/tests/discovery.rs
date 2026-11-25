@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use a2m_core::{Archetype, EvidenceLevel, Failure, Finding, Source, Values};
+use a2m_core::{AccessKind, EvidenceLevel, Failure, Finding, Source, Values};
 use a2m_files::{Drafter, TargetRoot};
 use a2m_provider::{
     CheckedPaths, Deadline, DescribeForm, DiscoveryScope, FindingSink, Posture, ReadOnlyPort,
@@ -29,7 +29,7 @@ impl FindingSink for Kept {
 async fn discover(scene: &Scene) -> (Vec<Finding>, a2m_provider::DiscovererHandle) {
     let description = SurfaceDescription {
         kind: DATABASE,
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };

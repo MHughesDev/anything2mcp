@@ -147,7 +147,7 @@ fn signature(scene: &Scene, run: u8, ran: &Ran) -> Digest {
             acting,
             values: read.into_iter().collect(),
             outcome: TraceOutcome::Done,
-            artifacts: Vec::new(),
+            captures: Vec::new(),
         });
     }
     trace.finish().unwrap().signature

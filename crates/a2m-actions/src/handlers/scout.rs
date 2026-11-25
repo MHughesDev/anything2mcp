@@ -83,7 +83,7 @@ fn untrusted(value: Json) -> Json {
 struct Look {
     name: SurfaceName,
     kind: String,
-    archetype: Option<&'static str>,
+    access_kind: Option<&'static str>,
     provider: Option<String>,
     keeps_a_session: bool,
     discoverers: Vec<Json>,
@@ -129,7 +129,7 @@ impl Look {
                 Self {
                     name: surface.name.clone(),
                     kind: surface.kind.to_string(),
-                    archetype: entry.map(|entry| entry.archetype.as_str()),
+                    access_kind: entry.map(|entry| entry.access_kind.as_str()),
                     provider: entry.map(|entry| entry.provider.to_string()),
                     keeps_a_session: entry.is_some_and(|entry| entry.session),
                     discoverers,
@@ -305,7 +305,7 @@ async fn identify(
         let mut entry = json!({
             "surface": look.name.as_str(),
             "kind": look.kind,
-            "archetype": look.archetype,
+            "access_kind": look.access_kind,
             "provider": look.provider,
             "keeps_a_session": look.keeps_a_session,
             "discoverers": look.discoverers,
@@ -2457,7 +2457,7 @@ pub(crate) async fn scout_capture(
             let mut entry = json!({
                 "surface": captured.surface.as_str(),
                 "kind": look.as_ref().map(|look| look.kind.clone()),
-                "archetype": look.as_ref().and_then(|look| look.archetype),
+                "access_kind": look.as_ref().and_then(|look| look.access_kind),
                 "provider": look.as_ref().and_then(|look| look.provider.clone()),
                 "keeps_a_session": look.as_ref().is_some_and(|look| look.keeps_a_session),
                 "observed_by": "person",

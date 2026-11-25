@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, EvidenceLevel, Failure, FailureClass, Finding, NoSecrets, Source, Values,
+    AccessKind, EvidenceLevel, Failure, FailureClass, Finding, NoSecrets, Source, Values,
 };
 use a2m_files::{Drafter, TargetRoot};
 use a2m_provider::{
@@ -77,7 +77,7 @@ async fn discovery_lists_the_servers_tools_and_calls_none() {
     let port = ReadOnlyPort::new(handle, prepared);
     let description = SurfaceDescription {
         kind: a2m_pack_mcp::SURFACE_KIND,
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -277,7 +277,7 @@ async fn the_stands_tool_list_drafts_reads_that_read_what_it_stores() {
     let port = ReadOnlyPort::new(handle, prepared);
     let description = SurfaceDescription {
         kind: a2m_pack_mcp::SURFACE_KIND,
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: surface.surface.address.clone(),
         facts: Values::new(),
     };

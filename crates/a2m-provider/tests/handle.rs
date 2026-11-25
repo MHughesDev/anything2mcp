@@ -931,7 +931,7 @@ async fn a_discoverer_cannot_write() {
     let port = ReadOnlyPort::new(handle, prepared);
     let surface = a2m_provider::SurfaceDescription {
         kind: a2m_core::SurfaceKind::new("alpha_surface").unwrap(),
-        archetype: a2m_core::Archetype::Request,
+        access_kind: a2m_core::AccessKind::Request,
         address: String::new(),
         facts: Values::new(),
     };

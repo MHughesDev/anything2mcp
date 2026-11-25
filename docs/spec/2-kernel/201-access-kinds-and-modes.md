@@ -1,32 +1,34 @@
-# 201. Archetypes and modes
+# 201. Access kinds and modes
 
-There are many kinds of system and few ways to reach one. This section names the seven archetypes, the ways a system can be reached, and shows that each fills the engine loop of [section 207](207-the-engine-loop.md) in the same way. It then says what a mode is, which modes the packs bring, how the runtime chooses among an operation's bindings at call time, and how a new binding earns its place. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
+There are many kinds of system and few ways to reach one. This section names the seven access kinds, the ways a system can be reached, and shows that each fills the engine loop of [section 207](207-the-engine-loop.md) in the same way. It then says what a mode is, which modes the packs bring, how the runtime chooses among an operation's bindings at call time, and how a new binding earns its place. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
-A mode is one concrete way of reaching a system, such as `ui`, `http`, or `mcp`. It is brought by a pack ([section 202](202-kernel-and-packs.md)) or a plug-in ([section 203](203-the-provider-contract.md)), and it belongs to exactly one archetype. A binding is how one mode carries out one operation; an operation can have several. Operations, pipelines, the ledger, and the policy gate are the same whatever the mode.
+A mode is one concrete way of reaching a system, such as `ui`, `http`, or `mcp`. It is brought by a pack ([section 202](202-kernel-and-packs.md)) or a plug-in ([section 203](203-the-provider-contract.md)), and it belongs to exactly one access kind. A binding is how one mode carries out one operation; an operation can have several. Operations, pipelines, the ledger, and the policy gate are the same whatever the mode.
 
 ## The seven
 
-| # | Archetype | The system is reached by | Examples | Modes |
-| --- | --- | --- | --- | --- |
-| 1 | Interface | The elements a person would use, found by role and name | A web page, a desktop window, a mobile screen, a terminal screen | `ui`, `desktop`; for planning, `mobile`, `terminal` |
-| 2 | Request | A typed request over a protocol, and its answer | HTTP and its descendants, a database query, a directory lookup, a tool on an MCP server | `page_http`, `http`, `api`, `site_tools`, `mcp`; proposed, `sql`; for planning, `rpc` |
-| 3 | Command | Starting a program with arguments and reading its exit status and output | A command-line tool, a script the system ships, the same on another machine | Proposed, `cli` |
-| 4 | Bridge | Code running inside the host, through an interface the host offers for that purpose | A scripting host, an add-in, an automation interface, a function a library exports | For planning, `bridge`, `library` |
-| 5 | Artifact | Reading and writing a file in a known format | A spreadsheet, a configuration file, a document | Proposed, `file` |
-| 6 | Stream | Waiting for, or adding to, a flow of events | A queue, a change feed, a log, telemetry | Proposed, `stream` |
-| 7 | Device | Exchanging frames with hardware over a bus or a link | A serial console, registers on a fieldbus, a management protocol | Proposed, `device` |
+| # | Access kind | Written as | The system is reached by | Examples | Modes |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Interface | `interface` | The elements a person would use, found by role and name | A web page, a desktop window, a mobile screen, a terminal screen | `ui`, `desktop`; for planning, `mobile`, `terminal` |
+| 2 | Request | `request` | A typed request over a protocol, and its answer | HTTP and its descendants, a database query, a directory lookup, a tool on an MCP server | `page_http`, `http`, `api`, `site_tools`, `mcp`; proposed, `sql`; for planning, `rpc` |
+| 3 | Command | `command` | Starting a program with arguments and reading its exit status and output | A command-line tool, a script the system ships, the same on another machine | Proposed, `cli` |
+| 4 | Bridge | `bridge` | Code running inside the host, through an interface the host offers for that purpose | A scripting host, an add-in, an automation interface, a function a library exports | For planning, `bridge`, `library` |
+| 5 | File | `artifact` | Reading and writing a file in a known format | A spreadsheet, a configuration file, a document | Proposed, `file` |
+| 6 | Stream | `stream` | Waiting for, or adding to, a flow of events | A queue, a change feed, a log, telemetry | Proposed, `stream` |
+| 7 | Device | `device` | Exchanging frames with hardware over a bus or a link | A serial console, registers on a fieldbus, a management protocol | Proposed, `device` |
 
-A proposed mode belongs to a pack that is designed and not yet built. A name "for planning" belongs to no designed pack. Either becomes real only when its pack clears the bar in [section 202](202-kernel-and-packs.md) and the mode has its own decision record. [Section 106](../1-product/106-what-it-latches-onto.md) lists the kinds of surface each archetype covers, and those it refuses.
+An access kind is written in a manifest, a stored row, and a result by the word in the second column, under the key `archetype` in a provider manifest: the file access kind is written `artifact` and the key keeps its old name, so that a manifest a pack already carries still reads ([decision 0402](../../decisions/0402-the-rename-sweep-renames-every-name-and-keeps-what-is-stored.md)).
 
-## In the kernel, the archetype is the closed type
+A proposed mode belongs to a pack that is designed and not yet built. A name "for planning" belongs to no designed pack. Either becomes real only when its pack clears the bar in [section 202](202-kernel-and-packs.md) and the mode has its own decision record. [Section 106](../1-product/106-what-it-latches-onto.md) lists the kinds of surface each access kind covers, and those it refuses.
 
-The kernel knows the seven archetypes and holds no list of modes ([decision 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)).
+## In the kernel, the access kind is the closed type
 
-- `Archetype` is an enum of seven values in `a2m-core`. The engine's handling differs by archetype and never by mode.
+The kernel knows the seven access kinds and holds no list of modes ([decision 0060](../../decisions/0060-a-mode-is-a-registered-name-and-the-archetype-is-the-closed-type.md)).
+
+- `AccessKind` is an enum of seven values in `a2m-core`. The engine's handling differs by access kind and never by mode.
 - A mode is a checked name, the type `Mode` in `a2m-core`: lowercase letters, digits, and underscores, starting with a letter, at most 32 characters.
-- A provider registers each mode it brings, with its archetype, in its manifest. The registry in `a2m-provider` is the only list of modes.
+- A provider registers each mode it brings, with its access kind, in its manifest. The registry in `a2m-provider` is the only list of modes.
 - A binding that names a mode nobody registered does not compile: unknown means stop. The check is made by the target compiler at load time, where the registry is known, and fails with `input`, `mode_unknown`, listing the registered modes.
-- Two providers that register one mode must give it the same archetype, or the second manifest is refused with `input`, `mode_conflict`.
+- Two providers that register one mode must give it the same access kind, or the second manifest is refused with `input`, `mode_conflict`.
 - Kernel code cannot branch on a particular mode, because it cannot name one. A test holds the engine's source free of every first-party mode name.
 
 Every word that arrives with a pack is a registered name in the same way: a surface kind, a step kind, a file kind, a lint code, a finding kind, a control name ([decision 0062](../../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)). A step kind is a name within its mode, so two modes may each have a step called `request` or `locate`.
@@ -38,7 +40,7 @@ Every word that arrives with a pack is a registered name in the same way: a surf
 | Field | What it says |
 | --- | --- |
 | `name` | The mode |
-| `archetype` | One of the seven |
+| `access_kind` | One of the seven |
 | `verbs` | The verbs the mode can carry out; the [verbs by mode](../../reference/technical-reference.md#verbs-by-mode) table collects them |
 | `steps` | The step kinds its lowerings may emit |
 | `commit_steps` | The step kinds that always save. A step of such a kind that is not marked as the commit point is refused before the driver sees it. May be left out |
@@ -51,42 +53,42 @@ Every word that arrives with a pack is a registered name in the same way: a surf
 
 **One mode, one driver.** If two ready providers drive the same mode and no setting names one, the registry refuses with `input`, `provider_ambiguous`, listing each candidate. If the named provider is not ready, it fails with `busy`, `provider_unavailable`, and never falls to the other. There is no priority and no silent fallback, and registration order never changes the result.
 
-## How each archetype fills the loop
+## How each access kind fills the loop
 
-The loop is guard, choose, prepare, intend, act, confirm, read back, record ([section 207](207-the-engine-loop.md)). Guard, choose, intend, and record belong to the kernel and never differ. The other four are the archetype's. In the driver interface, confirming and reading back are lists of steps that `act` carries out ([decision 0063](../../decisions/0063-the-kernels-interfaces-as-the-crate-designs-settle-them.md)).
+The loop is guard, choose, prepare, intend, act, confirm, read back, record ([section 207](207-the-engine-loop.md)). Guard, choose, intend, and record belong to the kernel and never differ. The other four are the access kind's. In the driver interface, confirming and reading back are lists of steps that `act` carries out ([decision 0063](../../decisions/0063-the-kernels-interfaces-as-the-crate-designs-settle-them.md)).
 
-| Archetype | Prepare | Act | Confirm | Read back |
+| Access kind | Prepare | Act | Confirm | Read back |
 | --- | --- | --- | --- | --- |
 | Interface | A tab, a window, a screen | Locate an element; set it through its widget driver; invoke an action | A response, an element, a state | The field again, or the save response |
 | Request | A client with the session's credentials | Build the request from a typed template; send it | The status and a response that fits its schema | The matching read request |
 | Command | A working directory, an allowed environment, the program's verified path | Start the program with arguments built from a typed template; never a shell | The exit status and a declared pattern in the output | A declared read command |
 | Bridge | A connection to the bridge inside the host | Call one declared function with typed arguments | The function's typed result | The matching read function |
-| Artifact | The file, opened without changing it | Set values at named places; save by writing a new file and replacing the old one in one step | The save succeeded and the file parses | Open the saved file and read the same places |
+| File | The file, opened without changing it | Set values at named places; save by writing a new file and replacing the old one in one step | The save succeeded and the file parses | Open the saved file and read the same places |
 | Stream | A subscription or a producer | Publish one message, or wait for one that matches | The broker's acknowledgement, or the message arriving within the time limit | Only where the system offers a read: a keyed topic, a stored message. Otherwise none |
 | Device | An open link, with exclusive use of it | Write one frame or one declared console command | The device's acknowledgement | Read the same register or parameter again |
 
-What "cannot write" means in the sandbox, where drafts are tried and discovery runs, is stated per archetype by each pack and proven against its test stand. The kernel's half is the intent token: outside a declared test record, no step that commits is ever sent.
+What "cannot write" means in the sandbox, where drafts are tried and discovery runs, is stated per access kind by each pack and proven against its test stand. The kernel's half is the intent token: outside a declared test record, no step that commits is ever sent.
 
-| Archetype | What the pack guarantees in the sandbox |
+| Access kind | What the pack guarantees in the sandbox |
 | --- | --- |
 | Interface | Only plain navigation; no control whose role or name commits is pressed; requests other than reads are blocked in the browser |
 | Request | Only methods the service's own description marks safe, or read endpoints a person marked safe. For a database, a statement runs in a read-only transaction |
 | Command | A program is started only in its declared help and version forms |
-| Artifact | A file is opened for reading only, and never replaced |
+| File | A file is opened for reading only, and never replaced |
 | Stream | A queue is never consumed and nothing is published; a sample is read without acknowledging |
 | Device | Only frames the device lists as reads |
 
 Discovery itself is [section 218](218-discovery-and-findings.md).
 
-## Steps each archetype adds
+## Steps each access kind adds
 
-Steps are the fixed instructions a compiled target is made of ([steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md)). The existing kinds stay. Each archetype beyond interface and request adds a small set, registered by its first pack as step kinds of its mode and fixed in the phase that builds that pack.
+Steps are the fixed instructions a compiled target is made of ([steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md)). The existing kinds stay. Each access kind beyond interface and request adds a small set, registered by its first pack as step kinds of its mode and fixed in the phase that builds that pack.
 
-| Archetype | Steps |
+| Access kind | Steps |
 | --- | --- |
 | Command | `spawn`: start a declared program with typed arguments. `expect`: check the exit status and output. `parse`: take typed values out of output in a declared format. `collect`: receive a file the program wrote |
 | Bridge | `attach`: connect to a bridge and check its version. `invoke`: call a declared function. `read`: call a declared read function |
-| Artifact | `open`, `locate` a named place, `set`, `read`, `save` |
+| File | `open`, `locate` a named place, `set`, `read`, `save` |
 | Stream | `subscribe`, `await` a matching event, `publish`, `acknowledge` |
 | Device | `open` a link, `build_frame`, `write_frame`, `read_frame`, `expect` |
 
@@ -102,16 +104,16 @@ Three cases recur, and one rule covers all three: a write that cannot be read ba
 | The effect is physical | A valve opened, a motor started | A declared sensor reading where one exists; otherwise the acknowledgement only. Such an operation also carries a hazard ([section 213](213-effects-hazards-and-consent.md)) |
 | The system offers no read | A command with no matching query | The exit status and output only |
 
-## Identity in each archetype
+## Identity in each access kind
 
 Every write declares how its record is found again ([section 209](209-record-identity-and-dependent-records.md)). The strategies do not change; what a "record" is does.
 
-| Archetype | A record is | Usual strategy |
+| Access kind | A record is | Usual strategy |
 | --- | --- | --- |
 | Interface, request | A row, a document, an entity | As section 209 gives |
 | Command | Whatever the tool names: a job, a user, a resource | `natural` by the name the caller chooses; `find` through a list command |
 | Bridge | An object in the host | `natural` by the host's own identifier |
-| Artifact | A named range, a key path, a row with a key column | `natural`, or `composite` of file and place |
+| File | A named range, a key path, a row with a key column | `natural`, or `composite` of file and place |
 | Stream | A message | `stamped` with the idempotency token where the system keeps messages; otherwise `none` |
 | Device | A register, a parameter, an object in a dictionary | `natural` by address or name |
 
@@ -119,7 +121,7 @@ Every write declares how its record is found again ([section 209](209-record-ide
 
 These are the modes of the four packs designed first ([section 202](202-kernel-and-packs.md)). Each is built and proven against its pack's test stand; how far each reaches on each system is in [SCOPE.md](../../../SCOPE.md).
 
-| Mode | Pack | Archetype | How it reaches the system | Needs | Best for | Main risk |
+| Mode | Pack | Access kind | How it reaches the system | Needs | Best for | Main risk |
 | --- | --- | --- | --- | --- | --- | --- |
 | `ui` | Web ([section 301](../3-packs/301-the-web-pack.md)) | Interface | The browser engine drives a Chromium-family browser over the DevTools protocol, acting on elements by role, label, text, or test id; no pixel clicks | A browser session | Writes that must pass the system's own validation; systems with no usable traffic | Layout and label changes |
 | `page_http` | Web | Request | Requests sent from inside the signed-in page with the page's own session, cookies, and headers. Built for reads and for an `update` by PUT with the page's own anti-forgery token ([decision 0206](../../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)), described in the web pack's `page_requests/`, written in the endpoint catalog's form until the two share one ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) | A browser session | Fast reads and proven writes without driving the interface | Front-end logic is skipped |
@@ -135,11 +137,11 @@ These are the modes of the four packs designed first ([section 202](202-kernel-a
 
 Five further packs were designed after the first four, and each is built with one mode, named in its manifest.
 
-| Mode | Pack | Archetype | Reaches |
+| Mode | Pack | Access kind | Reaches |
 | --- | --- | --- | --- |
 | `cli` | Command ([section 306](../3-packs/306-the-command-pack.md)) | Command | A program started by absolute path with typed arguments, never through a shell. Built second of all the packs, to test that the kernel is neutral (hypothesis H-26) |
 | `sql` | Data ([section 307](../3-packs/307-the-data-pack.md)) | Request | A relational database; reads before writes |
-| `file` | File ([section 308](../3-packs/308-the-file-pack.md)) | Artifact | A file in a known format, treated as the system operated on |
+| `file` | File ([section 308](../3-packs/308-the-file-pack.md)) | File | A file in a known format, treated as the system operated on |
 | `stream` | Stream ([section 309](../3-packs/309-the-stream-pack.md)) | Stream | A queue, a topic, a change feed, or a log |
 | `device` | Device ([section 310](../3-packs/310-the-device-pack.md)) | Device | Registers or objects on a fieldbus, or a console on a framed link |
 
@@ -179,13 +181,13 @@ A binding added beside a verified one starts in `shadow`. After it has matched t
 
 The first binding of an operation has no verified binding to be compared with. It is written, or drafted, as `draft`, and `binding.promote` makes it `verified` on its own evidence: every offline test of the operation passes at the time of the call, one of them ran this binding, and, for a read, a trial in the project proved this binding at `executed`. Evidence names the binding it was earned by and the digest of what the binding does, and is taken only for that binding as it is now ([decision 0200](../../decisions/0200-evidence-names-its-binding-and-a-recorded-fixture-says-nothing-of-the-original.md)). For an operation that writes, the promote is a person's act, and the publish page names every binding that acts for the first time in the version ([decision 0189](../../decisions/0189-a-developers-first-hour-runs-without-hand-steps.md)).
 
-## Why archetypes and not just modes
+## Why access kinds and not just modes
 
-A mode names one protocol or one technology. An archetype names what the engine and the compiler have to know: how a step is acted, confirmed, and read back. Seven archetypes mean seven shapes of driver to understand, lint, and test, however many modes there come to be. A proposed mode that fits none of them is a reason to examine the kernel, not to add a special case. Whether every system of real interest fits one of the seven is hypothesis H-29.
+A mode names one protocol or one technology. An access kind names what the engine and the compiler have to know: how a step is acted, confirmed, and read back. Seven access kinds mean seven shapes of driver to understand, lint, and test, however many modes there come to be. A proposed mode that fits none of them is a reason to examine the kernel, not to add a special case. Whether every system of real interest fits one of the seven is hypothesis H-29.
 
 ## Open points
 
-- The exact steps of each new archetype, fixed with its first pack.
+- The exact steps of each new access kind, fixed with its first pack.
 - Whether waiting for an event should also be able to start a run. Triggers are not designed ([section 704](../7-project/704-readiness.md)).
 - Whether `library` is a mode of its own, or the bridge mode with the host being a language runtime.
 - How a shadow binding of a write predicts: a posture in which the driver's handle refuses every step that reaches the system and the driver returns what it would have sent, compared with the request the verified binding sent.

@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, Coverage, Environment, EvidenceLevel, Failure, Finding, LimitationCode, NoSecrets,
+    AccessKind, Coverage, Environment, EvidenceLevel, Failure, Finding, LimitationCode, NoSecrets,
     Redact, Step, SurfaceKind, Values,
 };
 use a2m_pack_command::binary::BinaryFound;
@@ -101,7 +101,7 @@ fn scene(redact: Arc<dyn Redact>) -> Scene {
 fn description(surface: &SurfaceRef) -> SurfaceDescription {
     SurfaceDescription {
         kind: SurfaceKind::new("program").unwrap(),
-        archetype: Archetype::Command,
+        access_kind: AccessKind::Command,
         address: surface.surface.address.clone(),
         facts: Values::new(),
     }

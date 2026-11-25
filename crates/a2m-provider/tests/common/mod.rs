@@ -87,9 +87,9 @@ pub fn host_with(folder: &Folder, roots: Roots, redact: Arc<dyn a2m_core::Redact
     }
 }
 
-/// The manifest of the test pack. `name` is the pack; `archetype` that of
+/// The manifest of the test pack. `name` is the pack; `access kind` that of
 /// its mode; `extra` is added at the end.
-pub fn manifest(name: &str, archetype: &str, extra: &str) -> String {
+pub fn manifest(name: &str, access_kind: &str, extra: &str) -> String {
     format!(
         r#"manifest_format = 1
 contract = 1
@@ -102,7 +102,7 @@ kind = "pack"
 
 [[modes]]
 name = "stand"
-archetype = "{archetype}"
+archetype = "{access_kind}"
 verbs = ["read", "upsert"]
 steps = ["fetch", "send"]
 rank = 40
@@ -110,7 +110,7 @@ session_reads = 4
 
 [[surface_kinds]]
 name = "{name}_surface"
-archetype = "{archetype}"
+archetype = "{access_kind}"
 session = true
 
 [points]
@@ -120,7 +120,7 @@ auth_provider = ["{name}_login"]
 
 [[discoverers]]
 name = "look"
-archetype = "{archetype}"
+archetype = "{access_kind}"
 kinds = ["call"]
 sources = ["live_system"]
 max_level = "discovered"

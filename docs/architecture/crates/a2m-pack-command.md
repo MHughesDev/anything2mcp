@@ -11,7 +11,7 @@ The command pack: the `cli` driver over declared programs. A program is started 
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
 | Depends on | `a2m-core` (`CompiledTarget`, `Step`, `Value`, `Finding`), `a2m-files` (file kind, lowering, lint, and drafting registration), `a2m-auth` (the lease type in the driver's signature, and its code `needs_login`), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `ScopedSupervisor`, `Roots`, and the check of who may change a program, `check_program`, with `interpreter_form` and `redirects_loading`, which moved there from this pack, [decision 0250](../../decisions/0250-one-check-of-who-may-change-a-program-and-the-mcp-packs-local-server-on-windows.md)), `a2m-logs` (the clock a finding is dated with). Outside: `regex`, `serde`, `sha2`, `tokio`, `miniz_oxide` (to inflate a manual page handed compressed with gzip; already in the tree for `a2m-sources`), `quick-xml` (to read a PowerShell XML help file; already in the workspace for `a2m-pack-http`, [decision 0290](../../decisions/0290-the-command-packs-scout-reads-a-powershell-help-file-and-a-module-manifest-as-data.md)), `object` (to read the headers, imports, and exports of an ELF, a PE, and a Mach-O file from their bytes, with only those three readers and `std` switched on; Apache-2.0 OR MIT; [decision 0317](../../decisions/0317-the-command-packs-scout-reads-the-plain-facts-of-a-binary-it-is-handed.md)); on Linux and macOS `rustix` for one test alone, which compares the check as it stood here with the provider's |
 | Roadmap packages | Packages D3 and D5 of the [roadmap](../../plan/roadmap.md) |
-| Carries out | Spec section [306](../../spec/3-packs/306-the-command-pack.md); [201](../../spec/2-kernel/201-archetypes-and-modes.md) (the command archetype); [204](../../spec/2-kernel/204-supervising-subsystems.md) (every start goes through the supervisor); [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (no input changes what runs) |
+| Carries out | Spec section [306](../../spec/3-packs/306-the-command-pack.md); [201](../../spec/2-kernel/201-access-kinds-and-modes.md) (the command access kind); [204](../../spec/2-kernel/204-supervising-subsystems.md) (every start goes through the supervisor); [502](../../spec/5-security/502-defending-against-a-manipulated-agent.md) (no input changes what runs) |
 
 ## Owns
 
@@ -28,7 +28,7 @@ It must never: start a program except through the supervisor it is handed; build
 | Registration | Content |
 | --- | --- |
 | Provider | `command`; settings under `packs.command` |
-| Mode | `cli`, archetype command; one write holds the surface |
+| Mode | `cli`, access kind command; one write holds the surface |
 | Surface kind | `program`. Fields: `path` (the address; the program's absolute path) and `digest` (optional; one digest that holds on every machine). Both are declared as the surface's program, so the compiler puts the path of every environment in the compiled target's declared programs ([decision 0124](../../decisions/0124-the-plan-declares-a-surfaces-programs-and-a-schema-checks-run-time-values.md)) |
 | Step kinds | `spawn`, `expect`, `parse` |
 | Verbs | `read`, `list`, `search`, `create`, `update`, `delete`, `call` |

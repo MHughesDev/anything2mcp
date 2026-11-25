@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use a2m_core::{
-    Archetype, EffectClass, Hazard, IdentityStrategy, Mode, SurfaceKind, Values, WriteEvidence,
+    AccessKind, EffectClass, Hazard, IdentityStrategy, Mode, SurfaceKind, Values, WriteEvidence,
 };
 use a2m_provider::{Manifest, ProviderName, ProviderSettings};
 use common::{Folder, Planted, compile, compiled_target, edited, registry, registry_with};
@@ -29,7 +29,7 @@ fn a_registry_with_only_the_stream_pack_builds_and_its_digest_is_stable() {
     let first = registry(&folder);
     let second = registry(&folder);
     assert_eq!(first.digest(), second.digest());
-    assert_eq!(first.archetype(&mode()), Some(Archetype::Stream));
+    assert_eq!(first.access_kind(&mode()), Some(AccessKind::Stream));
     let handle = first.driver(&mode()).unwrap();
     assert_eq!(
         handle.choice().provider,

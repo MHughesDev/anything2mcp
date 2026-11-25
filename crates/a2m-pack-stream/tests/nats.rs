@@ -942,7 +942,7 @@ async fn a_broker_that_asks_for_no_sign_in_is_reached_at_an_address_off_the_loop
 
 #[tokio::test]
 async fn a_discovery_lists_streams_and_consumers_through_reads_only() {
-    use a2m_core::{Archetype, Failure, Finding, SurfaceKind};
+    use a2m_core::{AccessKind, Failure, Finding, SurfaceKind};
     use a2m_provider::{DiscoveryScope, FindingSink, ReadOnlyPort, SurfaceDescription};
 
     struct Kept(Vec<Finding>);
@@ -956,7 +956,7 @@ async fn a_discovery_lists_streams_and_consumers_through_reads_only() {
     let scene = Scene::start().await;
     let description = SurfaceDescription {
         kind: SurfaceKind::new("broker").unwrap(),
-        archetype: Archetype::Stream,
+        access_kind: AccessKind::Stream,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -1005,7 +1005,7 @@ async fn a_discovery_lists_streams_and_consumers_through_reads_only() {
 
 #[tokio::test]
 async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
-    use a2m_core::{Archetype, Failure, Finding, SurfaceKind};
+    use a2m_core::{AccessKind, Failure, Finding, SurfaceKind};
     use a2m_provider::{DiscoveryScope, FindingSink, ReadOnlyPort, SurfaceDescription};
 
     struct Kept(Vec<Finding>);
@@ -1019,7 +1019,7 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
     let mut scene = Scene::start().await;
     let description = SurfaceDescription {
         kind: SurfaceKind::new("broker").unwrap(),
-        archetype: Archetype::Stream,
+        access_kind: AccessKind::Stream,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -1141,7 +1141,7 @@ async fn the_drafted_reads_over_nats_return_what_the_server_holds() {
 /// channel's subject alone states no key at all.
 #[tokio::test]
 async fn a_retained_stream_keyed_by_subject_is_drafted_with_the_subject_as_its_key() {
-    use a2m_core::{Archetype, Failure, Finding, SurfaceKind};
+    use a2m_core::{AccessKind, Failure, Finding, SurfaceKind};
     use a2m_provider::{DiscoveryScope, FindingSink, ReadOnlyPort, SurfaceDescription};
 
     struct Kept(Vec<Finding>);
@@ -1160,7 +1160,7 @@ async fn a_retained_stream_keyed_by_subject_is_drafted_with_the_subject_as_its_k
     );
     let description = SurfaceDescription {
         kind: SurfaceKind::new("broker").unwrap(),
-        archetype: Archetype::Stream,
+        access_kind: AccessKind::Stream,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -2471,7 +2471,7 @@ async fn a_message_delivered_again_after_a_restart_is_taken_only_when_no_other_r
 /// invented; it is on messages the stand holds, and in no drafted file.
 #[tokio::test]
 async fn a_message_field_named_as_a_secret_is_never_drafted_as_an_output() {
-    use a2m_core::{Archetype, Failure, Finding, SurfaceKind};
+    use a2m_core::{AccessKind, Failure, Finding, SurfaceKind};
     use a2m_provider::{DiscoveryScope, FindingSink, ReadOnlyPort, SurfaceDescription};
 
     struct Kept(Vec<Finding>);
@@ -2493,7 +2493,7 @@ async fn a_message_field_named_as_a_secret_is_never_drafted_as_an_output() {
     }
     let description = SurfaceDescription {
         kind: SurfaceKind::new("broker").unwrap(),
-        archetype: Archetype::Stream,
+        access_kind: AccessKind::Stream,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };

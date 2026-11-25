@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use a2m_auth::SessionLease;
 use a2m_core::{
-    Archetype, CompiledSurface, CompiledTarget, Digest, Environment, Epoch, Failure, FailureClass,
+    AccessKind, CompiledSurface, CompiledTarget, Digest, Environment, Epoch, Failure, FailureClass,
     FailureCode, Mode, RecordKey, Redact, RunId, ScopedHost, Step, StepKind, TargetName, Value,
     Values, Version,
 };
@@ -647,7 +647,7 @@ pub enum Authority<'a> {
 /// What the handle knows of the mode and its provider, from the manifest.
 pub(crate) struct HandleFacts {
     pub mode: Mode,
-    pub archetype: Archetype,
+    pub access_kind: AccessKind,
     pub steps: BTreeSet<StepKind>,
     /// The kinds of step that always save.
     pub commit_steps: BTreeSet<StepKind>,
@@ -707,10 +707,10 @@ impl DriverHandle {
         &self.facts.mode
     }
 
-    /// The mode's archetype.
+    /// The mode's access kind.
     #[must_use]
-    pub fn archetype(&self) -> Archetype {
-        self.facts.archetype
+    pub fn access_kind(&self) -> AccessKind {
+        self.facts.access_kind
     }
 
     /// Which provider drives the mode, and why.

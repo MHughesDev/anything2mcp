@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-24
 
-**Changes:** `a2m-provider` (`src/manifest.rs`, `src/driver.rs`, `src/registry.rs`); `a2m-engine` (`src/run.rs`, `src/engine.rs`); the web pack's manifest (`a2m-pack-web-ui`); [section 201](../spec/2-kernel/201-archetypes-and-modes.md)'s table of what a mode declares; the designs of `a2m-provider`, `a2m-engine`, and `a2m-pack-web-browser`; the technical reference. Builds on [decision 0134](0134-one-browser-starts-at-a-time-and-a-silent-start-is-slow-not-foreign.md).
+**Changes:** `a2m-provider` (`src/manifest.rs`, `src/driver.rs`, `src/registry.rs`); `a2m-engine` (`src/run.rs`, `src/engine.rs`); the web pack's manifest (`a2m-pack-web-ui`); [section 201](../spec/2-kernel/201-access-kinds-and-modes.md)'s table of what a mode declares; the designs of `a2m-provider`, `a2m-engine`, and `a2m-pack-web-browser`; the technical reference. Builds on [decision 0134](0134-one-browser-starts-at-a-time-and-a-silent-start-is-slow-not-foreign.md).
 
 ## Context
 

@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-18
 
-**Would change:** [section 105](../spec/1-product/105-core-concepts.md), [section 106](../spec/1-product/106-what-it-latches-onto.md), [section 201](../spec/2-kernel/201-archetypes-and-modes.md), [section 203](../spec/2-kernel/203-the-provider-contract.md), [section 218](../spec/2-kernel/218-discovery-and-findings.md), [section 402](../spec/4-building-tools/402-the-scout-and-who-does-what.md), [section 502](../spec/5-security/502-defending-against-a-manipulated-agent.md), and the technical reference. The full design is [docs/plan/network-awareness.md](../plan/network-awareness.md).
+**Would change:** [section 105](../spec/1-product/105-core-concepts.md), [section 106](../spec/1-product/106-what-it-latches-onto.md), [section 201](../spec/2-kernel/201-access-kinds-and-modes.md), [section 203](../spec/2-kernel/203-the-provider-contract.md), [section 218](../spec/2-kernel/218-discovery-and-findings.md), [section 402](../spec/4-building-tools/402-the-scout-and-who-does-what.md), [section 502](../spec/5-security/502-defending-against-a-manipulated-agent.md), and the technical reference. The full design is [docs/plan/network-awareness.md](../plan/network-awareness.md).
 
 ## Context
 

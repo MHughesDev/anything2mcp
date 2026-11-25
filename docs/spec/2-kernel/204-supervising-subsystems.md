@@ -71,7 +71,7 @@ These are not sessions. A session is a signed-in state and belongs to the sessio
 
 ## Bridges inside a host application
 
-Many systems are best reached from inside: an application with a scripting interface, an add-in mechanism, or an automation interface can run a small piece of code that answers typed requests. This is the bridge archetype of [section 201](201-archetypes-and-modes.md), and it is how REA places itself inside the analysis tools it drives.
+Many systems are best reached from inside: an application with a scripting interface, an add-in mechanism, or an automation interface can run a small piece of code that answers typed requests. This is the bridge access kind of [section 201](201-access-kinds-and-modes.md), and it is how REA places itself inside the analysis tools it drives.
 
 | Way of getting in | When | Rule |
 | --- | --- | --- |

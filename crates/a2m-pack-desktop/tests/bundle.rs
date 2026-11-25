@@ -15,7 +15,9 @@ mod common;
 use std::path::Path;
 use std::time::Duration;
 
-use a2m_core::{Archetype, EvidenceLevel, Finding, NoSecrets, Redact, Source, SurfaceKind, Values};
+use a2m_core::{
+    AccessKind, EvidenceLevel, Finding, NoSecrets, Redact, Source, SurfaceKind, Values,
+};
 use a2m_provider::{
     Access, CheckedPaths, Deadline, DiscoveryReport, DiscoveryScope, FindingSink, Posture,
     ReadOnlyPort, RootName, Roots, SurfaceDescription,
@@ -87,7 +89,7 @@ async fn discover(
 ) -> (Result<DiscoveryReport, a2m_core::Failure>, Vec<Finding>) {
     let description = SurfaceDescription {
         kind: SurfaceKind::new("desktop").unwrap(),
-        archetype: Archetype::Interface,
+        access_kind: AccessKind::Interface,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };

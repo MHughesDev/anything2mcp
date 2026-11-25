@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, CompiledBinding, CompiledTarget, Environment, Epoch, Finding, Mode, NoSecrets,
+    AccessKind, CompiledBinding, CompiledTarget, Environment, Epoch, Finding, Mode, NoSecrets,
     RunId, Step, SurfaceKind, Values,
 };
 use a2m_files::{CompileMode, Compiled, Diagnostics, DraftReport, Drafter, TargetRoot};
@@ -350,7 +350,7 @@ impl Scene {
     async fn discovered(&self) -> Result<Vec<Finding>, String> {
         let description = SurfaceDescription {
             kind: SurfaceKind::new("desktop").unwrap(),
-            archetype: Archetype::Interface,
+            access_kind: AccessKind::Interface,
             address: self.surface.surface.address.clone(),
             facts: Values::new(),
         };

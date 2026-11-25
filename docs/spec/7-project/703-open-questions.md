@@ -39,7 +39,7 @@ Decisions taken in this spec:
 | Policy decisions | The policy crate's own evaluator: deny by default, forbid wins; grants are permits ([decision 0082](../../decisions/0082-the-decision-core-is-the-policy-crates-own-evaluator.md)) | Cedar | Its tree fails the closed licence list and adds 107 crates and 5.5 MB |
 | Policy lifecycle | Versioned, tested, immutable; every decision recorded and explainable | Live-edited settings | A policy change is as risky as a code change |
 | Target files at run time | Compiled once into a hashed compiled target; never parsed during a call | Interpret YAML on each call | Speed, early errors, a hash for exactly what ran |
-| Evidence | Events, a step trace, and artifacts; redacted at capture; a trace signature for comparing runs | Logs | Gates, repair, and audit all consume it |
+| Evidence | Events, a step trace, and captures; redacted at capture; a trace signature for comparing runs | Logs | Gates, repair, and audit all consume it |
 | Keys | Root, workspace, owner, and data keys; root in the OS store or a key service | One key for everything | Rotation without re-encrypting; ownership backed by encryption |
 | Local approval surface | A diff page served for that moment, then an operating-system prompt; no tray application at first | A system dialog alone | A diff needs a page; a page alone can be approved by a script |
 | Outbound data | Nothing leaves the machine unless switched on | Usage statistics by default | The tool holds live sessions to business systems |

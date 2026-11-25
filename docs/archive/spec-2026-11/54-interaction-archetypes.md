@@ -1,6 +1,6 @@
 # 54. Interaction archetypes
 
-> Archived on 2026-11-17. This is section 54 of the first design, kept as it was written, with the names and numbers of its time. What it says now lives in [section 201, Archetypes and modes](../../spec/2-kernel/201-archetypes-and-modes.md).
+> Archived on 2026-11-17. This is section 54 of the first design, kept as it was written, with the names and numbers of its time. What it says now lives in [section 201, Archetypes and modes](../../spec/2-kernel/201-access-kinds-and-modes.md).
 
 There are many kinds of system and few ways to reach one. This section names seven, and shows that each fills the engine loop of [section 8](../../spec/2-kernel/207-the-engine-loop.md) in the same way. A mode belongs to exactly one archetype. A pack ([section 55](../../spec/2-kernel/202-kernel-and-packs.md)) supplies one or more modes.
 

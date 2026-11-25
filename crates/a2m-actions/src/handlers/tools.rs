@@ -430,7 +430,7 @@ pub(crate) async fn discovery_files(
 }
 
 /// What the discovery of a surface of a compiled target is about, as the
-/// registry asks which discoverers suit it: the surface's kind and archetype,
+/// registry asks which discoverers suit it: the surface's kind and access kind,
 /// and its address in the compiled target's default environment. `None` when
 /// no enabled provider serves its kind.
 pub(crate) fn surface_described(
@@ -451,7 +451,7 @@ pub(crate) fn surface_described(
         .map_or_else(|| surface.address.clone(), |over| over.address.clone());
     Some(a2m_provider::SurfaceDescription {
         kind: surface.kind.clone(),
-        archetype: entry.archetype,
+        access_kind: entry.access_kind,
         address,
         facts: Values::new(),
     })

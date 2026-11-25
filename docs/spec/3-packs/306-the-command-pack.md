@@ -1,6 +1,6 @@
 # 306. The command pack
 
-The command pack lets a target be a program: something started with arguments, which ends with an exit status and leaves output behind. It was chosen as the second pack to build because it is as unlike a web page as a kind of system can be while staying small, and its job is to show that the kernel is neutral (hypothesis H-26; Stage D of the [long-term plan](../../plan/roadmap.md)). It brings one mode, `cli`, in the command archetype of [section 201](../2-kernel/201-archetypes-and-modes.md). The mode is real by [decision 0098](../../decisions/0098-the-cli-mode-is-real-and-a-program-is-a-surface.md), as item 8 of the bar in [section 202](../2-kernel/202-kernel-and-packs.md) requires. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
+The command pack lets a target be a program: something started with arguments, which ends with an exit status and leaves output behind. It was chosen as the second pack to build because it is as unlike a web page as a kind of system can be while staying small, and its job is to show that the kernel is neutral (hypothesis H-26; Stage D of the [long-term plan](../../plan/roadmap.md)). It brings one mode, `cli`, in the command access kind of [section 201](../2-kernel/201-access-kinds-and-modes.md). The mode is real by [decision 0098](../../decisions/0098-the-cli-mode-is-real-and-a-program-is-a-surface.md), as item 8 of the bar in [section 202](../2-kernel/202-kernel-and-packs.md) requires. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 **It is never a shell.** No command line is ever put together from text an agent supplied, and no program that reads a command line as code is started on an agent's behalf ([section 213](../2-kernel/213-effects-hazards-and-consent.md)).
 
@@ -162,7 +162,7 @@ Output is decoded as UTF-8 unless the program declares another encoding. The loc
 
 ## Verbs and their steps
 
-The pack adds the four step kinds that section 201 lists for the command archetype.
+The pack adds the four step kinds that section 201 lists for the command access kind.
 
 | Verb | Steps |
 | --- | --- |
@@ -324,7 +324,7 @@ Where the kernel is most likely to need one, most likely first:
 3. **Steps.** If the compiled step is a kernel enum of kinds, `spawn`, `expect`, `parse`, and `collect` are kernel edits. They should be a kernel envelope (kind, reference, time limit, failure class) around a payload only the pack reads.
 4. **Leases.** Most programs need no session. The engine asks for a `SessionLease` before prepare; a surface with no sign-in must get an empty lease, not a special case.
 5. **Read-back.** The two gaps the technical reference already names in the driver interface: read-back as a method or as steps, and reporting a record as absent.
-6. **The sandbox.** It promises that a draft cannot write. For a program that promise cannot be enforced, so it must be stated per archetype.
+6. **The sandbox.** It promises that a draft cannot write. For a program that promise cannot be enforced, so it must be stated per access kind.
 7. **Target identity.** Section 401 takes a target's identity at each start; a program's is its digest and version, which the identity check must accept from the pack.
 
 If more than items 1 and 3 need a kernel edit, the boundary is redrawn before a third pack is designed, as Stage D says.
@@ -351,7 +351,7 @@ Steps 2, 3, 6, and 7 are built in `a2m-pack-command`, except what the [crate's d
 
 ## Open points
 
-- Whether `collect` belongs to this archetype or to the file pack of section 308. The step payloads are fixed by [decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md).
+- Whether `collect` belongs to this access kind or to the file pack of section 308. The step payloads are fixed by [decision 0099](../../decisions/0099-the-command-pack-as-building-it-settled-it.md).
 - Programs on Windows that parse their command line by their own rule: how to declare it and prove it.
 - How long a digest may be trusted between starts. Taking it every start is safe and slow for large programs; starting the opened, checked file itself, where the platform allows it, closes the gap between check and start.
 - How a person signs a program in when it keeps its own sign-in and asks for it interactively.

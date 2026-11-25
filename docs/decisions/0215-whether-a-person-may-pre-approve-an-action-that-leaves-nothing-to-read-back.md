@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-18
 
-**Asks about:** rules two and three of [AGENTS.md](../../AGENTS.md#rules-that-never-bend); [section 212](../spec/2-kernel/212-policy-and-approvals.md); [section 201](../spec/2-kernel/201-archetypes-and-modes.md), "Where read-back is not possible"; [decision 0208](0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md).
+**Asks about:** rules two and three of [AGENTS.md](../../AGENTS.md#rules-that-never-bend); [section 212](../spec/2-kernel/212-policy-and-approvals.md); [section 201](../spec/2-kernel/201-access-kinds-and-modes.md), "Where read-back is not possible"; [decision 0208](0208-the-first-release-reaches-what-the-persons-machine-reaches-and-serves-on-that-machine-only.md).
 
 ## Context
 

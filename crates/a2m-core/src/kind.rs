@@ -1,4 +1,4 @@
-//! How a system is reached: the seven archetypes, which are fixed, and modes,
+//! How a system is reached: the seven access kinds, which are fixed, and modes,
 //! which arrive with packs.
 
 use std::fmt;
@@ -10,9 +10,9 @@ use crate::vocabulary::vocabulary;
 vocabulary! {
     /// One of the seven ways of reaching a system (spec section 201).
     ///
-    /// An archetype fixes how a step is prepared, acted, confirmed, and read
+    /// An access kind fixes how a step is prepared, acted, confirmed, and read
     /// back. Every mode belongs to exactly one.
-    pub enum Archetype: "archetype" {
+    pub enum AccessKind: "access kind" {
         /// The elements a person would use, found by role and name.
         Interface => "interface",
         /// A typed request over a protocol, and its answer.
@@ -21,8 +21,10 @@ vocabulary! {
         Command => "command",
         /// Code running inside the host, through an interface the host offers.
         Bridge => "bridge",
-        /// Reading and writing a file in a known format.
-        Artifact => "artifact",
+        /// Reading and writing a file in a known format. Written as
+        /// `artifact`, its old name, which manifests and stored rows already
+        /// carry (decision 0402).
+        File => "artifact",
         /// Waiting for, or adding to, a flow of events.
         Stream => "stream",
         /// Exchanging frames with hardware over a bus or a link.
@@ -33,7 +35,7 @@ vocabulary! {
 /// The name of a mode, such as `ui` or `http`.
 ///
 /// A mode is one concrete way of reaching a system, supplied by a pack or a
-/// plug-in and belonging to one [`Archetype`]. The kernel does not know the
+/// plug-in and belonging to one [`Access kind`]. The kernel does not know the
 /// list of modes: a provider registers each one it brings, and a binding that
 /// names a mode nobody registered does not compile (decision 0060). This type
 /// guarantees only that the name is well formed.
@@ -92,7 +94,7 @@ impl<'de> serde::Deserialize<'de> for Mode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Archetype, Mode};
+    use super::{AccessKind, Mode};
 
     #[test]
     fn a_mode_keeps_the_name_it_was_given() {
@@ -122,7 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn there_are_seven_archetypes() {
-        assert_eq!(Archetype::ALL.len(), 7);
+    fn there_are_seven_access_kinds() {
+        assert_eq!(AccessKind::ALL.len(), 7);
     }
 }

@@ -21,9 +21,9 @@ use a2m_core::{
     Version, WorkspaceId,
 };
 use a2m_logs::{
-    Acting, ArtifactKind, ArtifactOutcome, ArtifactRef, CaptureLevel, CapturePoint, ChoiceReason,
+    Acting, CaptureKind, CaptureLevel, CaptureOutcome, CapturePoint, CaptureRef, ChoiceReason,
     Detail, DropReason, FREE_TEXT_LIMIT, FinishedTrace, Held, Locating, LogLevel, LogsAndTraces,
-    ManualClock, MaskReport, OfferedArtifact, PassStart, Phase, StepLine, StepRecord, TRACE_SCHEMA,
+    ManualClock, MaskReport, OfferedCapture, PassStart, Phase, StepLine, StepRecord, TRACE_SCHEMA,
     TraceBuilder, TraceIdentity, TraceLine, TraceOutcome, TracedValue, read_trace,
 };
 
@@ -75,7 +75,7 @@ fn step(pass: u32, phase: Phase, step: u32, kind_name: &str, run: u8) -> StepRec
         acting: None,
         values: Vec::new(),
         outcome: TraceOutcome::Done,
-        artifacts: Vec::new(),
+        captures: Vec::new(),
     }
 }
 
@@ -160,8 +160,8 @@ fn steps(run: u8) -> Vec<StepRecord> {
         normalized_read_back: None,
         matched: None,
     }];
-    set.artifacts = vec![ArtifactRef {
-        kind: ArtifactKind::Snapshot,
+    set.captures = vec![CaptureRef {
+        kind: CaptureKind::Snapshot,
         at: CapturePoint::Checkpoint,
         blob: Digest::of(&[run, 2]),
     }];
@@ -393,7 +393,7 @@ fn a_trace_reads_back_as_its_lines() {
         [0, 1, 2, 3]
     );
     assert_eq!(steps[1].begins.as_ref().unwrap().mode.as_str(), "ui");
-    assert_eq!(steps[2].artifacts.len(), 1);
+    assert_eq!(steps[2].captures.len(), 1);
     assert_eq!(steps[3].outcome, TraceOutcome::Verified);
     // The record's key is never written: only the workspace's digest of it.
     assert!(steps[0].record.is_some());
@@ -607,33 +607,33 @@ fn a_trace_past_its_size_limit_is_cut_and_says_so() {
     assert_eq!(end.limitations, cut.limitations);
 }
 
-fn offered(kind: ArtifactKind, at: CapturePoint) -> OfferedArtifact {
-    OfferedArtifact {
+fn offered(kind: CaptureKind, at: CapturePoint) -> OfferedCapture {
+    OfferedCapture {
         kind,
         at,
         bytes: b"- heading \"Order SO-1001\"".to_vec(),
-        masked: (kind == ArtifactKind::Screenshot).then(MaskReport::default),
+        masked: (kind == CaptureKind::Screenshot).then(MaskReport::default),
     }
 }
 
 #[test]
-fn artifacts_are_kept_as_the_level_says() {
-    use ArtifactKind::{Exchange, Screenshot, Snapshot, WindowTree};
+fn captures_are_kept_as_the_level_says() {
+    use CaptureKind::{Exchange, Screenshot, Snapshot, WindowTree};
     use CapturePoint::{Checkpoint, Failure, Step};
 
-    let kept = |level: CaptureLevel, kind: ArtifactKind, at: CapturePoint| {
+    let kept = |level: CaptureLevel, kind: CaptureKind, at: CapturePoint| {
         let mut builder = builder(1, level, Arc::new(NoSecrets));
-        let outcome = builder.artifact(offered(kind, at));
+        let outcome = builder.capture(offered(kind, at));
         assert_eq!(
-            matches!(outcome, ArtifactOutcome::Kept(_)),
+            matches!(outcome, CaptureOutcome::Kept(_)),
             level.keeps(kind, at)
         );
-        if let ArtifactOutcome::Dropped(reason) = &outcome {
+        if let CaptureOutcome::Dropped(reason) = &outcome {
             assert_eq!(*reason, DropReason::Level);
             // Dropping by level is the ordinary case, not a weakness.
             assert!(builder.finish().unwrap().limitations.is_empty());
         }
-        matches!(outcome, ArtifactOutcome::Kept(_))
+        matches!(outcome, CaptureOutcome::Kept(_))
     };
 
     for kind in [Snapshot, Exchange, Screenshot, WindowTree] {
@@ -671,55 +671,55 @@ impl Redact for FindsMore {
 }
 
 #[test]
-fn an_artifact_is_redacted_and_checked_or_it_is_dropped() {
+fn a_capture_is_redacted_and_checked_or_it_is_dropped() {
     let mut builder = builder(1, CaptureLevel::Full, Arc::new(FindsMore));
 
     // Text is redacted.
-    let mut snapshot = offered(ArtifactKind::Snapshot, CapturePoint::Checkpoint);
+    let mut snapshot = offered(CaptureKind::Snapshot, CapturePoint::Checkpoint);
     snapshot.bytes = b"- textbox \"Password\": hunter2".to_vec();
-    let ArtifactOutcome::Kept(kept) = builder.artifact(snapshot) else {
+    let CaptureOutcome::Kept(kept) = builder.capture(snapshot) else {
         panic!("a snapshot at a checkpoint is kept");
     };
     assert_eq!(kept.bytes, b"- textbox \"Password\": [redacted]");
 
     // Text that still holds a secret after redaction is dropped.
-    let mut exchange = offered(ArtifactKind::Exchange, CapturePoint::Step);
+    let mut exchange = offered(CaptureKind::Exchange, CapturePoint::Step);
     exchange.bytes = b"{\"token\":\"late-secret\"}".to_vec();
     assert_eq!(
-        builder.artifact(exchange),
-        ArtifactOutcome::Dropped(DropReason::HeldSecret)
+        builder.capture(exchange),
+        CaptureOutcome::Dropped(DropReason::HeldSecret)
     );
 
     // An image without a report of what was masked is dropped.
-    let mut screenshot = offered(ArtifactKind::Screenshot, CapturePoint::Failure);
+    let mut screenshot = offered(CaptureKind::Screenshot, CapturePoint::Failure);
     screenshot.masked = None;
     assert_eq!(
-        builder.artifact(screenshot.clone()),
-        ArtifactOutcome::Dropped(DropReason::Unmasked)
+        builder.capture(screenshot.clone()),
+        CaptureOutcome::Dropped(DropReason::Unmasked)
     );
     assert_eq!(
-        builder.artifact(screenshot),
-        ArtifactOutcome::Dropped(DropReason::Unmasked)
+        builder.capture(screenshot),
+        CaptureOutcome::Dropped(DropReason::Unmasked)
     );
 
     // An image with a report is kept as it arrived, with the report cleaned.
-    let mut masked = offered(ArtifactKind::Screenshot, CapturePoint::Failure);
+    let mut masked = offered(CaptureKind::Screenshot, CapturePoint::Failure);
     masked.bytes = vec![0x89, 0x50, 0x4e, 0x47, 0xff];
     masked.masked = Some(MaskReport {
         fields: vec!["password".to_owned(), "hunter2".to_owned()],
     });
-    let ArtifactOutcome::Kept(kept) = builder.artifact(masked) else {
+    let CaptureOutcome::Kept(kept) = builder.capture(masked) else {
         panic!("a masked screenshot at a failure is kept");
     };
     assert_eq!(kept.bytes, [0x89, 0x50, 0x4e, 0x47, 0xff]);
     assert_eq!(kept.masked.unwrap().fields, ["password", "[redacted]"]);
 
     // Something that should be text and is not cannot be checked.
-    let mut broken = offered(ArtifactKind::WindowTree, CapturePoint::Failure);
+    let mut broken = offered(CaptureKind::WindowTree, CapturePoint::Failure);
     broken.bytes = vec![0xff, 0xfe];
     assert_eq!(
-        builder.artifact(broken),
-        ArtifactOutcome::Dropped(DropReason::NotText)
+        builder.capture(broken),
+        CaptureOutcome::Dropped(DropReason::NotText)
     );
 
     // Each kind of drop is recorded once as a limitation of the trace.
@@ -744,18 +744,18 @@ impl Redact for KnowsOne {
 }
 
 #[test]
-fn an_artifact_whose_secret_is_split_by_markup_or_written_with_a_reference_is_dropped() {
+fn a_capture_whose_secret_is_split_by_markup_or_written_with_a_reference_is_dropped() {
     const SECRET: &str = "example-key-ab&cd-7781";
     let offer = |text: &str| {
-        let mut snapshot = offered(ArtifactKind::Snapshot, CapturePoint::Checkpoint);
+        let mut snapshot = offered(CaptureKind::Snapshot, CapturePoint::Checkpoint);
         snapshot.bytes = text.as_bytes().to_vec();
         snapshot
     };
-    let dropped = ArtifactOutcome::Dropped(DropReason::HeldSecret);
+    let dropped = CaptureOutcome::Dropped(DropReason::HeldSecret);
     let mut builder = builder(1, CaptureLevel::Standard, Arc::new(KnowsOne(SECRET)));
 
     // Written out, it is redacted and the snapshot is kept.
-    let ArtifactOutcome::Kept(kept) = builder.artifact(offer(&format!("<td>{SECRET}</td>"))) else {
+    let CaptureOutcome::Kept(kept) = builder.capture(offer(&format!("<td>{SECRET}</td>"))) else {
         panic!("a snapshot with a secret written out is kept, redacted");
     };
     assert_eq!(kept.bytes, b"<td>[redacted]</td>");
@@ -771,12 +771,12 @@ fn an_artifact_whose_secret_is_split_by_markup_or_written_with_a_reference_is_dr
         "<input value=\"example-key-ab&#x26;cd-7781\">".to_owned(),
         "<b>example-key-</b>ab&amp;cd<i>-7781</i>".to_owned(),
     ] {
-        assert_eq!(builder.artifact(offer(&held)), dropped, "{held}");
+        assert_eq!(builder.capture(offer(&held)), dropped, "{held}");
     }
 
     // Markup and references that hold no secret do not drop a snapshot.
     let plain = "<p>Total &amp; tax: <b>12</b></p>";
-    let ArtifactOutcome::Kept(kept) = builder.artifact(offer(plain)) else {
+    let CaptureOutcome::Kept(kept) = builder.capture(offer(plain)) else {
         panic!("a snapshot with no secret is kept");
     };
     assert_eq!(kept.bytes, plain.as_bytes());

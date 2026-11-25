@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use a2m_core::{
-    Archetype, Availability, BindingStatus, Checkpoint, Coverage, DoctorState, EffectClass,
+    AccessKind, Availability, BindingStatus, Checkpoint, Coverage, DoctorState, EffectClass,
     EnvironmentKind, EvidenceLevel, FailureClass, FieldBase, Hazard, IdentityStrategy,
     LimitationCode, RecordState, RunState, Sensitivity, SessionState, Source, Subject,
     SubsystemMove, SubsystemState, TestKind, WriteEvidence,
@@ -165,18 +165,26 @@ fn evidence_levels_are_the_ladder_in_its_section() {
 }
 
 #[test]
-fn archetypes_are_the_seven_in_their_section() {
-    let spec = document("spec/2-kernel/201-archetypes-and-modes.md");
+fn access_kinds_are_the_seven_in_their_section() {
+    let spec = document("spec/2-kernel/201-access-kinds-and-modes.md");
     let section = between(
         &spec,
         "## The seven",
-        "## How each archetype fills the loop",
+        "## How each access kind fills the loop",
     );
-    let named: Vec<String> = column(section, "| # | Archetype |", 1)
-        .into_iter()
-        .map(|name| name.to_lowercase())
-        .collect();
-    assert_eq!(named, Archetype::NAMES);
+    // The section names each access kind, and gives the word it is written
+    // as, which keeps an older name where decision 0402 keeps one.
+    let named = column(section, "| # | Access kind |", 1);
+    let written = column(section, "| # | Access kind |", 2);
+    assert_eq!(written, AccessKind::NAMES);
+    assert_eq!(named.len(), AccessKind::NAMES.len());
+    for (name, word) in named.iter().zip(&written) {
+        let renamed = name == "File" && word == "artifact";
+        assert!(
+            renamed || name.to_lowercase() == *word,
+            "{name} is written {word}"
+        );
+    }
 }
 
 #[test]
@@ -423,7 +431,7 @@ fn every_vocabulary_reads_back_what_it_writes() {
         a2m_core::WhitespaceRule::NAMES,
     );
     round_trip(a2m_core::DecimalMark::ALL, a2m_core::DecimalMark::NAMES);
-    round_trip(Archetype::ALL, Archetype::NAMES);
+    round_trip(AccessKind::ALL, AccessKind::NAMES);
     round_trip(Availability::ALL, Availability::NAMES);
     round_trip(Checkpoint::ALL, Checkpoint::NAMES);
     round_trip(DoctorState::ALL, DoctorState::NAMES);

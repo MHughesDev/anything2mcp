@@ -38,7 +38,7 @@ One function hands the pack to the registry builder: this crate's `pack()` retur
 
 | Registration | Content |
 | --- | --- |
-| Mode | `sql`, archetype request, rank 30, four reads and one write in a session, a write holds the surface |
+| Mode | `sql`, access kind request, rank 30, four reads and one write in a session, a write holds the surface |
 | Surface kind | `database`, with a session. Fields: `store` (required; `sqlite`), `file` (the address: the path of the store's file below its root, with forward slashes), `root` (the named root; `project` unless given) |
 | Surface kind, feature `postgres` | `database_server`, with a session. Fields: `store` (required; `postgres`), `host` (the address: an IP address on the loopback range), `port`, `database`, `schema` (`public` unless given). The role and its password come from the lease; there is no switch for the link |
 | Step kinds | `begin`, `execute`, `fetch`, `expect_rows`, `commit`; and `catalog`, which only the discoverer sends |

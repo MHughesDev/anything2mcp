@@ -123,7 +123,7 @@ Steps 1 to 6 as for a read, then:
 ### Building tools
 
 1. `target.add` registers a target in the project folder.
-2. `scout.run` in `a2m-actions` submits discovery jobs. A runner runs the discoverers the registry holds for each surface inside the engine's sandbox, which gives a discoverer only what `SandboxPort` offers. What "cannot write" means is stated per archetype by each pack: a request that is not a read is never sent, a program is started only in its declared help and version forms, a queue is never consumed.
+2. `scout.run` in `a2m-actions` submits discovery jobs. A runner runs the discoverers the registry holds for each surface inside the engine's sandbox, which gives a discoverer only what `SandboxPort` offers. What "cannot write" means is stated per access kind by each pack: a request that is not a read is never sent, a program is started only in its declared help and version forms, a queue is never consumed.
 3. Findings are stored through `a2m-ledger`. What the system says about itself is compared with what was seen.
 4. The drafter in `a2m-files` writes draft files wherever a pack's drafting rules say how.
 5. `a2m-files` lints and compiles, using the file kinds and lowerings the packs registered.

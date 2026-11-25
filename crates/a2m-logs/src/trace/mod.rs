@@ -1,15 +1,15 @@
 //! The step trace: one structured record per step of a run, the capture of
-//! artifacts at the level a run asks for, and the trace signature (spec
+//! captures at the level a run asks for, and the trace signature (spec
 //! section 217).
 //!
 //! The engine makes one [`TraceBuilder`] per run attempt, gives it a
 //! [`StepRecord`] for every step a driver carried out, offers it the
-//! artifacts drivers returned, and ends it with [`TraceBuilder::finish`].
+//! captures drivers returned, and ends it with [`TraceBuilder::finish`].
 //! What comes back is redacted bytes for the store, and the signature.
 //! Nothing here is written anywhere by this crate.
 
-mod artifact;
 mod builder;
+mod capture;
 mod signature;
 mod wire;
 
@@ -21,11 +21,11 @@ use a2m_core::{
 };
 use serde::{Deserialize, Serialize};
 
-pub use artifact::{
-    ArtifactKind, ArtifactOutcome, ArtifactRef, CapturePoint, DropReason, KeptArtifact, MaskReport,
-    OfferedArtifact,
-};
 pub use builder::{DEFAULT_TRACE_LIMIT, FinishedTrace, TraceBuilder, TraceRefused};
+pub use capture::{
+    CaptureKind, CaptureOutcome, CapturePoint, CaptureRef, DropReason, MaskReport, OfferedCapture,
+    RedactedCapture,
+};
 pub use wire::{
     EndLine, HeaderLine, Held, PassLine, StepLine, TRACE_SCHEMA, TraceCheck, TraceLine, ValueLine,
     check_trace, read_trace,
@@ -131,8 +131,8 @@ pub struct StepRecord {
     pub values: Vec<TracedValue>,
     /// How the step ended.
     pub outcome: TraceOutcome,
-    /// The artifacts taken at this step, by the names the store gave them.
-    pub artifacts: Vec<ArtifactRef>,
+    /// The captures taken at this step, by the names the store gave them.
+    pub captures: Vec<CaptureRef>,
 }
 
 /// The start of a pass: the binding the engine chose and why.
@@ -233,7 +233,7 @@ impl std::fmt::Debug for StepRecord {
             .field("acting", &self.acting)
             .field("values", &self.values)
             .field("outcome", &self.outcome)
-            .field("artifacts", &self.artifacts.len())
+            .field("captures", &self.captures.len())
             .finish()
     }
 }

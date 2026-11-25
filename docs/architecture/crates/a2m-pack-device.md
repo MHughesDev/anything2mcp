@@ -11,7 +11,7 @@ The device pack: the `device` driver over a device's link. It sends one frame at
 | May depend on | Layers 1 to 5. It has no base crate and depends on no other pack crate |
 | Depends on | `a2m-core` (`CompiledTarget`, `Step`, `Value`, `Decimal`, `Finding`, `Hazard`), `a2m-files` (file kind, lowering, lint, and drafting registration), `a2m-auth` (the lease type in the driver's signature), `a2m-provider` (`Pack`, `Driver`, `Discoverer`, `Describer`, `SandboxPort`), `a2m-logs` (the clock a finding is dated with). Outside: `serde`, `serde_json`, and `tokio` with its `io-util` feature. No protocol library ([decision 0106](../../decisions/0106-the-device-pack-speaks-its-first-protocol-itself-and-checks-a-range-before-a-frame-is-built.md)) |
 | Roadmap packages | Packages K2, K3, K4 of the [roadmap](../../plan/roadmap.md) |
-| Carries out | Spec section [310](../../spec/3-packs/310-the-device-pack.md); [201](../../spec/2-kernel/201-archetypes-and-modes.md) (the device archetype); [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (hazards); the entry bar of section [202](../../spec/2-kernel/202-kernel-and-packs.md) |
+| Carries out | Spec section [310](../../spec/3-packs/310-the-device-pack.md); [201](../../spec/2-kernel/201-access-kinds-and-modes.md) (the device access kind); [213](../../spec/2-kernel/213-effects-hazards-and-consent.md) (hazards); the entry bar of section [202](../../spec/2-kernel/202-kernel-and-packs.md) |
 
 ## Owns
 
@@ -32,7 +32,7 @@ It must never: send a frame to an address its map does not name; build a frame f
 | Registration | Content |
 | --- | --- |
 | Provider | `device` |
-| Mode | `device`, archetype device, rank 60. One read and one write at a time on a session, an intent window of one, and exclusive use of the link |
+| Mode | `device`, access kind device, rank 60. One read and one write at a time on a session, an intent window of one, and exclusive use of the link |
 | Surface kind | `device_link`, with a session. Fields: `address` (a socket address, such as `192.0.2.7:502`; a host name is refused, because a lookup is a request the compiled target did not state), `protocol` (one of the crate's `PROTOCOLS`: today `modbus_tcp` alone), `unit` (0 to 255), and `serials` (optional: the serial of the device that answers in each environment, as text, by the environment's name) |
 | Step kinds | `open`, `build_frame`, `write_frame`, `read_frame`, `expect` |
 | Verbs | `read`, `update`, `submit` |

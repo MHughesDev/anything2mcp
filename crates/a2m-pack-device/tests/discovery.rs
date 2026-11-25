@@ -13,7 +13,7 @@ mod common;
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, EvidenceLevel, Failure, FailureClass, Finding, Source, Subject, SurfaceKind, Values,
+    AccessKind, EvidenceLevel, Failure, FailureClass, Finding, Source, Subject, SurfaceKind, Values,
 };
 use a2m_files::{Drafter, TargetRoot};
 use a2m_provider::{
@@ -43,7 +43,7 @@ async fn discovery_identifies_the_device_and_changes_nothing() {
     let port = ReadOnlyPort::new(handle, prepared);
     let surface = SurfaceDescription {
         kind: SurfaceKind::new("device_link").unwrap(),
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -169,7 +169,7 @@ async fn the_map_reader_reads_the_file_it_is_handed_under_its_declared_name() {
     let scene = Scene::start().await;
     let surface = SurfaceDescription {
         kind: SurfaceKind::new("device_link").unwrap(),
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -249,7 +249,7 @@ async fn a_published_map_drafts_reads_that_read_the_stand_and_send_no_frame_to_d
     let port = ReadOnlyPort::new(handle, prepared);
     let surface = SurfaceDescription {
         kind: SurfaceKind::new("device_link").unwrap(),
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -505,7 +505,7 @@ Top,input,4294967295,u32,,
     let port = ReadOnlyPort::new(handle, prepared);
     let surface = SurfaceDescription {
         kind: SurfaceKind::new("device_link").unwrap(),
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -635,7 +635,7 @@ Api key,input,41,u16,,
     let port = ReadOnlyPort::new(handle, prepared);
     let surface = SurfaceDescription {
         kind: SurfaceKind::new("device_link").unwrap(),
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };

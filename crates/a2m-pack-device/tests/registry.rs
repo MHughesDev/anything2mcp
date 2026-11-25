@@ -9,7 +9,7 @@
 
 mod common;
 
-use a2m_core::{Archetype, Availability, FailureClass, Mode, SurfaceKind, Values};
+use a2m_core::{AccessKind, Availability, FailureClass, Mode, SurfaceKind, Values};
 use a2m_provider::{Exclusive, Manifest, SurfaceDescription};
 use common::{Folder, registry};
 
@@ -21,7 +21,7 @@ fn a_registry_with_only_the_device_pack_builds_and_its_digest_is_stable() {
     assert_eq!(first.digest(), second.digest());
 
     let mode = Mode::new("device").unwrap();
-    assert_eq!(first.archetype(&mode), Some(Archetype::Device));
+    assert_eq!(first.access_kind(&mode), Some(AccessKind::Device));
     let defaults = first.mode_defaults(&mode).unwrap();
     // One request at a time, and one run at a time on one link.
     assert_eq!(
@@ -59,7 +59,7 @@ fn a_registry_with_only_the_device_pack_builds_and_its_digest_is_stable() {
 
     let surface = SurfaceDescription {
         kind,
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         address: "127.0.0.1:502".to_owned(),
         facts: Values::new(),
     };

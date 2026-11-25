@@ -1,7 +1,7 @@
 //! The stream pack of Anything2MCP: the `stream` mode over queues, topics,
 //! and logs (spec section 309).
 //!
-//! It registers one mode, `stream`, of the stream archetype; the surface
+//! It registers one mode, `stream`, of the stream access kind; the surface
 //! kind `broker`; two file kinds, `channels/` and `schemas/`; the lowering
 //! of the verbs `read`, `list`, `await`, `publish`, and `take`; a driver
 //! that ends every read within its limit and publishes with the record's

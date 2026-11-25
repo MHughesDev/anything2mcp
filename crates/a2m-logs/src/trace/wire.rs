@@ -17,7 +17,7 @@ use a2m_core::{
 use serde::{Deserialize, Serialize};
 
 use super::signature::Chain;
-use super::{Acting, ArtifactRef, CaptureLevel, ChoiceReason, Locating, Phase, TraceOutcome};
+use super::{Acting, CaptureLevel, CaptureRef, ChoiceReason, Locating, Phase, TraceOutcome};
 
 /// The version of the trace schema this crate writes.
 pub const TRACE_SCHEMA: u32 = 1;
@@ -92,9 +92,11 @@ pub struct StepLine {
     pub values: Vec<ValueLine>,
     /// How the step ended.
     pub outcome: TraceOutcome,
-    /// The artifacts taken at this step.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub artifacts: Vec<ArtifactRef>,
+    /// The captures taken at this step. Written as `artifacts`, the old name, so that a
+    /// trace an older build stored still reads and its signature is unchanged
+    /// (decision 0402).
+    #[serde(default, skip_serializing_if = "Vec::is_empty", rename = "artifacts")]
+    pub captures: Vec<CaptureRef>,
     /// The digest of this record's part of the signature. Two traces whose
     /// signatures differ first differ at the first record whose `sig`
     /// differs.

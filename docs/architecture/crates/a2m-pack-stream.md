@@ -28,7 +28,7 @@ It must never: choose a channel from a step argument; keep a subscription open a
 
 | Registration | Content |
 | --- | --- |
-| Mode | `stream`, archetype stream; rank 60; four reads and one write at a time in a session; a write holds the link |
+| Mode | `stream`, access kind stream; rank 60; four reads and one write at a time in a session; a write holds the link |
 | Surface kind | `broker`, with a session. Fields: `address`, one `host:port`, and `protocol`, one of the names the registration offers: `nats` (the crate's `PROTOCOLS`), and `example-broker/1` (`TEST_BROKER_PROTOCOL`) only in a test's registration |
 | Step kinds | `latest`, `browse`, `subscribe`, `await`, `publish`, `acknowledge`, `scan`, `position`, `taken` from lowerings; `channels` and `describe` from the discoverer only |
 | Driver | One, for `stream` |

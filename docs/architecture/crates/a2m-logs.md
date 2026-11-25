@@ -1,6 +1,6 @@
 # `a2m-logs`
 
-Emitting what the engine did: the step trace and its signature, the capture of artifacts at the level a run asks for, spans and metrics, and the engine's own logs. Everything it emits has passed a `Redact` first. It stores nothing durable: what must be kept, it hands back as redacted bytes for `a2m-ledger` to store.
+Emitting what the engine did: the step trace and its signature, the captures kept at the level a run asks for, spans and metrics, and the engine's own logs. Everything it emits has passed a `Redact` first. It stores nothing durable: what must be kept, it hands back as redacted bytes for `a2m-ledger` to store.
 
 ## Facts
 
@@ -17,7 +17,7 @@ Emitting what the engine did: the step trace and its signature, the capture of a
 
 - The step-trace record: its fields, its schema, and the JSON Lines form a trace blob takes.
 - The trace signature: which parts of a record enter it, in what order, and how they are hashed.
-- Capture: given a capture level, which artifacts are kept, and in what form, before anything is written or sent.
+- Capture: given a capture level, which captures are kept, and in what form, before anything is written or sent.
 - Redaction at capture, through the `Redact` it is given, and the check on the way out.
 - The list of headers an exchange may record, for every pack.
 - Spans and metrics, with a closed set of attributes that cannot carry a value.
@@ -32,7 +32,7 @@ It must never: store evidence, own a table, or write a blob (`a2m-ledger` does);
 | --- | --- | --- |
 | Run events | Nothing. They are the ledger's history | Writes them |
 | Step trace | Builds each record, redacts it, computes the signature, and returns a finished trace as bytes | Seals and stores the bytes as a blob of kind `trace`, with the schema's version, and records the signature on the run |
-| Artifacts | Decides from the level whether one is kept; redacts it; returns it as bytes with its kind | Seals and stores it as a blob; gives back the name that goes into the step's record |
+| Captures | Decides from the level whether one is kept; redacts it; returns it as bytes with its kind | Seals and stores it as a blob; gives back the name that goes into the step's record |
 | Logs | Writes them to the log files in the data directory | Nothing |
 | Spans and metrics | Keeps them in memory | Nothing |
 
@@ -55,8 +55,8 @@ impl TraceBuilder {
     /// of the bytes and still enters the signature.
     pub fn record(&mut self, step: StepRecord);
 
-    /// Offers an artifact. `Kept` carries redacted, checked bytes for the ledger; `Dropped` says why.
-    pub fn artifact(&mut self, offered: OfferedArtifact) -> ArtifactOutcome;
+    /// Offers a capture. `Kept` carries redacted, checked bytes for the ledger; `Dropped` says why.
+    pub fn capture(&mut self, offered: OfferedCapture) -> CaptureOutcome;
 
     /// Ends the trace: the JSON Lines bytes, already checked, and the signature.
     pub fn finish(self) -> Result<FinishedTrace, TraceRefused>;
@@ -65,7 +65,7 @@ impl TraceBuilder {
 pub struct TraceIdentity { pub workspace: WorkspaceId, pub run: RunId, pub attempt: u32, pub operation: OperationName,
                            pub compiled_target: Digest, pub engine: Version, pub registry: Digest }
 pub enum CaptureLevel { Minimal, Standard, Full }      // names as section 217
-impl CaptureLevel { pub const fn keeps(self, kind: ArtifactKind, at: CapturePoint) -> bool; }
+impl CaptureLevel { pub const fn keeps(self, kind: CaptureKind, at: CapturePoint) -> bool; }
 
 pub struct StepRecord {
     pub pass: u32,                        // which turn of the engine loop, from 0
@@ -79,7 +79,7 @@ pub struct StepRecord {
     pub acting: Option<Acting>,           // means: in the signature; measured: not
     pub values: Vec<TracedValue>,
     pub outcome: TraceOutcome,            // Verified, Done, or Failed { class, code }
-    pub artifacts: Vec<ArtifactRef>,      // kind, point, and the name the store gave the blob
+    pub captures: Vec<CaptureRef>,      // kind, point, and the name the store gave the blob
 }
 pub struct PassStart { pub operation: OperationName, pub mode: Mode, pub reason: ChoiceReason, pub driver: Digest,
                        pub queue: Duration, pub prepare: Duration }
@@ -92,11 +92,11 @@ pub struct TracedValue { pub field: String, pub sensitivity: Sensitivity, pub vo
                          pub normalized_intended: Option<Value>, pub normalized_read_back: Option<Value>,
                          pub matched: Option<bool> }
 
-pub struct OfferedArtifact { pub kind: ArtifactKind, pub at: CapturePoint, pub bytes: Vec<u8>, pub masked: Option<MaskReport> }
-pub enum ArtifactKind { Snapshot, Exchange, Screenshot, WindowTree }
+pub struct OfferedCapture { pub kind: CaptureKind, pub at: CapturePoint, pub bytes: Vec<u8>, pub masked: Option<MaskReport> }
+pub enum CaptureKind { Snapshot, Exchange, Screenshot, WindowTree }
 pub enum CapturePoint { Step, Checkpoint, Failure }
 pub struct MaskReport { pub fields: Vec<String> }
-pub enum ArtifactOutcome { Kept(KeptArtifact), Dropped(DropReason) }
+pub enum CaptureOutcome { Kept(RedactedCapture), Dropped(DropReason) }
 pub enum DropReason { Level, Unmasked, HeldSecret, NotText }
 
 pub struct FinishedTrace { pub schema: u32, pub bytes: Vec<u8>, pub signature: Digest, pub records: u32, pub kept: u32,
@@ -167,15 +167,15 @@ pub struct SystemClock; pub struct ManualClock;
 
 Contracts that the signatures do not show:
 
-- **Redaction happens on entry, not on write.** `record` and `artifact` pass every text through the `Redact` before keeping it, so nothing unredacted is held even in memory longer than the call. Text is redacted, cleaned of markup and hidden characters, and redacted again, because cleaning can join the halves of a secret that markup had split. The redactor and the keyed digest are the vault's, given at start; this crate never makes its own.
+- **Redaction happens on entry, not on write.** `record` and `capture` pass every text through the `Redact` before keeping it, so nothing unredacted is held even in memory longer than the call. Text is redacted, cleaned of markup and hidden characters, and redacted again, because cleaning can join the halves of a secret that markup had split. The redactor and the keyed digest are the vault's, given at start; this crate never makes its own.
 - **The check on the way out runs once more.** `finish` scans the finished bytes, and every text in them with the JSON escapes undone, with `Redact::contains_secret`. A hit refuses the whole trace: `finish` returns `TraceRefused`, which carries the signature and a `redacted` limitation and no bytes, and an alert is logged. The piece is never handed to the ledger.
-- **A text artifact is checked in four forms, and dropped on a hit in any** ([decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md)). The bytes that are kept are the redacted text with its markup, because a snapshot without its markup is no snapshot. So the redactor is asked about the text as it is kept, about the same text with tags and hidden characters taken out, and about both with their character references written out (`&amp;`, `&#38;`, `&#x26;`). A secret that a tag or a zero-width character splits, or that is written with a reference in a value, is found in one of those forms and the artifact is dropped, with a `redacted` limitation. A record's free text that holds a secret behind a reference is replaced whole by the redaction mark. What this crate relies on from the redactor: that `contains_secret` finds a registered secret in its own text and in the encoded forms the vault knows, wherever it stands in the text handed to it. What it does not find: a secret broken across two elements with white space between them, which reads as two words to a person as well.
+- **A text capture is checked in four forms, and dropped on a hit in any** ([decision 0152](../../decisions/0152-the-action-registry-and-telemetry-after-their-safety-audit.md)). The bytes that are kept are the redacted text with its markup, because a snapshot without its markup is no snapshot. So the redactor is asked about the text as it is kept, about the same text with tags and hidden characters taken out, and about both with their character references written out (`&amp;`, `&#38;`, `&#x26;`). A secret that a tag or a zero-width character splits, or that is written with a reference in a value, is found in one of those forms and the capture is dropped, with a `redacted` limitation. A record's free text that holds a secret behind a reference is replaced whole by the redaction mark. What this crate relies on from the redactor: that `contains_secret` finds a registered secret in its own text and in the encoded forms the vault knows, wherever it stands in the text handed to it. What it does not find: a secret broken across two elements with white space between them, which reads as two words to a person as well.
 - **A debug print shows no value a driver handed over.** `StepRecord`, `TracedValue`, and `Detail` print which parts are present, never a record key, a field's name, a value, or a detail: a step record reaches the trace before anything in it was redacted.
 - **Headers and cookies.** `RECORDED_HEADERS` lists the twenty headers whose values may be kept. Every other header is recorded as present with its value masked, whatever the level. Cookies, authorization, and headers that carry an address are not on the list. A pack that builds an exchange calls `record_headers`.
 - **Labelled fields.** A value labelled `public` is kept as it is. One labelled `internal` is kept as it is at `standard` and above, and as a keyed digest at `minimal`. One labelled `restricted` is kept only as a keyed digest. Free text is cleaned, and cut at 512 characters with a mark.
 - **A record key is never written.** The record holds the workspace's keyed digest of `RecordKey::canonical_bytes()`, under the purpose `record_key`, so that it matches the name the store gives the key.
 - **Images arrive masked.** A screenshot is kept only with a `MaskReport` from the pack that took it. Without one it is dropped and a limitation recorded. Outside `full`, a screenshot is kept only at a failure. An image cannot be scanned; the report is the pack's word.
-- **What a level keeps.** `minimal`: no artifact. `standard`: a snapshot or a window tree at a checkpoint or a failure, and a screenshot at a failure. `full`: everything offered. Dropping by level is the ordinary case and records no limitation.
+- **What a level keeps.** `minimal`: no capture. `standard`: a snapshot or a window tree at a checkpoint or a failure, and a screenshot at a failure. `full`: everything offered. Dropping by level is the ordinary case and records no limitation.
 - **A trace past its size limit is cut, not failed.** Later records are left out of the bytes and still enter the signature. The end line and `FinishedTrace::limitations` say `truncated`.
 - **Spans carry names, timings, and outcomes only.** A span's name and a metric's name are `&'static str`; attributes come from `Attr`, which has no constructor for text. A span's parent is given as a `TraceContext`: no current span is kept per thread. MCP spans follow the OpenTelemetry conventions for MCP, whose names are still in development, so their spelling lives in one table, `Attr::key`.
 - **Nothing leaves.** Spans and metrics are kept in memory, a buffer of 4,096 finished spans and one entry per series, for `engine.status`, tests, and the benchmark harness. There is no exporter.
@@ -200,7 +200,7 @@ Each record gives one SHA-256 digest, its `sig`, over these entries in this orde
 
 The signature starts from a fixed digest, replaces it with the digest of itself followed by each record's `sig` in order, and closes with the digest of a fixed mark, the last state, and the count of records.
 
-Text enters after redaction and cleaning and before it is cut for size. Left out: every timing; the run, attempt, and workspace; the tool called and the compiled target's hash; the engine's version, the registry's digest, and the provider chosen; why a binding was chosen; the score; the `measured` details; raw values; artifact references; the capture level; and a volatile field's value.
+Text enters after redaction and cleaning and before it is cut for size. Left out: every timing; the run, attempt, and workspace; the tool called and the compiled target's hash; the engine's version, the registry's digest, and the provider chosen; why a binding was chosen; the score; the `measured` details; raw values; capture references; the capture level; and a volatile field's value.
 
 ## The trace schema, version 1
 
@@ -237,7 +237,7 @@ One line per step:
 | `acting` | Optional. `means` and `measured`, each a list of `name` and `value` |
 | `values` | Optional. A list; each has `field`, `sensitivity`, optionally `volatile` when true, optionally `intended`, `read_back`, `normalized_intended`, `normalized_read_back`, and optionally `matched`. Each of the four is `{"value": …}` or `{"keyed": digest}` |
 | `outcome` | `state` (`verified`, `done`, or `failed`), and for `failed` its `class` and `code` |
-| `artifacts` | Optional. A list of `kind` (`snapshot`, `exchange`, `screenshot`, `window_tree`), `at` (`step`, `checkpoint`, `failure`), and `blob` |
+| `artifacts` | Optional. The captures taken at the step, under the field's old name (decision 0402): a list of `kind` (`snapshot`, `exchange`, `screenshot`, `window_tree`), `at` (`step`, `checkpoint`, `failure`), and `blob` |
 | `sig` | The record's digest in the signature |
 
 The last line:
@@ -262,9 +262,9 @@ One JSON object per line: `ts` (milliseconds since the start of 1970 in UTC), `l
 
 | Caller | Uses |
 | --- | --- |
-| `a2m-engine` | `TraceBuilder` for every run attempt; `LogsAndTraces` for spans and `record_call`; hands `FinishedTrace` and kept artifacts to `a2m-ledger` |
+| `a2m-engine` | `TraceBuilder` for every run attempt; `LogsAndTraces` for spans and `record_call`; hands `FinishedTrace` and kept captures to `a2m-ledger` |
 | `a2m-ledger` | Nothing at run time; `TRACE_SCHEMA`, to store with each trace blob |
-| `a2m-provider` | `ArtifactKind`, `CapturePoint`, and `MaskReport` in what a driver returns; `LogsAndTraces` for spans |
+| `a2m-provider` | `CaptureKind`, `CapturePoint`, and `MaskReport` in what a driver returns; `LogsAndTraces` for spans |
 | Packs | `record_headers` when they build an exchange; `MaskReport` when they take an image. The engine offers what they return |
 | The front doors | `LogsAndTraces::call_span` with the caller's `TraceContext`; the redactor is the vault's, not this crate's |
 | `a2m-actions` | `start` at `Kernel::open`; `read_trace` and the line types for `trace.show` and `trace.export`; `LOG_FILE_NAME` for `engine.logs` |
@@ -307,8 +307,8 @@ A failure to capture evidence never fails a read. For a write, the engine decide
 | The same input gives the same bytes, in the schema's order | `the_same_input_gives_the_same_bytes`, against a trace written out in the test |
 | A planted secret appears in no record, span, metric, or log line | `a_planted_secret_appears_in_no_trace`, `a_secret_split_by_markup_is_still_masked`, `a_planted_secret_appears_in_no_log_line`, and the run in `a_started_logs_and_traces_writes_to_its_file_and_nothing_carries_a_planted_secret`. All against a test redactor; the same tests against the vault's, and against the test application's traffic, are package 2.1's |
 | A trace that holds a registered secret is refused, not written | `a_trace_that_still_holds_a_secret_is_refused` |
-| An artifact is redacted and checked, or dropped | `an_artifact_is_redacted_and_checked_or_it_is_dropped`, `artifacts_are_kept_as_the_level_says` |
-| A text artifact whose secret is split by markup, by a hidden character, or written with a character reference is dropped | `an_artifact_whose_secret_is_split_by_markup_or_written_with_a_reference_is_dropped` |
+| A capture is redacted and checked, or dropped | `a_capture_is_redacted_and_checked_or_it_is_dropped`, `captures_are_kept_as_the_level_says` |
+| A text capture whose secret is split by markup, by a hidden character, or written with a character reference is dropped | `a_capture_whose_secret_is_split_by_markup_or_written_with_a_reference_is_dropped` |
 | A trace with a line missing, added, moved, or repeated reads back as broken; a debug print of a step record shows no value | `a_trace_is_checked_against_its_own_chain` |
 | A log file is its owner's alone | `a_log_file_is_its_owners_alone_and_a_wider_one_is_narrowed`, on Linux and macOS |
 | No span or metric can carry a value | The `Attr` type and `&'static str` names; the run in `a_started_logs_and_traces…` searches spans and metrics for planted values |
@@ -335,7 +335,7 @@ A failure to capture evidence never fails a read. For a write, the engine decide
 - `ChoiceReason` is a closed list of four, written before the engine's choosing was built. The engine slice confirms or changes it; a change is a new schema version only if a reader of version 1 would misread it.
 - A trace is held in memory until `finish`. A pipeline of many thousands of rows meets the size limit first. Streaming to the store is the `EvidenceSink` weighed above.
 - Log lines are written synchronously under a lock. A writer thread, if the benchmarks ask for one.
-- A text artifact is dropped whole when any form of it holds a secret. Keeping it with the element that holds the secret cut out needs a parser of each kind of snapshot, which belongs to the pack that took it.
+- A text capture is dropped whole when any form of it holds a secret. Keeping it with the element that holds the secret cut out needs a parser of each kind of snapshot, which belongs to the pack that took it.
 - A number cannot be masked in place. A trace in which a number is a registered secret is refused whole; whether to withhold only that record's values instead.
 - How well a pack's masking of a screenshot works, which this crate cannot check.
 - Whether `full` capture is ever allowed on a production write.

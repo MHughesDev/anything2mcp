@@ -111,7 +111,7 @@ fn a_started_logs_and_traces_writes_to_its_file_and_nothing_carries_a_planted_se
                 ),
             ],
             outcome: TraceOutcome::Done,
-            artifacts: Vec::new(),
+            captures: Vec::new(),
         });
     }
     logs_and_traces.record_call(

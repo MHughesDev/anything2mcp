@@ -1516,7 +1516,7 @@ impl a2m_provider::FindingSink for Kept {
 
 #[tokio::test]
 async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_states() {
-    use a2m_core::{Archetype, EvidenceLevel, SurfaceKind};
+    use a2m_core::{AccessKind, EvidenceLevel, SurfaceKind};
     use a2m_provider::{
         CheckedPaths, Deadline, DescribeForm, DiscoveryScope, ReadOnlyPort, RootName,
         SurfaceDescription,
@@ -1526,7 +1526,7 @@ async fn discovery_reads_layouts_writes_nothing_and_drafts_only_what_the_file_st
     let surface = scene.surface("price_files");
     let description = SurfaceDescription {
         kind: SurfaceKind::new("file").unwrap(),
-        archetype: Archetype::Artifact,
+        access_kind: AccessKind::File,
         address: "prices".to_owned(),
         facts: Values::new(),
     };
@@ -1699,13 +1699,13 @@ async fn drafted_from(
     label: &str,
     names: &[&str],
 ) -> (std::path::PathBuf, a2m_files::DraftReport) {
-    use a2m_core::{Archetype, SurfaceKind};
+    use a2m_core::{AccessKind, SurfaceKind};
     use a2m_provider::{CheckedPaths, Deadline, DiscoveryScope, ReadOnlyPort, RootName};
 
     let surface = scene.surface("price_files");
     let description = a2m_provider::SurfaceDescription {
         kind: SurfaceKind::new("file").unwrap(),
-        archetype: Archetype::Artifact,
+        access_kind: AccessKind::File,
         address: "prices".to_owned(),
         facts: Values::new(),
     };
@@ -2002,13 +2002,13 @@ async fn discovered_surface(
     name: &str,
     depth: Option<u32>,
 ) -> (Vec<a2m_core::Finding>, a2m_provider::DiscoveryReport) {
-    use a2m_core::{Archetype, SurfaceKind};
+    use a2m_core::{AccessKind, SurfaceKind};
     use a2m_provider::{Deadline, DiscoveryScope, ReadOnlyPort};
 
     let surface = scene.surface(name);
     let description = a2m_provider::SurfaceDescription {
         kind: SurfaceKind::new("file").unwrap(),
-        archetype: Archetype::Artifact,
+        access_kind: AccessKind::File,
         address: surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -2427,7 +2427,7 @@ async fn settings_files_are_discovered_by_key_and_shape_drafted_as_reads_and_no_
         .registry
         .discoverers_for(&a2m_provider::SurfaceDescription {
             kind: a2m_core::SurfaceKind::new("file").unwrap(),
-            archetype: a2m_core::Archetype::Artifact,
+            access_kind: a2m_core::AccessKind::File,
             address: "config".to_owned(),
             facts: Values::new(),
         })

@@ -1403,7 +1403,7 @@ impl a2m_provider::FindingSink for Found {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn discovery_runs_only_the_declared_forms_and_drafts_commands_it_never_tries() {
-    use a2m_core::{Archetype, EvidenceLevel, LimitationCode, SurfaceKind};
+    use a2m_core::{AccessKind, EvidenceLevel, LimitationCode, SurfaceKind};
     use a2m_provider::{DescribeForm, DiscoveryScope, ReadOnlyPort, SurfaceDescription};
 
     let mut scene = Scene::new();
@@ -1428,7 +1428,7 @@ async fn discovery_runs_only_the_declared_forms_and_drafts_commands_it_never_tri
 
     let description = SurfaceDescription {
         kind: SurfaceKind::new("program").unwrap(),
-        archetype: Archetype::Command,
+        access_kind: AccessKind::Command,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };
@@ -1634,13 +1634,13 @@ async fn discovery_runs_only_the_declared_forms_and_drafts_commands_it_never_tri
 /// What the help of the stand's program lists, as findings: the program is
 /// started only with its declared help and version forms.
 async fn found_by_help(scene: &Scene) -> Vec<a2m_core::Finding> {
-    use a2m_core::{Archetype, SurfaceKind};
+    use a2m_core::{AccessKind, SurfaceKind};
     use a2m_provider::{DiscoveryScope, ReadOnlyPort, SurfaceDescription};
 
     let prepared = scene.prepare(Posture::Discovery, None).await.unwrap();
     let description = SurfaceDescription {
         kind: SurfaceKind::new("program").unwrap(),
-        archetype: Archetype::Command,
+        access_kind: AccessKind::Command,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };

@@ -12,7 +12,7 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use a2m_core::{Archetype, Mode, SurfaceKind};
+use a2m_core::{AccessKind, Mode, SurfaceKind};
 use a2m_provider::{Manifest, Roots};
 use common::{compile, fixtures, registry};
 
@@ -23,7 +23,7 @@ fn a_registry_with_only_the_file_pack_builds_and_its_digest_is_stable() {
     assert_eq!(first.digest(), second.digest());
     let mode = Mode::new("file").unwrap();
     assert_eq!(first.modes().collect::<Vec<_>>(), [&mode]);
-    assert_eq!(first.archetype(&mode), Some(Archetype::Artifact));
+    assert_eq!(first.access_kind(&mode), Some(AccessKind::File));
     assert!(first.driver(&mode).is_ok());
     assert!(
         first

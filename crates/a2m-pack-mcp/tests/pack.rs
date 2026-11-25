@@ -9,7 +9,7 @@
 
 mod common;
 
-use a2m_core::{Archetype, FailureClass, Values};
+use a2m_core::{AccessKind, FailureClass, Values};
 use a2m_provider::{Manifest, SurfaceDescription};
 use common::{
     Folder, compile, compiled_fixture, fixture_root, registry, shown, steps, write_target,
@@ -24,7 +24,7 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     assert_eq!(one.digest(), other.digest());
 
     let names = a2m_pack_mcp::Names::new().unwrap();
-    assert_eq!(one.archetype(&names.mode), Some(Archetype::Request));
+    assert_eq!(one.access_kind(&names.mode), Some(AccessKind::Request));
     assert_eq!(one.modes().collect::<Vec<_>>(), [&names.mode]);
     assert!(
         one.surface_kind(&a2m_pack_mcp::SURFACE_KIND)
@@ -41,7 +41,7 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     assert_eq!(providers, ["upstream_mcp"]);
     let surface = SurfaceDescription {
         kind: a2m_pack_mcp::SURFACE_KIND,
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: "http://127.0.0.1:9/mcp".to_owned(),
         facts: Values::new(),
     };

@@ -69,7 +69,7 @@ async fn a_snapshot_is_the_windows_shape_and_changes_nothing() {
         .registry
         .discoverers_for(&a2m_provider::SurfaceDescription {
             kind: a2m_core::SurfaceKind::new("desktop").unwrap(),
-            archetype: a2m_core::Archetype::Interface,
+            access_kind: a2m_core::AccessKind::Interface,
             address: scene.surface.surface.address.clone(),
             facts: a2m_core::Values::new(),
         })

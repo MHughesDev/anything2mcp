@@ -8,7 +8,7 @@
 
 ## Context
 
-In field test 7 a target written by hand stated no `status` on its bindings. A binding with no status is `draft` ([spec section 201](../spec/2-kernel/201-archetypes-and-modes.md)), and a `draft` binding may not act once published. The target linted clean, passed its offline tests (which run a draft binding, as they must to earn its promotion), and was published by the person's act. Its call then stopped as `busy`, `no_binding`, and the agent was told "The run stopped and can be resumed". Nothing would ever let that run go on: a run is held to the compiled target it started on, and a binding's status in it never changes.
+In field test 7 a target written by hand stated no `status` on its bindings. A binding with no status is `draft` ([spec section 201](../spec/2-kernel/201-access-kinds-and-modes.md)), and a `draft` binding may not act once published. The target linted clean, passed its offline tests (which run a draft binding, as they must to earn its promotion), and was published by the person's act. Its call then stopped as `busy`, `no_binding`, and the agent was told "The run stopped and can be resumed". Nothing would ever let that run go on: a run is held to the compiled target it started on, and a binding's status in it never changes.
 
 ## Decision
 

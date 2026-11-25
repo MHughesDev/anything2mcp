@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, Coverage, EvidenceLevel, Failure, Finding, FindingKind, Redact, Step, SurfaceKind,
+    AccessKind, Coverage, EvidenceLevel, Failure, Finding, FindingKind, Redact, Step, SurfaceKind,
     Values,
 };
 
@@ -37,8 +37,8 @@ use crate::path::CheckedPaths;
 pub struct SurfaceDescription {
     /// The surface kind.
     pub kind: SurfaceKind,
-    /// The kind's archetype.
-    pub archetype: Archetype,
+    /// The kind's access kind.
+    pub access_kind: AccessKind,
     /// Where it is reached, in the form its kind defines.
     pub address: String,
     /// What else is known, by name.
@@ -308,7 +308,7 @@ impl DiscovererHandle {
     /// Whether it applies to the surface.
     #[must_use]
     pub fn suits(&self, surface: &SurfaceDescription) -> bool {
-        surface.archetype == self.decl.archetype
+        surface.access_kind == self.decl.access_kind
             && (self.decl.surface_kinds.is_empty()
                 || self.decl.surface_kinds.contains(&surface.kind))
             && self.discoverer.suits(surface)

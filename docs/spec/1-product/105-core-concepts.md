@@ -36,8 +36,8 @@ These are examples. Each pack's section defines its own.
 
 | Concept | What it is | Example |
 | --- | --- | --- |
-| Archetype | One of the seven ways a system is reached: interface, request, command, bridge, artifact, stream, device. It fixes how a step is acted, confirmed, and read back. A closed type in the kernel ([section 201](../2-kernel/201-archetypes-and-modes.md)) | Interface |
-| Mode | One concrete way of reaching a system, brought by a pack and belonging to one archetype. A registered name: the kernel holds no list of modes | `ui`, `http`, `mcp` |
+| Access kind | One of the seven ways a system is reached: interface, request, command, bridge, file, stream, device. It fixes how a step is acted, confirmed, and read back. A closed type in the kernel ([section 201](../2-kernel/201-access-kinds-and-modes.md)) | Interface |
+| Mode | One concrete way of reaching a system, brought by a pack and belonging to one access kind. A registered name: the kernel holds no list of modes | `ui`, `http`, `mcp` |
 | Pack | The crates that know one kind of system. Compiled into the binary, enabled by a setting ([section 202](../2-kernel/202-kernel-and-packs.md)) | The web pack |
 | Provider | Anything that supplies capabilities to the runtime through the provider contract: a pack, a plug-in, or an upstream MCP server ([section 203](../2-kernel/203-the-provider-contract.md)) | A plug-in for a rare kind of system |
 | Driver | Pack code that carries out the steps of one or more modes. Only the engine calls it | The browser interface driver; the HTTP driver |

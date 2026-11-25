@@ -1,6 +1,6 @@
 # 305. The desktop pack
 
-The desktop pack lets a target be a desktop application: a program with windows that a person uses on their own machine. It reaches the application through the operating system's accessibility interface (UI Automation on Windows, the Accessibility API on macOS, AT-SPI on Linux), finds elements by role and name, and acts on them through the interface's own patterns. It brings one mode, `desktop`, in the interface archetype. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
+The desktop pack lets a target be a desktop application: a program with windows that a person uses on their own machine. It reaches the application through the operating system's accessibility interface (UI Automation on Windows, the Accessibility API on macOS, AT-SPI on Linux), finds elements by role and name, and acts on them through the interface's own patterns. It brings one mode, `desktop`, in the interface access kind. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 **How far it has got.** The spike of package 8.1 chose its base ([decision 0120](../../decisions/0120-the-desktop-pack-stands-on-each-systems-own-interface-through-thin-bindings.md)). Reads and writes on Linux are built ([decision 0198](../../decisions/0198-the-desktop-pack-reads-linux-applications-through-a-look-only-back-end.md), [decision 0218](../../decisions/0218-the-desktop-pack-writes-on-linux-through-a-second-closed-list-and-reads-back-what-is-stored.md)); reads on Windows are built ([decision 0209](../../decisions/0209-the-desktop-pack-reads-windows-applications-through-ui-automation-on-a-thread-of-its-own.md)); reads on macOS are built, and rest on the Accessibility permission the person grants in System Settings ([decision 0244](../../decisions/0244-the-desktop-pack-reads-macos-applications-and-proves-the-record-before-every-act.md)); both passed against the stand on CI's hosted runners ([decision 0278](../../decisions/0278-what-the-first-runs-on-windows-and-macos-showed-about-the-desktop-pack-and-the-check-of-programs.md)). Writes on Windows and macOS are written and linted, through UI Automation's value pattern and `Invoke` and through `AXValue` and `AXPress`, each by a closed list of its own, and not yet run ([decision 0399](../../decisions/0399-the-desktop-pack-writes-on-windows-and-macos-through-a-closed-list-of-its-own-on-each.md)). This section says what is settled, what is assumed, and what is still to be learned; where a later step of the build has settled a point, the crate design says so first.
 
@@ -10,7 +10,7 @@ The pack is one crate, `a2m-pack-desktop`. It has no base crate and depends on n
 
 | Settled | Not settled |
 | --- | --- |
-| The mode `desktop`, archetype interface ([decision 0005](../../decisions/0005-seven-modes-behind-one-driver-interface.md), [decision 0050](../../decisions/0050-seven-archetypes-and-modes-that-arrive-with-packs.md)) | The accessibility library, or libraries |
+| The mode `desktop`, access kind interface ([decision 0005](../../decisions/0005-seven-modes-behind-one-driver-interface.md), [decision 0050](../../decisions/0050-seven-archetypes-and-modes-that-arrive-with-packs.md)) | The accessibility library, or libraries |
 | Elements are found by role and name in the accessibility tree; never by position on a picture of the screen | How a window is reached: started, attached, matched by title or by process |
 | Its steps are those of `ui` except `observe` ([steps reference](../../reference/steps-snapshots-and-diffs.md#steps)) | Which conditions each operating system can signal as events |
 | Its verbs are the `desktop` column below | How a desktop application's own sign-in is kept, and by which auth provider |
@@ -50,7 +50,7 @@ Open points of this section, which note 33 marks as not read: the text and behav
 
 ## The mode
 
-| Mode | Archetype | How it reaches the system | Needs | Best for | Main risk |
+| Mode | Access kind | How it reaches the system | Needs | Best for | Main risk |
 | --- | --- | --- | --- | --- | --- |
 | `desktop` | Interface | The operating system's accessibility tree | The application running on the machine, in an interactive session | Desktop clients | Applications with poor accessibility data |
 
@@ -59,7 +59,7 @@ Open points of this section, which note 33 marks as not read: the text and behav
 | Registration | Content |
 | --- | --- |
 | Surface kinds | `desktop` |
-| Modes | `desktop`, archetype interface |
+| Modes | `desktop`, access kind interface |
 | Step kinds | `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, checked names within the mode |
 | Driver | One |
 | File kinds | Owns `screens/` for surfaces of kind `desktop`. Registration is keyed by file kind and surface kind, so the web pack's registration for `web` surfaces does not collide. `reach` takes a window match (process, title, or an automation identifier) or `from` another screen with an action. The `css` locator is not accepted; `test_id` means the interface's automation identifier |
@@ -107,7 +107,7 @@ A pack may not depend on another pack's crates, so this pack cannot use the web 
 | The snapshot's text form | The steps reference. An agent reads a window and a page the same way |
 | What a driver must do | The conformance suite's groups for locating, waiting, acting, and snapshots, run against case 28 as against the web cases |
 
-The code is written twice, each over its own element handle. That is the price of the rule, and it is measured: if the second copy grows large, the parts that belong to the archetype (the `screens/` skeleton, locator ordering, condition evaluation over an abstract tree) are a candidate to move into the kernel by decision record. That would be a finding for hypotheses H-26 and H-37.
+The code is written twice, each over its own element handle. That is the price of the rule, and it is measured: if the second copy grows large, the parts that belong to the access kind (the `screens/` skeleton, locator ordering, condition evaluation over an abstract tree) are a candidate to move into the kernel by decision record. That would be a finding for hypotheses H-26 and H-37.
 
 ## Sessions and sign-in
 

@@ -56,7 +56,7 @@ surfaces:
 
 *Keeping the frame in the step that sends it, as a capture.* The committing step cannot return anything for reconcile, by the contract, and what a step returns exists only after it ends. A write whose link died would still leave no record of its bytes.
 
-*Reusing `expect` for the step that builds the frame.* No new step kind, and [spec section 201](../spec/2-kernel/201-archetypes-and-modes.md) would not change. It lost because a trace should say what a step did, and `expect` reads a reply.
+*Reusing `expect` for the step that builds the frame.* No new step kind, and [spec section 201](../spec/2-kernel/201-access-kinds-and-modes.md) would not change. It lost because a trace should say what a step did, and `expect` reads a reply.
 
 *A frame count from the provider contract.* A step is given a deadline and no count, and `prepare` is given no limits of the run. The pack counts by itself until the contract does.
 

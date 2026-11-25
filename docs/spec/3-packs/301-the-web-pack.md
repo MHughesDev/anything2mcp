@@ -32,13 +32,13 @@ The product crate builds one `Browsers` from the base and gives it to `a2m-pack-
 
 ## Modes
 
-| Mode | Archetype | How it reaches the system | Needs | Best for | Main risk |
+| Mode | Access kind | How it reaches the system | Needs | Best for | Main risk |
 | --- | --- | --- | --- | --- | --- |
 | `ui` | Interface | The browser engine acts on elements by role, label, text, or test id; no pixel clicks | A browser session | Writes that must pass the application's own validation; applications with no usable traffic | Layout and label changes |
 | `page_http` | Request | Requests sent from inside the signed-in page with the page's own session, cookies, and headers | A browser session | Fast reads and proven writes without driving the interface | Front-end logic is skipped |
 | `site_tools` | Request | Tools the site registers in the browser (WebMCP), called with typed arguments. As built: by name and the digest of the tool's description and schema, from an acting tab, as a write that cannot be taken back ([decision 0359](../../decisions/0359-the-site-tools-mode-calls-a-tool-a-page-registers-by-its-name-and-digest-as-a-write-that-cannot-be-taken-back.md)) | A browser session | Sites that offer them | An early standard, offered by few sites |
 
-The modes are those of [decision 0005](../../decisions/0005-seven-modes-behind-one-driver-interface.md), so the pack needs no new mode record. Each mode's place in the default order of bindings is its `rank` in the pack's manifest, as [section 201](../2-kernel/201-archetypes-and-modes.md) describes; the cheapest-first rule puts the interface last. An operation that began as `ui` steps gains a `page_http` or `http` binding safely through shadow and promotion (below).
+The modes are those of [decision 0005](../../decisions/0005-seven-modes-behind-one-driver-interface.md), so the pack needs no new mode record. Each mode's place in the default order of bindings is its `rank` in the pack's manifest, as [section 201](../2-kernel/201-access-kinds-and-modes.md) describes; the cheapest-first rule puts the interface last. An operation that began as `ui` steps gains a `page_http` or `http` binding safely through shadow and promotion (below).
 
 `site_tools` belongs here and not to the MCP pack, because it needs a tab that can act and only the web pack has one ([decision 0062](../../decisions/0062-words-that-arrive-with-packs-are-registered-names-and-packs-share-data-never-code.md)). It shares ideas with `mcp`, a pinned list of tools and a typed call, and no code.
 
@@ -47,7 +47,7 @@ The modes are those of [decision 0005](../../decisions/0005-seven-modes-behind-o
 | Registration | Content |
 | --- | --- |
 | Surface kinds | `web` |
-| Modes | `ui`, archetype interface; `page_http` and `site_tools`, archetype request |
+| Modes | `ui`, access kind interface; `page_http` and `site_tools`, access kind request |
 | Step kinds | `goto`, `wait`, `locate`, `set`, `invoke`, `read`, `handle`, `upload`, `download`, `observe` for `ui`; `goto` and `request` for `page_http`, where `request` also checks the answer and gives its values, so no unchecked answer is held between steps ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)), and, for a write, reads the page's anti-forgery token inside the page in the same call that sends it, so the token never leaves the page and there is no `token` step ([decision 0206](../../decisions/0206-the-page-http-mode-writes-by-put-with-the-pages-own-token-in-an-acting-tab.md)); `call_tool` for `site_tools`. Each a checked name within its mode |
 | Drivers | One per mode, sharing one `Browsers` |
 | File kinds | Owns `screens/` for surfaces of kind `web` ([file formats](../../reference/file-formats.md#screensyaml)), and `page_requests/`, the `page_http` mode's entries, in the form of the endpoint catalog the HTTP pack owns ([section 303](303-the-http-pack.md)) with the page that makes each; the drafter lets a pack draft only its own kinds, so the two share one catalog only once that changes ([decision 0190](../../decisions/0190-the-page-http-mode-reads-from-inside-the-page-in-an-observing-tab.md)) |
@@ -475,7 +475,7 @@ The crates are built in the order their designs give: the browser base chosen by
 
 - The base library behind the browser engine, and whether it can use a pipe for the protocol (slice 0.4, hypotheses H-01 to H-03).
 - How a program built on a browser runtime is started so that the protocol runs on a pipe, as for a browser.
-- Whether the shared parts of `screens/` should become the interface archetype's, in the kernel, once the desktop pack exists (hypothesis H-37).
+- Whether the shared parts of `screens/` should become the interface access kind's, in the kernel, once the desktop pack exists (hypothesis H-37).
 - How the `page_http` lowering and the probe are held to the version of the `endpoints/` and `endpoint` finding schemas they were written for, when the HTTP pack changes them.
 - The tool registry a page offers is an early proposal (brief 24); its shape is settled when the standard is. [Research note 25](../../research/25-webmcp-standard-status.md) found that such tools can be discovered and called through the browser's debugging protocol in a current browser build, and that the standard is still a community group draft.
 - Whether a validation message is always a declared variant, or a profile can name a generic one.

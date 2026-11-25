@@ -9,7 +9,7 @@
 
 mod common;
 
-use a2m_core::{Archetype, Availability, FailureClass, Mode, Values};
+use a2m_core::{AccessKind, Availability, FailureClass, Mode, Values};
 use a2m_provider::{
     FoundManifest, Manifest, ProviderName, ProviderSettings, RegistryBuilder, Roots,
     SurfaceDescription, codes,
@@ -37,7 +37,7 @@ fn a_pack_registers_a_mode_a_file_kind_a_discoverer_and_an_auth_provider() {
     let pack = TestPack::new("alpha");
     let (registry, problems) = build(&[&pack], ProviderSettings::default());
     assert!(problems.is_empty(), "{problems:?}");
-    assert_eq!(registry.archetype(&mode()), Some(Archetype::Request));
+    assert_eq!(registry.access_kind(&mode()), Some(AccessKind::Request));
     let defaults = registry.mode_defaults(&mode()).unwrap();
     assert_eq!(
         (
@@ -58,7 +58,7 @@ fn a_pack_registers_a_mode_a_file_kind_a_discoverer_and_an_auth_provider() {
     assert!(entry.session);
     let surface = SurfaceDescription {
         kind,
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: "https://example.test".to_owned(),
         facts: Values::new(),
     };
@@ -93,7 +93,7 @@ fn a_manifest_that_asks_for_an_undeclared_effect_is_refused() {
     let (registry, problems) = build(&[&pack], ProviderSettings::default());
     assert_eq!(problems.len(), 1);
     assert_eq!(problems[0].failure.code(), &codes::EFFECT_NOT_DECLARED);
-    assert_eq!(registry.archetype(&mode()), None);
+    assert_eq!(registry.access_kind(&mode()), None);
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn a_mode_registered_twice_is_refused() {
     let failure = Manifest::parse(&twice).unwrap_err();
     assert_eq!(failure.class(), FailureClass::Input);
     assert_eq!(failure.code(), &codes::MODE_CONFLICT);
-    // By two packs, with two archetypes: both are refused, whatever the order.
+    // By two packs, with two access kinds: both are refused, whatever the order.
     let request = TestPack::new("alpha");
     let command = TestPack::with_manifest("beta", manifest("beta", "command", ""));
     for packs in [[&request, &command], [&command, &request]] {
@@ -136,7 +136,7 @@ fn a_mode_registered_twice_is_refused() {
             .map(|problem| problem.provider.clone().unwrap().to_string())
             .collect();
         assert_eq!(conflicts, ["alpha", "beta"]);
-        assert_eq!(registry.archetype(&mode()), None);
+        assert_eq!(registry.access_kind(&mode()), None);
     }
 }
 
@@ -465,8 +465,8 @@ fn a_kind_has_one_owner_and_a_reader_of_a_missing_owner_stays_registered() {
     assert!(problems[0].registered);
     assert!(problems[0].failure.next_step().contains("alpha"));
     assert_eq!(
-        registry.archetype(&Mode::new("other").unwrap()),
-        Some(Archetype::Request)
+        registry.access_kind(&Mode::new("other").unwrap()),
+        Some(AccessKind::Request)
     );
     // With the owner enabled there is no problem.
     let (_, problems) = build(&[&alpha, &reader], ProviderSettings::default());
@@ -516,7 +516,7 @@ fn a_pack_whose_manifest_is_refused_is_named_with_its_problem_and_registers_noth
     assert_eq!(named[0].name.as_deref(), Some("alpha"));
     assert_eq!(named[0].version.as_deref(), Some("0.1.0"));
     assert_eq!(named[0].problem, problems[0].failure);
-    assert_eq!(registry.archetype(&mode()), None);
+    assert_eq!(registry.access_kind(&mode()), None);
 }
 
 /// Decision 0193, finding P-3: a refused manifest that says the name of a
@@ -535,7 +535,7 @@ fn a_refused_provider_never_takes_a_registered_providers_name() {
         let (registry, problems) = build(&packs, ProviderSettings::default());
         assert_eq!(registry.listing().len(), 1);
         assert!(registry.listing()[0].registered);
-        assert_eq!(registry.archetype(&mode()), Some(Archetype::Request));
+        assert_eq!(registry.access_kind(&mode()), Some(AccessKind::Request));
         let refused = registry.refused();
         assert_eq!(refused.len(), 1);
         assert_eq!(refused[0].name, None);
@@ -583,7 +583,7 @@ fn a_manifest_without_files_declares_none_and_one_with_files_is_read() {
     let kind = a2m_core::SurfaceKind::new("alpha_surface").unwrap();
     let surface = SurfaceDescription {
         kind,
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: "https://example.test".to_owned(),
         facts: Values::new(),
     };
@@ -618,7 +618,7 @@ fn a_manifest_without_files_declares_none_and_one_with_files_is_read() {
         vec!["description".to_owned()]
     );
     let other = SurfaceDescription {
-        archetype: Archetype::Device,
+        access_kind: AccessKind::Device,
         ..surface
     };
     assert!(registry.files_taken(&other).is_empty());

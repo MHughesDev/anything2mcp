@@ -4,7 +4,7 @@
 //! Each record gives one digest, over the parts of it that should not vary.
 //! The signature chains those digests in the order the records were made and
 //! closes the chain with their count. Timings, identifiers, versions, scores,
-//! measurements, artifact references, the capture level, and values the
+//! measurements, capture references, the capture level, and values the
 //! compiled target declares volatile never enter.
 
 use a2m_core::Digest;

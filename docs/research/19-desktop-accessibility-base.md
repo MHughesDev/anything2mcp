@@ -133,7 +133,7 @@ Case 28 is the egui program; a second window of native controls on each system i
 
 ### Applications built on a browser runtime
 
-They stay web surfaces, served by `ui` after the supervisor starts the program, as [section 201](../spec/2-kernel/201-archetypes-and-modes.md) and [section 301](../spec/3-packs/301-the-web-pack.md) say; the design's open point that asked for section 201 to be corrected is stale. One case is left: a packaged application can disable its inspector, and then the web pack fails. Such a runtime builds its accessibility tree only when it sees an assistive client, so the desktop pack could read it. The design keeps refusing it; whether to allow `desktop` there is an open point, not a decision.
+They stay web surfaces, served by `ui` after the supervisor starts the program, as [section 201](../spec/2-kernel/201-access-kinds-and-modes.md) and [section 301](../spec/3-packs/301-the-web-pack.md) say; the design's open point that asked for section 201 to be corrected is stale. One case is left: a packaged application can disable its inspector, and then the web pack fails. Such a runtime builds its accessibility tree only when it sees an assistive client, so the desktop pack could read it. The design keeps refusing it; whether to allow `desktop` there is an open point, not a decision.
 
 ## What this means for the design
 

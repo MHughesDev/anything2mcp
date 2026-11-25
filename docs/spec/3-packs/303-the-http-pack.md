@@ -1,6 +1,6 @@
 # 303. The HTTP pack
 
-The HTTP pack lets a target be a service reached by HTTP requests, described or not. Requests are built from typed templates, sent from code with no browser at run time, and checked against their schemas. It brings two modes in the request archetype: `http`, for requests sent directly, and `api`, for calls generated from a published description of the service. It owns the endpoint catalog, the `endpoints/` file kind, which the web pack's `page_http` mode also reads. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
+The HTTP pack lets a target be a service reached by HTTP requests, described or not. Requests are built from typed templates, sent from code with no browser at run time, and checked against their schemas. It brings two modes in the request access kind: `http`, for requests sent directly, and `api`, for calls generated from a published description of the service. It owns the endpoint catalog, the `endpoints/` file kind, which the web pack's `page_http` mode also reads. Built today: partly; [section 704](../7-project/704-readiness.md) gives the detail.
 
 The pack is one crate, `a2m-pack-http`. It has no base crate and depends on no other pack. Its [design](../../architecture/crates/a2m-pack-http.md) is the exact statement of how the code is arranged; this section says what the pack does and why.
 
@@ -26,19 +26,19 @@ The pack is one crate, `a2m-pack-http`. It has no base crate and depends on no o
 
 ## Modes
 
-| Mode | Archetype | How it reaches the system | Needs | Best for | Main risk |
+| Mode | Access kind | How it reaches the system | Needs | Best for | Main risk |
 | --- | --- | --- | --- | --- | --- |
 | `http` | Request | Requests sent directly from code, with no browser at run time | A session cookie or token from the session keeper | Bulk and high-volume work; servers without a browser | Undocumented endpoints change; bot defenses |
 | `api` | Request | Calls generated from a published description | A token or key | Systems with an official interface | Coverage gaps |
 
-Both modes are from [decision 0005](../../decisions/0005-seven-modes-behind-one-driver-interface.md). Their ranks in the pack's manifest put them ahead of `page_http` and `ui` in the default order of bindings, so the cheapest verified binding is tried first ([section 201](../2-kernel/201-archetypes-and-modes.md)). gRPC reflection, once listed under `api`, is not in the first release; it needs its own stand.
+Both modes are from [decision 0005](../../decisions/0005-seven-modes-behind-one-driver-interface.md). Their ranks in the pack's manifest put them ahead of `page_http` and `ui` in the default order of bindings, so the cheapest verified binding is tried first ([section 201](../2-kernel/201-access-kinds-and-modes.md)). gRPC reflection, once listed under `api`, is not in the first release; it needs its own stand.
 
 ## What it registers
 
 | Registration | Content |
 | --- | --- |
 | Surface kinds | `http` |
-| Modes | `http` and `api`, archetype request |
+| Modes | `http` and `api`, access kind request |
 | Step kinds | `token`, `request`, `validate`, `extract` for `http`; `call`, `validate`, `extract` for `api`; and `probe`, which only a discoverer makes, in both. Checked names within each mode |
 | Drivers | One per mode |
 | File kinds | Owns `endpoints/`, for `http` surfaces and, for requests made from inside a page, `web` surfaces. The web pack declares that it reads the kind and is handed the validated entries as data. Owns `descriptions/`, a pinned description, the endpoint catalog's entries for `api` reads: the pack's reading of an imported description's drafted reads, one document each, with the digest of the text it was read from and the path it was served at, which an `api` binding names ([decision 0389](../../decisions/0389-the-api-mode-binds-a-read-to-a-pinned-description-and-names-its-change-as-drift.md)) |

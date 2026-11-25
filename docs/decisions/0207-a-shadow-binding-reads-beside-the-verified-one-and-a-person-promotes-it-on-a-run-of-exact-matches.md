@@ -4,7 +4,7 @@
 
 **Date:** 2026-11-18
 
-**Changes:** the designs of [`a2m-engine`](../architecture/crates/a2m-engine.md) and [`a2m-ledger`](../architecture/crates/a2m-ledger.md); sentences of spec sections [201](../spec/2-kernel/201-archetypes-and-modes.md), [207](../spec/2-kernel/207-the-engine-loop.md), [219](../spec/2-kernel/219-the-evidence-ladder.md), and [225](../spec/2-kernel/225-performance.md); failure codes of the [technical reference](../reference/technical-reference.md). Builds roadmap package 4.3 for reads; the shadow of a write is named and not built.
+**Changes:** the designs of [`a2m-engine`](../architecture/crates/a2m-engine.md) and [`a2m-ledger`](../architecture/crates/a2m-ledger.md); sentences of spec sections [201](../spec/2-kernel/201-access-kinds-and-modes.md), [207](../spec/2-kernel/207-the-engine-loop.md), [219](../spec/2-kernel/219-the-evidence-ladder.md), and [225](../spec/2-kernel/225-performance.md); failure codes of the [technical reference](../reference/technical-reference.md). Builds roadmap package 4.3 for reads; the shadow of a write is named and not built.
 
 ## Plan, stated before the build
 

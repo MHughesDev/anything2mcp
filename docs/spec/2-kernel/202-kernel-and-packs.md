@@ -11,7 +11,7 @@ The crates fall in eleven layers ([decision 0061](../../decisions/0061-the-layer
 | In the kernel | In a pack |
 | --- | --- |
 | Core types; target files, their loader, and the compiler; expressions and field types | The file kinds only that pack understands, with their schemas and lint rules |
-| The engine loop, the ledger, identity strategies, reconcile | The driver: how each step of its archetype is carried out |
+| The engine loop, the ledger, identity strategies, reconcile | The driver: how each step of its access kind is carried out |
 | The policy engine, approvals, limits | How its verbs lower into steps |
 | The session keeper and the vault; the auth providers that only hold or exchange a credential | Its auth providers that need a surface of its kind: how a session of its kind is made and renewed |
 | Sources; the action registry; the local engine; the front doors | Its widget drivers or their equivalent |

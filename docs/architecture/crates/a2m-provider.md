@@ -16,10 +16,10 @@ The one doorway between the kernel and everything that knows a kind of system. I
 ## Owns
 
 - The manifest: its file format, its schema, and the checks that a provider asks for nothing it did not declare.
-- The `Registry`: one immutable snapshot of every provider, its modes with their archetypes, and the objects each supplied.
+- The `Registry`: one immutable snapshot of every provider, its modes with their access kinds, and the objects each supplied.
 - The traits `Driver`, `Discoverer`, `Describer`, and `ProviderAction`, and the `DriverHandle` through which alone the engine reaches a driver.
 - Traffic capture as a capability a pack may offer: `CaptureSource`, `TrafficCapture`, the form of what a capture yields (`CapturedTraffic`, `CapturedRequest`), and the check every yield passes (`take_capture`), with the registry's `CaptureHandle` ([decision 0391](../../decisions/0391-traffic-capture-is-a-capability-of-the-provider-contract-that-yields-structure-only.md)).
-- The registered names a provider brings: modes with their archetypes, surface kinds, step kinds, file kinds, lint codes, finding kinds. Each is a checked name from `a2m-core`; the registry is the only list of them.
+- The registered names a provider brings: modes with their access kinds, surface kinds, step kinds, file kinds, lint codes, finding kinds. Each is a checked name from `a2m-core`; the registry is the only list of them.
 - The choice between two providers that could fill the same place, and its recorded reason.
 - File access for packs: `CheckedPath`, which only the check against the allowed roots can make ([section 502](../../spec/5-security/502-defending-against-a-manipulated-agent.md), [section 213](../../spec/2-kernel/213-effects-hazards-and-consent.md)).
 - The supervisor: the only way anything starts a process, with the handshake, the framing, deadlines, and ownership-proven stopping.
@@ -57,7 +57,7 @@ queue = 16                               # requests waiting beyond that, before 
 
 [[modes]]
 name = "sheet"                           # a Mode; registering it needs a decision record for a pack, admin approval for a plug-in
-archetype = "artifact"                   # one of the seven
+access kind = "capture"                   # one of the seven
 verbs = ["read", "list", "update"]
 steps = ["open", "locate", "set", "read", "save"]
 commit_steps = ["save"]                  # the kinds that always save; the handle refuses one sent as a step that commits nothing. May be left out
@@ -71,7 +71,7 @@ exclusive = "file"                       # what one write holds alone: "none", "
 
 [[surface_kinds]]                        # registered names, like modes; a target's surface must name one that is registered
 name = "file"
-archetype = "artifact"
+access kind = "capture"
 session = false                          # whether a session of the keeper is held on it
 
 [[reads]]                                # kinds owned by another pack that this provider reads; the compiler hands it the validated entries as data
@@ -89,12 +89,12 @@ traffic_capture = []                     # surface kinds whose traffic it captur
 
 [[discoverers]]
 name = "sheet_structure"
-archetype = "artifact"
+access kind = "capture"
 kinds = ["schema", "field"]              # finding kinds it may return
 sources = ["live_system", "artifact"]
 max_level = "discovered"
 bounds = { seconds = 60, bytes = 50000000, depth = 8 }
-surface_kinds = ["file"]                 # the surface kinds it applies to; left out, any surface of its archetype
+surface_kinds = ["file"]                 # the surface kinds it applies to; left out, any surface of its access kind
 files = []                               # the names under which it reads files a person hands a discovery, from the project's `sources` folder; left out, none (decision 0263)
 driven_by = "engine"                     # "engine" | "person"; left out, "engine". "person" only where `points.traffic_capture` is not empty (decisions 0392, 0395)
 
@@ -181,7 +181,7 @@ Checks made when a manifest is read, and when the registry is built, each a name
 | --- | --- |
 | The file parses, has no key the format does not know, and every name in it is well formed | `input`, `manifest_invalid`, with the line; a rule that spans fields names the field |
 | `contract` is current or previous | `input`, `contract_unsupported` |
-| A mode or surface kind is stated once in a manifest. Two providers that register one mode agree on its archetype. A surface kind has one provider | `input`, `mode_conflict`, for each provider involved |
+| A mode or surface kind is stated once in a manifest. Two providers that register one mode agree on its access kind. A surface kind has one provider | `input`, `mode_conflict`, for each provider involved |
 | Every step kind, file kind, lint code, finding kind, control, and failure code is listed once; a lint code and an action start with the provider's name; a step kind that always commits is one of the mode's step kinds | `input`, `manifest_invalid` |
 | A failure code of the provider contract keeps its own class, and no code is one of the kernel's own, `codes::KERNEL_ONLY`: `blocked_by_parent`, `runner_lost`, `cannot_reconcile`, `reconcile_required`, `approval_missing`, `approval_stale`, `lease_superseded`. These state the kernel's bookkeeping, and some of the kernel's logic goes by the code alone | `input`, `manifest_invalid` |
 | Every kind a provider `reads` has exactly one enabled owner for that surface kind. If the owner is absent or disabled, the reader stays registered, the problem is listed, and any binding that needs the kind does not compile | `input`, `kind_owner_missing`, naming the kind, the surface kind, and the pack to enable |
@@ -272,9 +272,9 @@ pub struct ActionContext<'a> { pub roots: &'a Roots, pub registry: &'a Registry,
 pub struct Registry { /* immutable; an Arc inside */ }
 impl Registry {
     pub fn digest(&self) -> Digest;                            // keys the tool-list cache and is recorded in every trace
-    pub fn archetype(&self, mode: &Mode) -> Option<Archetype>;
+    pub fn access kind(&self, mode: &Mode) -> Option<Access kind>;
     pub fn modes(&self) -> impl Iterator<Item = &Mode>;
-    pub fn surface_kind(&self, kind: &SurfaceKind) -> Option<&SurfaceKindEntry>;   // archetype, whether it holds a session, which provider
+    pub fn surface_kind(&self, kind: &SurfaceKind) -> Option<&SurfaceKindEntry>;   // access kind, whether it holds a session, which provider
     pub fn mode_defaults(&self, mode: &Mode) -> Option<ModeDefaults>;   // rank, intent window, session limits, exclusive
     /// The driver for a mode, with the provider choice already made and its reason attached.
     pub fn driver(&self, mode: &Mode) -> Result<DriverHandle, Failure>;
@@ -426,7 +426,7 @@ pub struct CheckedPaths { /* by the name the compiled target gives each */ }    
 #[derive(Clone)]
 pub struct DriverHandle { /* the driver, the mode's declared steps and codes, the provider choice */ }
 impl DriverHandle {
-    pub fn mode(&self) -> &Mode;   pub fn archetype(&self) -> Archetype;
+    pub fn mode(&self) -> &Mode;   pub fn access kind(&self) -> Access kind;
     pub fn choice(&self) -> &ProviderChoice;                   // provider, version, manifest digest, reason: recorded in the trace
     /// The supervisor for the PrepareContext: the manifest's programs, and the compiled target's where the manifest says `compiled_target_programs`.
     pub fn supervisor(&self, compiled_target_programs: Vec<ProgramRef>) -> ScopedSupervisor;
@@ -455,7 +455,7 @@ pub enum DrivenBy { Engine, Person }                          // DiscovererDecl:
 pub struct CaptureEnd;     // is_set(), async ended(); set by the contract alone
 pub struct CaptureStop;    // the kernel's half: stop(), end() -> &CaptureEnd; from Registry::capture_stop alone
 pub const CAPTURE_END_GRACE: Duration;                       // 5 seconds, after the end, to return
-pub struct SurfaceDescription { pub kind: SurfaceKind, pub archetype: Archetype, pub address: String, pub facts: Values }
+pub struct SurfaceDescription { pub kind: SurfaceKind, pub access kind: Access kind, pub address: String, pub facts: Values }
 pub struct DiscoveryScope<'a> {
     pub surface: &'a SurfaceRef, pub bounds: Bounds, pub deadline: Deadline,
     pub paths: &'a CheckedPaths, pub redact: &'a dyn Redact, pub focus: &'a Values,
@@ -520,7 +520,7 @@ Contracts the signatures do not show:
 - **There is one redactor.** `PackContext::redact`, `PrepareContext::redact`, and the handle's own are the same object: the vault's redactor, which the action registry's kernel hands to `HostServices` and to the engine alike. `PrepareContext::redact` is a borrow that ends with `prepare`, and `StepInput` carries none, so a driver redacts in `act` with the one it keeps from its `PackContext`. A host that built the two from different objects would break this; nothing checks it.
 - **What a capture yields is structure, and passes the contract's check whatever the pack did.** `take_capture` withholds whole a request whose method or origin is not of its form or holds a secret the redactor knows, and counts it; cuts a query or fragment off a path; and holds every path segment, every name of a query's parameter or a header, and each part of a field's name to one predicate, `is_captured_word` (at most 32 characters of ASCII letters, digits, `_`, `-`, `.`; at most three digits; no run of more than 15 hexadecimal digits) and to the redactor. A segment that fails is `{value}`; a name that fails is dropped, saying one was left out. It holds by itself, whatever the pack flagged. A surface of a kind the manifest does not declare is refused by the handle before the pack is asked (decision 0391).
 - **A discoverer is called by one method, which its manifest names** (decisions 0392, 0395, and 0406). `DiscovererHandle::discover` refuses a discoverer whose `driven_by` is `person`, and `DiscovererHandle::watch` one whose `driven_by` is `engine`, both `policy`, `effect_not_declared`, before the pack is asked; the registry gives the first kind only through `discoverers_for` and the second only through `capture_discoverers_for`. A manifest with a person-driven discoverer and no `points.traffic_capture` is refused. `watch` takes no port. The handle holds its bound: the earlier of the scope's deadline and its `seconds`, held to the manifest's; at the bound it sets the end itself and names `seconds` in the report, and once the end is set, a discoverer that has not returned within `CAPTURE_END_GRACE` is dropped, `transient`, `timeout`. A `CaptureEnd` has no public constructor and no public setter; its `CaptureStop` comes from the registry.
-- **A discoverer has no handle and no token.** `discover` is given a `SandboxPort`, a scope, and a sink. The port's one method takes no `Authority`, so there is nowhere to pass a token; a `DriverHandle` comes only from the registry, which no pack is given; an `IntentToken` has no public constructor. `ReadOnlyPort` sends every step with `Authority::Read`, so a step marked `commits` is refused before the driver sees it. For a first-party pack that is structural and reviewed; for a plug-in it is only as strong as the effects listing says. What a read-only step is, for its archetype, each pack states and its conformance test proves. The limit of this: a discoverer builds its own steps, and the driver behind the port may be another pack's, so a step of a kind that saves, sent without the `commits` mark, is stopped by that driver's own posture guard and by nothing in the kernel, unless the mode lists the kind under `commit_steps`. No first-party manifest lists one yet.
+- **A discoverer has no handle and no token.** `discover` is given a `SandboxPort`, a scope, and a sink. The port's one method takes no `Authority`, so there is nowhere to pass a token; a `DriverHandle` comes only from the registry, which no pack is given; an `IntentToken` has no public constructor. `ReadOnlyPort` sends every step with `Authority::Read`, so a step marked `commits` is refused before the driver sees it. For a first-party pack that is structural and reviewed; for a plug-in it is only as strong as the effects listing says. What a read-only step is, for its access kind, each pack states and its conformance test proves. The limit of this: a discoverer builds its own steps, and the driver behind the port may be another pack's, so a step of a kind that saves, sent without the `commits` mark, is stopped by that driver's own posture guard and by nothing in the kernel, unless the mode lists the kind under `commit_steps`. No first-party manifest lists one yet.
 - **`CheckedPath` refuses the same forms on every operating system:** an empty path, an absolute path, `.` and `..`, a backslash, a colon (so every drive, stream, and network form), a home folder mark, a control character, a part that ends with a dot or a space, a device name, and a link that leads outside the root. A link that stays inside is followed. The path is resolved once; every method that opens the file looks once more that it still resolves inside the root.
 - **What `check` and `join` promise about links.** Every link that exists in the path when it is made is followed, in a folder on the way and at the final name alike, as long as it leads inside the root; one that leads outside, or nowhere, is refused. So the path a `CheckedPath` holds, which `as_path` gives and the reading methods use, has no link in it, and a pack that looks at it cannot tell a file from a link to one. `entry_kind` is how it can: it reports what stands at the final name as written, `Absent`, `File`, `Folder`, `Link`, or `Other`, and follows nothing.
 - **A write and a removal never go through a link.** `write` and `remove_file` act on the final name in its folder. Where a link stands at that name they refuse, `input`, `path_not_allowed`, whether the link was there when the path was made or was put there since. `write` makes its new file under a name of 128 random bits from the operating system, only if nothing stands at that name, and without following a link; the name the file then takes is replaced and never followed. `create_dir` makes one folder and fails when anything is at the name.
@@ -759,7 +759,7 @@ The host supports the current and previous version. A method the plug-in does no
 | Caller | Uses |
 | --- | --- |
 | The product crate | `RegistryBuilder`, `HostServices`, `ProviderSettings`, `Pack`, `Supervisor::new`, `Roots::add` |
-| `a2m-engine` | `Registry::driver`, `DriverHandle`, `archetype`, `mode_defaults`, `source_reader`; implements `SandboxPort`, or uses `ReadOnlyPort` |
+| `a2m-engine` | `Registry::driver`, `DriverHandle`, `access_kind`, `mode_defaults`, `source_reader`; implements `SandboxPort`, or uses `ReadOnlyPort` |
 | `a2m-actions` | `listing`, `discoverers_for` when it submits a discovery job, `auth_providers`, `compiler_set`, `action` for its dispatcher, `Roots::check` for the kernel's own reads, `supervisor` for `doctor.run` |
 | A runner | `discoverers_for` and `Discoverer::discover`, inside the engine's sandbox, for a discovery job |
 | Packs | `Pack`, `PackContext`, `Registrar`, `CompilerRegistrations`, the traits, `PrepareContext`, `CheckedPath`, `ScopedSupervisor` to start their programs; `shape`, in the HTTP pack and the web pack |
@@ -795,7 +795,7 @@ The codes are declared in this crate's `failure_codes!` table, the module `codes
 | Must always hold | Proven by |
 | --- | --- |
 | A manifest that asks for an undeclared effect, or registers beyond it, is refused with a named failure | `tests/registry.rs`: an undeclared point, an undeclared session, and a pack that registers a driver its manifest does not list |
-| A mode registered twice, or with two archetypes, is refused | `tests/registry.rs`, in one manifest and across two packs in both orders |
+| A mode registered twice, or with two access kinds, is refused | `tests/registry.rs`, in one manifest and across two packs in both orders |
 | Registration order never changes the registry's digest or any choice; a changed registration changes the digest | `tests/registry.rs` builds three packs in all six orders, then with a pack, an object, and a setting changed |
 | Two ready providers and no setting give `provider_ambiguous`, never a choice; a provider that is not ready is never replaced | `tests/registry.rs` |
 | A kind has one owner for a surface kind, and a reader of a missing owner stays registered | `tests/registry.rs` |

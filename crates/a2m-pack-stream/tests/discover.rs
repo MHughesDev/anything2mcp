@@ -12,7 +12,7 @@ mod common;
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, Coverage, EvidenceLevel, Failure, Finding, LimitationCode, SurfaceKind, Values,
+    AccessKind, Coverage, EvidenceLevel, Failure, Finding, LimitationCode, SurfaceKind, Values,
 };
 use a2m_files::{Drafter, TargetRoot};
 use a2m_provider::{
@@ -37,7 +37,7 @@ impl FindingSink for Kept {
 async fn discover(scene: &Scene) -> (Vec<Finding>, a2m_provider::DiscoveryReport, String) {
     let description = SurfaceDescription {
         kind: SurfaceKind::new("broker").unwrap(),
-        archetype: Archetype::Stream,
+        access_kind: AccessKind::Stream,
         address: scene.surface.surface.address.clone(),
         facts: Values::new(),
     };

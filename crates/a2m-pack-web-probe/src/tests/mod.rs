@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use a2m_core::{
-    Archetype, CompiledSurface, Digest, Environment, Failure, Finding, NoSecrets, PackPayload,
+    AccessKind, CompiledSurface, Digest, Environment, Failure, Finding, NoSecrets, PackPayload,
     Redact, SurfaceKind, SurfaceName, TargetName, Value, Values,
 };
 use a2m_logs::LogSettings;
@@ -146,7 +146,7 @@ impl Bench {
     fn description(address: &str) -> SurfaceDescription {
         SurfaceDescription {
             kind: SurfaceKind::new(SURFACE_KIND).unwrap(),
-            archetype: Archetype::Interface,
+            access_kind: AccessKind::Interface,
             address: address.to_owned(),
             facts: Values::new(),
         }

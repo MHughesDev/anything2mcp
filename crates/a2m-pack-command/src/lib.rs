@@ -3,7 +3,7 @@
 //!
 //! A target may be a program: something started with arguments, which ends
 //! with an exit status and leaves output behind. This crate brings the
-//! `cli` mode of the command archetype, the surface kind `program`, the
+//! `cli` mode of the command access kind, the surface kind `program`, the
 //! file kind `commands/`, the lowering of a binding to the steps `spawn`,
 //! `expect`, and `parse`, the driver that carries those steps out through
 //! the kernel's supervisor, and a discoverer that runs only a program's

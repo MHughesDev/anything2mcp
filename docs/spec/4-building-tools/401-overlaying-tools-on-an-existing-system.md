@@ -62,15 +62,15 @@ The scout never captures. A capture is never started on a person's behalf, by an
 
 The kernel's half is the intent token. Discovery and drafts run in the engine's sandbox. The sandbox asks for an intent only when a record's key is one of the target's declared test records, and a driver's handle refuses every step that commits without the token. A discovery job declares no test records, so through it a write is impossible. A discoverer is given only what the sandbox offers: no driver, no ledger token, and no way to act ([`a2m-engine`](../../architecture/crates/a2m-engine.md)).
 
-The other half is what a step that commits nothing may still do to a system of its kind. That is stated per archetype by each pack, and proven by the pack's conformance test against its test stand.
+The other half is what a step that commits nothing may still do to a system of its kind. That is stated per access kind by each pack, and proven by the pack's conformance test against its test stand.
 
-| Archetype | What the pack guarantees while exploring and in the sandbox |
+| Access kind | What the pack guarantees while exploring and in the sandbox |
 | --- | --- |
 | Interface | Only plain navigation within the declared surfaces; no control whose role or name means committing, such as save, submit, delete, approve, send, or pay, is ever activated; requests other than reads are blocked before they leave, unless a person marked one safe, and each blocked request is logged |
 | Request | Only methods the service's own description marks safe, or read endpoints a person marked safe |
 | Request, for a data store | A statement runs in a read-only transaction, so the store itself refuses a write |
 | Command | A program is started only in the help and version forms its target declares |
-| Artifact | A file is opened for reading only, and never replaced |
+| File | A file is opened for reading only, and never replaced |
 | Stream | A queue is never consumed and nothing is published; a sample is read without acknowledging |
 | Device | Only what the device lists as reads, and the requests that ask it to identify and list itself |
 

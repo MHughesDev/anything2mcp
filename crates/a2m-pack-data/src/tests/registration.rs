@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use a2m_core::{Archetype, Availability, NoSecrets, Values};
+use a2m_core::{AccessKind, Availability, NoSecrets, Values};
 use a2m_provider::{Manifest, Pack, SurfaceDescription};
 
 use super::{Folder, mode, registry_of};
@@ -16,7 +16,7 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     let second = registry_of(&crate::pack(), &folder, Arc::new(NoSecrets));
     assert_eq!(first.digest(), second.digest());
 
-    assert_eq!(first.archetype(&mode()), Some(Archetype::Request));
+    assert_eq!(first.access_kind(&mode()), Some(AccessKind::Request));
     let handle = first.driver(&mode()).unwrap();
     assert_eq!(handle.choice().provider.as_str(), "data");
     let entry = first.surface_kind(&DATABASE).unwrap();
@@ -38,7 +38,7 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
         assert!(first.surface_kind(&DATABASE_SERVER).unwrap().session);
         let server = SurfaceDescription {
             kind: DATABASE_SERVER,
-            archetype: Archetype::Request,
+            access_kind: AccessKind::Request,
             address: "127.0.0.1".to_owned(),
             facts: Values::new(),
         };
@@ -48,7 +48,7 @@ fn a_registry_with_only_this_pack_builds_and_its_digest_is_stable() {
     assert_eq!(set.drafting_rules().count(), 2);
     let surface = SurfaceDescription {
         kind: DATABASE,
-        archetype: Archetype::Request,
+        access_kind: AccessKind::Request,
         address: "example.db".to_owned(),
         facts: Values::new(),
     };

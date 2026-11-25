@@ -10,7 +10,7 @@ Everything Anything2MCP claims about a run has to be checkable afterwards. Every
 | --- | --- | --- | --- |
 | Run events | The ledger's append-only history: state changes, intents, verifications | Small | The store ([section 208](208-runs-the-ledger-and-resume.md)) |
 | Step trace | One structured record per step: what was chosen, matched, sent, seen, and how long it took | About 2 KB per step | A blob of kind `trace`, as JSON Lines |
-| Artifacts | Snapshots, network exchanges, screenshots, desktop window trees | Large | Blobs, referenced from the step trace |
+| Captures | Snapshots, network exchanges, screenshots, desktop window trees | Large | Blobs, referenced from the step trace |
 
 ## A step trace record
 
@@ -23,9 +23,9 @@ Everything Anything2MCP claims about a run has to be checkable afterwards. Every
 | Acting | What the driver did: in the web pack, the widget-driver rung used; for HTTP, the method, path template, status, and sizes |
 | Values | For each field: the intended value, the value read back, the normalized forms, and whether they matched, each held as its sensitivity label allows |
 | Outcome | Verified, done, or the failure class and code |
-| Artifacts | References to snapshots and exchanges taken at this step |
+| Captures | References to snapshots and exchanges taken at this step |
 
-Request and response bodies are not in the step trace. They are artifacts, captured only at the levels below. The trace has a published schema, and becomes a public format once it is fixed in Phase 1.
+Request and response bodies are not in the step trace. They are captures, kept only at the levels below. The trace has a published schema, and becomes a public format once it is fixed in Phase 1.
 
 ## The trace signature
 
@@ -56,9 +56,9 @@ Redaction happens on the runner, at capture, before anything is written or sent.
 3. **Labelled fields.** A value with the sensitivity label `restricted` is kept only as a keyed digest, never as a value. One labelled `internal` is kept at `standard` and above, and as a keyed digest at `minimal`. A record's key is kept only as a keyed digest. Policy may also say a labelled field is masked or left out.
 4. **Free text.** Length-limited and stripped of markup and hidden characters.
 5. **Images are masked by the pack that took them.** Only the pack knows where the password inputs and labelled fields were on its screen. It paints over them, and sends with the image a report of what it masked. An image that arrives without that report is dropped, and a limitation is recorded. The kernel never paints over an image.
-6. **A check on the way out.** Before a finished trace or a kept artifact leaves the runner, it is scanned once more for registered secrets, with `contains_secret` on the `Redact` trait of `a2m-core`. A hit drops the piece, records a `redacted` limitation, and raises an alert. The piece never reaches the store.
+6. **A check on the way out.** Before a finished trace or a kept capture leaves the runner, it is scanned once more for registered secrets, with `contains_secret` on the `Redact` trait of `a2m-core`. A hit drops the piece, records a `redacted` limitation, and raises an alert. The piece never reaches the store.
 
-A test in CI plants a known secret in the test application's traffic and fails if it appears in any record, artifact, span, metric, or log line.
+A test in CI plants a known secret in the test application's traffic and fails if it appears in any record, capture, span, metric, or log line.
 
 ## Evidence in the store
 
@@ -72,7 +72,7 @@ A test in CI plants a known secret in the test application's traffic and fails i
 - **Network exchanges:** a subset of the HAR format, so existing viewers open them.
 - **Snapshots:** the compact accessibility snapshot the authoring tools already produce ([steps, snapshots, and diffs](../../reference/steps-snapshots-and-diffs.md)).
 - **Export:** `anything2mcp trace export` writes one archive with a manifest, for attaching to a bug report.
-- **Viewing:** `anything2mcp trace show` in a terminal, and a page in the admin console. `run.trace` gives a summary of a run's trace with links to its artifacts.
+- **Viewing:** `anything2mcp trace show` in a terminal, and a page in the admin console. `run.trace` gives a summary of a run's trace with links to its captures.
 - **For agents:** the trace tool returns a summary and resource links. A whole trace is never returned inline ([section 221](221-the-tool-surface-agents-see.md)).
 
 ## Retention

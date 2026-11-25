@@ -165,7 +165,7 @@ impl Engine {
                 surface.kind
             ))
         })?;
-        let archetype = entry.archetype;
+        let access_kind = entry.access_kind;
         let handed = control.discovery_files();
         let mut run = Run::new(
             self,
@@ -182,7 +182,7 @@ impl Engine {
         ))?;
         let description = SurfaceDescription {
             kind: surface.kind.clone(),
-            archetype,
+            access_kind,
             address: surface_ref.surface.address.clone(),
             facts: job.input.clone(),
         };
@@ -216,7 +216,7 @@ impl Engine {
                 "Enable a provider that drives a mode of the surface.",
             )),
         };
-        match surface_mode(registry, &surface.kind, archetype, &entry.provider) {
+        match surface_mode(registry, &surface.kind, access_kind, &entry.provider) {
             Ok((mode, handle)) => {
                 let candidate = Candidate {
                     binding: 0,
@@ -392,13 +392,13 @@ fn handed_files(
 
 /// The mode a discovery of a surface is made through, and its driver: of
 /// the modes the provider that serves the surface's kind declares, those of
-/// the kind's archetype whose driver the registry can hand over; the one an
+/// the kind's access kind whose driver the registry can hand over; the one an
 /// operation would try first, by the `rank` its manifest declares. Two of
 /// one rank are a choice nothing states, and none is guessed (rule 7).
 fn surface_mode(
     registry: &a2m_provider::Registry,
     kind: &a2m_core::SurfaceKind,
-    archetype: a2m_core::Archetype,
+    access_kind: a2m_core::AccessKind,
     provider: &a2m_provider::ProviderName,
 ) -> Result<(a2m_core::Mode, a2m_provider::DriverHandle), Failure> {
     let listing = registry
@@ -410,7 +410,7 @@ fn surface_mode(
     for mode in listing
         .iter()
         .flat_map(|listing| listing.manifest.modes.iter())
-        .filter(|mode| mode.archetype == archetype)
+        .filter(|mode| mode.access_kind == access_kind)
     {
         match registry.driver(&mode.name) {
             Ok(handle) => ready.push((mode.rank, mode.name.clone(), handle)),
@@ -425,7 +425,7 @@ fn surface_mode(
             codes::fail(
                 &codes::row::NO_BINDING,
                 format!(
-                    "The provider `{provider}` serves the surface kind `{kind}` and drives no mode of its archetype, so nothing on the surface can be observed."
+                    "The provider `{provider}` serves the surface kind `{kind}` and drives no mode of its access kind, so nothing on the surface can be observed."
                 ),
                 "Enable a provider that drives a mode of the surface's kind.",
             )

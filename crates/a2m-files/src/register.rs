@@ -612,7 +612,7 @@ impl CompilerSet {
     }
 
     /// A mode's rank: its default place in the order of an operation's
-    /// bindings, lower first ([section 201](../../docs/spec/2-kernel/201-archetypes-and-modes.md)).
+    /// bindings, lower first ([section 201](../../docs/spec/2-kernel/201-access-kinds-and-modes.md)).
     /// It is the rank its provider's manifest states, as given to
     /// [`CompilerSetBuilder::mode_rank`], and [`DEFAULT_MODE_RANK`], the
     /// manifest's own default, for a mode that was given none.
