@@ -6,6 +6,10 @@ The design's own history is in the [decision records](docs/decisions/README.md),
 
 ## [Unreleased]
 
+### Added
+
+- A run's step trace now ends with its time marks: the whole attempt, and the calls the engine made to the policy engine, the scheduler, the session keeper, the ledger, and the loading of the compiled target, with their time. They are an optional entry, `marks`, of the trace's end line; the schema stays at version 1, a trace written before reads as before, and the marks are not in the signature. `trace export` writes them with the trace. The benchmark gains `call_overhead`, `warm_tab`, and `call_outside_run`, read from these marks.
+
 ## [0.1.0] - 2026-11-25
 
 The first published version, a **preview**, before version 1.0 ([decision 0476](docs/decisions/0476-version-0-1-is-a-preview-and-the-checks-a-person-makes-move-to-before-1-0.md)). Built and tested against the built-in test stands on Windows, macOS, and Linux. Until 1.0 a minor version may break. What this preview has not had yet:
