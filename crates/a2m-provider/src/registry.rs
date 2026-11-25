@@ -30,6 +30,7 @@ use crate::manifest::{DrivenBy, KindOf, Manifest, ModeDecl, ModeDefaults, Provid
 use crate::name::{ActionName, ProviderName};
 use crate::pack::{Collected, Pack, PackContext, Registrar};
 use crate::path::Roots;
+use crate::repair::RepairProposer;
 use crate::supervisor::{Allowed, ScopedSupervisor, Supervisor};
 
 /// What the product crate gives the registry to hand on to packs.
@@ -638,6 +639,7 @@ impl RegistryBuilder {
         let mut discoverers = Vec::new();
         let mut captures = Vec::new();
         let mut key_rules: BTreeMap<FindingKind, Vec<Arc<dyn KeyRule>>> = BTreeMap::new();
+        let mut repair_proposers: BTreeMap<FindingKind, Arc<dyn RepairProposer>> = BTreeMap::new();
         let mut problems: Vec<RegistryProblem> = unnamed
             .iter()
             .map(|refused| RegistryProblem {
@@ -774,6 +776,12 @@ impl RegistryBuilder {
                 names.push(format!("key_rule:{}", kind.as_str()));
                 key_rules.entry(kind).or_default().push(rule);
             }
+            for (kind, proposer) in collected.repair_proposers {
+                names.push(format!("repair_proposer:{}", kind.as_str()));
+                // A kind is owned by one manifest, and the registrar takes
+                // one proposer for it: the first one stands.
+                repair_proposers.entry(kind).or_insert(proposer);
+            }
             for provider in collected.auth_providers {
                 names.push(format!("auth:{}", provider.name().as_str()));
                 auth_providers.push(provider);
@@ -868,6 +876,7 @@ impl RegistryBuilder {
                 discoverers,
                 captures,
                 key_rules,
+                repair_proposers,
                 compiler,
                 choices: settings.mode_providers,
                 host,
@@ -912,6 +921,7 @@ struct Inner {
     discoverers: Vec<DiscovererHandle>,
     captures: Vec<CaptureHandle>,
     key_rules: BTreeMap<FindingKind, Vec<Arc<dyn KeyRule>>>,
+    repair_proposers: BTreeMap<FindingKind, Arc<dyn RepairProposer>>,
     compiler: CompilerSet,
     choices: BTreeMap<Mode, ProviderName>,
     host: HostServices,
@@ -1241,6 +1251,13 @@ impl Registry {
             let rules = self.inner.key_rules.get(finding.kind())?;
             Some((rules.iter().find_map(|rule| rule.key(finding)), finding))
         }))
+    }
+
+    /// The repair proposer registered for findings of `kind`, when a pack
+    /// registered one (decision 0999).
+    #[must_use]
+    pub fn repair_proposer(&self, kind: &FindingKind) -> Option<Arc<dyn RepairProposer>> {
+        self.inner.repair_proposers.get(kind).cloned()
     }
 
     fn driven_for(&self, surface: &SurfaceDescription, by: DrivenBy) -> Vec<DiscovererHandle> {

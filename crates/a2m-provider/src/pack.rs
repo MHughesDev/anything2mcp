@@ -20,6 +20,7 @@ use crate::driver::Driver;
 use crate::manifest::{KindOf, Manifest};
 use crate::name::{ProviderName, RootName};
 use crate::path::{Access, CheckedPath, Roots};
+use crate::repair::RepairProposer;
 use crate::supervisor::ScopedSupervisor;
 
 /// A first-party pack. The product crate makes one call per enabled pack,
@@ -203,6 +204,7 @@ pub(crate) struct Collected {
     pub actions: Vec<Arc<dyn ProviderAction>>,
     pub capture: Option<Arc<dyn CaptureSource>>,
     pub key_rules: Vec<(FindingKind, Arc<dyn KeyRule>)>,
+    pub repair_proposers: Vec<(FindingKind, Arc<dyn RepairProposer>)>,
 }
 
 /// What a pack hands its objects to. Each call is checked against the
@@ -332,6 +334,35 @@ impl<'a> Registrar<'a> {
         }
         self.once(format!("the key rule of `{}`", kind.as_str()))?;
         self.collected.key_rules.push((kind, rule));
+        Ok(())
+    }
+
+    /// Registers the repair proposer of a finding kind the manifest owns,
+    /// under `finding_kinds`: what proposes a repair of drifted knowledge
+    /// from two findings of that kind, before and now (decision 0999).
+    ///
+    /// # Errors
+    ///
+    /// `policy`/`effect_not_declared` for a kind the manifest does not
+    /// own, or a second proposer for one kind.
+    pub fn repair_proposer(
+        &mut self,
+        kind: FindingKind,
+        proposer: Arc<dyn RepairProposer>,
+    ) -> Result<(), Failure> {
+        if !self
+            .manifest
+            .finding_kinds
+            .iter()
+            .any(|owned| owned.name == kind)
+        {
+            return Err(self.undeclared(&format!(
+                "a repair proposer for the finding kind `{}`, which it does not own",
+                kind.as_str()
+            )));
+        }
+        self.once(format!("the repair proposer of `{}`", kind.as_str()))?;
+        self.collected.repair_proposers.push((kind, proposer));
         Ok(())
     }
 
