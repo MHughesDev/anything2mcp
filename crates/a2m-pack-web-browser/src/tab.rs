@@ -1066,7 +1066,7 @@ pub(crate) struct Page {
     /// Whether the task that hears the tab's events has ended: the browser
     /// detached the tab, or the link closed.
     ended: watch::Sender<bool>,
-    browser: Arc<BrowserInner>,
+    pub(crate) browser: Arc<BrowserInner>,
 }
 
 mod downloads;

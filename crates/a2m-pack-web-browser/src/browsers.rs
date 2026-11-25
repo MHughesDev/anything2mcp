@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
@@ -369,6 +369,12 @@ pub(crate) struct BrowserInner {
     state_mark: Mutex<Option<String>>,
     /// Whether the browser shows a window.
     window: bool,
+    /// Whether every handle of a window's browser is gone: its notice is
+    /// closed with the last of them, and the browser, with no window left,
+    /// ends by itself. Until its link closes it is still listed, and an
+    /// open of another profile that cannot measure it does not count it
+    /// (decision 0998).
+    pub(crate) going: AtomicBool,
 }
 
 /// A window a page opened. It is kept locked, and closed once the first
@@ -596,7 +602,11 @@ impl Shared {
 
     /// What each open browser that still runs holds. One that has ended
     /// holds nothing and is not asked; it is started afresh at its next
-    /// open.
+    /// open. One that could not be measured because it ended meanwhile, or
+    /// because it is a window whose handles are all gone and that is ending
+    /// by itself, holds nothing either: the memory it held is being given
+    /// back, and its failure to answer is no other run's stop. Every other
+    /// browser that cannot be measured stays an error (decision 0425).
     async fn measure(&self) -> Measured {
         let running: Vec<Arc<BrowserInner>> = self
             .open()
@@ -607,6 +617,11 @@ impl Shared {
         let mut measured = Vec::with_capacity(running.len());
         for browser in running {
             let held = browser.memory(self.settings.hang_probe).await;
+            if held.is_err()
+                && (browser.client.closed().is_some() || browser.going.load(Ordering::SeqCst))
+            {
+                continue;
+            }
             measured.push((browser.profile.clone(), held));
         }
         measured
@@ -1361,6 +1376,7 @@ impl Browsers {
             context,
             state_mark: Mutex::new(None),
             window,
+            going: AtomicBool::new(false),
         });
         // The locks that hold for the whole browser go on before any tab
         // exists. A browser that does not take them is not one the engine
@@ -1373,7 +1389,7 @@ impl Browsers {
         let notice = match notice {
             None => None,
             Some(text) => match show_notice(shared, &inner, &text, purpose).await {
-                Ok(tab) => Some(Arc::new(tab)),
+                Ok(tab) => Some(Arc::new(Notice(tab))),
                 Err(error) => {
                     inner.client.close();
                     unrecorded.stop().await;
@@ -1461,7 +1477,18 @@ pub struct Browser {
     shared: Arc<Shared>,
     /// A window's first tab, which says what the window is for. Held, not
     /// used: it is closed when the last clone of this handle goes.
-    _notice: Option<Arc<ActTab>>,
+    _notice: Option<Arc<Notice>>,
+}
+
+/// A window's first tab. When it goes, with the last handle of its
+/// browser, the browser has no window left and ends by itself: it is
+/// marked going before the tab is closed.
+struct Notice(ActTab);
+
+impl Drop for Notice {
+    fn drop(&mut self) {
+        self.0.page.browser.going.store(true, Ordering::SeqCst);
+    }
 }
 
 impl fmt::Debug for Browser {
