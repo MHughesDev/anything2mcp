@@ -77,8 +77,9 @@ type Noted = Vec<(LimitationCode, String)>;
 
 /// What the capture has taken so far.
 struct Taken {
-    /// Each request, with the page it is put to, and what it is noted for.
-    requests: Vec<(Exchange, Noted)>,
+    /// Each request, with the page it is put to, what it is noted for, and
+    /// the visit it was taken on: how many screens the tab had taken then.
+    requests: Vec<(Exchange, Noted, usize)>,
     /// Each screen, as `web_snapshot` keeps one.
     screens: Vec<Looked>,
     /// The path of the screen the person is on, by the last snapshot.
@@ -220,7 +221,8 @@ impl Taken {
                 self.report.dropped += 1;
                 continue;
             }
-            self.requests.push(exchange(own, &self.current));
+            let (one, noted) = exchange(own, &self.current);
+            self.requests.push((one, noted, self.screens.len()));
         }
     }
 
@@ -252,7 +254,8 @@ impl Taken {
         }
         WebSnapshot::give(core, kinds, scope, &screens, &mut out)?;
 
-        let only: Vec<Exchange> = requests.iter().map(|(one, _)| one.clone()).collect();
+        let only: Vec<Exchange> = requests.iter().map(|(one, _, _)| one.clone()).collect();
+        let visits: Vec<usize> = requests.iter().map(|(_, _, visit)| *visit).collect();
         // The groups: first the reads by key, then the requests of one
         // method to one path from one page.
         let mut groups: Vec<Group> = matched_requests(&only)
@@ -300,18 +303,30 @@ impl Taken {
                 .iter()
                 .map(|member| only[*member].found().to_string())
                 .collect();
-            let shapes = if group.matched.is_some() {
+            // A page that keeps its state in the browser may ask, on every
+            // visit after its first, in a shape that only adds to the first
+            // one's: counted as one shape (decision 0998, point 3).
+            let kept = (group.matched.is_none() && shapes.len() == 2)
+                .then(|| kept_by_the_browser(&group.members, &only, &visits))
+                .flatten();
+            let shapes = if group.matched.is_some() || kept.is_some() {
                 1
             } else {
                 shapes.len()
             };
-            let mut found = exchange.found();
+            let mut found = kept.clone().unwrap_or_else(|| exchange.found());
             let mut noted = union(
                 group
                     .members
                     .iter()
                     .map(|member| requests[*member].1.as_slice()),
             );
+            if kept.is_some() {
+                noted.push((
+                    LimitationCode::Sampled,
+                    "The requests of the first visit to the page came in one shape, and those of every later visit in one that only adds fields to it, as a page does that keeps its state in the browser: they are counted as one shape, the later one, and a field only the later ones held is optional in the answer.".to_owned(),
+                ));
+            }
             let mut path = exchange.path.clone();
             if let Json::Object(fields) = &mut found {
                 if let Some((pattern, page)) = &group.matched {
@@ -426,6 +441,108 @@ impl Taken {
         }
         Ok(report)
     }
+}
+
+/// The one shape of a group of requests in two, when the change is the one
+/// a page that keeps its state in the browser makes (decision 0998, point 3): the
+/// first shape is that of every request of the first visit to the page and
+/// of no later one; the second is that of every request of every later
+/// visit; and the second differs from the first only in fields it adds, to
+/// the body, to the answer, or to both, each field the two share being of
+/// one kind. Its found is the second's, with each field of the answer only
+/// the second held marked optional. `None` for any other two shapes: a
+/// change back, a change within one visit, a field of another kind, names
+/// withheld, or anything else that differs.
+pub(crate) fn kept_by_the_browser(
+    members: &[usize],
+    only: &[Exchange],
+    visits: &[usize],
+) -> Option<Json> {
+    let first = *members.first()?;
+    let first_found = only[first].found();
+    let first_visit = visits[first];
+    let mut later: Option<Json> = None;
+    for member in members {
+        let found = only[*member].found();
+        if found == first_found {
+            if visits[*member] != first_visit {
+                return None;
+            }
+        } else {
+            if visits[*member] == first_visit {
+                return None;
+            }
+            match &later {
+                Some(known) if *known != found => return None,
+                Some(_) => {}
+                None => later = Some(found),
+            }
+        }
+    }
+    let later = later?;
+    let (Json::Object(a), Json::Object(b)) = (&first_found, &later) else {
+        return None;
+    };
+    // Nothing but the body and the answer differs.
+    let keys: BTreeSet<&String> = a.keys().chain(b.keys()).collect();
+    for key in keys {
+        if key != "body" && key != "response" && a.get(key) != b.get(key) {
+            return None;
+        }
+    }
+    // The body: one media type, every name kept, and the first's fields
+    // among the second's, each of one kind.
+    match (a.get("body"), b.get("body")) {
+        (None, None) => {}
+        (Some(one), Some(two)) if one == two => {}
+        (Some(one), Some(two)) => {
+            if one.get("media_type") != two.get("media_type")
+                || one.get("names_withheld") != Some(&Json::Bool(false))
+                || two.get("names_withheld") != Some(&Json::Bool(false))
+                || !adds_only(one.get("fields")?, two.get("fields")?)
+            {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+    // The answer: the same, or an object whose fields the second adds to.
+    let (one, two) = (a.get("response"), b.get("response"));
+    let mut found = later.clone();
+    if one != two {
+        let (one, two) = (one?, two?);
+        if one.get("type") != Some(&Json::from("object"))
+            || two.get("type") != one.get("type")
+            || one.get("names_withheld").is_some()
+            || two.get("names_withheld").is_some()
+            || !adds_only(one.get("fields")?, two.get("fields")?)
+        {
+            return None;
+        }
+        let first_fields = one.get("fields")?.as_object()?;
+        if let Some(Json::Object(fields)) = found
+            .get_mut("response")
+            .and_then(|response| response.get_mut("fields"))
+        {
+            for (name, field) in fields.iter_mut() {
+                if !first_fields.contains_key(name)
+                    && let Json::Object(field) = field
+                {
+                    field.insert("optional".to_owned(), Json::Bool(true));
+                }
+            }
+        }
+    }
+    Some(found)
+}
+
+/// Whether `two`, an object of fields, holds every field of `one` as `one`
+/// holds it, and more.
+fn adds_only(one: &Json, two: &Json) -> bool {
+    let (Some(one), Some(two)) = (one.as_object(), two.as_object()) else {
+        return false;
+    };
+    one.len() < two.len() && one.iter().all(|(name, kind)| two.get(name) == Some(kind))
 }
 
 /// Requests given as one `exchange` finding.
