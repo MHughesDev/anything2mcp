@@ -11,7 +11,7 @@ The single list of everything a person, an agent, or a program can ask Anything2
 
 This is a design draft. The list is settled action by action as each phase builds it; adding, renaming, or removing an action after its phase ships is a change to a public interface and needs a decision record. An action's inputs and output are promised from the release that builds it: one with no handler is to carry `x-sdk: false` and get no client method, and each release's built actions are kept and checked against every later build ([decision 0437](../decisions/0437-what-a-release-publishes-is-kept-and-every-later-build-is-checked-against-it.md); package YL4 keeps and checks them, and no release is kept yet; package YL5 built the rest: the API description says `x-sdk: false` for every route of an action with no handler, so neither client has a method for one, and `tools/contracts.py check` holds `x-sdk` to the actions `handler_for` builds).
 
-**Columns.** *Who* is the lowest role that may use the action on a server ([spec section 214](../spec/2-kernel/214-access-control-toolsets-and-tenancy.md)); on one machine the user holds every role. *Listed* says whether the MCP tool appears in a tool list (`use` or `build` toolset) or is reached through `a2m_action_run`. *Phase* is when it is built. *Not built* after the phase marks an action with no handler: it answers `action_not_built`, is not listed up front, and has no SDK method. Each is left unbuilt on purpose, for the reason [decision 0456](../decisions/0456-the-first-release-leaves-out-what-its-first-hour-never-meets-and-a-shortcut-is-offered-only-when-built.md), point 6, gives; the list with each reason is the test `every_action_without_a_handler_is_named_with_its_reason` in `crates/a2m-actions/src/tests/unbuilt.rs` (package 5.1), and `tools/docs_audit.py` holds these marks to it. An action that gains its handler loses its mark, and leaves the list, in the same change.
+**Columns.** *Who* is the lowest role that may use the action on a server ([spec section 214](../spec/2-kernel/214-access-control-toolsets-and-tenancy.md)); on one machine the user holds every role. *Listed* says whether the MCP tool appears in a tool list (`use` or `build` toolset) or is reached through `a2m_action_run`. *Phase* is when it is built. *Not built* after the phase marks an action with no handler: it answers `action_not_built`, is not listed up front, and has no SDK method. Each is left unbuilt on purpose, for the reason [decision 0456](../decisions/0456-the-first-release-leaves-out-what-its-first-hour-never-meets-and-a-shortcut-is-offered-only-when-built.md), point 6, gives, and [decision 0997](../decisions/0997-which-actions-with-no-handler-serve-one-machine-and-what-each-waits-on.md) says what each waits on; the list with each reason is the test `every_action_without_a_handler_is_named_with_its_reason` in `crates/a2m-actions/src/tests/unbuilt.rs` (package 5.1), and `tools/docs_audit.py` holds these marks to it. An action that gains its handler loses its mark, and leaves the list, in the same change.
 
 ## Using tools
 
@@ -25,7 +25,7 @@ This is a design draft. The list is settled action by action as each phase build
 | `run.resume` | Continue a stopped run after reconciling | Operator | use | 3 |
 | `run.cancel` | Stop a running or waiting run | Operator | use | 3 |
 | `run.undo` | Build the reverse diff of a completed write run, for approval | Operator | No | 9, not built |
-| `run.trace` | Summary of a run's trace, with links to captures | Viewer | No | 1, not built |
+| `run.trace` | Summary of one of the caller's own runs' trace: each step's kind, outcome, and time, and each kept capture by its reference, never a value ([decision 0998](../decisions/0998-a-runs-trace-is-summarized-for-its-person-and-exported-as-one-file-in-the-working-folder.md)) | Viewer | No | 1 |
 | `session.status` | Whether each target is signed in for the caller | Viewer | use | 2 |
 | `session.login` | Ask the caller's person to sign in to a target; the person gives any credential on the engine's own page, never through an input | Viewer | use | 2 |
 | `session.revoke` | End one of the caller's own sessions | Viewer | No | 2 |
@@ -70,7 +70,7 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | `provider.list` | Every pack and provider: installed, enabled, ready, or what it lacks | Viewer | build | Stage B |
 | `provider.describe` | One provider's manifest, effects, and requirements | Viewer | No | Stage B |
 | `provider.enable`, `provider.disable` | Switch a provider on or off; a protected setting on one machine where it starts processes or reaches a network | Admin | No | Stage B, not built |
-| `component.list` | Outside programs providers need: found or not, with path and digest | Viewer | No | Stage B, not built |
+| `component.list` | Outside programs providers need: found or not, with path and digest, known or unverified; starts nothing | Viewer | No | Stage B |
 | `discover.run` | Run the discoverers that suit a target's surfaces; returns findings. `files` hands them files of the project's `inputs` folder, each under a name a discoverer reads | Builder | build | Stage E |
 | `finding.list`, `finding.describe` | Findings for a target, by level, kind, or source | Builder | build | Stage E |
 | `unknown.list` | The open questions about a target | Builder | build | Stage E |
@@ -85,7 +85,7 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | `version.publish` | Publish a reviewed version; a person, never an agent; with `tools`, of only those tools ([decision 0457](../decisions/0457-a-publish-of-named-tools-compiles-only-their-files.md)) | Publisher | No | 5 |
 | `binding.promote` | Make a drafted operation's first binding verified on the evidence of its tests and a trial, or a shadow binding on its run of exact matches; for a write or a shadow binding, a person | Publisher | No | 4 |
 | `version.activate` | Move a toolset to a version, through the candidate stage | Publisher | No | 6, not built |
-| `version.rollback` | Make an earlier version current | Publisher | No | 5, not built |
+| `version.rollback` | Make another published version current, earlier or later; a person, never an agent; recorded in the audit and read back ([decision 0999](../decisions/0999-a-rollback-is-a-persons-act-and-moves-to-any-version-a-person-published.md)) | Publisher | No | 5 |
 | `version.bundle` | Pack a version into a signed file | Publisher | No | 6, not built |
 | `version.import` | Import a signed bundle | Publisher | No | 6, not built |
 | `version.migrate` | Recompile stored sources for a newer engine | Publisher | No | 9, not built |
@@ -129,7 +129,7 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 | `plugin.install`, `plugin.list` | Manage plug-ins | Admin | No | 8, not built |
 | `client.connect` | Give the configuration an MCP client needs to start the stdio proxy: printed for `generic`, or set in the file a client profile names, shown first, by a local person | Local user | No | 5 |
 | `trace.show` | View a run's evidence | Auditor | No | 1 |
-| `trace.export` | Export a run's evidence | Auditor | No | 1, not built |
+| `trace.export` | Export a run's evidence to one file, `.anything2mcp/exports/<run>.json` in the project: its events, its step trace, and its text captures, with a manifest naming each piece and what was left out and why; read back before its digest is given ([decision 0998](../decisions/0998-a-runs-trace-is-summarized-for-its-person-and-exported-as-one-file-in-the-working-folder.md)) | Auditor | No | 1 |
 | `action.search`, `action.describe`, `action.run` | Reach any action without listing it | Any | use and build | 5 |
 | `docs.get` | Built-in reference pages | Any | No | 5 |
 | `self.update` | Update a standalone install | Local user | No | 9 |
@@ -142,7 +142,7 @@ Added with spec sections 203, 218, 220, and 402. Built with the stage of the [lo
 
 ## Shortcuts
 
-Single-word commands for people. Each is a fixed sequence of the actions above and adds no behavior. A shortcut is offered only when every one of its steps is built ([decision 0456](../decisions/0456-the-first-release-leaves-out-what-its-first-hour-never-meets-and-a-shortcut-is-offered-only-when-built.md)); this table lists those that are. `bundle`, `rollback`, and `migrate`, each the `version` action of its name, are defined and not offered, because their actions are not built; each joins this table with its action's handler.
+Single-word commands for people. Each is a fixed sequence of the actions above and adds no behavior. A shortcut is offered only when every one of its steps is built ([decision 0456](../decisions/0456-the-first-release-leaves-out-what-its-first-hour-never-meets-and-a-shortcut-is-offered-only-when-built.md)); this table lists those that are. `bundle` and `migrate`, each the `version` action of its name, are defined and not offered, because their actions are not built; each joins this table with its action's handler.
 
 | Shortcut | Does |
 | --- | --- |
@@ -155,6 +155,7 @@ Single-word commands for people. Each is a fixed sequence of the actions above a
 | `status` | `target.status` |
 | `call`, `run` | `tool.call` for an operation or a pipeline |
 | `diff` | `version.diff` |
+| `rollback` | `version.rollback`: a person's act ([decision 0999](../decisions/0999-a-rollback-is-a-persons-act-and-moves-to-any-version-a-person-published.md)) |
 | `connect <client>` | `client.connect` |
 | `doctor` | `doctor.run` |
 | `docs <topic>` | `docs.get` |

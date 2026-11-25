@@ -457,8 +457,8 @@ Some numbers have no record: 0118, 0125 to 0129, 0174, 0210, 0227 to 0229, and 0
 | 0463 | [The names of decision 0330, as the sweep settled them](0463-the-names-of-decision-0330-as-the-sweep-settled-them.md) | Accepted (design decision) |
 | 0464 | [The release carries archives, a notices file, and attested provenance, and a check holds the workflow to every piece](0464-the-release-carries-archives-a-notices-file-and-attested-provenance-and-a-check-holds-the-workflow-to-every-piece.md) | Accepted (design decision) |
 | 0465 | [While the first release waits on the owner, agents build the one-machine packages moved after it](0465-while-the-first-release-waits-on-the-owner-agents-build-the-one-machine-packages-moved-after-it.md) | Accepted (design decision) |
-<<<<<<< HEAD
 | 0466 | [The Node client on Windows reaches the engine through the channel command](0466-the-node-client-on-windows-reaches-the-engine-through-the-channel-command.md) | Accepted (design decision) |
-=======
 | 0467 | [The desktop pack starts an application a surface allows, does an action by a key the element binds, and probes its reach](0467-the-desktop-pack-starts-an-application-a-surface-allows-does-an-action-by-a-key-the-element-binds-and-probes-its-reach.md) | Accepted (design decision) |
->>>>>>> w/desk2
+| 0997 | [Which actions with no handler serve one machine, and what each waits on](0997-which-actions-with-no-handler-serve-one-machine-and-what-each-waits-on.md) | Accepted (design decision) |
+| 0998 | [A run's trace is summarized for its person, and exported as one file in the working folder](0998-a-runs-trace-is-summarized-for-its-person-and-exported-as-one-file-in-the-working-folder.md) | Accepted (design decision) |
+| 0999 | [A rollback is a person's act, and moves to any version a person published](0999-a-rollback-is-a-persons-act-and-moves-to-any-version-a-person-published.md) | Accepted (design decision) |
