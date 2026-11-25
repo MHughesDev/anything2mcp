@@ -15,16 +15,27 @@
 //!   it whose outputs are the table's columns, as lists;
 //! - for the labelled values of the page, each a definition labelled by a
 //!   term of the same name, one screen whose fields locate them, and one
-//!   `get` read whose outputs they are.
+//!   `get` read whose outputs they are;
+//! - for a table the page gives no name, the one of its part of the page,
+//!   the same as for a named one, with each heading as a person reads it
+//!   (decision 0998);
+//! - for a list with no name whose items repeat one shape, a screen that
+//!   reads its items and a `list` read of them; and for a record whose
+//!   pages show different words in their one heading, a screen that reads
+//!   the heading and the paragraphs below it, and a `get` read of them
+//!   (decision 0999).
+//!
+//! What a page gives no name or label is drafted held: its locator is an
+//! open question that says why and names the locator a person may keep.
 //!
 //! A placeholder of the address is the read's input and key, of type
 //! `text`; the driver refuses a value that is not one plain segment before
 //! the tab is sent anywhere.
 //!
 //! What they never draft: a field that is set, an action, or anything that
-//! could write, whatever the page holds; a table with no name, or whose
-//! name another table of the page shares (that is an open question naming
-//! both); a column whose heading another column shares; a labelled value
+//! could write, whatever the page holds; a table whose name another table
+//! of the page shares (that is an open question naming both), or two with
+//! no name in one part of the page; a column whose heading another column shares; a labelled value
 //! whose label another term shares (an open question, apart); a type other
 //! than `untrusted_text`, since what a cell holds is a sample nobody stated
 //! the type of; an example; a test.
@@ -127,16 +138,23 @@ struct Element {
     role: String,
     /// The accessible name, for a role whose name the finding keeps.
     name: Option<String>,
+    /// The level of a heading.
+    level: Option<u64>,
+    /// Whether the pages of one screen gave this element different names:
+    /// what it shows is the record's value (decision 0999, point 2).
+    varies: bool,
 }
 
-/// A table the page names, with what is needed to read it.
+/// A table of the page, with what is needed to read it.
 struct Table {
+    /// Its accessible name; empty when the page gives it none.
     name: String,
     headers: Vec<String>,
     /// The element whose part of the page the table is in, by role and
     /// name. `None` when no such element is one of its kind on the page.
     section: Option<(String, String)>,
-    /// Whether another table of the page has the same name.
+    /// Whether another table of the page has the same name; for a table
+    /// with no name, whether another with none is in its section.
     shared: bool,
     /// Whether the table could be read row by row as its headings say:
     /// one row of headings, and every other row with one cell for each.
@@ -171,6 +189,8 @@ fn elements(found: &str) -> Result<Option<Vec<Element>>, Failure> {
                 depth: one.get("depth")?.as_u64()?,
                 role: one.get("role")?.as_str()?.to_owned(),
                 name: one.get("name").and_then(Json::as_str).map(str::to_owned),
+                level: one.get("level").and_then(Json::as_u64),
+                varies: one.get("varies").and_then(Json::as_bool) == Some(true),
             })
         })
         .collect::<Option<Vec<_>>>()
@@ -241,7 +261,8 @@ fn permissions(
     ));
 }
 
-/// Every table of the page that has a name, in the order of the page.
+/// Every table of the page, in the order of the page: those it names, and
+/// those it does not (decision 0998, point 1).
 fn tables(elements: &[Element]) -> Vec<Table> {
     let named = |role: &str, name: &str| {
         elements
@@ -254,11 +275,13 @@ fn tables(elements: &[Element]) -> Vec<Table> {
     let mut above: Vec<usize> = Vec::new();
     for (at, one) in elements.iter().enumerate() {
         above.retain(|parent| elements[*parent].depth < one.depth);
-        let name = (one.role == "table")
-            .then(|| one.name.clone())
-            .flatten()
-            .filter(|name| !name.trim().is_empty());
-        if let Some(name) = name {
+        if one.role == "table" {
+            let name = one.name.clone().unwrap_or_default();
+            let name = if name.trim().is_empty() {
+                String::new()
+            } else {
+                name
+            };
             let section = above
                 .iter()
                 .rev()
@@ -269,8 +292,19 @@ fn tables(elements: &[Element]) -> Vec<Table> {
                 })
                 .map(|parent| (parent.role.clone(), parent.name.clone().unwrap_or_default()));
             let (headers, regular) = inside(elements, at);
+            let shared = if name.is_empty() {
+                // Another table with no name in the same part of the page.
+                elements.iter().enumerate().any(|(other, element)| {
+                    other != at
+                        && element.role == "table"
+                        && element.name.as_deref().unwrap_or("").trim().is_empty()
+                        && section_of(elements, other).0 == section
+                })
+            } else {
+                named("table", &name) > 1
+            };
             out.push(Table {
-                shared: named("table", &name) > 1,
+                shared,
                 name,
                 headers,
                 section,
@@ -592,11 +626,43 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         format!("the pages `{path}`")
     };
     let mut drafted: Vec<String> = Vec::new();
+    // A rule that stops on what it cannot read says so by name, when
+    // nothing else of the page is drafted.
+    let mut stopped: Option<&'static str> = None;
     for table in tables(&elements) {
+        // Each heading as a person reads it: a table library's sort words
+        // are taken off by the one closed rule the driver also reads by,
+        // and a heading with no words left stops the table (decision 0998,
+        // point 2).
+        let mut headers = Vec::new();
+        let mut stripped = false;
+        let mut no_words = false;
+        for heading in &table.headers {
+            match crate::heading::heading(heading) {
+                crate::heading::Heading::Words {
+                    words,
+                    stripped: taken,
+                } => {
+                    stripped |= taken;
+                    headers.push(words);
+                }
+                crate::heading::Heading::NoWords => no_words = true,
+            }
+        }
+        if no_words {
+            stopped = Some(why::HEADING_HAS_NO_WORDS);
+            continue;
+        }
+        let table = Table { headers, ..table };
+        let unnamed = table.name.is_empty();
         if !plain_words(&table.name) || !table.headers.iter().all(|heading| plain_words(heading)) {
             continue;
         }
-        let words = snake(&table.name);
+        let words = if unnamed {
+            "table".to_owned()
+        } else {
+            snake(&table.name)
+        };
         let name = if page.is_empty() {
             words
         } else {
@@ -648,7 +714,31 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         if columns.is_empty() {
             continue;
         }
-        let locate = if table.shared {
+        if unnamed && table.shared {
+            stopped = Some(why::TABLES_WITH_NO_NAME);
+            continue;
+        }
+        // A table the page gives no name is found by the part of the page it
+        // is in and held to its headings; that is weaker than a name, so the
+        // locator waits for a person's word (decision 0998, point 1).
+        let within = DraftValue::map(vec![
+            ("role", DraftValue::text("table")),
+            ("name", DraftValue::text("")),
+            ("within", locator(&role, &section)),
+        ]);
+        let locate = if unnamed {
+            cx.open_question_quoting(
+                &format!(
+                    "The page quoted first shows a table the page gives no accessible name, so it cannot be located by its name. It is the one table with no name inside the part of the page quoted second (its role, then its name when it has one), and a read holds it to the headings this screen lists{}. A locator that finds it so is `role: table` with `name: \"\"`, which the screen's fingerprint holds to that part. Is it the table this screen reads? Write that locator here, or a better one, then release this draft.",
+                    if stripped {
+                        ", each as a person reads it, without the sort words a table library adds"
+                    } else {
+                        ""
+                    }
+                ),
+                &[path, &role, &section],
+            )
+        } else if table.shared {
             cx.open_question_quoting(
                 "The page quoted first shows more than one table with the name quoted second, so neither can be located by its role and name alone. Which does this screen read, and what tells it apart?",
                 &[path, &table.name],
@@ -656,50 +746,58 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
         } else {
             DraftValue::List(vec![locator("table", &table.name)])
         };
+        let ready = if unnamed {
+            within
+        } else {
+            locator("table", &table.name)
+        };
+        let rows = vec![
+            ("locate", locate),
+            (
+                "fingerprint",
+                DraftValue::map(vec![("section", locator(&role, &section))]),
+            ),
+        ];
         let screen = DraftValue::map(vec![
             ("screen", DraftValue::text(&name)),
             ("surface", DraftValue::text(&surface)),
             ("reach", reach()),
-            (
-                "ready",
-                DraftValue::map(vec![("visible", locator("table", &table.name))]),
-            ),
+            ("ready", DraftValue::map(vec![("visible", ready)])),
             (
                 "rows",
-                DraftValue::map(vec![
-                    ("locate", locate),
-                    (
-                        "fingerprint",
-                        DraftValue::map(vec![("section", locator(&role, &section))]),
-                    ),
-                    (
-                        "header",
-                        DraftValue::List(
-                            table
-                                .headers
-                                .iter()
-                                .map(|heading| DraftValue::text(heading))
-                                .collect(),
-                        ),
-                    ),
-                    (
-                        "columns",
-                        DraftValue::Map(
-                            columns
-                                .iter()
-                                .map(|(column, heading)| {
-                                    (
-                                        column.clone(),
-                                        DraftValue::map(vec![
-                                            ("header", DraftValue::text(heading)),
-                                            ("type", DraftValue::text(UNTRUSTED_TEXT)),
-                                        ]),
-                                    )
-                                })
-                                .collect(),
-                        ),
-                    ),
-                ]),
+                DraftValue::map(
+                    rows.into_iter()
+                        .chain([
+                            (
+                                "header",
+                                DraftValue::List(
+                                    table
+                                        .headers
+                                        .iter()
+                                        .map(|heading| DraftValue::text(heading))
+                                        .collect(),
+                                ),
+                            ),
+                            (
+                                "columns",
+                                DraftValue::Map(
+                                    columns
+                                        .iter()
+                                        .map(|(column, heading)| {
+                                            (
+                                                column.clone(),
+                                                DraftValue::map(vec![
+                                                    ("header", DraftValue::text(heading)),
+                                                    ("type", DraftValue::text(UNTRUSTED_TEXT)),
+                                                ]),
+                                            )
+                                        })
+                                        .collect(),
+                                ),
+                            ),
+                        ])
+                        .collect(),
+                ),
             ),
         ]);
         out.screens.push(DraftDoc {
@@ -751,6 +849,29 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
             path: RelPath::new(&format!("operations/{name}_list.yaml"))?,
             body: DraftValue::map(doc),
         });
+    }
+
+    // A list of items of one shape, and a record headed by its value, each
+    // found where the page gives no name or label: held, saying why
+    // (decision 0999, points 1 and 2).
+    let parts = Parts {
+        target: target.as_str(),
+        surface: &surface,
+        path,
+        page: &page,
+        holes: &holes,
+        seen: &seen,
+        sends_to: &sends_to,
+    };
+    match items_list(&elements) {
+        Ok(Some(list)) => parts.list(&list, &mut drafted, &mut out, cx)?,
+        Ok(None) => {}
+        Err(why) => stopped = Some(why),
+    }
+    match headed_record(&elements) {
+        Ok(Some(record)) => parts.record(&record, &mut drafted, &mut out, cx)?,
+        Ok(None) => {}
+        Err(why) => stopped = stopped.or(Some(why)),
     }
 
     // The labelled values, as one screen and one read; a label that cannot
@@ -899,11 +1020,418 @@ fn drafts(finding: &Finding, cx: &DraftContext<'_>) -> Result<Drafts, Failure> {
     // A rule that drafts nothing says why: no screen at all, or a screen
     // whose questions hold its read back.
     cx.not_drafted(if out.screens.is_empty() {
-        why::NOTHING_TO_READ
+        stopped.unwrap_or(why::NOTHING_TO_READ)
     } else {
         why::SCREEN_HAS_QUESTIONS
     });
     Ok(out)
+}
+
+/// What the rules of a list and of a record share of the page.
+struct Parts<'a> {
+    target: &'a str,
+    surface: &'a str,
+    path: &'a str,
+    page: &'a str,
+    holes: &'a [String],
+    seen: &'a str,
+    sends_to: &'a [String],
+}
+
+/// A list of the page whose items repeat one shape.
+struct ItemList {
+    /// The part of the page it is the one list with no name in.
+    section: (String, String),
+}
+
+/// A record whose heading is its value, and whose values have no labels.
+struct HeadedRecord {
+    section: (String, String),
+    level: u64,
+}
+
+/// The roles of a part of a page that holds what the page is about, where
+/// a list or a record is looked for: not its navigation, its banner, or
+/// its footer.
+const CONTENT_ROLES: &[&str] = &["main", "region"];
+
+/// The elements below the one at `at`, with their depth below it.
+fn below(elements: &[Element], at: usize) -> impl Iterator<Item = (usize, &Element)> {
+    let depth = elements[at].depth;
+    elements[at + 1..]
+        .iter()
+        .enumerate()
+        .take_while(move |(_, one)| one.depth > depth)
+        .map(move |(offset, one)| (at + 1 + offset, one))
+}
+
+fn unnamed(one: &Element) -> bool {
+    one.name.as_deref().unwrap_or("").trim().is_empty()
+}
+
+/// The one list with no name in a part of the page about its content,
+/// with two items or more that all repeat one shape (decision 0999, point
+/// 1). `Ok(None)` when the page has no such list; a stop, by name, when it
+/// has one whose items differ in shape or one it cannot tell from another.
+fn items_list(elements: &[Element]) -> Result<Option<ItemList>, &'static str> {
+    let mut found: Vec<(usize, (String, String))> = Vec::new();
+    for (at, one) in elements.iter().enumerate() {
+        if one.role != "list" || !unnamed(one) {
+            continue;
+        }
+        let (section, in_table) = section_of(elements, at);
+        let Some(section) = section.filter(|(role, _)| CONTENT_ROLES.contains(&role.as_str()))
+        else {
+            continue;
+        };
+        // A list inside a list's item, or a table, is part of it.
+        let nested = {
+            let mut depth = one.depth;
+            elements[..at].iter().rev().any(|parent| {
+                if parent.depth < depth {
+                    depth = parent.depth;
+                    parent.role == "listitem" || parent.role == "list"
+                } else {
+                    false
+                }
+            })
+        };
+        if in_table || nested {
+            continue;
+        }
+        found.push((at, section));
+    }
+    let Some((at, section)) = found.first().cloned() else {
+        return Ok(None);
+    };
+    if found.iter().filter(|(_, other)| *other == section).count() > 1 {
+        return Err(why::LISTS_WITH_NO_NAME);
+    }
+    let depth = elements[at].depth;
+    let mut shapes: Vec<Vec<(u64, &str)>> = Vec::new();
+    for (item_at, item) in below(elements, at) {
+        if item.depth != depth + 1 {
+            continue;
+        }
+        if item.role != "listitem" {
+            return Err(why::ITEMS_DIFFER);
+        }
+        shapes.push(
+            below(elements, item_at)
+                .map(|(_, inner)| (inner.depth - item.depth, inner.role.as_str()))
+                .collect(),
+        );
+    }
+    if shapes.len() < 2 {
+        return Ok(None);
+    }
+    if shapes.iter().any(|shape| *shape != shapes[0]) {
+        return Err(why::ITEMS_DIFFER);
+    }
+    Ok(Some(ItemList { section }))
+}
+
+/// The record of a screen whose pages show its value as their heading:
+/// the one heading in a part of the page about its content whose name the
+/// pages of the screen do not share, the one heading of its level there,
+/// and the paragraphs of that part, its values with no label (decision
+/// 0999, point 2). `Ok(None)` when no heading's name varies; a stop, by
+/// name, when one does and the record cannot be read by rule.
+fn headed_record(elements: &[Element]) -> Result<Option<HeadedRecord>, &'static str> {
+    let varying: Vec<usize> = elements
+        .iter()
+        .enumerate()
+        .filter(|(_, one)| one.role == "heading" && one.varies)
+        .map(|(at, _)| at)
+        .collect();
+    let [at] = varying[..] else {
+        return if varying.is_empty() {
+            Ok(None)
+        } else {
+            Err(why::RECORD_NOT_READ)
+        };
+    };
+    let (section, in_table) = section_of(elements, at);
+    let Some(section) = section.filter(|(role, _)| CONTENT_ROLES.contains(&role.as_str())) else {
+        return Err(why::RECORD_NOT_READ);
+    };
+    let Some(level) = elements[at].level.filter(|level| (1..=6).contains(level)) else {
+        return Err(why::RECORD_NOT_READ);
+    };
+    let Some(part) = elements
+        .iter()
+        .position(|one| one.role == section.0 && one.name.as_deref().unwrap_or("") == section.1)
+    else {
+        return Err(why::RECORD_NOT_READ);
+    };
+    let same_level = below(elements, part)
+        .filter(|(_, one)| one.role == "heading" && one.level == Some(level))
+        .count();
+    // Every paragraph of the part is one of its values, right under it.
+    let paragraphs: Vec<&Element> = below(elements, part)
+        .map(|(_, one)| one)
+        .filter(|one| one.role == "paragraph")
+        .collect();
+    let flat = paragraphs
+        .iter()
+        .all(|one| one.depth == elements[part].depth + 1);
+    if in_table || same_level != 1 || paragraphs.is_empty() || !flat {
+        return Err(why::RECORD_NOT_READ);
+    }
+    Ok(Some(HeadedRecord { section, level }))
+}
+
+/// The open question a list's or a record's locator waits on.
+fn held_locator(
+    cx: &DraftContext<'_>,
+    sentence: &str,
+    path: &str,
+    section: &(String, String),
+) -> DraftValue {
+    cx.open_question_quoting(sentence, &[path, &section.0, &section.1])
+}
+
+impl Parts<'_> {
+    fn named(&self, words: &str) -> String {
+        if self.page.is_empty() {
+            words.to_owned()
+        } else if self.page == words || self.page.ends_with(&format!("_{words}")) {
+            self.page.to_owned()
+        } else {
+            format!("{}_{words}", self.page)
+        }
+    }
+
+    fn reach(&self) -> DraftValue {
+        DraftValue::map(vec![("url", DraftValue::text(self.path))])
+    }
+
+    /// The screen of a list's items and a `list` read of them.
+    fn list(
+        &self,
+        list: &ItemList,
+        drafted: &mut Vec<String>,
+        out: &mut Drafts,
+        cx: &DraftContext<'_>,
+    ) -> Result<(), Failure> {
+        let name = self.named("items");
+        let operation = format!("{}_{name}_list", self.target);
+        if !is_name(&name, LONGEST)
+            || OperationName::new(&operation).is_err()
+            || drafted.contains(&name)
+            || self.holes.iter().any(|hole| hole == "items")
+        {
+            return Ok(());
+        }
+        drafted.push(name.clone());
+        let found_by = DraftValue::map(vec![
+            ("role", DraftValue::text("list")),
+            ("name", DraftValue::text("")),
+            ("within", locator(&list.section.0, &list.section.1)),
+        ]);
+        let locate = held_locator(
+            cx,
+            "The page quoted first shows a list whose items all repeat one shape, and the page gives the list no accessible name, so it cannot be located by its name. It is the one list with no name inside the part of the page quoted second (its role, then its name when it has one), and a read gives the text of each of its items, one to a row. A locator that finds it so is `role: list` with `name: \"\"`, which the screen's fingerprint holds to that part. Is it the list this screen reads? Write that locator here, or a better one, then release this draft.",
+            self.path,
+            &list.section,
+        );
+        out.screens.push(DraftDoc {
+            path: RelPath::new(&format!("screens/{name}.yaml"))?,
+            body: DraftValue::map(vec![
+                ("screen", DraftValue::text(&name)),
+                ("surface", DraftValue::text(self.surface)),
+                ("reach", self.reach()),
+                ("ready", DraftValue::map(vec![("visible", found_by)])),
+                (
+                    "rows",
+                    DraftValue::map(vec![
+                        ("locate", locate),
+                        (
+                            "fingerprint",
+                            DraftValue::map(vec![(
+                                "section",
+                                locator(&list.section.0, &list.section.1),
+                            )]),
+                        ),
+                        ("items", DraftValue::text("listitem")),
+                        (
+                            "columns",
+                            DraftValue::map(vec![(
+                                "items",
+                                DraftValue::map(vec![("type", DraftValue::text(UNTRUSTED_TEXT))]),
+                            )]),
+                        ),
+                    ]),
+                ),
+            ]),
+        });
+        let mut doc = vec![
+            ("operation", DraftValue::text(&operation)),
+            ("effect", DraftValue::text("read")),
+        ];
+        keyed(&mut doc, self.holes);
+        doc.extend([
+            (
+                "outputs",
+                DraftValue::map(vec![(
+                    "items",
+                    DraftValue::map(vec![
+                        ("type", DraftValue::text(UNTRUSTED_TEXT)),
+                        ("list", DraftValue::Bool(true)),
+                    ]),
+                )]),
+            ),
+            (
+                "bindings",
+                DraftValue::List(vec![DraftValue::map(vec![
+                    ("mode", DraftValue::text(crate::UI_MODE)),
+                    ("verb", DraftValue::text("list")),
+                    ("screen", DraftValue::text(&name)),
+                ])]),
+            ),
+            (
+                "description",
+                DraftValue::text(&format!(
+                    "Lists the items of one list of {}, each as the text the page shows for it. Drafted by rule from a snapshot; its name is provisional.",
+                    self.seen
+                )),
+            ),
+        ]);
+        permissions(&mut doc, self.sends_to, self.path, cx);
+        out.operations.push(DraftDoc {
+            path: RelPath::new(&format!("operations/{name}_list.yaml"))?,
+            body: DraftValue::map(doc),
+        });
+        Ok(())
+    }
+
+    /// The screen of a record headed by its value and a `read` of it: the
+    /// heading, and the values with no label as a list, in the page's
+    /// order.
+    fn record(
+        &self,
+        record: &HeadedRecord,
+        drafted: &mut Vec<String>,
+        out: &mut Drafts,
+        cx: &DraftContext<'_>,
+    ) -> Result<(), Failure> {
+        let name = self.named("record");
+        let operation = format!("{}_{name}_get", self.target);
+        if !is_name(&name, LONGEST)
+            || OperationName::new(&operation).is_err()
+            || drafted.contains(&name)
+            || self
+                .holes
+                .iter()
+                .any(|hole| hole == "heading" || hole == "values")
+        {
+            return Ok(());
+        }
+        drafted.push(name.clone());
+        let section = locator(&record.section.0, &record.section.1);
+        let level = i64::try_from(record.level).unwrap_or(1);
+        let locate = held_locator(
+            cx,
+            &format!(
+                "The pages quoted first show different words in their one heading of level {level} inside the part of the page quoted second (its role, then its name when it has one): the heading is the record's own value, not a label, so it cannot be located by its name. The values below it have no labels, so a read gives them as one list, in the page's order, and names none of them. A locator that finds the heading is `heading: {level}`, which the field's fingerprint holds to that part. Is it the record's heading? Write that locator here, or a better one, then release this draft."
+            ),
+            self.path,
+            &record.section,
+        );
+        out.screens.push(DraftDoc {
+            path: RelPath::new(&format!("screens/{name}.yaml"))?,
+            body: DraftValue::map(vec![
+                ("screen", DraftValue::text(&name)),
+                ("surface", DraftValue::text(self.surface)),
+                ("reach", self.reach()),
+                (
+                    "ready",
+                    DraftValue::map(vec![(
+                        "visible",
+                        DraftValue::map(vec![
+                            ("heading", DraftValue::Int(level)),
+                            ("within", section.clone()),
+                        ]),
+                    )]),
+                ),
+                (
+                    "fields",
+                    DraftValue::map(vec![(
+                        "heading",
+                        DraftValue::map(vec![
+                            ("type", DraftValue::text(UNTRUSTED_TEXT)),
+                            ("control", DraftValue::text("text")),
+                            ("read", DraftValue::text("text")),
+                            ("locate", locate),
+                            (
+                                "fingerprint",
+                                DraftValue::map(vec![("section", section.clone())]),
+                            ),
+                        ]),
+                    )]),
+                ),
+                (
+                    "rows",
+                    DraftValue::map(vec![
+                        ("locate", DraftValue::List(vec![section.clone()])),
+                        ("fingerprint", DraftValue::map(vec![("section", section)])),
+                        ("items", DraftValue::text("paragraph")),
+                        (
+                            "columns",
+                            DraftValue::map(vec![(
+                                "values",
+                                DraftValue::map(vec![("type", DraftValue::text(UNTRUSTED_TEXT))]),
+                            )]),
+                        ),
+                    ]),
+                ),
+            ]),
+        });
+        let mut doc = vec![
+            ("operation", DraftValue::text(&operation)),
+            ("effect", DraftValue::text("read")),
+        ];
+        keyed(&mut doc, self.holes);
+        doc.extend([
+            (
+                "outputs",
+                DraftValue::map(vec![
+                    (
+                        "heading",
+                        DraftValue::map(vec![("type", DraftValue::text(UNTRUSTED_TEXT))]),
+                    ),
+                    (
+                        "values",
+                        DraftValue::map(vec![
+                            ("type", DraftValue::text(UNTRUSTED_TEXT)),
+                            ("list", DraftValue::Bool(true)),
+                        ]),
+                    ),
+                ]),
+            ),
+            (
+                "bindings",
+                DraftValue::List(vec![DraftValue::map(vec![
+                    ("mode", DraftValue::text(crate::UI_MODE)),
+                    ("verb", DraftValue::text("read")),
+                    ("screen", DraftValue::text(&name)),
+                ])]),
+            ),
+            (
+                "description",
+                DraftValue::text(&format!(
+                    "Reads the record of {}: its heading, which is the record's own value, and the values below it, which have no labels, as one list in the page's order. Drafted by rule from a snapshot; its name is provisional.",
+                    self.seen
+                )),
+            ),
+        ]);
+        permissions(&mut doc, self.sends_to, self.path, cx);
+        out.operations.push(DraftDoc {
+            path: RelPath::new(&format!("operations/{name}_get.yaml"))?,
+            body: DraftValue::map(doc),
+        });
+        Ok(())
+    }
 }
 
 /// Why a rule from a `screen` finding drafts nothing, in plain words, with
@@ -919,6 +1447,11 @@ mod why {
     pub(super) const NO_SURFACE: &str = "The page is at an origin that is not exactly one `web` surface of the target. If the page belongs to this application, give the target one `web` surface at that origin and draft again; otherwise it belongs to another system.";
     pub(super) const SECRET_PLACEHOLDER: &str = "A placeholder of the page's path is named as a secret, so a read of the page would take a secret as an input, and nothing is drafted (decision 0302). A secret comes from the session, never from a caller.";
     pub(super) const NOTHING_TO_READ: &str = "The page shows no table with a plain name and plain headings, and no value beside a plain label, that a screen could locate. Write its screen by hand, naming what it reads.";
+    pub(super) const HEADING_HAS_NO_WORDS: &str = "A heading of the page's table holds a table library's sort words and no words of its own once they are taken off, so its column cannot be named or read by its heading. Write the table's screen by hand, with the heading as the page shows it to a person.";
+    pub(super) const TABLES_WITH_NO_NAME: &str = "The page shows more than one table with no accessible name in one part of the page, so none of them can be located by rule. Write the screen by hand, with a locator that tells the table apart.";
+    pub(super) const LISTS_WITH_NO_NAME: &str = "The page shows more than one list with no accessible name in one part of the page, so none of them can be located by rule. Write the screen by hand, with a locator that tells the list apart.";
+    pub(super) const ITEMS_DIFFER: &str = "The page's list holds items that differ in shape, or something that is not an item, so a read of it as items of one shape would be a guess. Write the list's screen by hand, naming what it reads.";
+    pub(super) const RECORD_NOT_READ: &str = "The pages of the screen show different words in a heading, so the heading is a record's value, but the record cannot be read by rule: more than one heading varies, it is not the one heading of its level in a part of the page about its content, or the values below it are not all paragraphs right under that part. Write the record's screen by hand.";
     pub(super) const SCREEN_HAS_QUESTIONS: &str = "Each screen drafted from the page holds a question for a person, so no read is drafted over it yet. Answer the screen's questions, then write the read by hand.";
 }
 
