@@ -86,7 +86,7 @@ pub const INTERFACE_RULES: &[InterfaceRule] = &[
 /// there when the page was read.
 pub const EMPTY_INTERFACE: &str = "empty";
 
-fn suits_web(surface: &SurfaceDescription) -> bool {
+pub(crate) fn suits_web(surface: &SurfaceDescription) -> bool {
     surface.kind.as_str() == SURFACE_KIND
         && (surface.address.starts_with("http://") || surface.address.starts_with("https://"))
 }
@@ -167,7 +167,7 @@ const PAGE_WAIT: Duration = Duration::from_secs(10);
 
 /// The limitation of an address whose query held an entry that is not
 /// kept.
-fn query_left_out() -> (LimitationCode, String) {
+pub(crate) fn query_left_out() -> (LimitationCode, String) {
     (
         LimitationCode::NotExercised,
         "The query held an entry with no name, or a name that is not a plain word; such an entry is a value, and was not kept.".to_owned(),
@@ -175,7 +175,7 @@ fn query_left_out() -> (LimitationCode, String) {
 }
 
 /// The limitation of an answer an object of which read as a dictionary.
-fn dictionary() -> (LimitationCode, String) {
+pub(crate) fn dictionary() -> (LimitationCode, String) {
     (
         LimitationCode::NotExercised,
         "An object of the answer had names that read as values (more of them than a record has, or one that is not a plain name), as a dictionary's keys are; none of its names were kept, so whether they are structure is not known.".to_owned(),
@@ -184,7 +184,7 @@ fn dictionary() -> (LimitationCode, String) {
 
 /// The limitations of every member of a matched group, each once, in the
 /// order first seen: what one page or request showed holds for the whole.
-fn union<'a>(
+pub(crate) fn union<'a>(
     each: impl Iterator<Item = &'a [(LimitationCode, String)]>,
 ) -> Vec<(LimitationCode, String)> {
     let mut out: Vec<(LimitationCode, String)> = Vec::new();
@@ -207,9 +207,9 @@ fn single_variant(what: &str) -> (LimitationCode, String) {
 pub(crate) struct Kinds {
     surface: FindingKind,
     sign_in_method: FindingKind,
-    screen: FindingKind,
-    exchange: FindingKind,
-    endpoint: FindingKind,
+    pub(crate) screen: FindingKind,
+    pub(crate) exchange: FindingKind,
+    pub(crate) endpoint: FindingKind,
 }
 
 impl Kinds {
@@ -232,20 +232,20 @@ pub(crate) struct Parts {
 
 /// Sends each finding on once: the same observation made twice has one
 /// identifier, and is one finding.
-struct Once<'a> {
+pub(crate) struct Once<'a> {
     out: &'a mut dyn FindingSink,
     sent: BTreeSet<Digest>,
 }
 
 impl<'a> Once<'a> {
-    fn new(out: &'a mut dyn FindingSink) -> Self {
+    pub(crate) fn new(out: &'a mut dyn FindingSink) -> Self {
         Self {
             out,
             sent: BTreeSet::new(),
         }
     }
 
-    fn found(&mut self, finding: &Finding) -> Result<(), Failure> {
+    pub(crate) fn found(&mut self, finding: &Finding) -> Result<(), Failure> {
         if self.sent.insert(finding.id()) {
             self.out.found(finding.clone())?;
         }
@@ -612,7 +612,7 @@ async fn ready(
 
 /// One page a snapshot was taken of: where it ended, what was found, and
 /// why that is weaker than it looks.
-type Looked = (Place, Json, Vec<(LimitationCode, String)>);
+pub(crate) type Looked = (Place, Json, Vec<(LimitationCode, String)>);
 
 /// `web_snapshot`: the screens of the surface's start page, of the pages
 /// the focus names, and of the pages plain links lead to, as deep as the
@@ -743,7 +743,7 @@ impl WebSnapshot {
     /// were looked at: one for each page, and one for each group of pages
     /// that show one screen at addresses that differ in one segment, in
     /// place of those pages' own (screen matching).
-    fn give(
+    pub(crate) fn give(
         core: &Core,
         kinds: &Kinds,
         scope: &DiscoveryScope<'_>,
@@ -908,6 +908,7 @@ impl WebCapture {
                         credential_headers: Vec::new(),
                         set_headers: Vec::new(),
                         query_left_out: false,
+                        body: None,
                     }),
                     // A request to a system that is not this surface.
                     _ => pages.report.dropped += 1,
@@ -964,6 +965,7 @@ impl WebCapture {
                     credential_headers: Vec::new(),
                     set_headers: Vec::new(),
                     query_left_out: arrival.ended.query_left_out,
+                    body: None,
                 },
                 limitations,
             ));
@@ -1026,6 +1028,7 @@ impl WebCapture {
                         credential_headers: own.credential_headers,
                         set_headers: own.set_headers,
                         query_left_out: own.query_left_out,
+                        body: None,
                     },
                     limitations,
                 ));
