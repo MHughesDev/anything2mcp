@@ -1,4 +1,4 @@
-# 0999. A release is gated by its environments, and a person approves every publish
+# 0484. A release is gated by its environments, and a person approves every publish
 
 **Status:** Accepted. Design decision, made by the worker who ran the first design review round by lens 8, the security reviewer, under the lead's brief. The owner had not read this record when it was merged. It changes no public contract and no code; it changes what [publishing setup](../plan/publishing-setup.md) and [RELEASING.md](../../RELEASING.md) say the owner must set before the first publish, from "if a person should approve" to required.
 

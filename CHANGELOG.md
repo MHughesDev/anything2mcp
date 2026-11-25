@@ -15,7 +15,7 @@ The design's own history is in the [decision records](docs/decisions/README.md),
 
 ### Security
 
-- The README now has the vault's passphrase typed at a prompt that writes no shell history (`read -rs`), and says to start agents from another shell, since a program started from the shell that holds it inherits it. It also states the limit of the approval it promises: the presence prompt stops a mistaken or steered agent, not a hostile program already running as you. Publishing setup and RELEASING.md now make each release environment's required reviewer and its rule of `main` and `v*` tags the release's gate, set before the first tag ([decision 0999](docs/decisions/0999-a-release-is-gated-by-its-environments-and-a-person-approves-every-publish.md)).
+- The README now has the vault's passphrase typed at a prompt that writes no shell history (`read -rs`), and says to start agents from another shell, since a program started from the shell that holds it inherits it. It also states the limit of the approval it promises: the presence prompt stops a mistaken or steered agent, not a hostile program already running as you. Publishing setup and RELEASING.md now make each release environment's required reviewer and its rule of `main` and `v*` tags the release's gate, set before the first tag ([decision 0484](docs/decisions/0484-a-release-is-gated-by-its-environments-and-a-person-approves-every-publish.md)).
 
 ## [0.1.0] - 2026-11-25
 
