@@ -166,7 +166,7 @@ impl InProcessControl {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
-            .any(|((target, hash), _)| {
+            .any(|((target, hash), _, _)| {
                 *target == self.run.target && *hash == self.run.target_version
             })
     }
@@ -243,6 +243,10 @@ impl ControlPort for InProcessControl {
                 .await
                 .map_err(|failure| self.redacted(failure))
         })
+    }
+
+    fn confirmed_reads(&self, hash: &Digest) -> a2m_provider::ConfirmedReads {
+        self.kernel.confirmed_reads_kept(&self.run.target, hash)
     }
 
     fn decide<'a>(&'a self, question: &'a GuardQuestion) -> BoxFuture<'a, Result<(), Failure>> {

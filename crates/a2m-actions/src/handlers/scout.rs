@@ -1526,7 +1526,14 @@ async fn try_reads(
         }
     };
     let compiled_target = Arc::new(compiled.compiled_target);
-    kernel.keep_draft(target, compiled.encoded.hash, Arc::clone(&compiled_target));
+    // A scout's trial lets no asserted read through: it is not a try a
+    // person asked for (decision 0999).
+    kernel.keep_draft(
+        target,
+        compiled.encoded.hash,
+        Arc::clone(&compiled_target),
+        a2m_provider::ConfirmedReads::none(),
+    );
     let environment = compiled_target
         .default_environment()
         .map(|environment| environment.name.clone());

@@ -3,6 +3,7 @@
 
 mod access;
 mod admin;
+pub(crate) mod assertions;
 pub(crate) mod build;
 pub(crate) mod captures;
 mod client;
@@ -125,6 +126,7 @@ pub(crate) fn handler_for(action: &str) -> Option<HandlerFn> {
         "session.end" => sessions::session_end,
         "watch.create" => watches::watch_create,
         "watch.confirm" => watches::watch_confirm,
+        "assertion.confirm" => assertions::assertion_confirm,
         "watch.get" => watches::watch_get,
         "watch.list" => watches::watch_list,
         "watch.changes" => watches::watch_changes,

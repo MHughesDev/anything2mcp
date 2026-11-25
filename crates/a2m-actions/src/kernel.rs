@@ -1108,9 +1108,14 @@ impl Kernel {
 
 /// How many compiled targets read from the store are kept in memory.
 pub(crate) const COMPILED_TARGETS_KEPT: usize = 64;
-/// A drafted compiled target kept for a trial: its target and hash, and the
-/// compiled target.
-pub(crate) type KeptDraft = ((TargetName, Digest), Arc<CompiledTarget>);
+/// A drafted compiled target kept for a trial: its target and hash, the
+/// compiled target, and the asserted reads of it its person confirmed
+/// (decision 0999).
+pub(crate) type KeptDraft = (
+    (TargetName, Digest),
+    Arc<CompiledTarget>,
+    a2m_provider::ConfirmedReads,
+);
 /// How many drafted compiled targets of trials are kept in memory. A trial
 /// whose compiled target was let go since cannot be resumed; it is tried
 /// again.
