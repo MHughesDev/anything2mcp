@@ -25,7 +25,7 @@ A round that finds nothing has probably not looked hard enough. A round that rew
 | 6 | One pipeline, line by line | Walk one real pipeline through every section it touches. Where do two steps not connect? | 2026-11-16 |
 | 7 | Less | What can be removed from the first release without losing the core? What is designed and not needed? | 2026-11-25 ([report](../reviews/less-review-2026-11-25.md)) |
 | 8 | The security reviewer | Read the company-server path as an organization's security team would. What would they refuse? | Not yet |
-| 9 | The first-time user | Follow the walkthrough as someone who has never seen the project. Where do they get stuck? | Not yet |
+| 9 | The first-time user | Follow the walkthrough as someone who has never seen the project. Where do they get stuck? First run by walking the README's path at a terminal, as the [first-time user review](../reviews/first-time-user-review-2026-11-25.md) | 2026-11-25 |
 | 10 | The measured system | Now that numbers exist, which sections assumed something the numbers contradict? | 2026-11-24 ([report](../reviews/measured-system-review-2026-11-24.md)) |
 | 11 | The application owner | Read the design as the vendor of a wrapped application. What would make them object, and is the objection fair? | Not yet |
 | 12 | Simpler | For each major part: is there a design half as complex that gives most of the value? | Not yet |
