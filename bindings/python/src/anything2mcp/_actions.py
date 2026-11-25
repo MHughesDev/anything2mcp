@@ -78,6 +78,8 @@ ACTIONS = (
     "reach.list",
     "reach.name",
     "reach.withdraw",
+    "repair.accept",
+    "repair.propose",
     "run.cancel",
     "run.get",
     "run.list",
@@ -469,6 +471,7 @@ class Actions:
         *,
         target: str,
         files: Optional[Dict[str, Any]] = None,
+        focus: Optional[Dict[str, Any]] = None,
         surface: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
@@ -482,6 +485,7 @@ class Actions:
             {
                 "target": target,
                 "files": files,
+                "focus": focus,
                 "surface": surface,
             },
             idempotency_key,
@@ -1104,6 +1108,63 @@ class Actions:
         The engine action is ``reach.withdraw``.
         """
         return self._action("reach.withdraw", {"label": label}, idempotency_key)
+
+    def repair_accept(
+        self,
+        *,
+        knowledge: str,
+        now: str,
+        proposal: str,
+        target: str,
+        before: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Write a repair the pack proposed into the target's drafts, as
+        `repair.propose` showed it. A person's act, carried out on the engine's
+        page, never an agent's. The draft is linted, tested, and published like
+        any other; nothing is published here.
+
+        The engine action is ``repair.accept``.
+        """
+        return self._action(
+            "repair.accept",
+            {
+                "knowledge": knowledge,
+                "now": now,
+                "proposal": proposal,
+                "target": target,
+                "before": before,
+            },
+            idempotency_key,
+        )
+
+    def repair_propose(
+        self,
+        *,
+        knowledge: str,
+        now: str,
+        target: str,
+        before: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """The repair bundle of a drift: the drift, the tools it stops, two shapes
+        of the surface from findings of a discovery, before and now, the draft
+        file that holds the knowledge, and the change the pack's repair proposer
+        proposes, as a diff, or why it proposes none. Keeps nothing, and writes
+        nothing.
+
+        The engine action is ``repair.propose``.
+        """
+        return self._action(
+            "repair.propose",
+            {
+                "knowledge": knowledge,
+                "now": now,
+                "target": target,
+                "before": before,
+            },
+            idempotency_key,
+        )
 
     def run_cancel(
         self,

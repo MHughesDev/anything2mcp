@@ -65,6 +65,8 @@ const ACTIONS = Object.freeze([
   "reach.list",
   "reach.name",
   "reach.withdraw",
+  "repair.accept",
+  "repair.propose",
   "run.cancel",
   "run.get",
   "run.list",
@@ -595,6 +597,27 @@ class Actions {
    */
   reachWithdraw(input, options = {}) {
     return this.call("reach.withdraw", input, options);
+  }
+
+  /**
+   * Write a repair the pack proposed into the target's drafts, as `repair.propose`
+   * showed it. A person's act, carried out on the engine's page, never an agent's. The
+   * draft is linted, tested, and published like any other; nothing is published here.
+   * The engine action is `repair.accept`.
+   */
+  repairAccept(input, options = {}) {
+    return this.call("repair.accept", input, options);
+  }
+
+  /**
+   * The repair bundle of a drift: the drift, the tools it stops, two shapes of the
+   * surface from findings of a discovery, before and now, the draft file that holds the
+   * knowledge, and the change the pack's repair proposer proposes, as a diff, or why it
+   * proposes none. Keeps nothing, and writes nothing. The engine action is
+   * `repair.propose`.
+   */
+  repairPropose(input, options = {}) {
+    return this.call("repair.propose", input, options);
   }
 
   /**
