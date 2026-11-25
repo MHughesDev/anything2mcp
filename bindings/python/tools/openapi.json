@@ -1176,7 +1176,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "The sign-in method of a surface, with evidence, and a recommended identity mode. Read only.",
+    "summary": "The sign-in method of a surface, with evidence, and a recommended identity kind. Read only.",
     "x-action": "auth.detect",
     "x-sdk": true
    }
@@ -2863,7 +2863,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Give the configuration an MCP client needs to start the bridge for this project: printed for the `generic` profile, or set in the file a client profile names, shown first and written by a local person.",
+    "summary": "Give the configuration an MCP client needs to start the stdio proxy for this project: printed for the `generic` client profile, or set in the file a client profile names, shown first and written by a local person.",
     "x-action": "client.connect",
     "x-sdk": true
    }
@@ -19430,7 +19430,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "A summary of one run's trace, with references to its kept artifacts.",
+    "summary": "A summary of one run's trace, with references to its kept captures.",
     "x-action": "run.trace",
     "x-sdk": false
    }
@@ -23444,7 +23444,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "A new scout of a target, handed a description the system publishes about itself as a file of the project's `sources` folder: exactly `scout.run` with `files` naming it `description`. Drafts by rule; never writes to the system.",
+    "summary": "A new scout of a target, handed a description the system publishes about itself as a file of the project's `inputs` folder: exactly `scout.run` with `files` naming it `description`. Drafts by rule; never writes to the system.",
     "x-action": "spec.import",
     "x-sdk": true
    }
@@ -26293,7 +26293,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "Create a toolset: who may connect, which tools it selects, the highest effect class and the identity mode of its runs. A toolset only narrows what grants allow. A person's act, published as a new version of the policy set.",
+    "summary": "Create a toolset: who may connect, which tools it selects, the highest effect class and the identity kind of its runs. A toolset only narrows what grants allow. A person's act, published as a new version of the policy set.",
     "x-action": "toolset.create",
     "x-sdk": true
    }
@@ -27847,7 +27847,7 @@
       "description": "A failure: its class, code, message, and fix."
      }
     },
-    "summary": "View one run's evidence: its trace lines and artifact references.",
+    "summary": "View one run's evidence: its trace lines and capture references.",
     "x-action": "trace.show",
     "x-sdk": true
    }

@@ -208,7 +208,7 @@ class Actions:
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """The sign-in method of a surface, with evidence, and a recommended
-        identity mode. Read only.
+        identity kind. Read only.
 
         The engine action is ``auth.detect``.
         """
@@ -310,9 +310,9 @@ class Actions:
         yes: Optional[bool] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """Give the configuration an MCP client needs to start the bridge for this
-        project: printed for the `generic` profile, or set in the file a client
-        profile names, shown first and written by a local person.
+        """Give the configuration an MCP client needs to start the stdio proxy for
+        this project: printed for the `generic` client profile, or set in the
+        file a client profile names, shown first and written by a local person.
 
         The engine action is ``client.connect``.
         """
@@ -1254,7 +1254,7 @@ class Actions:
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """A new scout of a target, handed a description the system publishes about
-        itself as a file of the project's `sources` folder: exactly `scout.run`
+        itself as a file of the project's `inputs` folder: exactly `scout.run`
         with `files` naming it `description`. Drafts by rule; never writes to
         the system.
 
@@ -1470,7 +1470,7 @@ class Actions:
         idempotency_key: Optional[str] = None,
     ) -> "Response":
         """Create a toolset: who may connect, which tools it selects, the highest
-        effect class and the identity mode of its runs. A toolset only narrows
+        effect class and the identity kind of its runs. A toolset only narrows
         what grants allow. A person's act, published as a new version of the
         policy set.
 
@@ -1570,7 +1570,7 @@ class Actions:
         run_id: str,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
-        """View one run's evidence: its trace lines and artifact references.
+        """View one run's evidence: its trace lines and capture references.
 
         The engine action is ``trace.show``.
         """

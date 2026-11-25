@@ -136,7 +136,7 @@ class Actions {
   }
 
   /**
-   * The sign-in method of a surface, with evidence, and a recommended identity mode.
+   * The sign-in method of a surface, with evidence, and a recommended identity kind.
    * Read only. The engine action is `auth.detect`.
    */
   authDetect(input, options = {}) {
@@ -173,9 +173,10 @@ class Actions {
   }
 
   /**
-   * Give the configuration an MCP client needs to start the bridge for this project:
-   * printed for the `generic` profile, or set in the file a client profile names, shown
-   * first and written by a local person. The engine action is `client.connect`.
+   * Give the configuration an MCP client needs to start the stdio proxy for this
+   * project: printed for the `generic` client profile, or set in the file a client
+   * profile names, shown first and written by a local person. The engine action is
+   * `client.connect`.
    */
   clientConnect(input = {}, options = {}) {
     return this.call("client.connect", input, options);
@@ -644,8 +645,8 @@ class Actions {
 
   /**
    * A new scout of a target, handed a description the system publishes about itself as
-   * a file of the project's `sources` folder: exactly `scout.run` with `files` naming
-   * it `description`. Drafts by rule; never writes to the system. The engine action is
+   * a file of the project's `inputs` folder: exactly `scout.run` with `files` naming it
+   * `description`. Drafts by rule; never writes to the system. The engine action is
    * `spec.import`.
    */
   specImport(input, options = {}) {
@@ -731,7 +732,7 @@ class Actions {
 
   /**
    * Create a toolset: who may connect, which tools it selects, the highest effect class
-   * and the identity mode of its runs. A toolset only narrows what grants allow. A
+   * and the identity kind of its runs. A toolset only narrows what grants allow. A
    * person's act, published as a new version of the policy set. The engine action is
    * `toolset.create`.
    */
@@ -764,7 +765,7 @@ class Actions {
   }
 
   /**
-   * View one run's evidence: its trace lines and artifact references. The engine action
+   * View one run's evidence: its trace lines and capture references. The engine action
    * is `trace.show`.
    */
   traceShow(input, options = {}) {
