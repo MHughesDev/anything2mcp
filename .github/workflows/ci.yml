@@ -660,8 +660,16 @@ jobs:
       # holds the build without it, which `--no-default-features` gives.
       - name: Lint with TLS off
         run: cargo clippy -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --all-targets --locked --no-default-features -- -D warnings
+      # The probe's tests each start a browser, as many of the product's do;
+      # run together, their browsers share the runner's cores, and on
+      # 2026-11-25 a capture of the probe took more than its minute to open
+      # on Linux, and a capture of the product's missed one exchange on
+      # macOS. The probe's tests run in a step of their own, with the same
+      # tests and the same deadlines.
       - name: Test with TLS off
-        run: cargo test -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp -p a2m-pack-web-probe --locked --no-fail-fast --no-default-features
+        run: cargo test -p a2m-auth -p a2m-pack-http -p a2m-pack-mcp -p example-app -p anything2mcp -p example-mcp --locked --no-fail-fast --no-default-features
+      - name: Test the probe with TLS off
+        run: cargo test -p a2m-pack-web-probe --locked --no-fail-fast --no-default-features
 
   postgres:
     name: The data pack against a real PostgreSQL server
