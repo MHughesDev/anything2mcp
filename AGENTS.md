@@ -12,7 +12,7 @@ A toolkit that latches onto existing software and systems and exposes them to AI
 
 Rust core, one binary, installed through pip or npm. It is a neutral **kernel** and a set of **packs**, each of which knows one kind of system: web applications first, then HTTP services, existing MCP servers, desktop applications, command-line programs, data stores and files, streams, and devices with their firmware.
 
-The first release is for one person's machine, on Windows, macOS, or Linux. That machine is the measure of what the product reaches and the boundary of where it serves: it can be set around anything the machine can reach, it knows the networks the machine is on, and it offers its tools on that machine only. A shared server comes after the first release.
+The product starts on one person's machine, on Windows, macOS, or Linux. That machine is the measure of what the local engine reaches and the boundary of where it serves: it can be set around anything the machine can reach, it knows the networks the machine is on, and it offers its tools on that machine only. A shared server is another configuration of the same program. The first release is the whole design, the shared server with it, and nothing is cut to reach it sooner ([decision 0494](docs/decisions/0494-the-first-release-is-the-whole-design-the-shared-server-with-it.md)).
 
 ## How this project grows
 
