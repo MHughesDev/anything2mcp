@@ -8,6 +8,7 @@ Newest first.
 
 | Date | Entry | In one line |
 | --- | --- | --- |
+| 2026-11-26 | [The whole design for the first release](2026-11-26-the-whole-design-for-the-first-release.md) | Pull request 28 merged; the owner puts the whole design, the shared server with it, into the first release (0494) |
 | 2026-11-25 | [Handed on to a new session](2026-11-25-handed-on-to-a-new-session.md) | 9.1c and the stretch's fixes in pull request 28; the first release back to its full scope (0493); a page for the next cloud session |
 | 2026-11-25 | [The preview made ready](2026-11-25-the-preview-made-ready.md) | FT6 and its four fixes, W2d and W2e, the desktop pack's start and probe, four actions; 0.1 made a preview by the owner, its release commit prepared, and a Windows tester kit from CI; 183 of 212 |
 | 2026-11-25 | [The first hour, twice, and faster checks](2026-11-25-the-first-hour-twice-and-faster-checks.md) | H-18 measured twice (about 2 min, then 1 min 13 s); capture through to a scout; three systems' faults; CI in shards; 168 of 203 |

@@ -30,9 +30,9 @@ The browser tests find a browser through `A2M_TEST_BROWSER`. In a cloud containe
 ## 2. Where the work stands
 
 - **Branches.** `main` holds everything merged through pull request 27, including the prepared commit of 0.1.0 (`261eee0`). The session branch of the last session holds pull request 28, in draft, with everything since: decisions 0479 to 0493. Merge it when every check is green on Windows, macOS, and Linux; never over red. A new session works on its own branch, cut from that one or from main once 28 is merged.
-- **Scope.** The first release has its full scope again ([decision 0493](../decisions/0493-the-first-release-has-its-full-scope-again-and-the-prepared-preview-is-not-tagged.md)). The preview's words in the README, the changelog's 0.1.0 section, and the roadmap rows 3.6, 5.6, and OS5 are rewritten to say so. When the release is near, bring the 0.1.0 section up to date with what is under Unreleased, and check `contracts/0.1.0/` against what main then holds (`python3 tools/contracts.py`).
+- **Scope.** The first release is the whole design, the shared server with it, and nothing is cut to reach it sooner ([decision 0494](../decisions/0494-the-first-release-is-the-whole-design-the-shared-server-with-it.md)). Its first task is the sweep that record names: the build order's and the roadmap's rows once held after the release, and the spec's sentences that say so; then the server's design, as records. Before 0494: the first release has its full scope again ([decision 0493](../decisions/0493-the-first-release-has-its-full-scope-again-and-the-prepared-preview-is-not-tagged.md)). The preview's words in the README, the changelog's 0.1.0 section, and the roadmap rows 3.6, 5.6, and OS5 are rewritten to say so. When the release is near, bring the 0.1.0 section up to date with what is under Unreleased, and check `contracts/0.1.0/` against what main then holds (`python3 tools/contracts.py`).
 - **What is left.** `python3 tools/progress.py` counts it from the roadmap. Of the packages left, the owner's are the release gate (SR1), the registries (0.2p), and the checks a person makes at a Windows and a macOS machine (3.6, OS5); 5.6 needs a person or an agent timed in the loop on each system. Package 8.3 is held: a start and keys of the desktop pack on Windows and macOS are not built ([decision 0490](../decisions/0490-the-desktop-pack-still-starts-nothing-on-macos-because-no-event-off-the-main-run-loop-says-an-application-answers.md)). The rest is in the [build order](build-order.md).
-- **Next free decision number:** 0494.
+- **Next free decision number:** 0495.
 
 ## 3. How the lead runs builders
 
@@ -63,7 +63,7 @@ The last sessions ran one lead and up to four builders at once, each a subagent 
 
 ## 4. What the last lead knew that is written nowhere else
 
-A new session on another account shares no memory with the old one. This is what the last lead held in mind.
+A new session shares no memory with the old one, even on the same account. This is what the last lead held in mind.
 
 **The owner.**
 - The owner directs in short messages, often typed fast, and wants the work to move without being asked. Per AGENTS.md: decide, record, build, merge. Ask only what is truly the owner's, and then in one question with a recommended answer first.

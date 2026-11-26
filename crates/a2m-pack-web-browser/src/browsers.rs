@@ -852,7 +852,11 @@ fn unanswered(error: &ClientError, waited: Duration, redact: &dyn Redact) -> Str
 /// request waits on a prompt nobody answers and none is granted by one.
 /// And every new page is attached before it runs, so that a window a page
 /// opens is caught before its first request ([`watch_windows`]).
-async fn lock_browser(inner: &Arc<BrowserInner>, call_deadline: Duration) -> Result<(), String> {
+async fn lock_browser(
+    inner: &Arc<BrowserInner>,
+    call_deadline: Duration,
+    redact: &dyn Redact,
+) -> Result<(), String> {
     let client = &inner.client;
     let deadline = Deadline::after(call_deadline);
     // Listening starts before the browser is told to attach anything.
@@ -873,7 +877,12 @@ async fn lock_browser(inner: &Arc<BrowserInner>, call_deadline: Duration) -> Res
                 deadline,
             )
             .await
-            .map_err(|_| "it did not take the refusal of downloads".to_owned())?;
+            .map_err(|error| {
+                format!(
+                    "it did not take the refusal of downloads: {}",
+                    unanswered(&error, call_deadline, redact)
+                )
+            })?;
         client
             .call(
                 None,
@@ -884,7 +893,12 @@ async fn lock_browser(inner: &Arc<BrowserInner>, call_deadline: Duration) -> Res
                 deadline,
             )
             .await
-            .map_err(|_| "it did not take the refusal of permissions".to_owned())?;
+            .map_err(|error| {
+                format!(
+                    "it did not take the refusal of permissions: {}",
+                    unanswered(&error, call_deadline, redact)
+                )
+            })?;
     }
     client
         .call(
@@ -909,7 +923,12 @@ async fn lock_browser(inner: &Arc<BrowserInner>, call_deadline: Duration) -> Res
             deadline,
         )
         .await
-        .map_err(|_| "it did not take the watch on new windows".to_owned())?;
+        .map_err(|error| {
+            format!(
+                "it did not take the watch on new windows: {}",
+                unanswered(&error, call_deadline, redact)
+            )
+        })?;
     Ok(())
 }
 
@@ -1422,7 +1441,13 @@ impl Browsers {
         // The locks that hold for the whole browser go on before any tab
         // exists. A browser that does not take them is not one the engine
         // can own: it is closed.
-        if let Err(why) = lock_browser(&inner, shared.settings.call_deadline).await {
+        if let Err(why) = lock_browser(
+            &inner,
+            shared.settings.call_deadline,
+            shared.redact.as_ref(),
+        )
+        .await
+        {
             inner.client.close();
             unrecorded.stop().await;
             return Err(failed(LaunchReason::NotOwned(why)));
