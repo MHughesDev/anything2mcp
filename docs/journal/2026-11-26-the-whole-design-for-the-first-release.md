@@ -12,6 +12,10 @@ The entry before this is [handed on to a new session](2026-11-25-handed-on-to-a-
 - **Progress:** 194 of 219 packages. Of the 25 left, 10 are the owner's and 15 an agent's, the server's packages among them.
 - **Nothing is running.** No builder, no scheduled check-in.
 
+## Found, and routed
+
+- On macOS, one run of the web pack's `cases` test saw a started browser refuse the first of its locks, the refusal of downloads, and the lock threw the browser's answer away. The answer is now kept in the sentence (`it did not take the refusal of downloads: ...`), so the next time names its cause. The cause itself is not found.
+
 ## Next
 
 - The sweep decision 0494 names: the roadmap's held rows that give "after the release" as their reason, and the spec's sentences that place a part after the first release.
