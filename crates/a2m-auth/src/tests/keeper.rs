@@ -500,6 +500,7 @@ async fn a_refused_refresh_goes_to_the_person_and_is_never_tried_again() {
             .unwrap_err();
         assert_eq!(stopped.code(), &codes::NEEDS_LOGIN);
         world.keeper.tick().await;
+        world.keeper.idle().await;
     }
     assert_eq!(world.state(&key).await, SessionState::NeedsPerson);
     assert_eq!((world.fake.refreshes(), world.fake.sign_ins()), (1, 1));
@@ -1163,6 +1164,7 @@ async fn the_timers_end_a_session_at_its_maximum_age_and_probe_only_while_wanted
     assert_eq!(world.probe.calls(), 0);
     world.clock.advance(Duration::from_secs(1));
     world.keeper.tick().await;
+    world.keeper.idle().await;
     world.keeper.tick().await;
     world.keeper.idle().await;
     assert_eq!(world.probe.calls(), 1);
@@ -1181,6 +1183,7 @@ async fn the_timers_end_a_session_at_its_maximum_age_and_probe_only_while_wanted
     // ends, whatever was renewed meanwhile.
     world.clock.advance(8 * HOUR);
     world.keeper.tick().await;
+    world.keeper.idle().await;
     assert_eq!(world.state(&key).await, SessionState::Expired);
     let probes = world.probe.calls();
 
@@ -1240,12 +1243,15 @@ async fn a_probe_that_could_not_be_made_changes_nothing_and_a_probes_lease_never
     *world.probe.outcome.lock().unwrap() = SessionCheckOutcome::Unknown;
     world.clock.advance(Duration::from_secs(600));
     world.keeper.tick().await;
+    world.keeper.idle().await;
     assert_eq!(world.probe.calls(), 1);
     assert_eq!(world.state(&key).await, SessionState::Valid);
     world.keeper.tick().await;
+    world.keeper.idle().await;
     assert_eq!(world.probe.calls(), 1);
     world.clock.advance(Duration::from_secs(600));
     world.keeper.tick().await;
+    world.keeper.idle().await;
     assert_eq!(world.probe.calls(), 2);
     assert_eq!(world.state(&key).await, SessionState::Valid);
     assert_eq!(world.fake.refreshes(), 0);
