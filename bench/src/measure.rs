@@ -119,12 +119,12 @@ impl Scenario for ListTools {
 /// What a read scenario holds: the application, an engine, and the answer the
 /// first read gave.
 pub struct Reading {
-    stand: Stand,
-    machine: Machine,
-    reference: Value,
+    pub(crate) stand: Stand,
+    pub(crate) machine: Machine,
+    pub(crate) reference: Value,
 }
 
-async fn reading(scenario: &str, request: bool) -> Result<Reading, BenchError> {
+pub(crate) async fn reading(scenario: &str, request: bool) -> Result<Reading, BenchError> {
     let stand = Stand::start(scenario).await?;
     let address = stand.app().url("");
     let address = address.trim_end_matches('/').to_owned();

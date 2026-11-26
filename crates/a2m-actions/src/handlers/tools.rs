@@ -669,13 +669,61 @@ fn requirements(run: &RunRow, kind: JobKind, exclusive: Vec<ResourceKey>) -> Job
     }
 }
 
+/// A tool no published version has, when a publish of its target waits
+/// for its person: the answer says so, and where, so that the wait is not
+/// taken for a missing tool (decision 0485, point 2). Any other failure is
+/// given back as it is.
+fn waits_for_its_person(
+    kernel: &Kernel,
+    call: &Call,
+    name: &OperationName,
+    failure: Failure,
+) -> Failure {
+    if failure.code().as_str() != codes::NOT_FOUND.as_str() {
+        return failure;
+    }
+    let Some(person) = call.caller.principal.person() else {
+        return failure;
+    };
+    let waiting = kernel
+        .publishes_waiting(person)
+        .into_iter()
+        .find_map(|target| {
+            let named = a2m_core::TargetName::new(&target).ok()?;
+            if !name.belongs_to(&named) {
+                return None;
+            }
+            kernel
+                .waiting_publish(person, &target)
+                .map(|waiting| (target, waiting))
+        });
+    let Some((target, waiting)) = waiting else {
+        return failure;
+    };
+    let page = waiting.link.map_or_else(
+        || "on its page".to_owned(),
+        |link| format!("on the page at {link}"),
+    );
+    Failure::new(
+        failure.class(),
+        failure.code().clone(),
+        format!(
+            "No published tool is named `{name}` yet: a publish of `{target}` waits for its person, {page}."
+        ),
+        "Once the person has carried out the publish on that page, call the tool again; until then there is nothing to do.",
+    )
+}
+
 handler!(
     /// `tool.call`: submits a run of one published tool and returns its
     /// outcome, or the state it rests in.
     tool_call,
     |kernel, call| {
         let name = OperationName::new(call.required("tool")?)?;
-        let found = kernel.find_tool(&name).await?;
+        let found = match kernel.find_tool(&name).await {
+            Ok(found) => found,
+            Err(failure) => return Err(waits_for_its_person(kernel, &call, &name, failure)),
+        };
         let (effect, hazard) = found.effect();
         // The decision about this call, and the health check before it,
         // were made for the tool as it stood then. A version published in
@@ -2516,7 +2564,13 @@ pub(crate) const DISCOVER_TOOL: &str = "a2m_discover";
 /// Keeps the call of a discovery of one surface and submits it as a
 /// `Discover` job of a run of its own, in the engine's sandbox. Gives the
 /// run. A discovery of the same surface of the same compiled target by the
-/// same caller that has not ended is given back, not started again.
+/// same caller that has not ended is given back, not started again. The
+/// focus is handed to the discoverers as data, by the names they read
+/// (decision 0492); the kernel reads none of it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each is one fact of the stored call, and none belongs with another"
+)]
 pub(crate) async fn submit_discovery(
     kernel: &Kernel,
     call: &Call,
@@ -2525,6 +2579,7 @@ pub(crate) async fn submit_discovery(
     environment: &Environment,
     surface: &a2m_core::SurfaceName,
     files: &std::collections::BTreeMap<String, String>,
+    focus: &Values,
 ) -> Result<RunId, Failure> {
     let store = kernel.store()?;
     let principal = &call.caller.principal;
@@ -2536,7 +2591,7 @@ pub(crate) async fn submit_discovery(
         )
         .with(
             crate::runner::DISCOVERY_FOCUS,
-            a2m_core::Value::Record(Values::new()),
+            a2m_core::Value::Record(focus.clone()),
         );
     // The files the call hands the discovery are part of its stored call,
     // and so of its input hash: a discovery handed other files is another
@@ -2657,6 +2712,16 @@ handler!(
                 )
             })?;
         let handed = files_by_surface(kernel, &compiled_target, &surfaces, &files, false)?;
+        let focus: Values = match call.input.get("focus") {
+            Some(given) => serde_json::from_value(given.clone()).map_err(|_| {
+                codes::input(
+                    codes::SCHEMA_INVALID,
+                    "The focus holds a value that cannot be taken.",
+                    "Give the focus as a map of the names the surface's discoverers read, such as `paths` with a list of paths for a web surface.",
+                )
+            })?,
+            None => Values::new(),
+        };
         let mut runs = Vec::new();
         for (surface, files) in surfaces.iter().zip(&handed) {
             let run = submit_discovery(
@@ -2667,6 +2732,7 @@ handler!(
                 &environment,
                 surface,
                 files,
+                &focus,
             )
             .await?;
             runs.push((surface.clone(), run));

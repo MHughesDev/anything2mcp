@@ -504,6 +504,45 @@ pub(crate) fn promote_next(target: &TargetName, compiled: &Compiled) -> Option<N
     ))
 }
 
+/// The `when` of `draft.ready` as the way on from a place on the first
+/// hour's path (decision 0485, point 2).
+pub(crate) const READY_WHEN: &str = "to record the offline test and fixture of each read the scout proved, promote its binding, run the publish gates, and ask a person to publish, in one action; `tools` names the reads to publish when not all are wanted";
+
+/// `draft.ready` as the one way on from a place on the first hour's path
+/// (decision 0485, point 2): when the newest scout of the target proved a
+/// read and the target has no published version yet, every step between
+/// here and the publish is that one action, whatever the step just taken
+/// was. `None` otherwise, and the caller names its own next step.
+pub(crate) async fn ready_way(kernel: &Kernel, call: &Call, target: &TargetName) -> Option<Next> {
+    let workspace = call.caller.principal.workspace;
+    let listed = target.clone();
+    let published = kernel
+        .store()
+        .ok()?
+        .read(move |tx| tx.versions().list(&workspace, &listed))
+        .await
+        .ok()?
+        .iter()
+        .any(|row| row.current);
+    if published {
+        return None;
+    }
+    let scout = super::scout::scout_tried(kernel, call, target)
+        .await
+        .ok()??;
+    scout
+        .entries
+        .iter()
+        .any(|entry| entry["state"] == "proven")
+        .then(|| {
+            Next::new(
+                "draft.ready",
+                json!({"target": target.as_str()}),
+                READY_WHEN,
+            )
+        })
+}
+
 pub(crate) async fn publish_next(
     kernel: &Kernel,
     call: &Call,
@@ -541,7 +580,7 @@ pub(crate) async fn publish_next(
                 return Next::new(
                     "draft.ready",
                     json!({"target": target.as_str()}),
-                    "to record the offline test and fixture of each read the scout proved, promote its binding, run the publish gates, and ask a person to publish, in one action; `tools` names the reads to publish when not all are wanted",
+                    READY_WHEN,
                 );
             }
             let files: Vec<&str> = untested

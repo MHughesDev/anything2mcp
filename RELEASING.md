@@ -12,7 +12,7 @@ How a version of Anything2MCP is numbered, built, and published. The design behi
 
 ## Before a release
 
-1. `main` is green on all three operating systems.
+1. CI passed on the commit to be released, on all three operating systems. The release workflow holds this: its `decide` job asks GitHub how the newest run of the `CI` workflow on `main` for that very commit ended (a run started by the push to `main`, or by hand for a commit pushed with `[skip ci]`), and refuses to publish unless it completed with the conclusion `success`. A run still queued or in progress is refused too, so wait for it to end before the tag. A rehearsal says, as a warning, that it would have refused ([decision 0484](docs/decisions/0484-a-release-is-gated-by-its-environments-and-a-person-approves-every-publish.md), roadmap package SR3).
 2. The version is set in all places (`Cargo.toml`, `bindings/python/pyproject.toml`, and the npm launcher's `package.json` with its optional dependencies), and `python3 tools/docs_audit.py` reports no findings. The engine's OpenAPI document carries the version, so the saved copy is fetched again from the built program and both clients regenerated ([bindings/README.md](bindings/README.md)); CI fails until it is.
 3. [CHANGELOG.md](CHANGELOG.md) has a section for the version headed `## [VERSION] - YYYY-MM-DD`, listing what changed, and a link line `[VERSION]: ...` at its foot, and "Unreleased" holds no entry again. Where `contracts/next-breaks` lists a break, the section says so. `python3 tools/release_files.py changelog VERSION` says whether it is ready; the release workflow refuses to publish a version it is not ready for, and the section becomes the release page's notes.
 4. The notices file is current: `python3 tools/notices.py check` (CI's dependencies job runs it on every pull request). After a change to `Cargo.lock`, `python3 tools/notices.py write` writes `THIRD-PARTY-NOTICES.txt` and its copy in `bindings/python/`.
@@ -44,7 +44,7 @@ When it is to publish, the job `publish-release`, waiting on the `release` envir
 
 The workflow also keeps a plain list per target of the Rust crates compiled into the binary, with their licences, as the run's `bill-of-materials` artifact. It does not publish to crates.io, which the product is not published to ([decision 0242](docs/decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)), and makes no installers, Homebrew or winget entries, or container image; see [publishing setup](docs/plan/publishing-setup.md). Before the first publish, the owner has setup to do: the `release`, `pypi`, and `npm` environments, PyPI's pending publisher, and npm's first publish and publishers.
 
-Either way the workflow refuses to publish a version that is not the package's own, a commit that is not on `main`, a version with no whole kept contract in `contracts/`, or a version the changelog is not ready for. `python3 tools/release_files.py workflow` (in CI's documents job) fails when a job of the release is missing or a job that may write is not gated.
+Either way the workflow refuses to publish a version that is not the package's own, a commit that is not on `main`, a commit on which CI did not pass (step 1 above), a version with no whole kept contract in `contracts/`, or a version the changelog is not ready for. Those refusals catch a mistake; they are steps of the workflow file, which a branch can change, so the gate against a changed workflow is the three environments' required reviewer and their rule that only `main` and `v*` tags deploy ([decision 0484](docs/decisions/0484-a-release-is-gated-by-its-environments-and-a-person-approves-every-publish.md)). `python3 tools/release_files.py workflow` (in CI's documents job) fails when a job of the release is missing, a job that may write is not gated, or the `decide` job does not ask for CI's result with `actions: read` held by that job alone.
 
 The order the design asks for: the release page, PyPI, npm, then everything that installs from those. PyPI and npm each wait for the release page, and not for each other, so either can be re-run alone.
 
@@ -52,11 +52,11 @@ The order the design asks for: the release page, PyPI, npm, then everything that
 
 Everything an agent can build for it is built; these steps are the owner's, because each acts on a registry or on the repository's settings ([publishing setup](docs/plan/publishing-setup.md) has the detail):
 
-1. Create the GitHub environments `release`, `pypi`, and `npm`, each with required reviewers if a person should approve each publish.
+1. Create the GitHub environments `release`, `pypi`, and `npm`, each with the owner as a required reviewer and deployments allowed from `main` and tags matching `v*` only, and add a tag ruleset that lets only the owner create a `v*` tag. These are the release's gate: until they are set, do not push the tag ([decision 0484](docs/decisions/0484-a-release-is-gated-by-its-environments-and-a-person-approves-every-publish.md)).
 2. On PyPI, add the pending publisher for `anything2mcp` (workflow `release.yml`, environment `pypi`).
 3. On npm, create the organization `anything2mcp`, publish each of the nine packages once from a rehearsal run's `npm-package-*` artifacts, and add a trusted publisher to each (workflow `release.yml`, environment `npm`), allowing `npm publish`.
 4. Rehearse: run the "Release" workflow by hand on `main` with no version, and see every job pass, `release-files` among them.
-5. Set the version to 0.1.0 in every place, write the changelog's section, keep the contract (steps 2 to 5 of "Before a release"), merge, and push the tag `v0.1.0` or start the workflow by hand with `0.1.0`.
+5. The version 0.1.0, its changelog section, and its kept contract are on main already, in the commit that prepared them ([decision 0479](docs/decisions/0479-agents-keep-building-while-0-1-waits-and-0-1-is-released-from-its-prepared-commit.md)). Push the tag `v0.1.0` on that commit; later commits on main hold work for the next version under Unreleased.
 6. Approve `publish-release`, then `publish-pypi` and `publish-npm`, and do the steps below.
 
 ## After a release

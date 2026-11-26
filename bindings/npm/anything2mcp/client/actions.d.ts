@@ -65,6 +65,45 @@ export interface BindingPromoteInput {
 }
 
 /**
+ * The input of `canary.confirm`.
+ */
+export interface CanaryConfirmInput {
+  canary_id: string;
+}
+
+/**
+ * The input of `canary.create`.
+ */
+export interface CanaryCreateInput {
+  ends_at: number;
+  interval_seconds: number;
+  tool: string;
+  environment?: string;
+  input?: Record<string, unknown>;
+}
+
+/**
+ * The input of `canary.end`.
+ */
+export interface CanaryEndInput {
+  canary_id: string;
+}
+
+/**
+ * The input of `canary.get`.
+ */
+export interface CanaryGetInput {
+  canary_id: string;
+}
+
+/**
+ * The input of `canary.list`.
+ */
+export interface CanaryListInput {
+  open_only?: boolean;
+}
+
+/**
  * The input of `capture.start`.
  */
 export interface CaptureStartInput {
@@ -111,6 +150,7 @@ export interface ConfigShowInput {
 export interface DiscoverRunInput {
   target: string;
   files?: Record<string, unknown>;
+  focus?: Record<string, unknown>;
   surface?: string;
 }
 
@@ -398,6 +438,27 @@ export interface ReachWithdrawInput {
 }
 
 /**
+ * The input of `repair.accept`.
+ */
+export interface RepairAcceptInput {
+  knowledge: string;
+  now: string;
+  proposal: string;
+  target: string;
+  before?: string;
+}
+
+/**
+ * The input of `repair.propose`.
+ */
+export interface RepairProposeInput {
+  knowledge: string;
+  now: string;
+  target: string;
+  before?: string;
+}
+
+/**
  * The input of `run.cancel`.
  */
 export interface RunCancelInput {
@@ -445,7 +506,7 @@ export interface ScoutReportInput {
   target: string;
   limit?: number;
   offset?: number;
-  part?: "surfaces" | "found" | "compared.differs" | "compared.would_draft" | "compared.not_covered" | "drafted.written" | "drafted.held_back" | "drafted.not_drafted" | "drafted.conflicts" | "drafted.refused" | "checked.problems" | "checked.tools" | "tried.tools" | "tried.left_out" | "open" | "not_looked_at";
+  part?: "surfaces" | "found" | "compared.differs" | "compared.would_draft" | "compared.not_covered" | "compared.described_against_observed.entries" | "drafted.written" | "drafted.held_back" | "drafted.not_drafted" | "drafted.conflicts" | "drafted.refused" | "checked.problems" | "checked.tools" | "tried.tools" | "tried.left_out" | "open" | "not_looked_at";
   scout?: string;
 }
 
@@ -821,6 +882,41 @@ export declare abstract class Actions {
   bindingPromote(input: BindingPromoteInput, options?: CallOptions): Promise<Response>;
 
   /**
+   * Confirm a canary the caller's person was asked for, so that its checks begin. A
+   * person's act, carried out on the engine's page, never an agent's. The engine action
+   * is `canary.confirm`.
+   */
+  canaryConfirm(input: CanaryConfirmInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Ask for a canary: one published read, called with one fixed input at a fixed
+   * interval until an end, to find whether what it goes through still fits the system.
+   * Its drift stops every tool that relies on the same knowledge before anything is
+   * sent, and its pass lifts that. It sends nothing until the caller's person confirms
+   * it on the engine's page. The engine action is `canary.create`.
+   */
+  canaryCreate(input: CanaryCreateInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * End a canary, by its person or by the caller that asked for it. A check under way
+   * is let go. The engine action is `canary.end`.
+   */
+  canaryEnd(input: CanaryEndInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * One canary of the caller's person: its read, interval, end, state, how many checks
+   * it made, and what the last one found. Never a value the read returned. The engine
+   * action is `canary.get`.
+   */
+  canaryGet(input: CanaryGetInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The canaries of the caller's person, oldest first. The engine action is
+   * `canary.list`.
+   */
+  canaryList(input?: CanaryListInput, options?: CallOptions): Promise<Response>;
+
+  /**
    * Ask for a capture of your person's own use of a surface. Nothing records until the
    * person begins it on the engine's page; then only the structure of what they use is
    * kept, never a value. The engine action is `capture.start`.
@@ -1108,6 +1204,23 @@ export declare abstract class Actions {
    * A person forgets one reach by its label. The engine action is `reach.withdraw`.
    */
   reachWithdraw(input: ReachWithdrawInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * Write a repair the pack proposed into the target's drafts, as `repair.propose`
+   * showed it. A person's act, carried out on the engine's page, never an agent's. The
+   * draft is linted, tested, and published like any other; nothing is published here.
+   * The engine action is `repair.accept`.
+   */
+  repairAccept(input: RepairAcceptInput, options?: CallOptions): Promise<Response>;
+
+  /**
+   * The repair bundle of a drift: the drift, the tools it stops, two shapes of the
+   * surface from findings of a discovery, before and now, the draft file that holds the
+   * knowledge, and the change the pack's repair proposer proposes, as a diff, or why it
+   * proposes none. Keeps nothing, and writes nothing. The engine action is
+   * `repair.propose`.
+   */
+  repairPropose(input: RepairProposeInput, options?: CallOptions): Promise<Response>;
 
   /**
    * Stop a running or waiting run. Says what was completed before it stopped. The

@@ -24,7 +24,7 @@ Conventions: names are lowercase with underscores, start with a letter, and are 
 | `modules` | Module names, for large applications |
 | `defaults` | What applies unless overridden. `timeouts` is a map from a name to milliseconds, which a pack's lowering gives to a step that states none. `limits` holds `max_records` and `max_duration_ms`, which a pipeline that states none takes. `capture` is the capture level of a run: one of the levels of [spec section 217](../spec/2-kernel/217-traces-evidence-and-repair.md). The compiler applies the timeouts and the limits, so the compiled target holds the result and the engine applies no default; the capture level travels in the compiled target |
 | `exclusive_session` | True when the application allows one session per account |
-| `drift_risk` | `low`, `medium`, or `high`; sets how often canaries run |
+| `drift_risk` | `low`, `medium`, or `high`. Read by no canary today: a canary's interval is what its person confirmed ([decision 0482](../decisions/0482-a-canary-runs-on-a-schedule-its-person-confirmed-and-sends-only-a-published-read.md)) |
 | `authorization` | Reference to the record of who agreed to this target being wrapped; required to publish on a server |
 
 **Surface.**

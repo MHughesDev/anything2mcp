@@ -248,6 +248,74 @@ class Workflow(unittest.TestCase):
         problems = self.copy(lambda t: t.replace("    environment: release\n", ""))
         self.assertTrue(any("`publish-release` runs in no GitHub environment" in p for p in problems), problems)
 
+    def test_a_decide_job_that_does_not_ask_whether_ci_passed_fails(self):
+        def drop_step(text):
+            start = text.index("      - name: Refuse a commit on which CI did not pass\n")
+            return text[:start] + text[text.index("\n  wheels:\n", start) + 1:]
+        problems = self.copy(drop_step)
+        self.assertTrue(any("`decide` has no step that asks GitHub whether CI passed" in p for p in problems), problems)
+
+    def test_a_decide_job_without_its_own_actions_read_fails(self):
+        problems = self.copy(lambda t: t.replace("      contents: read\n      actions: read\n", "", 1))
+        self.assertTrue(any("`decide` does not hold" in p for p in problems), problems)
+
+    def test_another_job_that_holds_actions_fails(self):
+        problems = self.copy(lambda t: t.replace(
+            "    name: Gather and check every file of the release\n",
+            "    name: Gather and check every file of the release\n    permissions:\n      actions: read\n"))
+        self.assertIn("`release-files` holds `actions`, which only `decide` may hold", problems)
+
+
+SHA = "a" * 40
+
+
+def run(**fields):
+    base = {"id": 1, "head_sha": SHA, "head_branch": "main", "event": "push", "status": "completed",
+            "conclusion": "success", "created_at": "2026-11-25T21:17:08Z"}
+    return {**base, **fields}
+
+
+class CiVerdict(unittest.TestCase):
+    def verdict(self, *runs):
+        return rf.ci_verdict({"workflow_runs": list(runs)}, SHA)
+
+    def test_a_push_run_on_main_that_succeeded_passes(self):
+        self.assertTrue(self.verdict(run())[0])
+
+    def test_a_run_by_hand_on_main_passes(self):
+        self.assertTrue(self.verdict(run(event="workflow_dispatch"))[0])
+
+    def test_no_run_fails(self):
+        self.assertFalse(self.verdict()[0])
+
+    def test_a_run_of_a_pull_request_or_another_commit_or_branch_does_not_count(self):
+        self.assertFalse(self.verdict(run(event="pull_request"), run(head_sha="b" * 40),
+                                      run(head_branch="w/other"))[0])
+
+    def test_a_run_that_failed_is_cancelled_or_has_not_ended_fails(self):
+        for fields in ({"conclusion": "failure"}, {"conclusion": "cancelled"},
+                       {"status": "queued", "conclusion": None}, {"status": "in_progress", "conclusion": None}):
+            passed, why = self.verdict(run(**fields))
+            self.assertFalse(passed, fields)
+            self.assertIn(SHA, why)
+
+    def test_the_newest_run_decides(self):
+        old_pass = run(id=1, created_at="2026-11-25T01:00:00Z")
+        new_fail = run(id=2, created_at="2026-11-25T02:00:00Z", conclusion="failure")
+        self.assertFalse(self.verdict(old_pass, new_fail)[0])
+        self.assertTrue(self.verdict(run(id=1, created_at="2026-11-25T01:00:00Z", conclusion="cancelled"),
+                                     run(id=2, created_at="2026-11-25T02:00:00Z", event="workflow_dispatch"))[0])
+
+    def test_the_command_reads_the_list_and_exits_by_the_verdict(self):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder)
+        path = folder / "runs.json"
+        path.write_text(json.dumps({"workflow_runs": [run()]}))
+        self.assertEqual(rf.main(["release_files.py", "ci", str(path), SHA]), 0)
+        self.assertEqual(rf.main(["release_files.py", "ci", str(path), "b" * 40]), 1)
+        path.write_text("not json")
+        self.assertEqual(rf.main(["release_files.py", "ci", str(path), SHA]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

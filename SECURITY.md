@@ -44,7 +44,7 @@ Also in scope: the release pipeline, and anything that would let a tampered buil
 
 - A system that the product is pointed at behaving badly. Report that to its owner.
 - Using the product against a system without the right to. That is misuse, not a flaw in the product, and the product is designed not to help: it does not get past sign-in, licence, or bot protections.
-- Findings that need an attacker to already control the user's machine or operating-system account.
+- Findings that need an attacker to already control the user's machine or operating-system account: a hostile program that replaces the engine, changes its files, or reads its memory ([the limit](docs/spec/2-kernel/222-front-doors-and-the-local-engine.md#what-may-never-be-done-from-a-local-command)). An agent that runs as the user and gets a write approved, a version published, or a protected setting loosened without a person passing the operating system's presence prompt is not such a finding: it counts, as above.
 
 ## The design
 

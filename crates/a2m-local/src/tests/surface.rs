@@ -1362,6 +1362,63 @@ async fn a_sign_in_that_asks_for_a_code_asks_on_the_persons_own_page_and_keeps_i
     world.kernel.close(CloseReason::Asked).await;
 }
 
+/// How a field of a sign-in's secret is served (decision 0489), written out
+/// here so that the page is held to the record and not to its own constant.
+const SECRET_FIELD_SERVED: &str = "type=\"text\" class=\"secret\" autocomplete=\"off\" autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"";
+
+/// A credential typed on a sign-in's act page is not offered to the
+/// person's own browser to keep (decision 0489, roadmap SR5). The page of a
+/// provider that takes a username and a password, as `form_login` does, has
+/// no field of type `password`: each credential is a text field the page's
+/// style masks, with no completion, spelling check, or change of case,
+/// inside a form that asks for no completion, and the sentence not to let
+/// the browser keep it stands beside each. The page keeps its protections:
+/// no script, no framing, no caching, a one-time value, and no address
+/// outside itself.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_sign_in_page_offers_no_password_field_for_the_browser_to_keep() {
+    let prompt = TestPrompt::answering(PASSED);
+    let world = World::signing_in_by_password(Arc::clone(&prompt) as _, LONG).await;
+    let http = http();
+    let asked = asked_of(
+        &world
+            .call("session.login", json!({"target": "example"}))
+            .await,
+    );
+    let page = http.get(&asked.link).send().await.unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let headers = page.headers().clone();
+    let text = page.text().await.unwrap();
+
+    assert!(!text.contains("type=\"password\""), "{text}");
+    assert!(!text.contains("<script"), "{text}");
+    let keep = "If your browser offers to save or remember what you typed here, decline: it belongs in the engine's vault only.";
+    for role in ["user", "password"] {
+        let field = format!("name=\"secret.{role}\" {SECRET_FIELD_SERVED} required> {keep}");
+        assert!(text.contains(&field), "{text}");
+    }
+    assert_eq!(text.matches("<input id=\"secret-").count(), 2, "{text}");
+    assert_eq!(text.matches(SECRET_FIELD_SERVED).count(), 2, "{text}");
+    assert_eq!(text.matches(keep).count(), 2, "{text}");
+    assert!(
+        text.contains(".secret { -webkit-text-security: disc; }"),
+        "{text}"
+    );
+    assert!(text.contains("/confirm\" autocomplete=\"off\">"), "{text}");
+    assert!(text.contains("in the clear"), "{text}");
+    assert!(text.contains("name=\"once\" value=\""), "{text}");
+
+    assert_eq!(headers["cache-control"], "no-store");
+    assert_eq!(headers["x-frame-options"], "DENY");
+    let policy = headers["content-security-policy"].to_str().unwrap();
+    assert!(policy.contains("default-src 'none'"), "{policy}");
+    assert!(policy.contains("frame-ancestors 'none'"), "{policy}");
+    assert!(policy.contains("form-action 'self'"), "{policy}");
+    assert!(!policy.contains("script-src"), "{policy}");
+    assert_eq!(prompt.asked(), 0);
+    world.kernel.close(CloseReason::Asked).await;
+}
+
 /// A provider that signs in with two stored credentials, a username and a
 /// password, has its page ask for each role, each in a field of its own
 /// that is served empty; what the person types is never shown back, on
@@ -1386,7 +1443,7 @@ async fn the_sign_in_page_asks_for_each_role_the_provider_needs_and_shows_none_b
     };
     let field = |role: &str, required: bool| {
         format!(
-            "name=\"secret.{role}\" type=\"password\" autocomplete=\"off\"{}>",
+            "name=\"secret.{role}\" {SECRET_FIELD_SERVED}{}>",
             if required { " required" } else { "" }
         )
     };

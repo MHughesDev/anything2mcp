@@ -543,7 +543,7 @@ impl Tree {
             "",
             "",
             7,
-            &format!("{PROGRAM} <shortcut> [argument]"),
+            &format!("{PROGRAM} <shortcut> [arguments]"),
             width,
         ));
         out.push('\n');
@@ -598,14 +598,43 @@ impl Tree {
         out
     }
 
+    /// How a shortcut is written, with its argument by name (decision
+    /// 0485, point 4): a shortcut of one action takes what its command
+    /// takes, and one of several its argument and its own flags.
+    fn shortcut_usage(&self, shortcut: &Shortcut) -> String {
+        let word = format!("{PROGRAM} {}", shortcut.word);
+        let Some(first) = shortcut.steps.first() else {
+            return word;
+        };
+        let Some(face) = self.face_of(first.action) else {
+            return word;
+        };
+        if let [_] = shortcut.steps {
+            let command = format!("{PROGRAM} {} {}", face.noun, face.verb);
+            if let Some(rest) = face.usage.strip_prefix(&command) {
+                return format!("{word}{rest}");
+            }
+        }
+        let mut usage = word;
+        if let Some(arg) = first
+            .argument
+            .and_then(|field| face.args.iter().find(|arg| arg.field == field))
+        {
+            usage.push_str(&if arg.required {
+                format!(" <{}>", arg.field)
+            } else {
+                format!(" [<{}>]", arg.field)
+            });
+        }
+        for option in shortcut.options {
+            usage.push_str(&format!(" [--{} <value>]", option.flag));
+        }
+        usage
+    }
+
     pub(crate) fn help_shortcut(&self, shortcut: &Shortcut) -> String {
         let width = self.width;
-        let mut out = wrap(
-            "",
-            &format!("{PROGRAM} {} [argument]", shortcut.word),
-            4,
-            width,
-        );
+        let mut out = wrap("", &self.shortcut_usage(shortcut), 4, width);
         out.push('\n');
         out.push_str(&paragraphs(shortcut.does, width));
         if shortcut.steps.is_empty() {
@@ -1401,6 +1430,27 @@ mod tests {
             assert!(!refused.message().contains(given), "{refused:?}");
             assert!(!refused.next_step().contains(given), "{refused:?}");
         }
+    }
+
+    /// Decision 0485, point 4: a shortcut's help names its arguments as
+    /// its command does.
+    #[test]
+    fn a_shortcuts_help_names_its_arguments() {
+        let (_, tree) = every_action();
+        for (word, usage) in [
+            (
+                "add",
+                "anything2mcp add <name> [--address <value>] [--kind <value>]",
+            ),
+            ("ready", "anything2mcp ready <target>"),
+            ("try", "anything2mcp try <target> --tool <text>"),
+            ("call", "anything2mcp call <tool>"),
+        ] {
+            let shown = flat(&help(&tree, &[word]));
+            assert!(shown.starts_with(usage), "{word}: {shown}");
+            assert!(!shown.contains("[argument]"), "{word}: {shown}");
+        }
+        assert!(flat(&help(&tree, &["init"])).starts_with("anything2mcp init "));
     }
 
     #[test]

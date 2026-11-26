@@ -63,6 +63,9 @@ a2m_core::failure_codes! {
     LINK_NOT_ENCRYPTED = Policy, "link_not_encrypted",
         meaning "A request that would carry the session's credential over plain `http` to an address that is not a loopback address, from a surface that does not accept it. Nothing is sent (decision 0188).",
         next "Reach the surface over `https`. For a system on a private network that offers nothing else, the surface may declare `unencrypted_credentials: accepted` in `target.yaml`.";
+    BODY_NOT_ASSERTED = Policy, "body_not_asserted",
+        meaning "A read the endpoint asserts with `read_asserted`, whose body does not fit the endpoint's closed `request_schema`: a field of another kind, a required field missing, or a text outside its `enum`. The person's assertion covers no other body, so nothing is sent, in any posture (decision 0491).",
+        next "Give a value the endpoint's `request_schema` allows; widen its `enum` only once the system's owner confirms that the request with that value changes nothing.";
     PRODUCT_HEADER_REFUSED = Policy, "product_header_refused",
         meaning "The session's provider placed a header whose name begins `a2m-`, one of the product's own carriers between its parts, which never goes on the wire. Nothing is sent (decision 0270).",
         next "Sign in to this surface with a provider made for an HTTP service, such as `api_key`, `bearer_static`, or `http_basic`.";

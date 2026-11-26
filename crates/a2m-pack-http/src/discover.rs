@@ -436,6 +436,32 @@ impl Discoverer for HttpDescription {
     }
 }
 
+/// The key rule of the two finding kinds whose form this pack owns,
+/// `endpoint` and `described_operation` (decision 0486): the origin of the
+/// finding's address, and the `method` and `path` of its `found`. The path
+/// is the address's own where that ends in the path `found` holds, so that
+/// a description's path is put under the surface's prefix as its finding's
+/// address puts it. A method outside the closed list, or a `found` that
+/// cannot be read, gives no key.
+pub(crate) struct EndpointKey;
+
+impl a2m_provider::KeyRule for EndpointKey {
+    fn key(&self, finding: &Finding) -> Option<a2m_provider::ComparisonKey> {
+        let Subject::Address(address) = finding.subject() else {
+            return None;
+        };
+        let found = Json::parse(finding.found().as_bytes()).ok()?;
+        let method = Method::from_word(&found.get("method")?.as_text()?.to_ascii_uppercase())?;
+        let path = found.get("path")?.as_text()?;
+        let path = if address.path().ends_with(path) {
+            address.path()
+        } else {
+            path
+        };
+        a2m_provider::ComparisonKey::parse(address.origin(), method.word(), path)
+    }
+}
+
 /// `http_describer`: endpoints as method and path, with what the system
 /// itself supplied kept apart.
 pub(crate) struct HttpDescriber;

@@ -1,0 +1,100 @@
+{
+  "schema": "a2m-bench-result",
+  "version": 1,
+  "commit": null,
+  "os": "linux",
+  "arch": "x86_64",
+  "plan": {
+    "warmup_iterations": 50,
+    "iterations": 500
+  },
+  "scenarios": [
+    {
+      "name": "http_operation",
+      "operation": {
+        "count": 500,
+        "min_ns": 5924831,
+        "median_ns": 8787346,
+        "p95_ns": 14492472,
+        "p99_ns": 24861641,
+        "max_ns": 81158524
+      },
+      "baseline": {
+        "count": 500,
+        "min_ns": 33701,
+        "median_ns": 193935,
+        "p95_ns": 432337,
+        "p99_ns": 590352,
+        "max_ns": 887066
+      },
+      "overhead": {
+        "median_ns": 8593411,
+        "p95_ns": 14060135,
+        "p99_ns": 24271289
+      }
+    },
+    {
+      "name": "call_overhead",
+      "operation": {
+        "count": 500,
+        "min_ns": 539000,
+        "median_ns": 1086000,
+        "p95_ns": 1909000,
+        "p99_ns": 3639000,
+        "max_ns": 58328000
+      },
+      "baseline": null,
+      "overhead": null
+    },
+    {
+      "name": "call_outside_run",
+      "operation": {
+        "count": 500,
+        "min_ns": 4553039,
+        "median_ns": 6267584,
+        "p95_ns": 8531709,
+        "p99_ns": 11060925,
+        "max_ns": 542825061
+      },
+      "baseline": null,
+      "overhead": null
+    },
+    {
+      "name": "ui_step",
+      "operation": {
+        "count": 40,
+        "min_ns": 202315376,
+        "median_ns": 250050168,
+        "p95_ns": 356916912,
+        "p99_ns": 376409189,
+        "max_ns": 376409189
+      },
+      "baseline": {
+        "count": 40,
+        "min_ns": 55327,
+        "median_ns": 322837,
+        "p95_ns": 740668,
+        "p99_ns": 885618,
+        "max_ns": 885618
+      },
+      "overhead": {
+        "median_ns": 249727331,
+        "p95_ns": 356176244,
+        "p99_ns": 375523571
+      }
+    },
+    {
+      "name": "warm_tab",
+      "operation": {
+        "count": 40,
+        "min_ns": 122767000,
+        "median_ns": 143595000,
+        "p95_ns": 168666000,
+        "p99_ns": 188721000,
+        "max_ns": 188721000
+      },
+      "baseline": null,
+      "overhead": null
+    }
+  ]
+}

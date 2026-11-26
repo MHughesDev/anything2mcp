@@ -30,7 +30,7 @@ use windows_sys::Win32::Security::{
 };
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_GENERIC_WRITE, FILE_WRITE_DATA, READ_CONTROL, WRITE_DAC,
+    FILE_GENERIC_WRITE, FILE_WRITE_DATA, READ_CONTROL, SECURITY_IDENTIFICATION, WRITE_DAC,
 };
 use windows_sys::Win32::System::Console::{
     GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
@@ -520,7 +520,9 @@ async fn wait_for_instance(name: &str, millis: u32) -> io::Result<()> {
 }
 
 /// Connects to the engine, then checks that the process which serves the
-/// pipe runs as the expected user. Nothing is sent before that.
+/// pipe runs as the expected user. Nothing is sent before that. The pipe is
+/// opened at the identification level, so that the server, whoever made
+/// the pipe, may learn who the client is and never act as the client.
 ///
 /// A pipe that is not there is no engine, told at once. A pipe whose every
 /// instance is taken is an engine that does not take this connection yet:
@@ -534,7 +536,13 @@ pub(crate) async fn connect(
     deadline: tokio::time::Instant,
 ) -> Result<ClientStream, ConnectError> {
     let pipe = loop {
-        match ClientOptions::new().open(&place.pipe) {
+        // The identification level, set here and not left to a default:
+        // a process that made the pipe first, or any server, can learn who
+        // connected and cannot act as them.
+        match ClientOptions::new()
+            .security_qos_flags(SECURITY_IDENTIFICATION)
+            .open(&place.pipe)
+        {
             Ok(pipe) => break pipe,
             Err(error) if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) => {
                 return Err(ConnectError::NotRunning);
@@ -610,7 +618,19 @@ pub(crate) fn spawn_detached(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::io;
+    use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
+    use std::path::{Path, PathBuf};
+    use std::ptr;
+
+    use tokio::net::windows::named_pipe::NamedPipeServer;
+    use windows_sys::Win32::Foundation::{ERROR_BAD_IMPERSONATION_LEVEL, HANDLE};
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, RevertToSelf, SECURITY_IMPERSONATION_LEVEL, SecurityIdentification,
+        TOKEN_QUERY, TokenImpersonationLevel,
+    };
+    use windows_sys::Win32::System::Pipes::ImpersonateNamedPipeClient;
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
 
     use super::super::{ConnectError, Place};
     use super::{Listener, connect, current_user, is_sid};
@@ -679,6 +699,100 @@ mod tests {
         drop(server);
         let gone = connect(&place, &user, soon()).await;
         assert!(matches!(gone, Err(ConnectError::NotRunning)), "{gone:?}");
+    }
+
+    /// What the server of a pipe holds while it impersonates its client:
+    /// the impersonation level of the thread's token, and what came of
+    /// opening `file` as the client. The thread is itself again before this
+    /// returns, whatever came of either.
+    #[allow(unsafe_code)] // four calls into the operating system; each is explained where it is made
+    fn as_the_client(
+        pipe: &NamedPipeServer,
+        file: &Path,
+    ) -> (SECURITY_IMPERSONATION_LEVEL, io::Result<std::fs::File>) {
+        // SAFETY: the pipe's handle is open and owned by `pipe`, which
+        // outlives the call; the call changes only this thread's token.
+        let impersonating = unsafe { ImpersonateNamedPipeClient(pipe.as_raw_handle()) };
+        assert_ne!(impersonating, 0, "{}", io::Error::last_os_error());
+        let mut token: HANDLE = ptr::null_mut();
+        // SAFETY: the pseudo-handle of this thread needs no closing; the
+        // call writes one handle into `token`, which is ours. It opens the
+        // token as this process, since a token at the identification level
+        // could not open its own token.
+        let opened = unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &raw mut token) };
+        let token_error = io::Error::last_os_error();
+        let tried = std::fs::File::open(file);
+        // SAFETY: the call takes nothing and makes this thread use the
+        // process's own token again.
+        let reverted = unsafe { RevertToSelf() };
+        assert_ne!(reverted, 0, "{}", io::Error::last_os_error());
+        assert!(opened != 0 && !token.is_null(), "{token_error}");
+        // SAFETY: `token` is an open handle that nothing else owns, and it
+        // is wrapped exactly once, so it is closed exactly once.
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let mut level: SECURITY_IMPERSONATION_LEVEL = -1;
+        let mut needed = 0_u32;
+        // SAFETY: `level` is writable for the length given and outlives the
+        // call; `needed` is ours; the token is open and owned by `token`.
+        let read = unsafe {
+            GetTokenInformation(
+                token.as_raw_handle(),
+                TokenImpersonationLevel,
+                (&raw mut level).cast(),
+                u32::try_from(size_of::<SECURITY_IMPERSONATION_LEVEL>()).unwrap_or(u32::MAX),
+                &raw mut needed,
+            )
+        };
+        assert_ne!(read, 0, "{}", io::Error::last_os_error());
+        (level, tried)
+    }
+
+    /// The client opens the pipe at the identification level by its own
+    /// code (roadmap package SR2): a server of the test's own making that
+    /// impersonates a client `connect` opened finds the thread's token at
+    /// that level, and can open no file as the client, not even one the
+    /// server itself can open.
+    #[tokio::test]
+    async fn a_server_that_impersonates_the_client_can_identify_it_and_not_act_as_it() {
+        let place = place("level");
+        let user = current_user().unwrap();
+        let mut listener = Listener::bind(&place).unwrap();
+        let client = tokio::spawn({
+            let place = place.clone();
+            let user = user.clone();
+            async move { connect(&place, &user, soon()).await }
+        });
+        let (server, _) = listener.accept().await.unwrap();
+        let client = client.await.unwrap().unwrap();
+
+        // A server may impersonate its client only once it has read from
+        // the pipe.
+        client.writable().await.unwrap();
+        assert_eq!(client.try_write(b"x").unwrap(), 1);
+        let mut got = [0_u8; 1];
+        loop {
+            server.readable().await.unwrap();
+            match server.try_read(&mut got) {
+                Ok(read) => {
+                    assert_eq!(read, 1);
+                    break;
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Err(error) => panic!("{error}"),
+            }
+        }
+
+        let file = std::env::current_exe().unwrap();
+        let (level, tried) = as_the_client(&server, &file);
+        assert_eq!(level, SecurityIdentification);
+        let refused = tried.unwrap_err();
+        assert_eq!(
+            refused.raw_os_error(),
+            Some(ERROR_BAD_IMPERSONATION_LEVEL.cast_signed()),
+            "{refused}"
+        );
+        // As itself, the server opens the same file.
+        std::fs::File::open(&file).unwrap();
     }
 }
 

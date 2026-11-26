@@ -216,6 +216,54 @@ async fn a_stale_socket_is_not_an_engine_and_does_not_block_the_next() {
     assert!(!place.socket.exists());
 }
 
+/// The client asks the kernel who serves the socket it connected to, as
+/// the engine asks of its clients: the server of the test's own engine is
+/// this user, and the client's judgment refuses a server of any other
+/// user, or one whose user could not be read, as `NotOurs`. A server of
+/// another user cannot be stood up by a test that runs as one user, so
+/// that case is held by the function that decides it; the reading it
+/// judges is the kernel's, of a real connection.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_client_asks_the_kernel_who_serves_and_refuses_another_user() {
+    use crate::os::{ConnectError, unix_served_by, unix_server_user};
+
+    let (_folder, paths) = home("served");
+    let me = OsUser::current().unwrap();
+    let place = crate::channel::place(&paths, &me);
+    let engine = Engine::start(
+        Channel::bind(&paths, VERSION).await.unwrap(),
+        1,
+        IdlePolicy::never(),
+    );
+    let stream = tokio::net::UnixStream::connect(&place.socket)
+        .await
+        .unwrap();
+    let server = unix_server_user(&stream);
+    assert_eq!(server.as_deref(), Some(me.as_str()));
+    assert!(unix_served_by(server.as_deref(), me.as_str()).is_ok());
+    drop(stream);
+
+    for (server, expected) in [
+        (Some("someone-else"), me.as_str()),
+        (server.as_deref(), "someone-else"),
+        (None, me.as_str()),
+    ] {
+        assert!(
+            matches!(unix_served_by(server, expected), Err(ConnectError::NotOurs)),
+            "{server:?} for {expected}"
+        );
+    }
+
+    // The client's whole connect passes its own engine, both checks.
+    let connector = Connector::new(&paths, VERSION, ClientLabel::CommandLine).unwrap();
+    let link = connect(&connector).await.unwrap();
+    let (_, said) = json_of(&link, get_request("/who")).await;
+    assert_eq!(said["instance"], 1);
+    drop(link);
+    engine.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn another_users_connection_is_closed_unread_and_another_users_engine_is_not_spoken_to() {
     // An engine that expects another user sees this user's connection as

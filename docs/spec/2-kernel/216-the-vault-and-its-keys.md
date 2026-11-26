@@ -56,6 +56,7 @@ A session signed in as a person may be used only by that person or an agent acti
 - Every secret released by the vault is registered with the redactor ([section 217](217-traces-evidence-and-repair.md)).
 - Target files never contain secrets. They refer to vault entries by name.
 - `anything2mcp secret set` reads the value from a prompt or standard input, never from a command-line argument, so it does not land in shell history or an agent's context.
+- The passphrase of the passphrase route is held to the same rule by what the documents tell a person to do. It is read from the environment of the command that starts the engine, which hands it to the engine on a pipe and takes it out of its own environment before anything else runs ([decision 0165](../../decisions/0165-a-client-starts-the-engine-on-demand-detached-and-gives-it-the-passphrase-on-a-pipe.md)); but the shell it was set in keeps it, and every program started from that shell inherits it. So the person types it at a prompt that writes no history (`read -rs`), and starts their agents from another shell. A program of the same user can still read the environment of that shell, as [section 222](222-front-doors-and-the-local-engine.md) says of every program of the user.
 - No action reads a secret back. There is no `secret get`.
 
 ## Naming without revealing

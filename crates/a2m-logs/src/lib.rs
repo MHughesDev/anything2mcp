@@ -48,7 +48,7 @@ pub use text::{
 pub use trace::{
     Acting, CaptureKind, CaptureLevel, CaptureOutcome, CapturePoint, CaptureRef, ChoiceReason,
     DEFAULT_TRACE_LIMIT, Detail, DropReason, EndLine, FinishedTrace, HeaderLine, Held, Locating,
-    MaskReport, OfferedCapture, PassLine, PassStart, Phase, RedactedCapture, StepLine, StepRecord,
-    TRACE_SCHEMA, TraceBuilder, TraceCheck, TraceIdentity, TraceLine, TraceOutcome, TraceRefused,
-    TracedValue, ValueLine, check_trace, read_trace,
+    Mark, MaskReport, OfferedCapture, PassLine, PassStart, Phase, RedactedCapture, StepLine,
+    StepRecord, TRACE_SCHEMA, TimeMarks, TraceBuilder, TraceCheck, TraceIdentity, TraceLine,
+    TraceOutcome, TraceRefused, TracedValue, ValueLine, check_trace, read_trace,
 };

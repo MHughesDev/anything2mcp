@@ -1,0 +1,21 @@
+operation: example_case_count
+title: Count the cases of one status
+effect: read
+inputs:
+  status: {type: identifier, description: "open or closed"}
+outputs:
+  count: {type: integer}
+  first: {type: identifier}
+  cases: {type: identifier, list: true}
+bindings:
+  - mode: http
+    verb: search
+    status: verified
+    endpoint: cases_count
+    body:
+      status: input.status
+      op: "'count'"
+    extract: {cases: "cases.*"}
+description: >
+  Counts the cases of one status, through a search that takes its filter in
+  the body of a POST.

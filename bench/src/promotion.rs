@@ -305,6 +305,17 @@ impl Machine {
         tool: &str,
         input: &Value,
     ) -> Result<Value, BenchError> {
+        Ok(self.call_tool(scenario, tool, input).await?.0)
+    }
+
+    /// Calls a tool as [`Machine::read_tool`] does, and gives the result
+    /// with the run's identifier.
+    pub(crate) async fn call_tool(
+        &self,
+        scenario: &str,
+        tool: &str,
+        input: &Value,
+    ) -> Result<(Value, String), BenchError> {
         let text = input.to_string();
         let args: Vec<String> = [
             "tool",
@@ -328,7 +339,31 @@ impl Machine {
                 format!("the call did not complete: {finished:?}"),
             ));
         }
-        Ok(answer["result"].clone())
+        let run = answer["run_id"].as_str().ok_or_else(|| {
+            BenchError::operation(scenario, format!("the call named no run: {finished:?}"))
+        })?;
+        Ok((answer["result"].clone(), run.to_owned()))
+    }
+
+    /// The stored step trace of a run, as `trace export` writes it into the
+    /// project's working folder, read back into its lines.
+    pub(crate) async fn trace(
+        &self,
+        scenario: &str,
+        run: &str,
+    ) -> Result<Vec<a2m_logs::TraceLine>, BenchError> {
+        let exported = self.run(&["trace", "export", run], false).await?;
+        let file = exported["file"]
+            .as_str()
+            .ok_or_else(|| BenchError::operation(scenario, "the export named no file"))?;
+        let path = self.project.0.join(file);
+        let bytes = std::fs::read(&path).map_err(|e| BenchError::operation(scenario, e))?;
+        // The file is read once; it is not left to fill the working folder.
+        let _ = std::fs::remove_file(&path);
+        let document: Value =
+            serde_json::from_slice(&bytes).map_err(|e| BenchError::operation(scenario, e))?;
+        serde_json::from_value(document["trace"].clone())
+            .map_err(|e| BenchError::operation(scenario, format!("the export held no trace: {e}")))
     }
 
     pub(crate) async fn publish(&self) -> Result<(), BenchError> {

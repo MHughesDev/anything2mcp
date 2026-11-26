@@ -11,13 +11,13 @@ Anything2MCP is a toolkit that wraps a system you are already entitled to use (a
 
 - **No model runs inside a tool call.** A tool is a compiled target. A step that cannot be done as written stops with a named failure.
 - **A write is recorded first, then read back and compared.** A run whose answer was lost is reconciled before anything is sent again.
-- **A person at the machine approves a write and publishes a tool.** An agent asks; it cannot approve or publish, and no command, tool, or route does it for them.
+- **A person at the machine approves a write and publishes a tool.** An agent asks; it cannot approve or publish, and no command, tool, or route does it for them. Each approval passes the operating system's own presence prompt. On one machine under one account this stops a mistaken, runaway, or steered agent; it does not stop a hostile program already running as you, which can change your files, and on Linux one that has your password can pass the prompt ([the limit](docs/spec/2-kernel/222-front-doors-and-the-local-engine.md#what-may-never-be-done-from-a-local-command)).
 - **Secrets never reach the caller.** Tokens and passwords stay in the engine's vault; the tests plant them and find them in no result, log, trace, or file.
 - **Nothing phones home.** Usage data, crash reports, and update checks are off unless a person switches them on.
 
 ## Status
 
-**Preview, before version 0.1. Not yet published to PyPI or npm**: those names are not held yet, so `pip install anything2mcp` does not work today. You build it from source, or, on Windows, download the tester kit CI builds and follow [trying the preview on Windows](docs/plan/trying-the-preview-on-windows.md). Version 0.1 is to be a preview ([decision 0476](docs/decisions/0476-version-0-1-is-a-preview-and-the-checks-a-person-makes-move-to-before-1-0.md)): the presence prompt and the approval page have been passed by a person on Linux only, the first hour is measured as machine time and not with a person, and no copy test has been run from a Windows or a macOS machine.
+**Version 0.1.0 is not yet published, and nothing is on PyPI or npm**: those names are not held yet, so `pip install anything2mcp` does not work today. A program built from this repository says `anything2mcp 0.1.0`. You build it from source, or, on Windows, download the tester kit CI builds and follow [trying the program on Windows](docs/plan/trying-the-preview-on-windows.md). The first release waits for its full scope ([decision 0493](docs/decisions/0493-the-first-release-has-its-full-scope-again-and-the-prepared-preview-is-not-tagged.md)): among what is left, the presence prompt and the approval page are to be passed by a person on macOS and Windows as they have been on Linux, the first hour is to be measured with a person or an agent in the loop, and a copy test is to be run from a Windows and a macOS machine.
 
 What exists and is tested in CI on Windows, macOS, and Linux: the kernel, nine packs, the local engine with its command line and stdio proxy, the tool-building flow (scout, drafts, recorded fixtures, gates, promotion, publish on a page by a person), and verified writes with reconciliation, all against the built-in test stands. Separate CI jobs run the data pack against a real PostgreSQL server, the stream pack against a real NATS server, the desktop pack on Linux against its stand, the Linux presence prompt against a real polkit, and the wheel and npm packages on the three systems.
 
@@ -25,7 +25,7 @@ Not built yet: plug-ins, MCP over HTTP for a shared server, remote runners, ten 
 
 ## Try it from source
 
-You need the Rust toolchain (`rustup` installs the pinned one) and a Unix shell. This builds the program and the test application, an imaginary order system, and turns one of its reads into a tool. The engine gets a home of its own beside the project, not inside it, on a short path: its socket lives there, and Unix limits a socket's path to about 100 bytes. On Linux this build has no operating-system key store, so the vault takes its root key from a passphrase by default: set it in the shell (16 bytes or more, and keep it), and a command hands it to the engine it starts.
+You need the Rust toolchain (`rustup` installs the pinned one) and a Unix shell. This builds the program and the test application, an imaginary order system, and turns one of its reads into a tool. The engine gets a home of its own beside the project, not inside it, on a short path: its socket lives there, and Unix limits a socket's path to about 100 bytes. On Linux this build has no operating-system key store, so the vault takes its root key from a passphrase by default: set it in the shell (16 bytes or more, and keep it), and a command hands it to the engine it starts. The passphrase opens every secret the vault holds, so type it at a prompt that writes nothing to your shell's history, as below, and start your agents from another terminal: a program started from this shell inherits it.
 
 ```sh
 git clone https://github.com/MHughesDev/anything2mcp && cd anything2mcp
@@ -35,7 +35,7 @@ example-app &                    # example-app is listening on http://127.0.0.1:
 
 mkdir ~/a2m-try && cd ~/a2m-try
 export A2M_HOME="$PWD/home"
-export A2M_VAULT_PASSPHRASE='a passphrase of your own'
+read -rs A2M_VAULT_PASSPHRASE && export A2M_VAULT_PASSPHRASE   # type it; it is not shown or kept
 mkdir first-project && cd first-project
 
 # Make a project, point it at the test application, and let the scout
@@ -45,28 +45,44 @@ anything2mcp add example --address http://127.0.0.1:4010/ --kind http   # the ta
 anything2mcp try example --tool example_api_orders_get --input '{"order_id": "A-100"}'
 ```
 
+At a terminal, an answer is printed as text, and every step it names is written as the command that takes it; piped or redirected, or with `--json`, it is one JSON object, the form an agent reads, which names each step as its action. `add` prints the scout's report, which ends in the step to take next. Shortened:
+
 ```text
+Drafted reads: 8: 7 proven, 0 waiting for a sign-in, 1 failed, 0 not tried, 0 held.
 Tried: `example_api_orders_get`: proven, 5 of 5 completed.
-Tried: `example_api_stock_get`: failed, 2 of 3 completed.   (the stand fails every third call)
+Tried: `example_api_stock_get`: failed, 2 of 3 completed.     (the stand fails every third call)
+...
+next, to record the offline test and fixture of each read the scout proved, ...:
+  anything2mcp draft ready example
+```
+
+`try` runs one draft in the sandbox, and only reads:
+
+```text
 result:
   customer: Example Customer One
   order_id: A-100
   status: draft
-status: completed      (and a warning: this was a trial of a draft; nothing was published)
+status: completed
+warning: This was a trial of a draft in the sandbox; nothing was published.
 ```
 
-To make the proven reads published tools, one command does the rest: for each read a trial proved, it records an offline test from one real read (every value replaced by a made-up one), promotes the read's binding on that evidence, runs the gates, and asks a person to publish.
+To make the proven reads published tools, one command does the rest (`ready` is the short name of `draft ready`): for each read a trial proved, it records an offline test from one real read (every value replaced by a made-up one), promotes the read's binding on that evidence, runs the gates, and asks a person to publish.
 
 ```sh
 anything2mcp ready example
-# The read the scout could not prove is left alone, with its reason, and `next`
-# names the removal of its draft. Run that removal as given, then:
-anything2mcp ready example --version 1.0.0   # needs_person, and a link: only the person's press is left
+# Seven reads are ready; `example_api_stock_get` is left alone, with its reason,
+# so no publish is asked for yet (exit code 1). `next` names its removal:
+anything2mcp draft delete example --files operations/api_stock_get.yaml
+# Its `next` is `ready` again, which now asks for the publish:
+anything2mcp ready example --version 1.0.0   # needs_person (exit code 3), and a link: only the person's press is left
 ```
 
-**This is where a run by hand stops on most machines.** The link opens a page that shows exactly what will be published and which gates ran. Pressing Carry out raises the operating system's presence prompt, and only a person passing it publishes. On a Linux desktop the prompt is polkit's, once an administrator has copied `crates/a2m-local/polkit/io.github.mhughesdev.anything2mcp.presence.policy` into `/usr/share/polkit-1/actions`. In a container or with no desktop, the page says that nothing on the machine can approve, and nothing is published: that is the design, not a fault. The macOS and Windows prompts are written and not yet run by a person, so a publish by hand there is untried. After the press, `anything2mcp ready example --version 1.0.0` again says the version is published, and `anything2mcp call example_api_orders_get --input '{"order_id": "A-100"}'` reads the order. The whole flow is the test `crates/anything2mcp/tests/ready.rs`, which stands in for the prompt and runs on all three systems in CI; each step `ready` takes is also an action of its own (`fixture record`, `test`, `binding promote`, `publish`), which the guidance file the project holds describes.
+The answer tells an agent to give the person the link and stop. At a terminal, you are that person: open the link in a browser on the same machine. It is good for 15 minutes; `ready example --version 1.0.0` again gives a fresh one.
 
-`anything2mcp engine stop` stops the engine, `anything2mcp doctor` says what this machine lacks and how to fix it, and `anything2mcp config show` lists every setting and the layer that set it.
+**This is where a run by hand stops on most machines.** The link opens a page that shows exactly what will be published and which gates ran. Pressing Carry out raises the operating system's presence prompt, and only a person passing it publishes. On a Linux desktop the prompt is polkit's, once an administrator has installed the project's polkit policy file, `crates/a2m-local/polkit/io.github.mhughesdev.anything2mcp.presence.policy`, into `/usr/share/polkit-1/actions`: where it is missing, `anything2mcp doctor` and the page both give the one `sudo` command that installs the engine's own copy after checking its digest. In a container or with no desktop, the page and `anything2mcp doctor` (its `presence` check, `component_missing`) say that nothing on the machine can approve, and `doctor` answers `component_missing` overall; nothing is published: that is the design, not a fault. Until a publish, `call` answers `not_found`, and says that a publish of the target waits for its person and where; `anything2mcp status example` names that publish too. The macOS and Windows prompts are written and not yet run by a person, so a publish by hand there is untried. After the press, `anything2mcp ready example --version 1.0.0` again says the version is published, and `anything2mcp call example_api_orders_get --input '{"order_id": "A-100"}'` reads the order. The whole flow is the test `crates/anything2mcp/tests/ready.rs`, which stands in for the prompt and runs on all three systems in CI; each step `ready` takes is also an action of its own (`fixture record`, `test`, `binding promote`, `publish`), which the guidance file the project holds describes.
+
+`anything2mcp engine stop` stops the engine (with none running it says so, and `engine status` says none runs and starts none), `kill %1` stops the test application started with `&`, and deleting `~/a2m-try` removes everything the run made. `anything2mcp doctor` says what this machine lacks and how to fix it, and `anything2mcp config show` lists every setting and the layer that set it. If you forget the passphrase, the first command answers `vault_passphrase_missing` with the fix; a home on a path too long for a socket answers `socket_path_too_long`, with the longest that works.
 
 ## Connect an agent
 
@@ -80,7 +96,7 @@ An MCP client starts `anything2mcp stdio`, which copies MCP messages over standa
 } } }
 ```
 
-The default toolset, `use`, serves the published tools and the calls around them (`a2m_tool_search`, `a2m_tool_call`, `a2m_run_resume`, and others). `["stdio", "--toolset", "build", ...]` serves the authoring actions instead, so an agent can do the steps above itself; `a2m_action_run` reaches any action by name. Start the engine from a terminal first (any command does it, and it stops by itself after `engine.idle_stop_minutes` idle), so that the passphrase is in its environment and not in a client's file. Any client that speaks MCP over stdio can use it; none is preferred. `anything2mcp connect` prints this block for your project; a client profile you keep as data writes it into that client's file.
+The default toolset, `use`, serves the published tools and the calls around them (`a2m_tool_search`, `a2m_tool_call`, `a2m_run_resume`, and others). `["stdio", "--toolset", "build", ...]` serves the authoring actions instead, so an agent can do the steps above itself; `a2m_action_run` reaches any action by name. Start the engine from a terminal first (any command does it, and it stops by itself after `engine.idle_stop_minutes` idle), so that the passphrase is in its environment and not in a client's file. Any client that speaks MCP over stdio can use it; none is preferred. `anything2mcp connect` prints this block's inner entry for your project, as text at a terminal; `anything2mcp connect --json` prints it as JSON, under `result.block`, to put inside `mcpServers`. A client profile you keep as data writes it into that client's file.
 
 ## How it works
 
@@ -127,7 +143,7 @@ Each limit carries its kind, as in [SCOPE.md](SCOPE.md): a rule (one of the ten 
 
 ## Installing
 
-Today, only from source, as above. A release will bring one binary by two routes: a pip wheel for eight platforms and an npm launcher with eight platform packages. The product is not published to crates.io ([decision 0242](docs/decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)). The release workflow builds and checks the wheels and the npm packages, and has never published; nothing is on a registry yet. [Publishing setup](docs/plan/publishing-setup.md) says what remains, and the [changelog](CHANGELOG.md) will say when it changes.
+Today, only from source, as above, or on Windows from the tester kit. A release will bring one binary by three routes: a pip wheel for eight platforms, an npm launcher with eight platform packages, and a standalone archive per platform on the release page ([RELEASING.md](RELEASING.md)). The product is not published to crates.io ([decision 0242](docs/decisions/0242-the-owner-takes-the-recommended-answer-to-every-open-question.md)). The release workflow builds and checks the wheels and the npm packages, and has never published; nothing is on a registry yet. [Publishing setup](docs/plan/publishing-setup.md) says what remains, and the [changelog](CHANGELOG.md) will say when it changes.
 
 ## Documentation
 

@@ -1159,10 +1159,12 @@ async fn the_timers_end_a_session_at_its_maximum_age_and_probe_only_while_wanted
     // checked at half the declared idle timeout, and not before.
     world.clock.advance(Duration::from_secs(599));
     world.keeper.tick().await;
+    world.keeper.idle().await;
     assert_eq!(world.probe.calls(), 0);
     world.clock.advance(Duration::from_secs(1));
     world.keeper.tick().await;
     world.keeper.tick().await;
+    world.keeper.idle().await;
     assert_eq!(world.probe.calls(), 1);
 
     // A pipeline that needs more time than the maximum age leaves stops at
@@ -1191,6 +1193,7 @@ async fn the_timers_end_a_session_at_its_maximum_age_and_probe_only_while_wanted
         .unwrap();
     world.clock.advance(HOUR / 2);
     world.keeper.tick().await;
+    world.keeper.idle().await;
     assert_eq!(world.probe.calls(), probes + 1);
     let unwatched = Arc::new(AuthEntry {
         absolute: None,
@@ -1204,6 +1207,7 @@ async fn the_timers_end_a_session_at_its_maximum_age_and_probe_only_while_wanted
     let probes = world.probe.calls();
     world.clock.advance(settings.keep_alive);
     world.keeper.tick().await;
+    world.keeper.idle().await;
     assert_eq!(world.probe.calls(), probes);
     assert_eq!(world.state(&key).await, SessionState::Valid);
 }

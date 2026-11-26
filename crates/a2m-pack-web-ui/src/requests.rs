@@ -1026,6 +1026,20 @@ impl AssertedReads {
         }
     }
 
+    /// Whether the run hands the observing tab the asserted read `name`.
+    pub(crate) fn hands(&self, name: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|(entry, _, _, handed)| entry == name && *handed)
+    }
+
+    /// The next step of a stop on the asserted read `name`, by whether the
+    /// run hands it; `None` when the surface asserts no read of that name.
+    pub(crate) fn next_step_of(&self, name: &str) -> Option<String> {
+        let (_, _, _, handed) = self.entries.iter().find(|(entry, ..)| entry == name)?;
+        Some(self.next_words(name, *handed))
+    }
+
     /// The next step of a stop on a request the tab failed by `method` at
     /// `path`, when an asserted read of the surface names that method and
     /// that path; `None` when none does.
@@ -1049,8 +1063,12 @@ impl AssertedReads {
                         Segment::Hole(_) => true,
                     })
         })?;
+        Some(self.next_words(name, *handed))
+    }
+
+    fn next_words(&self, name: &str, handed: bool) -> String {
         let name = shown(name);
-        Some(if *handed {
+        if handed {
             format!(
                 "The page request `{name}` asserts a read by this method at this path, and the request the page sent did not fit it: its body, its media type, a query, or a header that overrides its method. Look at what the page sends; widen the entry only if the system's owner confirms that what it sends changes nothing."
             )
@@ -1062,6 +1080,6 @@ impl AssertedReads {
             format!(
                 "The page request `{name}` asserts that this request only reads, and an observing tab lets it through from a published version only in a live run, or in a try or a shadow in an environment of kind `test`; never in discovery. Run the tool live, or try it in an environment of kind `test`."
             )
-        })
+        }
     }
 }

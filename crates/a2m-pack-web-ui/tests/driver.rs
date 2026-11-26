@@ -121,6 +121,88 @@ async fn one_read_gives_what_the_form_shows_and_five_runs_do_the_same_thing() {
     scene.stand.end().await;
 }
 
+/// The observing tabs kept warm in the stand's browsers.
+fn warm_tabs(scene: &Scene) -> usize {
+    scene
+        .stand
+        .browsers
+        .observer()
+        .map_or(0, |observer| observer.warm_tabs())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_read_that_went_as_written_leaves_its_tab_warm_for_the_next_and_one_that_did_not_leaves_none()
+ {
+    // Decision 0488: the observing tab of a read in which every step went as
+    // written is kept warm, as no tab held, and the next read of the same
+    // surface and session is handed it; it reads what the application
+    // holds, as a new tab does.
+    let (app, mut scene) = scene("warm").await;
+    let stored = app.stored_item("A-100", "L-101").await.unwrap().unwrap();
+    for run in 0..3 {
+        let (handle, mut prepared) = scene.reader().await;
+        // The tab kept by the run before is the one this run holds.
+        assert_eq!(warm_tabs(&scene), 0, "run {run}");
+        let read = scene
+            .read(&handle, &mut prepared, GET, &item("A-100", "L-101"))
+            .await
+            .unwrap();
+        assert_eq!(
+            read.values.get("description"),
+            Some(&Value::from(stored.description.as_str()))
+        );
+        assert!(handle.release(prepared, false).await.complete);
+        assert_eq!(warm_tabs(&scene), 1, "run {run}");
+        let browsers = scene.stand.browsers.get().unwrap();
+        let listing = browsers.list();
+        assert_eq!(listing.len(), 1, "{listing:?}");
+        assert_eq!(listing[0].tabs, 0, "{listing:?}");
+    }
+
+    // A run released as poisoned keeps nothing: the warm tab it was handed
+    // is closed with it.
+    let (handle, mut prepared) = scene.reader().await;
+    scene
+        .read(&handle, &mut prepared, GET, &item("A-100", "L-101"))
+        .await
+        .unwrap();
+    assert!(handle.release(prepared, true).await.complete);
+    assert_eq!(warm_tabs(&scene), 0);
+
+    // A record that is not there is an answer the screen declares: the
+    // read went as written, and its tab is kept.
+    let (handle, mut prepared) = scene.reader().await;
+    let absent = scene
+        .read(&handle, &mut prepared, GET, &item("A-100", "L-999"))
+        .await
+        .unwrap();
+    assert!(absent.absent);
+    assert!(handle.release(prepared, false).await.complete);
+    assert_eq!(warm_tabs(&scene), 1);
+
+    // A read whose step failed keeps nothing, even when it is released as
+    // not poisoned: here the field is no longer where its locators say.
+    let compiled_target = changed(&scene, "screens/line_item.yaml", |text| {
+        text.replace("name: Description}", "name: Summary}")
+            .replace("{label: Description}", "{label: Summary}")
+    });
+    let kept = std::mem::replace(&mut scene.compiled_target, compiled_target);
+    let (handle, mut prepared) = scene.reader().await;
+    let gone = scene
+        .read(&handle, &mut prepared, GET, &item("A-100", "L-101"))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        class_and_code(&gone),
+        (FailureClass::Drift, "locator_not_found")
+    );
+    assert!(handle.release(prepared, false).await.complete);
+    assert_eq!(warm_tabs(&scene), 0);
+    scene.compiled_target = kept;
+    assert!(app.writes().await.unwrap().is_empty());
+    scene.stand.end().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn rows_are_read_by_their_headings_and_a_record_that_is_not_there_is_absent() {
     let (app, scene) = scene("rows").await;
@@ -1007,6 +1089,8 @@ async fn a_page_that_opens_a_shared_worker_as_it_loads_is_read_and_the_run_says_
         "{}",
         read.means_text()
     );
+    // A read with a refusal kept as a limitation leaves no warm tab.
+    assert_eq!(warm_tabs(&scene), 0);
     // The worker never ran: nothing it would send arrived.
     tabs_closed(&scene).await;
     let arrived = app.trap_writes().await.unwrap();

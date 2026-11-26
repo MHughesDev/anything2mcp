@@ -20,9 +20,14 @@
 //! does stays running for the engine's life, as an application a person
 //! started would; the supervisor ends it when the engine stops.
 //!
-//! Built on Linux. On Windows and macOS nothing is started, as
-//! `busy`/`start_not_built`: neither back end yet has an event that says a
-//! new application's window appeared, and a wait polls nothing.
+//! Built on Linux and Windows. On Windows the wait is for a window of the
+//! program to be shown, heard through the system's event of a window shown
+//! by any process (an out-of-context hook, which loads nothing into
+//! another program), after which the list of top-level windows is read
+//! again, as at attach (decision 0480). On macOS nothing is started, as
+//! `busy`/`start_not_built`: no event heard off the main thread's run
+//! loop says that a just-started application has begun to answer the
+//! accessibility interface, and a wait polls nothing (decision 0490).
 
 use a2m_files::{EnvironmentVariable, ProgramRun, VariableValue};
 
@@ -50,13 +55,34 @@ pub(crate) const PASSED: &[&str] = &[
     "LC_ALL",
     "PATH",
 ];
-/// On Windows and macOS nothing is started in this version.
-#[cfg(not(target_os = "linux"))]
+/// On Windows: where the system and the person's own folders are, who the
+/// person is, and the temporary folders. Not `PATH`: the supervisor holds
+/// every folder a `PATH` names to the check of who may change it, a
+/// person's `PATH` on Windows commonly names a folder others may change, and
+/// a desktop application loads its own libraries from its own folder and
+/// the system's (decision 0480).
+#[cfg(windows)]
+pub(crate) const PASSED: &[&str] = &[
+    "SystemRoot",
+    "windir",
+    "SystemDrive",
+    "USERPROFILE",
+    "USERNAME",
+    "USERDOMAIN",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "TEMP",
+    "TMP",
+];
+/// On macOS nothing is started in this version.
+#[cfg(not(any(target_os = "linux", windows)))]
 pub(crate) const PASSED: &[&str] = &[];
 
 /// The kind of subsystem a started application is, for the supervisor's
 /// count.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 pub(crate) const KIND: &str = "desktop_application";
 
 /// What the review shows of a surface that lets the driver start its

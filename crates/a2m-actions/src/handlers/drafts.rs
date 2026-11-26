@@ -421,9 +421,9 @@ handler!(
             paths.push(path);
         }
         let project_folder = call.project_folder()?.to_path_buf();
-        let (kernel, named, all) = (kernel.clone(), target.clone(), paths.clone());
+        let (worker, named, all) = (kernel.clone(), target.clone(), paths.clone());
         let (removed, problems) = off_thread(move || {
-            let set = kernel.providers().compiler_set();
+            let set = worker.providers().compiler_set();
             let folder = target_folder(&project_folder, &named)?;
             if !folder.is_dir() {
                 return Err(codes::input(
@@ -526,11 +526,22 @@ handler!(
         {
             output = output.warn(note);
         }
-        Ok(output.then(Next::new(
-            "test.run",
-            json!({"target": target.as_str()}),
-            "to run the gates on the drafts that are left",
-        )))
+        // The reads the scout proved are made ready, tested, and asked to
+        // be published by one action, which runs the gates too: it is the
+        // way on while one waits for it (decision 0485, point 2).
+        let ready = if problems.has_errors() {
+            None
+        } else {
+            super::build::ready_way(kernel, &call, &target).await
+        };
+        let next = ready.unwrap_or_else(|| {
+            Next::new(
+                "test.run",
+                json!({"target": target.as_str()}),
+                "to run the gates on the drafts that are left",
+            )
+        });
+        Ok(output.then(next))
     }
 );
 
@@ -628,9 +639,11 @@ fn file_list(sources: &Sources) -> Vec<Json> {
 
 handler!(
     /// `target.status`: where the target's build stands, from what the
-    /// engine can see itself, and the next action. The states between
-    /// added and drafted that need a system, signed in and explored, and
-    /// tried and tested, are not kept yet and are named as unknown.
+    /// engine can see itself, and the next action. The newest scout's
+    /// trials and the offline tests the files hold are counted; whether a
+    /// sign-in holds is not kept here and is named as unknown, as is each
+    /// of the others while nothing shows it. A publish that waits for its
+    /// person is named, with its page (decision 0485, point 2).
     target_status,
     |kernel, call| {
         let target = TargetName::new(call.required("target")?)?;
@@ -674,32 +687,74 @@ handler!(
             (true, None) => "drafted",
             (false, None) => "added",
         };
-        let next = match (compiles, current) {
-            (false, _) => Next::new(
+        // What the engine kept of the steps between drafted and published
+        // (decision 0485, point 2): the newest scout's trials, counted by
+        // their state, and the offline tests the target's files hold, which
+        // `draft.ready` records. What is not kept is named as unknown.
+        let scout = super::scout::scout_tried(kernel, &call, &target).await?;
+        let tried = scout.as_ref().map(|scout| {
+            let mut counts = serde_json::Map::new();
+            for entry in &scout.entries {
+                let state = entry["state"].as_str().unwrap_or("unknown").to_owned();
+                let count = counts.get(&state).and_then(Json::as_u64).unwrap_or(0);
+                counts.insert(state, json!(count + 1));
+            }
+            json!({"scout": scout.scout.to_string(), "reads": scout.entries.len(), "by_state": counts})
+        });
+        let tests = files
+            .iter()
+            .filter(|file| file["kind"] == a2m_files::kernel::TEST)
+            .count();
+        let mut unknown = vec!["signed_in"];
+        if scout.is_none() {
+            unknown.extend(["explored", "tried"]);
+        }
+        if tests == 0 {
+            unknown.push("tested");
+        }
+        // A publish that waits for its person is named, with its page: the
+        // step is done, and only the press is left.
+        let waiting = call
+            .caller
+            .principal
+            .person()
+            .and_then(|person| kernel.waiting_publish(person, target.as_str()));
+        let next = match (compiles, current, &waiting) {
+            (false, _, _) => Next::new(
                 "draft.lint",
                 json!({"target": target.as_str()}),
                 "after correcting the files the problems name",
             ),
-            (true, None) => {
-                super::build::publish_next(
-                    kernel,
-                    &call,
-                    &target,
-                    Next::new(
-                        "publish.request",
-                        json!({"target": target.as_str()}),
-                        "when the drafts are ready for a person's review",
-                    ),
+            (true, None, Some(waiting)) => {
+                let mut input = json!({"target": target.as_str()});
+                if let Some(version) = &waiting.version {
+                    input["version"] = json!(version);
+                }
+                Next::new(
+                    "draft.ready",
+                    input,
+                    "after the person has carried out the publish that waits on the page at `waiting.link`; until then there is nothing to do, and the same call gives that page again",
                 )
-                .await
             }
-            (true, Some(_)) => Next::new(
+            (true, None, None) => {
+                let ready = super::build::ready_way(kernel, &call, &target)
+                    .await
+                    .unwrap_or_else(|| {
+                        Next::new(
+                            "publish.request",
+                            json!({"target": target.as_str()}),
+                            "when the drafts are ready for a person's review",
+                        )
+                    });
+                super::build::publish_next(kernel, &call, &target, ready).await
+            }
+            (true, Some(_), _) => Next::new(
                 "tool.search",
                 json!({"target": target.as_str()}),
                 "to see the published tools",
             ),
         };
-        Ok(Output::ok(json!({
+        let mut shown = json!({
             "target": target.as_str(),
             "state": state,
             "compiles": compiles,
@@ -707,9 +762,15 @@ handler!(
             "files": files,
             "current_version": current.map(|row| row.version.to_string()),
             "versions": versions.len(),
-            "unknown": ["signed_in", "explored", "tried", "tested"],
-        }))
-        .then(next))
+            "explored": scout.is_some(),
+            "tried": tried,
+            "tested": {"offline_tests": tests},
+            "unknown": unknown,
+        });
+        if let Some(waiting) = &waiting {
+            shown["waiting"] = waiting.to_json();
+        }
+        Ok(Output::ok(shown).then(next))
     }
 );
 
@@ -789,16 +850,25 @@ handler!(
         } else {
             output.failed(gates.refusal(&target))
         };
+        let ready = if all_passed {
+            super::build::ready_way(kernel, &call, &target).await
+        } else {
+            None
+        };
         Ok(output.then(if all_passed {
-            // A draft binding that would act is promoted first: the
-            // publish request comes after it (package 5.6b).
-            super::build::promote_next(&target, &compiled).unwrap_or_else(|| {
-                Next::new(
-                    "publish.request",
-                    json!({"target": target.as_str()}),
-                    "when a person should review the drafts",
-                )
-            })
+            // A draft binding that would act is promoted first (package
+            // 5.6b); then the reads the scout proved go on by `draft.ready`,
+            // which asks for the publish (decision 0485, point 2), and with
+            // none, the publish request.
+            super::build::promote_next(&target, &compiled)
+                .or(ready)
+                .unwrap_or_else(|| {
+                    Next::new(
+                        "publish.request",
+                        json!({"target": target.as_str()}),
+                        "when a person should review the drafts",
+                    )
+                })
         } else {
             Next::new(
                 "draft.read",

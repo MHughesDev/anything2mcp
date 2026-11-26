@@ -46,7 +46,7 @@ const DAY_MS: u128 = 86_400_000;
 
 /// The refusals of admission a check waits out: it is tried again later,
 /// and its due time becomes a gap only if the next one passes first.
-const ADMISSION_WAITS: [FailureCode; 6] = [
+pub(crate) const ADMISSION_WAITS: [FailureCode; 6] = [
     crate::failure::SCHEDULER_PAUSED,
     crate::failure::QUEUE_FULL,
     crate::failure::CALLER_QUEUE_FULL,
@@ -255,13 +255,47 @@ pub fn plan(watch: &WatchRow, now: Timestamp) -> Option<DuePlan> {
         return None;
     }
     let (_, confirmed_at) = watch.confirmed?;
-    let phase = watch.phase?;
-    let at = |index: u64| due_at(confirmed_at, phase, watch.interval, index);
-    let next = watch.next_due_index;
+    Some(plan_times(
+        &DueTimes {
+            confirmed_at,
+            phase: watch.phase?,
+            interval: watch.interval,
+            next: watch.next_due_index,
+            not_before: watch.not_before,
+            ends_at: watch.ends_at,
+        },
+        now,
+    ))
+}
+
+/// What a schedule's due times are made of: a watch's or a canary's, as its
+/// row holds them (decisions 0247 and 0482).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DueTimes {
+    pub confirmed_at: Timestamp,
+    pub phase: Duration,
+    pub interval: Duration,
+    /// The index of the next due time not yet handled.
+    pub next: u64,
+    pub not_before: Option<Timestamp>,
+    pub ends_at: Timestamp,
+}
+
+/// What should happen now to a confirmed schedule with these due times.
+pub(crate) fn plan_times(times: &DueTimes, now: Timestamp) -> DuePlan {
+    let DueTimes {
+        confirmed_at,
+        phase,
+        interval,
+        next,
+        not_before,
+        ends_at,
+    } = *times;
+    let at = |index: u64| due_at(confirmed_at, phase, interval, index);
     // The last index whose due time has come, if any.
-    let latest = latest_due(confirmed_at, phase, watch.interval, now);
-    if now >= watch.ends_at {
-        let last_before_end = latest_due(confirmed_at, phase, watch.interval, watch.ends_at);
+    let latest = latest_due(confirmed_at, phase, interval, now);
+    if now >= ends_at {
+        let last_before_end = latest_due(confirmed_at, phase, interval, ends_at);
         let missed = match last_before_end {
             Some(last) if last >= next => Some((
                 next,
@@ -274,28 +308,28 @@ pub fn plan(watch: &WatchRow, now: Timestamp) -> Option<DuePlan> {
             )),
             _ => None,
         };
-        return Some(DuePlan::EndReached { missed });
+        return DuePlan::EndReached { missed };
     }
-    let waiting_until = |moment: Timestamp| match watch.not_before {
+    let waiting_until = |moment: Timestamp| match not_before {
         Some(not_before) if not_before > moment => not_before,
         _ => moment,
     };
     match latest {
         Some(latest) if latest >= next => {
-            if let Some(not_before) = watch.not_before
+            if let Some(not_before) = not_before
                 && not_before > now
                 && latest == next
             {
-                return Some(DuePlan::Waiting { at: not_before });
+                return DuePlan::Waiting { at: not_before };
             }
             if latest == next {
-                return Some(DuePlan::Due(Due {
+                return DuePlan::Due(Due {
                     index: next,
                     at: at(next),
                     catch_up: false,
-                }));
+                });
             }
-            Some(DuePlan::Missed {
+            DuePlan::Missed {
                 from: next,
                 until: latest,
                 missed: Missed {
@@ -308,11 +342,11 @@ pub fn plan(watch: &WatchRow, now: Timestamp) -> Option<DuePlan> {
                     at: at(latest),
                     catch_up: true,
                 },
-            })
+            }
         }
-        _ => Some(DuePlan::Waiting {
-            at: waiting_until(at(next)).min(watch.ends_at),
-        }),
+        _ => DuePlan::Waiting {
+            at: waiting_until(at(next)).min(ends_at),
+        },
     }
 }
 
@@ -370,8 +404,20 @@ pub(crate) fn share_key(
         &watch.environment,
         watch.surface.as_str(),
     )?;
-    let limit = budget::share_limit(tx, default, &surface, limits.budget_share_percent)?;
-    let share = BudgetKey::watch_share(&surface);
+    share_key_of(tx, default, limits, &surface)
+}
+
+/// The budget all watches and canaries on `surface` share (decisions 0262
+/// and 0482), with its limit brought to the share of the surface's own
+/// budget in force.
+pub(crate) fn share_key_of(
+    tx: &mut Tx<'_>,
+    default: &RateLimit,
+    limits: &WatchLimits,
+    surface: &BudgetKey,
+) -> Result<BudgetKey, Failure> {
+    let limit = budget::share_limit(tx, default, surface, limits.budget_share_percent)?;
+    let share = BudgetKey::watch_share(surface);
     budget::ensure_limit(tx, &share, &limit)?;
     Ok(share)
 }
@@ -520,6 +566,13 @@ impl Scheduler {
                     .into_iter()
                     .filter(|other| other.id != watch)
                     .map(|other| (other.interval, other.requests_per_check))
+                    .chain(crate::canary::on_surface(
+                        tx,
+                        &row.workspace,
+                        &row.target,
+                        &row.environment,
+                        &row.surface,
+                    )?)
                     .collect();
                 limits.fits_budget(&limit, row.interval, row.requests_per_check, &others)?;
                 Ok(row)

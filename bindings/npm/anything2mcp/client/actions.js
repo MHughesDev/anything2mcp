@@ -15,6 +15,11 @@ const ACTIONS = Object.freeze([
   "audit.query",
   "auth.detect",
   "binding.promote",
+  "canary.confirm",
+  "canary.create",
+  "canary.end",
+  "canary.get",
+  "canary.list",
   "capture.start",
   "capture.stop",
   "client.connect",
@@ -60,6 +65,8 @@ const ACTIONS = Object.freeze([
   "reach.list",
   "reach.name",
   "reach.withdraw",
+  "repair.accept",
+  "repair.propose",
   "run.cancel",
   "run.get",
   "run.list",
@@ -166,6 +173,51 @@ class Actions {
    */
   bindingPromote(input, options = {}) {
     return this.call("binding.promote", input, options);
+  }
+
+  /**
+   * Confirm a canary the caller's person was asked for, so that its checks begin. A
+   * person's act, carried out on the engine's page, never an agent's. The engine action
+   * is `canary.confirm`.
+   */
+  canaryConfirm(input, options = {}) {
+    return this.call("canary.confirm", input, options);
+  }
+
+  /**
+   * Ask for a canary: one published read, called with one fixed input at a fixed
+   * interval until an end, to find whether what it goes through still fits the system.
+   * Its drift stops every tool that relies on the same knowledge before anything is
+   * sent, and its pass lifts that. It sends nothing until the caller's person confirms
+   * it on the engine's page. The engine action is `canary.create`.
+   */
+  canaryCreate(input, options = {}) {
+    return this.call("canary.create", input, options);
+  }
+
+  /**
+   * End a canary, by its person or by the caller that asked for it. A check under way
+   * is let go. The engine action is `canary.end`.
+   */
+  canaryEnd(input, options = {}) {
+    return this.call("canary.end", input, options);
+  }
+
+  /**
+   * One canary of the caller's person: its read, interval, end, state, how many checks
+   * it made, and what the last one found. Never a value the read returned. The engine
+   * action is `canary.get`.
+   */
+  canaryGet(input, options = {}) {
+    return this.call("canary.get", input, options);
+  }
+
+  /**
+   * The canaries of the caller's person, oldest first. The engine action is
+   * `canary.list`.
+   */
+  canaryList(input = {}, options = {}) {
+    return this.call("canary.list", input, options);
   }
 
   /**
@@ -545,6 +597,27 @@ class Actions {
    */
   reachWithdraw(input, options = {}) {
     return this.call("reach.withdraw", input, options);
+  }
+
+  /**
+   * Write a repair the pack proposed into the target's drafts, as `repair.propose`
+   * showed it. A person's act, carried out on the engine's page, never an agent's. The
+   * draft is linted, tested, and published like any other; nothing is published here.
+   * The engine action is `repair.accept`.
+   */
+  repairAccept(input, options = {}) {
+    return this.call("repair.accept", input, options);
+  }
+
+  /**
+   * The repair bundle of a drift: the drift, the tools it stops, two shapes of the
+   * surface from findings of a discovery, before and now, the draft file that holds the
+   * knowledge, and the change the pack's repair proposer proposes, as a diff, or why it
+   * proposes none. Keeps nothing, and writes nothing. The engine action is
+   * `repair.propose`.
+   */
+  repairPropose(input, options = {}) {
+    return this.call("repair.propose", input, options);
   }
 
   /**

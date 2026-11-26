@@ -10,8 +10,8 @@ How a person tries Anything2MCP on a Windows 11 machine before release 0.1 is pu
 
 ## Get the kit
 
-1. Open the repository's Actions page, choose the newest run of **CI** on `main` (or on the open pull request), and scroll to **Artifacts**.
-2. Download `windows-tester-kit` and unzip it, for example to `C:\a2m-kit`. It holds `anything2mcp.exe`, `example-app.exe` (the test application, an imaginary order system), the wheel, `THIRD-PARTY-NOTICES.txt`, and this guide.
+1. Open the repository's Actions page, signed in to GitHub (an artifact is downloaded only when signed in), choose the newest run of **CI** on `main` (or on the open pull request), and scroll to **Artifacts**. A kit is kept for 14 days; if the newest run has none, it is older than that or a check failed, and a later run will have one.
+2. Download `windows-tester-kit` and unzip it, for example to `C:\a2m-kit`. It holds `anything2mcp.exe`, `example-app.exe` (the test application, an imaginary order system), the wheel, `THIRD-PARTY-NOTICES.txt`, and this guide as `README.md`. The guide's links point into the repository and do not open from the kit; read them on the repository's page.
 3. Windows may warn that the programs are from an unknown publisher: the kit is not signed yet. Choose to run them anyway, or unblock the zip first (its Properties, Unblock).
 
 ## Run it
@@ -43,11 +43,13 @@ The try should end with `status: completed` and the order of `Example Customer O
 
 ```powershell
 anything2mcp ready example
-# Run the removal that `next` names, as given, then:
+# Seven reads are ready and `example_api_stock_get` is left alone (the test
+# application fails every third call), so no publish is asked for yet. Run
+# the removal that `next` names, as given, then:
 anything2mcp ready example --version 1.0.0
 ```
 
-The last command answers `needs_person` with a link. Open it in your browser.
+The last command answers `needs_person` with a link. Its words tell an agent to give the person the link and stop: at this window, you are that person. Open it in your browser on this machine; it is good for 15 minutes, and running the command again gives a fresh one. Until the publish, `anything2mcp call` answers `not_found`: no published tool has that name yet.
 
 ## The presence prompt (package 3.6)
 

@@ -26,6 +26,7 @@
 mod action;
 mod capture;
 pub mod codes;
+mod compare;
 pub mod decompiler;
 mod discover;
 mod driver;
@@ -37,6 +38,7 @@ mod path;
 mod place;
 mod reach;
 mod registry;
+mod repair;
 mod replay;
 pub mod shape;
 mod supervisor;
@@ -51,6 +53,7 @@ pub use capture::{
     FIELD_KINDS, LONGEST_CAPTURED_WORD, LONGEST_HEX_RUN, MOST_CAPTURED_DIGITS, TrafficCapture,
     is_captured_word, kept_by_structure, take_capture,
 };
+pub use compare::{Compared, Comparison, ComparisonKey, KeyRule, KeySegment, compare_findings};
 pub use discover::{
     CAPTURE_END_GRACE, CaptureEnd, CaptureStop, DescribeForm, Describer, Description, Discoverer,
     DiscovererHandle, DiscoveryReport, DiscoveryScope, FindingSink, SandboxPort,
@@ -83,6 +86,7 @@ pub use registry::{
     RefusedProvider, Registry, RegistryBuilder, RegistryProblem, SurfaceKindEntry, component_state,
     current_platform,
 };
+pub use repair::{RepairAsk, RepairFile, RepairProposal, RepairProposer};
 pub use replay::{Recorded, RecordedAnswer, Replay, answer_name, answers_to};
 pub use supervisor::{
     Cleanup, ConnFailure, EnvAllowlist, Exit, Finished, ForeignLink, ForeignPipe,

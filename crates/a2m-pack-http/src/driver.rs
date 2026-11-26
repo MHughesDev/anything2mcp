@@ -1178,6 +1178,7 @@ impl HttpDriver {
         )
         .map_err(StepFailure::not_sent)?;
         may_send(session, &name, &template, &built, step)?;
+        asserted_body_fits(&name, &template, &built)?;
         // A read that could not be begun is refused now, before anything
         // is sent, and not once the answer is in (decision 0270).
         self.overruns
@@ -1416,6 +1417,42 @@ fn may_send(
             "Run the operation live, or against a declared test record."
         },
     )))
+}
+
+/// The body of an asserted read, checked against the endpoint's closed
+/// `request_schema` before it is sent, in every posture (decision 0392,
+/// point 6). The lowering lets a read write only the fields the schema
+/// names; a value outside a field's `enum`, which an input can carry, is
+/// refused here, since the person's assertion covers no other body. An
+/// endpoint that writes, or a read with no `request_schema`, is not judged
+/// here.
+fn asserted_body_fits(
+    name: &str,
+    template: &EndpointTemplate,
+    built: &Built,
+) -> Result<(), StepFailure> {
+    let (false, true, Some(shape), Some(body)) = (
+        template.writes,
+        template.read_asserted,
+        template.request.as_ref(),
+        built.body.as_deref(),
+    ) else {
+        return Ok(());
+    };
+    let refused = |why: String| {
+        StepFailure::not_sent(codes::failure(
+            &codes::row::BODY_NOT_ASSERTED,
+            format!(
+                "The endpoint `{name}` is an asserted read, and the body built for it does not fit its `request_schema`: {why}. Nothing was sent."
+            ),
+            codes::row::BODY_NOT_ASSERTED.next,
+        ))
+    };
+    let json = Json::parse(body.as_bytes())
+        .map_err(|_| refused("it cannot be read as structure".to_owned()))?;
+    shape
+        .check(&json)
+        .map_err(|misfit| refused(misfit_said(&misfit)))
 }
 
 /// A step that judges a held answer and cannot be carried out as written.

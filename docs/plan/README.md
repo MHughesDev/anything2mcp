@@ -11,6 +11,7 @@ This folder holds four kinds of document. The [roadmap](roadmap.md) is the order
 | How work is done | [working-method.md](working-method.md) | The loop every slice follows, and the kinds of change to the design |
 | | [design-review-lenses.md](design-review-lenses.md) | How a design review round is run, and the lenses with their last use |
 | Standing descriptions | [test-application.md](test-application.md) | The test application's cases and the driver conformance suite, with what is built |
+| | [continuing-in-a-cloud-session.md](continuing-in-a-cloud-session.md) | How a new cloud session sets up its environment, where the work stands, and how the lead runs builders
 | | [trying-the-preview-on-windows.md](trying-the-preview-on-windows.md) | How a person tries the preview on Windows from the tester kit CI builds, and what to write down |
 | | [publishing-setup.md](publishing-setup.md) | Where each package name stands, and how releases authenticate |
 | | [open-questions-for-the-owner.md](open-questions-for-the-owner.md) | What is still waiting for the owner; the eighteen questions of 2026-11-18 are answered in decision 0242 |

@@ -481,6 +481,9 @@ pub(crate) struct RequestSent {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SameDocument {
     pub frame_id: String,
+    /// The frame's address now.
+    #[serde(default)]
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -829,6 +832,59 @@ pub(crate) struct FrameDescription {
     pub url: String,
     #[serde(default)]
     pub security_origin: String,
+}
+
+/// Empties the page's history: one entry, the document it is on.
+#[derive(Debug, Serialize)]
+pub(crate) struct ResetNavigationHistory {}
+command!(ResetNavigationHistory, "Page.resetNavigationHistory" => Nothing);
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GetNavigationHistory {}
+command!(GetNavigationHistory, "Page.getNavigationHistory" => NavigationHistory);
+
+/// The page's history: only how many entries it holds, and where each is.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NavigationHistory {
+    pub current_index: i64,
+    pub entries: Vec<HistoryEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct HistoryEntry {
+    #[serde(default)]
+    pub url: String,
+}
+
+/// One storage area of one origin: a tab's own session storage when
+/// `is_local_storage` is false.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StorageId<'a> {
+    pub security_origin: &'a str,
+    pub is_local_storage: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ClearStorage<'a> {
+    pub storage_id: StorageId<'a>,
+}
+command!(ClearStorage<'_>, "DOMStorage.clear" => Nothing);
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GetStorageItems<'a> {
+    pub storage_id: StorageId<'a>,
+}
+command!(GetStorageItems<'_>, "DOMStorage.getDOMStorageItems" => StorageItems);
+
+/// How many entries a storage area holds. What each holds is never read
+/// into the engine: it may be a credential.
+#[derive(Debug, Deserialize)]
+pub(crate) struct StorageItems {
+    pub entries: Vec<serde::de::IgnoredAny>,
 }
 
 /// Puts a document the engine wrote into a frame, with no request.

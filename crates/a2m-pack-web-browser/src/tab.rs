@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use serde_json::Value as Json;
 use std::fmt;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
@@ -21,6 +21,7 @@ use crate::browsers::{Address, BrowserInner, Shared};
 use crate::client::{Client, ClientError};
 use crate::error::{BrowserError, Dispatch, REFUSED_WHEN_MADE, Reason, RequestShape};
 use crate::origin::{Origins, origin_of, path_of, shown_origin};
+use crate::page_ask::PageAsk;
 use crate::page_read::{PageAnswer, PagePath};
 use crate::page_write::{PageWrite, TokenProblem};
 use crate::protocol::{
@@ -1011,8 +1012,17 @@ pub(crate) struct Page {
     /// browser's number for them, and how many there are.
     pending: Mutex<BTreeMap<String, Pending>>,
     waiting: watch::Sender<usize>,
-    /// The page's own requests answered whole, oldest first.
-    exchanges: Mutex<Vec<PageExchange>>,
+    /// The page's own requests answered whole, oldest first, each with
+    /// the loader of the document it was sent under, where the browser
+    /// said.
+    exchanges: Mutex<Vec<(Option<String>, PageExchange)>>,
+    /// The loaders of the documents of a watching tab's own frame, in the
+    /// order they were parsed: a document's place in it is its
+    /// [`watching::DocumentMark`].
+    documents: Mutex<Vec<String>>,
+    /// The address of each document of a watching tab, by its loader, as
+    /// the browser said it, newest last.
+    addresses: Mutex<std::collections::VecDeque<(String, String)>>,
     /// Whether the page's own requests are recorded: only once
     /// [`ObserveTab::record_exchanges`] asked, so that a tab whose
     /// exchanges nobody takes fetches no answer (decision 0195).
@@ -1023,7 +1033,7 @@ pub(crate) struct Page {
     /// What the request of the page's own document held, for telling the
     /// browser's headers from the page's.
     document: Mutex<Option<DocumentHeaders>>,
-    safe: Option<SafeRequests>,
+    pub(crate) safe: Option<SafeRequests>,
     /// Whether the tab hears no network event (a sign-in tab).
     quiet: bool,
     /// Whether the tab is a watching tab: it records every request of its
@@ -1035,7 +1045,7 @@ pub(crate) struct Page {
     /// missed, or past the bound.
     looked: watch::Sender<usize>,
     /// The origins the tab was opened for.
-    origins: Origins,
+    pub(crate) origins: Origins,
     /// The helper's source, with those origins written in.
     helper: String,
     /// The script that holds what interception cannot see: every socket
@@ -1057,18 +1067,29 @@ pub(crate) struct Page {
     /// Whether the task that hears the tab's events has ended: the browser
     /// detached the tab, or the link closed.
     ended: watch::Sender<bool>,
-    browser: Arc<BrowserInner>,
+    pub(crate) browser: Arc<BrowserInner>,
+    /// The fixed environment the tab was opened with.
+    pub(crate) environment: PageEnvironment,
+    /// Whether the tab is kept warm, between two reads: no handle holds it,
+    /// and dropping the last handle that held it did not release it
+    /// (decision 0488).
+    pub(crate) parked: AtomicBool,
+    /// How many times the tab was handed out: once when it was opened, and
+    /// once more each time it was taken warm.
+    pub(crate) uses: AtomicU64,
 }
 
 mod downloads;
 mod site_tools;
+mod warm;
 mod watching;
 use downloads::DownloadState;
 pub use downloads::{Download, DownloadError};
 use site_tools::SiteState;
 pub use site_tools::{SiteAnswer, SiteTool, digest_of};
 pub use watching::{
-    LONGEST_WATCHED_BODY, SCREENS_KEPT, SETTLE_BOUND, WatchStart, WatchTab, WatchedScreens,
+    DocumentMark, LONGEST_WATCHED_BODY, SCREENS_KEPT, SETTLE_BOUND, WatchStart, WatchTab,
+    WatchedScreen, WatchedScreens,
 };
 
 /// A call to the page that has not been answered. Dropped unanswered, at
@@ -2291,6 +2312,22 @@ impl Page {
         path: &PagePath,
         deadline: Deadline,
     ) -> Result<PageAnswer, BrowserError> {
+        self.read_by_helper(
+            "function (path, limit) { return __a2m.readFromPage(path, limit); }",
+            CallArgument::text(path.as_str()),
+            deadline,
+        )
+        .await
+    }
+
+    /// One read the helper makes from inside the page by `function`, given
+    /// `argument` and the tab's limit, and its answer.
+    async fn read_by_helper(
+        &self,
+        function: &str,
+        argument: CallArgument,
+        deadline: Deadline,
+    ) -> Result<PageAnswer, BrowserError> {
         #[derive(Deserialize, Default)]
         #[serde(default)]
         struct Answer {
@@ -2304,11 +2341,8 @@ impl Page {
         let outcome = self
             .evaluate(
                 On::World(world),
-                "function (path, limit) { return __a2m.readFromPage(path, limit); }",
-                vec![
-                    CallArgument::text(path.as_str()),
-                    CallArgument::number(self.max_read),
-                ],
+                function,
+                vec![argument, CallArgument::number(self.max_read)],
                 true,
                 true,
                 deadline,
@@ -2345,6 +2379,26 @@ impl Page {
             body: self.redact.redact(&answer.body),
             withheld: false,
         })
+    }
+
+    /// A read from inside the page by a method that may write, with a body
+    /// of plain fields or none (decision 0491). It goes through the tab's
+    /// guard as any request of the page does.
+    async fn ask_from_page(
+        &self,
+        ask: &PageAsk,
+        deadline: Deadline,
+    ) -> Result<PageAnswer, BrowserError> {
+        let shape =
+            || BrowserError::Unexpected("a helper argument could not be written".to_owned());
+        let spec = ask.spec();
+        let argument = CallArgument::of(&spec).ok_or_else(shape)?;
+        self.read_by_helper(
+            "function (spec, limit) { return __a2m.askFromPage(spec, limit); }",
+            argument,
+            deadline,
+        )
+        .await
     }
 
     /// A write from inside the page, with the page's own anti-forgery
@@ -2772,6 +2826,7 @@ impl Page {
             EventKind::Lifecycle(lifecycle) if own => {
                 if lifecycle.frame_id == self.target && lifecycle.name == "DOMContentLoaded" {
                     if self.watching {
+                        self.parsed(&lifecycle.loader_id);
                         self.left_behind(&lifecycle.loader_id);
                     }
                     // Counted before the document is said to be parsed: a
@@ -2960,6 +3015,7 @@ impl Page {
             EventKind::RequestSent(sent) if own && self.watching => self.heard_sent(&sent),
             EventKind::SameDocument(moved) if own && self.watching => {
                 if moved.frame_id == self.target {
+                    self.moved_within(&moved.url);
                     self.changes.send_modify(|count| *count += 1);
                 }
             }
@@ -3162,6 +3218,7 @@ impl Page {
         let Some(Pending {
             mut exchange,
             answered: true,
+            loader,
             ..
         }) = taken
         else {
@@ -3200,7 +3257,7 @@ impl Page {
         }
         if let Ok(mut exchanges) = self.exchanges.lock() {
             if exchanges.len() < EXCHANGES_KEPT {
-                exchanges.push(exchange);
+                exchanges.push((loader, exchange));
             } else {
                 self.dropped.fetch_add(1, Ordering::SeqCst);
             }
@@ -3211,16 +3268,69 @@ impl Page {
     /// The page's own requests answered whole, oldest first, taken out,
     /// once none is awaiting its answer or the deadline has passed, with
     /// how many were left out and how many were still awaited.
-    async fn take_exchanges(&self, deadline: Deadline) -> PageExchanges {
-        let mut waiting = self.waiting.subscribe();
-        let _ = tokio::time::timeout_at(deadline.at(), waiting.wait_for(|count| *count == 0)).await;
-        let awaited = *self.waiting.borrow();
-        PageExchanges {
-            exchanges: self
-                .exchanges
+    ///
+    /// With `through`, only the requests sent under a document of the
+    /// tab's own frame up to that one are taken, and waited for: those of
+    /// a document parsed after it, or not parsed yet, are kept for a later
+    /// take. A request the browser gave no document for is taken with any.
+    async fn take_exchanges(
+        &self,
+        deadline: Deadline,
+        through: Option<watching::DocumentMark>,
+    ) -> PageExchanges {
+        let documents = || {
+            self.documents
                 .lock()
-                .map(|mut exchanges| std::mem::take(&mut *exchanges))
-                .unwrap_or_default(),
+                .map(|known| known.clone())
+                .unwrap_or_default()
+        };
+        let taken = |loader: Option<&String>, documents: &[String]| match (through, loader) {
+            (None, _) | (_, None) => true,
+            (Some(mark), Some(loader)) => documents
+                .iter()
+                .position(|known| known == loader)
+                .is_some_and(|at| at <= mark.0),
+        };
+        let awaited = || {
+            let documents = documents();
+            self.pending
+                .lock()
+                .map(|pending| {
+                    pending
+                        .values()
+                        .filter(|one| taken(one.loader.as_ref(), &documents))
+                        .count()
+                })
+                .unwrap_or(0)
+        };
+        // The count is read with the list's lock and never inside the
+        // watch's own: the list is changed under its lock before the count
+        // is sent.
+        let mut waiting = self.waiting.subscribe();
+        let _ = tokio::time::timeout_at(deadline.at(), async {
+            loop {
+                let _ = waiting.borrow_and_update();
+                if awaited() == 0 || waiting.changed().await.is_err() {
+                    return;
+                }
+            }
+        })
+        .await;
+        let awaited = awaited();
+        let documents = documents();
+        let exchanges = self
+            .exchanges
+            .lock()
+            .map(|mut exchanges| {
+                let (out, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *exchanges)
+                    .into_iter()
+                    .partition(|(loader, _)| taken(loader.as_ref(), &documents));
+                *exchanges = kept;
+                out.into_iter().map(|(_, one)| one).collect()
+            })
+            .unwrap_or_default();
+        PageExchanges {
+            exchanges,
             dropped: self.dropped.swap(0, Ordering::SeqCst),
             awaited,
         }
@@ -3267,7 +3377,7 @@ impl Page {
     /// with an empty one the engine writes, with no request: that erases
     /// every handler the page set on its window and its document, so its
     /// leaving runs nothing of the page's.
-    fn release(&self) {
+    pub(crate) fn release(&self) {
         self.status.send_replace(Status::Gone);
         if self.released.swap(true, Ordering::SeqCst) {
             return;
@@ -3661,6 +3771,8 @@ pub(crate) async fn open_page(
         pending: Mutex::new(BTreeMap::new()),
         waiting: watch::Sender::new(0),
         exchanges: Mutex::new(Vec::new()),
+        documents: Mutex::new(Vec::new()),
+        addresses: Mutex::new(std::collections::VecDeque::new()),
         // A watching tab is opened for a capture alone: it records from
         // its first request.
         recording: AtomicBool::new(matches!(posture, Posture::Watch)),
@@ -3684,6 +3796,9 @@ pub(crate) async fn open_page(
         hang_closed: watch::Sender::new(false),
         ended: watch::Sender::new(false),
         browser: Arc::clone(browser),
+        environment: env.clone(),
+        parked: AtomicBool::new(false),
+        uses: AtomicU64::new(1),
     });
     browser.tabs.fetch_add(1, Ordering::SeqCst);
     browser
@@ -4066,7 +4181,11 @@ macro_rules! looks {
 
         impl Drop for $tab {
             fn drop(&mut self) {
-                self.page.release();
+                // A tab kept warm is held by the set of browsers, not
+                // released (decision 0488).
+                if !self.page.parked.load(Ordering::SeqCst) {
+                    self.page.release();
+                }
             }
         }
 
@@ -4359,6 +4478,13 @@ impl ObserveTab {
         Self { page }
     }
 
+    /// Whether this tab was kept warm after an earlier read and handed out
+    /// again, made fresh, rather than opened for this one (decision 0488).
+    #[must_use]
+    pub fn reused(&self) -> bool {
+        self.page.uses.load(Ordering::SeqCst) > 1
+    }
+
     /// Whether the browser this tab is in is lost: its link is closed,
     /// because its process ended or the engine closed it, or this tab has
     /// itself seen its page crash or its target go while the engine had not
@@ -4446,7 +4572,7 @@ impl ObserveTab {
     ///
     /// Nothing is recorded until [`Self::record_exchanges`] is called.
     pub async fn exchanges(&self, deadline: Deadline) -> PageExchanges {
-        self.page.take_exchanges(deadline).await
+        self.page.take_exchanges(deadline, None).await
     }
 
     /// Starts recording the requests its page makes by itself, for
@@ -4483,6 +4609,31 @@ impl ObserveTab {
         deadline: Deadline,
     ) -> Result<PageAnswer, BrowserError> {
         self.page.read_from_page(path, deadline).await
+    }
+
+    /// Reads from inside the page the tab is on, with the page's own
+    /// session, once, by a method that may write: the method, the path, and
+    /// the body of `ask`, to the page's own origin, which must be one of the
+    /// tab's, with no header a caller chose but the body's own type, and no
+    /// token of the page (decision 0491). A redirect is not followed, and
+    /// the answer is read as text up to the tab's limit and passes the
+    /// redactor, as a [`Self::read_from_page`] is.
+    ///
+    /// The tab's own guard judges the request as any request of its page:
+    /// it leaves only when it matches an asserted read the tab was opened
+    /// with, by method, origin, path, and body; otherwise it is failed
+    /// before it leaves, the refusal is among those the tab hands out, and
+    /// this answers [`BrowserError::RequestFailed`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_from_page`].
+    pub async fn ask_from_page(
+        &self,
+        ask: &PageAsk,
+        deadline: Deadline,
+    ) -> Result<PageAnswer, BrowserError> {
+        self.page.ask_from_page(ask, deadline).await
     }
 }
 

@@ -39,6 +39,7 @@ use serde_json::Value as Json;
 use crate::{SURFACE_KIND, WebProbePack};
 
 mod capture;
+mod repair;
 mod rules;
 mod scouting;
 mod sign_in;

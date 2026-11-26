@@ -1,6 +1,6 @@
 # 0467. The desktop pack starts an application a surface allows, does an action by a key the element binds, and probes its reach
 
-**Status:** Accepted. Design decision. The owner had not read this record when it was merged.
+**Status:** Accepted. Design decision. The owner had not read this record when it was merged. Point 4 is superseded for Windows by [decision 0480](0480-the-desktop-pack-starts-an-application-on-windows-by-the-event-of-a-window-shown-and-not-yet-on-macos.md).
 
 **Date:** 2026-11-25
 

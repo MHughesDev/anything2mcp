@@ -346,7 +346,11 @@ impl Engine {
             return self.discover(job, control).await;
         };
         // A call to the control plane that never answers is given up.
-        let timed = Timed::new(control, self.deps.settings.control_timeout);
+        let timed = Timed::new(
+            control,
+            self.deps.settings.control_timeout,
+            Arc::clone(&self.deps.clock),
+        );
         let control: &dyn ControlPort = &timed;
         let keeps_state = job.kind == JobKind::VerifyAfterLoss;
         let give_up = |state: RunState, failure: Failure| {
@@ -420,7 +424,9 @@ impl Engine {
         run.replay = replay;
         let result = tool::run_tool(&mut run, name).await;
         run.release().await;
-        if let Some(trace) = run.trace.take() {
+        if let Some(mut trace) = run.trace.take() {
+            // Where the attempt's time went, up to here (decision 0481).
+            trace.mark(timed.marks());
             // A trace that still holds a registered secret is dropped, not
             // sent: nothing of it leaves the engine.
             if let Ok(finished) = trace.finish() {

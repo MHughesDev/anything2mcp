@@ -28,6 +28,11 @@ ACTIONS = (
     "audit.query",
     "auth.detect",
     "binding.promote",
+    "canary.confirm",
+    "canary.create",
+    "canary.end",
+    "canary.get",
+    "canary.list",
     "capture.start",
     "capture.stop",
     "client.connect",
@@ -73,6 +78,8 @@ ACTIONS = (
     "reach.list",
     "reach.name",
     "reach.withdraw",
+    "repair.accept",
+    "repair.propose",
     "run.cancel",
     "run.get",
     "run.list",
@@ -278,6 +285,89 @@ class Actions:
             idempotency_key,
         )
 
+    def canary_confirm(
+        self,
+        *,
+        canary_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Confirm a canary the caller's person was asked for, so that its checks
+        begin. A person's act, carried out on the engine's page, never an
+        agent's.
+
+        The engine action is ``canary.confirm``.
+        """
+        return self._action("canary.confirm", {"canary_id": canary_id}, idempotency_key)
+
+    def canary_create(
+        self,
+        *,
+        ends_at: int,
+        interval_seconds: int,
+        tool: str,
+        environment: Optional[str] = None,
+        input: Optional[Dict[str, Any]] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Ask for a canary: one published read, called with one fixed input at a
+        fixed interval until an end, to find whether what it goes through still
+        fits the system. Its drift stops every tool that relies on the same
+        knowledge before anything is sent, and its pass lifts that. It sends
+        nothing until the caller's person confirms it on the engine's page.
+
+        The engine action is ``canary.create``.
+        """
+        return self._action(
+            "canary.create",
+            {
+                "ends_at": ends_at,
+                "interval_seconds": interval_seconds,
+                "tool": tool,
+                "environment": environment,
+                "input": input,
+            },
+            idempotency_key,
+        )
+
+    def canary_end(
+        self,
+        *,
+        canary_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """End a canary, by its person or by the caller that asked for it. A check
+        under way is let go.
+
+        The engine action is ``canary.end``.
+        """
+        return self._action("canary.end", {"canary_id": canary_id}, idempotency_key)
+
+    def canary_get(
+        self,
+        *,
+        canary_id: str,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """One canary of the caller's person: its read, interval, end, state, how
+        many checks it made, and what the last one found. Never a value the read
+        returned.
+
+        The engine action is ``canary.get``.
+        """
+        return self._action("canary.get", {"canary_id": canary_id}, idempotency_key)
+
+    def canary_list(
+        self,
+        *,
+        open_only: Optional[bool] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """The canaries of the caller's person, oldest first.
+
+        The engine action is ``canary.list``.
+        """
+        return self._action("canary.list", {"open_only": open_only}, idempotency_key)
+
     def capture_start(
         self,
         *,
@@ -381,6 +471,7 @@ class Actions:
         *,
         target: str,
         files: Optional[Dict[str, Any]] = None,
+        focus: Optional[Dict[str, Any]] = None,
         surface: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":
@@ -394,6 +485,7 @@ class Actions:
             {
                 "target": target,
                 "files": files,
+                "focus": focus,
                 "surface": surface,
             },
             idempotency_key,
@@ -1017,6 +1109,63 @@ class Actions:
         """
         return self._action("reach.withdraw", {"label": label}, idempotency_key)
 
+    def repair_accept(
+        self,
+        *,
+        knowledge: str,
+        now: str,
+        proposal: str,
+        target: str,
+        before: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """Write a repair the pack proposed into the target's drafts, as
+        `repair.propose` showed it. A person's act, carried out on the engine's
+        page, never an agent's. The draft is linted, tested, and published like
+        any other; nothing is published here.
+
+        The engine action is ``repair.accept``.
+        """
+        return self._action(
+            "repair.accept",
+            {
+                "knowledge": knowledge,
+                "now": now,
+                "proposal": proposal,
+                "target": target,
+                "before": before,
+            },
+            idempotency_key,
+        )
+
+    def repair_propose(
+        self,
+        *,
+        knowledge: str,
+        now: str,
+        target: str,
+        before: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> "Response":
+        """The repair bundle of a drift: the drift, the tools it stops, two shapes
+        of the surface from findings of a discovery, before and now, the draft
+        file that holds the knowledge, and the change the pack's repair proposer
+        proposes, as a diff, or why it proposes none. Keeps nothing, and writes
+        nothing.
+
+        The engine action is ``repair.propose``.
+        """
+        return self._action(
+            "repair.propose",
+            {
+                "knowledge": knowledge,
+                "now": now,
+                "target": target,
+                "before": before,
+            },
+            idempotency_key,
+        )
+
     def run_cancel(
         self,
         *,
@@ -1114,7 +1263,7 @@ class Actions:
         target: str,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        part: Optional[Literal["surfaces", "found", "compared.differs", "compared.would_draft", "compared.not_covered", "drafted.written", "drafted.held_back", "drafted.not_drafted", "drafted.conflicts", "drafted.refused", "checked.problems", "checked.tools", "tried.tools", "tried.left_out", "open", "not_looked_at"]] = None,
+        part: Optional[Literal["surfaces", "found", "compared.differs", "compared.would_draft", "compared.not_covered", "compared.described_against_observed.entries", "drafted.written", "drafted.held_back", "drafted.not_drafted", "drafted.conflicts", "drafted.refused", "checked.problems", "checked.tools", "tried.tools", "tried.left_out", "open", "not_looked_at"]] = None,
         scout: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> "Response":

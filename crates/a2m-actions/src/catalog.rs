@@ -228,6 +228,91 @@ fn watch_output() -> JsonSchema {
         .required("resource", text())
 }
 
+/// The fields that name what a repair bundle is of (decision 0492).
+const REPAIR_KNOWLEDGE: &str = "The knowledge a drift mark names, as `tool.describe` gives it under `unavailable.knowledge`: in the web pack a screen.";
+const REPAIR_NOW: &str = "The identifier of a finding of what the surface shows now, from `discover.run` and `finding.list`.";
+const REPAIR_BEFORE: &str = "The identifier of a finding of the same place from before the change, of the same kind, while the knowledge still fit. Without one, a pack's proposer may propose nothing.";
+
+/// A repair bundle, as `repair.propose` returns it (decision 0492).
+fn repair_output() -> JsonSchema {
+    let shape = JsonSchema::object()
+        .required("finding", text())
+        .required("shape", any_map());
+    JsonSchema::object()
+        .required("target", text())
+        .required("knowledge", text())
+        .required(
+            "drift",
+            JsonSchema::object()
+                .required("tool", text())
+                .required("mode", text())
+                .required("surface", text())
+                .required("code", text())
+                .required("run_id", text())
+                .required("marked_at", JsonSchema::int()),
+        )
+        .required(
+            "stops",
+            list_of(
+                JsonSchema::object()
+                    .required("tool", text())
+                    .required("mode", text()),
+            ),
+        )
+        .required("file_kind", text())
+        .required("files", list_of(text()))
+        .optional("before", shape.clone())
+        .required("now", shape)
+        .required("proposed", JsonSchema::bool())
+        .optional("reason", text())
+        .optional("file", text())
+        .optional("because", list_of(text()))
+        .optional(
+            "diff",
+            list_of(
+                JsonSchema::object()
+                    .required("line", JsonSchema::int())
+                    .required("before", text())
+                    .required("after", text()),
+            ),
+        )
+        .optional("proposal", text())
+}
+
+/// The words of a canary's state, as the scheduler keeps them.
+const CANARY_STATES: &[&str] = a2m_sched::CanaryState::NAMES;
+
+/// The field of a canary's identifier.
+const CANARY: &str = "The canary's identifier, as `canary.create` gave it.";
+
+/// A canary, as every `canary.*` action returns it (decision 0482). It
+/// holds no value the read returned and not its input.
+fn canary_output() -> JsonSchema {
+    JsonSchema::object()
+        .required("canary_id", text())
+        .required("tool", text())
+        .required("target", text())
+        .required("environment", text())
+        .required("compiled_target_hash", text())
+        .required("state", JsonSchema::words(CANARY_STATES))
+        .optional("ended", JsonSchema::words(a2m_sched::CanaryEnd::NAMES))
+        .required("interval_seconds", JsonSchema::int())
+        .required("ends_at", JsonSchema::int())
+        .required("asked_at", JsonSchema::int())
+        .optional("confirmed_at", JsonSchema::int())
+        .optional("next_due_at", JsonSchema::int())
+        .required("checks", JsonSchema::int())
+        .required("missed", JsonSchema::int())
+        .optional(
+            "outcome",
+            JsonSchema::words(a2m_sched::CanaryOutcome::NAMES),
+        )
+        .optional("failure", any_map())
+        .optional("outcome_at", JsonSchema::int())
+        .required("surface", text())
+        .required("requests_per_check", JsonSchema::int())
+}
+
 /// The URI of a watch's MCP resource, the template of `watch.changes`
 /// (decision 0478), with `{watch_id}` for the watch.
 pub(crate) const WATCH_RESOURCE: &str = "a2m://watches/{watch_id}/changes";
@@ -547,6 +632,44 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .writes()
             .output(watch_output())
             .done(),
+        // Canaries on a schedule of their own (decision 0482). None is
+        // listed: the `use` toolset is full (decision 0280).
+        act("canary.create", "Ask for a canary: one published read, called with one fixed input at a fixed interval until an end, to find whether what it goes through still fits the system. Its drift stops every tool that relies on the same knowledge before anything is sent, and its pass lifts that. It sends nothing until the caller's person confirms it on the engine's page.", VIEWER, No, "9", Change)
+            .pos("tool", TEXT, "The read's full name, as tool.search gives it: a published operation whose effect is read.")
+            .opt("input", MAP, "The read's own input, as its schema describes. Fixed for the life of the canary.")
+            .opt("environment", TEXT, "The environment to read in. The target's default when left out.")
+            .req("interval_seconds", FieldType::Int { min: 60, max: 86_400 }, "Seconds between checks: at least `watch.shortest_interval_seconds`, and within the share of the surface's rate that watches and canaries may take.")
+            .req("ends_at", FieldType::Int { min: 0, max: 99_999_999_999_999 }, "When the canary ends, in whole milliseconds since 1970 in UTC: at most `watch.longest_days` from now.")
+            .writes()
+            .output(canary_output()
+                .optional("act", text())
+                .optional("link", text())
+                .optional("person", text())
+                .optional("expires_at", JsonSchema::int()))
+            .example(r#"{"tool": "example_order_get", "input": {"order_id": "A-100"}, "interval_seconds": 3600, "ends_at": 1800086400000}"#)
+            .done(),
+        act("canary.confirm", "Confirm a canary the caller's person was asked for, so that its checks begin. A person's act, carried out on the engine's page, never an agent's.", Who::Person, No, "9", Change)
+            .pos("canary_id", TEXT, CANARY)
+            .writes()
+            .person(PersonNeed::Presence)
+            .output(canary_output())
+            .done(),
+        act("canary.get", "One canary of the caller's person: its read, interval, end, state, how many checks it made, and what the last one found. Never a value the read returned.", VIEWER, No, "9", Inspect)
+            .pos("canary_id", TEXT, CANARY)
+            .output(canary_output())
+            .done(),
+        act("canary.list", "The canaries of the caller's person, oldest first.", VIEWER, No, "9", List)
+            .opt("open_only", BOOL, "Only canaries that have not ended.")
+            .output(JsonSchema::object()
+                .required("canaries", list_of(canary_output()))
+                .required("complete", JsonSchema::bool()))
+            .example("{}")
+            .done(),
+        act("canary.end", "End a canary, by its person or by the caller that asked for it. A check under way is let go.", VIEWER, No, "9", Change)
+            .pos("canary_id", TEXT, CANARY)
+            .writes()
+            .output(canary_output())
+            .done(),
         // Building a target.
         act("target.add", "Register a target in the project: makes its folder and a first target file, with one surface where an address and its kind are given.", BUILDER, No, "5", Change)
             .pos("name", TEXT, "The new target's name: lowercase letters, digits, and underscores.")
@@ -830,6 +953,7 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .pos("target", TEXT, TARGET)
             .opt("surface", TEXT, "One surface. Every surface when left out.")
             .opt("files", MAP, "Files of the project's `inputs` folder to hand the discoverers, each under a name a discoverer reads, such as `description` for a published description of an interface: each name to the file's path from the project folder, such as `inputs/example-openapi.json`. Each is checked when asked and again before any discoverer runs, and is read only; no other file is.")
+            .opt("focus", MAP, "What to look at, by the names the surface's discoverers read, such as `paths` with a list of the surface's own paths for a web surface. Handed to them as data; a discoverer refuses what is not of its surface.")
             .long_running()
             .done(),
         act("finding.list", "Findings for a target, by level, kind, or source.", BUILDER, Build, "Stage E", List)
@@ -863,6 +987,25 @@ pub(crate) fn definitions() -> Vec<ActionDef> {
             .opt("part", FieldType::Word(crate::handlers::scout_report::PARTS), "One list of the report to read whole, by its path in the report's content, such as `drafted.written`. The report with each list cut to its first entries when left out.")
             .opt("limit", COUNT, LIMIT)
             .opt("offset", OFFSET, OFFSET_HELP)
+            .done(),
+        // The repair bundle and its acceptance (decision 0492). Neither is
+        // listed: an agent reaches them through `action.run`.
+        act("repair.propose", "The repair bundle of a drift: the drift, the tools it stops, two shapes of the surface from findings of a discovery, before and now, the draft file that holds the knowledge, and the change the pack's repair proposer proposes, as a diff, or why it proposes none. Keeps nothing, and writes nothing.", BUILDER, No, "9", Inspect)
+            .pos("target", TEXT, TARGET)
+            .req("knowledge", TEXT, REPAIR_KNOWLEDGE)
+            .req("now", TEXT, REPAIR_NOW)
+            .opt("before", TEXT, REPAIR_BEFORE)
+            .output(repair_output())
+            .example(r#"{"target": "example", "knowledge": "line_item", "now": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0", "before": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"}"#)
+            .done(),
+        act("repair.accept", "Write a repair the pack proposed into the target's drafts, as `repair.propose` showed it. A person's act, carried out on the engine's page, never an agent's. The draft is linted, tested, and published like any other; nothing is published here.", Who::Person, No, "9", Change)
+            .pos("target", TEXT, TARGET)
+            .req("knowledge", TEXT, REPAIR_KNOWLEDGE)
+            .req("now", TEXT, REPAIR_NOW)
+            .opt("before", TEXT, REPAIR_BEFORE)
+            .req("proposal", TEXT, "The proposal's digest, as `repair.propose` gave it: the change written is exactly the one shown, or none.")
+            .writes()
+            .person(PersonNeed::Presence)
             .done(),
         // Publishing and versions.
         act("version.publish", "Publish a target's drafts, compiled, as an immutable version. A person's act, never an agent's.", PUBLISHER, No, "5", Change)

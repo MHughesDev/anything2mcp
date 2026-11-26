@@ -769,3 +769,535 @@ async fn a_tool_a_drift_stopped_is_listed_marked_and_listed_available_after_the_
     }
     stand.close().await;
 }
+
+impl Stand {
+    /// A canary of the read of line item L-101, asked for by an agent on the
+    /// command line, every minute for an hour, with no watch (package 9.1b,
+    /// decision 0482). Gives its identifier; it is not confirmed.
+    async fn ask_canary(&self) -> String {
+        let input = json!({"order_id": "A-100", "item_code": "L-101"}).to_string();
+        let ends_at = (self.clock.now().as_unix_millis() + 3_600_000).to_string();
+        let asked = self
+            .world
+            .agent(&[
+                "canary",
+                "create",
+                GET,
+                "--input",
+                &input,
+                "--interval-seconds",
+                "60",
+                "--ends-at",
+                &ends_at,
+            ])
+            .await;
+        assert_eq!(asked.result()["state"], "asked", "{}", asked.json);
+        asked.result()["canary_id"].as_str().unwrap().to_owned()
+    }
+
+    async fn canary_of(&self, id: &str) -> Json {
+        self.world.ok(&["canary", "get", id]).await
+    }
+
+    /// The canary's person confirms it on the page they were shown, then
+    /// the clock moves by `by` and the engine tends until its check ends.
+    async fn confirmed_canary(&self, id: &str, by: Duration) -> Json {
+        let ask = self
+            .pages
+            .acts
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|ask| {
+                ask.action.as_str() == "canary.confirm"
+                    && ask.input.iter().any(|field| field.value == id)
+            })
+            .cloned()
+            .expect("the person was shown the canary's confirmation");
+        let proof = PresenceProof::new(PresenceCheck::OsPrompt, self.person().id, self.clock.now())
+            .for_act(ask.act);
+        let done = self.desk().carry_out(ask.act, proof).await.unwrap();
+        assert!(done.ok, "{done:?}");
+        self.clock.advance(by);
+        let started = std::time::Instant::now();
+        while started.elapsed() < CHECK_WAIT {
+            self.world.engine.kernel().tend().await;
+            let canary = self.canary_of(id).await;
+            if canary["checks"] == 1 && canary["state"] != "running" {
+                return canary;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!(
+            "the canary's check never ended in {CHECK_WAIT:?}: {}",
+            self.canary_of(id).await
+        );
+    }
+}
+
+/// Package 9.1b in a real browser, through the product's commands: the
+/// test application's form of a line item is changed on purpose. A canary
+/// an agent asked for and nobody confirmed sends nothing however long it
+/// waits, and the write through the form is not stopped by it; once its
+/// person confirms it, its first check finds the change, and the write
+/// through the same form is refused as drift, naming the tool, before
+/// anything reaches the application. There is no watch. The application is
+/// asked what it heard and what it stored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_canary_nobody_confirmed_sends_nothing_and_a_confirmed_one_stops_the_write_before_any_call()
+ {
+    let stand = Stand::published().await;
+    stand
+        .app
+        .change_screen(ChangedPage::LineItem, ScreenChange::Reword)
+        .await
+        .unwrap();
+    let before = stand.app.seen().await.unwrap();
+    let id = stand.ask_canary().await;
+
+    // Ten of its intervals pass, with the engine tending: nothing is sent.
+    for _ in 0..10 {
+        stand.clock.advance(Duration::from_secs(60));
+        stand.world.engine.kernel().tend().await;
+    }
+    let canary = stand.canary_of(&id).await;
+    assert_eq!(canary["state"], "asked", "{canary}");
+    assert_eq!(canary["checks"], 0, "{canary}");
+    let heard = stand.app.heard_since(&before).await.unwrap();
+    assert!(
+        !heard.iter().any(|line| line.contains("L-101")),
+        "{heard:?}"
+    );
+    let runs = stand.world.ok(&["run", "list", "--tool", GET]).await;
+    assert_eq!(runs["runs"].as_array().unwrap().len(), 0, "{runs}");
+
+    // Its person confirms it: its first check finds the form changed, and
+    // the canary goes on.
+    let canary = stand.confirmed_canary(&id, Duration::from_secs(10)).await;
+    assert_eq!(canary["state"], "confirmed", "{canary}");
+    assert_eq!(canary["outcome"], "drifted", "{canary}");
+    assert_eq!(canary["failure"]["class"], "drift", "{canary}");
+    let watches = stand.world.ok(&["watch", "list"]).await;
+    assert_eq!(watches["watches"].as_array().unwrap().len(), 0, "{watches}");
+
+    // The write through the same form is refused before anything is sent:
+    // nobody is asked to approve it, and the application heard nothing of
+    // the line item and stored nothing.
+    let before = stand.app.seen().await.unwrap();
+    let input = json!({
+        "order_id": "A-100",
+        "item_code": "L-102",
+        "description": "Oak rail",
+        "quantity": 6,
+        "length_in": "12.5",
+    })
+    .to_string();
+    let refused = stand
+        .world
+        .agent(&["tool", "call", UPDATE, "--input", &input])
+        .await;
+    assert_eq!(
+        refused.error()["code"],
+        "binding_drifted",
+        "{}",
+        refused.json
+    );
+    assert_eq!(refused.result()["status"], "stopped", "{}", refused.json);
+    assert!(
+        refused.error()["message"]
+            .as_str()
+            .unwrap()
+            .contains(UPDATE)
+    );
+    assert!(stand.pages.approvals.lock().unwrap().is_empty());
+    let heard = stand.app.heard_since(&before).await.unwrap();
+    assert!(
+        !heard.iter().any(|line| line.contains("L-102")),
+        "{heard:?}"
+    );
+    assert!(stand.app.writes().await.unwrap().is_empty());
+
+    // Its person ends it.
+    let ended = stand.world.person(&["canary", "end", &id]).await;
+    assert_eq!(ended.result()["ended"], "ended_by_person", "{}", ended.json);
+    stand.close().await;
+}
+
+/// The page of the form, as the web probe is told to look at it.
+const FORM_PATH: &str = "/orders/A-100/items/L-101";
+
+impl Stand {
+    /// A discovery of the form's page, through the product's commands, with
+    /// the web probe's focus on it: gives the identifiers of the `screen`
+    /// findings the target holds of that page, in the order observed.
+    async fn snapshots(&self) -> Vec<String> {
+        let focus = json!({"paths": [FORM_PATH]}).to_string();
+        let ran = self
+            .world
+            .agent(&["discover", "run", "example", "--focus", &focus])
+            .await;
+        assert_eq!(ran.finished.code, 0, "{}", ran.json);
+        assert_eq!(ran.result()["complete"], true, "{}", ran.json);
+        for surface in ran.result()["surfaces"].as_array().unwrap() {
+            assert_eq!(surface["status"], "completed", "{}", ran.json);
+        }
+        let listed = self
+            .world
+            .ok(&[
+                "finding", "list", "example", "--kind", "screen", "--limit", "1000",
+            ])
+            .await;
+        let mut ids = Vec::new();
+        for finding in listed["findings"].as_array().unwrap() {
+            let id = finding["id"].as_str().unwrap();
+            let described = self
+                .world
+                .ok(&["finding", "describe", id, "--target", "example"])
+                .await;
+            let subject = described["finding"]["subject"].to_string();
+            if subject.contains(&format!("\"{FORM_PATH}\"")) {
+                ids.push(id.to_owned());
+            }
+        }
+        ids
+    }
+
+    /// The one finding of the form's page that `after` holds and `before`
+    /// did not.
+    fn new_one(before: &[String], after: &[String]) -> String {
+        let new: Vec<&String> = after.iter().filter(|id| !before.contains(id)).collect();
+        assert_eq!(new.len(), 1, "{before:?} {after:?}");
+        new[0].clone()
+    }
+
+    fn screen_model(&self) -> String {
+        std::fs::read_to_string(self.machine.project.path().join(SCREEN)).unwrap()
+    }
+}
+
+/// Package 9.1c in a real browser, through the product's commands
+/// (decision 0492): the form is reworded on purpose and a canary stops the
+/// write through it. Two discoveries of the page, one from before the
+/// change and one from now, give the repair bundle its shapes; the web
+/// pack's proposer pairs the renamed box and button. An agent asks for the
+/// repair to be accepted, and nothing changes until the person presses on
+/// the engine's page; the press writes the draft, which lints, passes its
+/// publish gates, and is published by the person. The repaired read then
+/// passes a canary and reads what the application holds, and the write is
+/// made once. The application is asked what it stored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reworded_form_is_repaired_by_a_proposal_a_person_accepts() {
+    let stand = Stand::published().await;
+    let before = stand.snapshots().await;
+    assert_eq!(before.len(), 1, "{before:?}");
+    stand
+        .app
+        .change_screen(ChangedPage::LineItem, ScreenChange::Reword)
+        .await
+        .unwrap();
+    let id = stand.canary().await;
+    assert_eq!(stand.watch(&id).await["reason"], "drifted");
+    let described = stand.world.ok(&["tool", "describe", UPDATE]).await;
+    assert_eq!(described["available"], false, "{described}");
+    let knowledge = described["unavailable"]["knowledge"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(knowledge, "line_item");
+    let now = Stand::new_one(&before, &stand.snapshots().await);
+
+    // The bundle: the drift, what it stops, the two shapes, and the diff.
+    let bundle = stand
+        .world
+        .ok(&[
+            "repair",
+            "propose",
+            "example",
+            "--knowledge",
+            &knowledge,
+            "--before",
+            &before[0],
+            "--now",
+            &now,
+        ])
+        .await;
+    assert_eq!(bundle["proposed"], true, "{bundle}");
+    assert_eq!(bundle["drift"]["tool"], GET, "{bundle}");
+    assert_eq!(bundle["drift"]["code"], "locator_not_found", "{bundle}");
+    assert_eq!(bundle["file_kind"], "screen", "{bundle}");
+    assert_eq!(bundle["file"], "screens/line_item.yaml", "{bundle}");
+    let stops: Vec<&str> = bundle["stops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|stop| stop["tool"].as_str().unwrap())
+        .collect();
+    assert!(stops.contains(&GET) && stops.contains(&UPDATE), "{bundle}");
+    assert_eq!(bundle["before"]["finding"], before[0].as_str());
+    assert_eq!(bundle["now"]["finding"], now.as_str());
+    assert!(bundle["now"]["shape"]["untrusted"]["elements"].is_array());
+    let diff: Vec<(String, String)> = bundle["diff"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| {
+            (
+                line["before"].as_str().unwrap().trim().to_owned(),
+                line["after"].as_str().unwrap().trim().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        diff,
+        [
+            (
+                "- {role: textbox, name: Quantity}".to_owned(),
+                "- {role: textbox, name: Qty}".to_owned()
+            ),
+            (
+                "- {role: button, name: Save}".to_owned(),
+                "- {role: button, name: Save line item}".to_owned()
+            ),
+        ],
+        "{bundle}"
+    );
+    let proposal = bundle["proposal"].as_str().unwrap().to_owned();
+
+    // An agent asks for it to be accepted: the person is shown it on the
+    // page, and the draft is unchanged until they press.
+    let unrepaired = stand.screen_model();
+    let asked = stand
+        .world
+        .agent(&[
+            "repair",
+            "accept",
+            "example",
+            "--knowledge",
+            &knowledge,
+            "--before",
+            &before[0],
+            "--now",
+            &now,
+            "--proposal",
+            &proposal,
+        ])
+        .await;
+    assert!(asked.result()["act"].is_string(), "{}", asked.json);
+    assert_eq!(stand.screen_model(), unrepaired);
+    let ask = stand
+        .pages
+        .acts
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|ask| ask.action.as_str() == "repair.accept")
+        .cloned()
+        .expect("the person was shown the repair");
+    assert!(
+        ask.details.iter().any(|line| line.contains("`Qty`")),
+        "{:?}",
+        ask.details
+    );
+    let proof = PresenceProof::new(
+        PresenceCheck::OsPrompt,
+        stand.person().id,
+        stand.clock.now(),
+    )
+    .for_act(ask.act);
+    let done = stand.desk().carry_out(ask.act, proof).await.unwrap();
+    assert!(done.ok, "{done:?}");
+    let repaired = stand.screen_model();
+    assert_eq!(
+        repaired,
+        unrepaired
+            .replace(
+                "{role: textbox, name: Quantity}",
+                "{role: textbox, name: Qty}"
+            )
+            .replace(
+                "{role: button, name: Save}",
+                "{role: button, name: Save line item}"
+            )
+    );
+
+    // The draft goes through the gates and a publish like any other.
+    stand.publish().await;
+    let again = stand.canary().await;
+    assert_eq!(stand.watch(&again).await["state"], "confirmed");
+    let read = stand
+        .world
+        .agent(&[
+            "tool",
+            "call",
+            GET,
+            "--input",
+            &json!({"order_id": "A-100", "item_code": "L-101"}).to_string(),
+        ])
+        .await;
+    assert_eq!(read.finished.code, 0, "{}", read.json);
+    let held = stand
+        .app
+        .stored_item("A-100", "L-101")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        read.result()["result"]["quantity"],
+        held.quantity,
+        "{}",
+        read.json
+    );
+    assert_eq!(
+        read.result()["result"]["description"],
+        held.description.as_str(),
+        "{}",
+        read.json
+    );
+    let done = stand.written("L-102", "Oak rail", 6).await;
+    assert_eq!(done["result"]["quantity"], 6, "{done}");
+    assert_eq!(stand.app.write_count("A-100", "L-102").await.unwrap(), 1);
+    assert_eq!(stand.app.writes().await.unwrap().len(), 1);
+
+    // The bundle once more: the version published now changed the
+    // knowledge the mark names, so nothing of it is stopped and there is
+    // nothing to repair.
+    let after = stand
+        .world
+        .agent(&[
+            "repair",
+            "propose",
+            "example",
+            "--knowledge",
+            &knowledge,
+            "--before",
+            &before[0],
+            "--now",
+            &now,
+        ])
+        .await;
+    assert_eq!(after.error()["code"], "not_found", "{}", after.json);
+    stand.close().await;
+}
+
+/// Package 9.1c, a drift with no sure repair (decision 0492): two labels of
+/// the form are reworded at once, so the page does not show which old box
+/// is which new one. The bundle proposes nothing and says why; asking for
+/// it to be accepted is refused before any person is asked, and the draft
+/// is unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_relabelled_form_proposes_no_repair_and_says_why() {
+    let stand = Stand::published().await;
+    let before = stand.snapshots().await;
+    stand
+        .app
+        .change_screen(ChangedPage::LineItem, ScreenChange::Relabel)
+        .await
+        .unwrap();
+    let id = stand.canary().await;
+    let watch = stand.watch(&id).await;
+    assert_eq!(watch["reason"], "drifted", "{watch}");
+    assert_eq!(watch["failure"]["code"], "locator_not_found", "{watch}");
+    let now = Stand::new_one(&before, &stand.snapshots().await);
+    let asked = [
+        "example",
+        "--knowledge",
+        "line_item",
+        "--before",
+        &before[0],
+        "--now",
+        &now,
+    ];
+    let bundle = stand
+        .world
+        .ok(&[&["repair", "propose"][..], &asked[..]].concat())
+        .await;
+    assert_eq!(bundle["proposed"], false, "{bundle}");
+    let reason = bundle["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("2 element(s) of the role `textbox` are gone and 2 are new"),
+        "{reason}"
+    );
+    assert!(bundle.get("diff").is_none(), "{bundle}");
+
+    let unrepaired = stand.screen_model();
+    let refused = stand
+        .world
+        .agent(
+            &[
+                &["repair", "accept"][..],
+                &asked[..],
+                &["--proposal", &"0".repeat(64)][..],
+            ]
+            .concat(),
+        )
+        .await;
+    assert_ne!(refused.finished.code, 0, "{}", refused.json);
+    assert_eq!(
+        refused.error()["code"],
+        "repair_not_proposed",
+        "{}",
+        refused.json
+    );
+    assert!(
+        !stand
+            .pages
+            .acts
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|ask| ask.action.as_str() == "repair.accept")
+    );
+    assert_eq!(stand.screen_model(), unrepaired);
+    assert!(stand.app.writes().await.unwrap().is_empty());
+    stand.close().await;
+}
+
+/// Package 9.1c, a wrap (decision 0492): every locator still finds its
+/// field, and the fingerprints that named the form's heading are proposed
+/// the card that holds it now, the repair a person wrote by hand in
+/// package 9.1; the length's, whose text the snapshots keep only as a
+/// type, and the button's, which names no text, are left as they are.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_wrapped_form_is_proposed_the_section_that_holds_its_heading_now() {
+    let stand = Stand::published().await;
+    let before = stand.snapshots().await;
+    stand
+        .app
+        .change_screen(ChangedPage::LineItem, ScreenChange::Wrap)
+        .await
+        .unwrap();
+    let id = stand.canary().await;
+    assert_eq!(
+        stand.watch(&id).await["failure"]["code"],
+        "fingerprint_mismatch"
+    );
+    let now = Stand::new_one(&before, &stand.snapshots().await);
+    let bundle = stand
+        .world
+        .ok(&[
+            "repair",
+            "propose",
+            "example",
+            "--knowledge",
+            "line_item",
+            "--before",
+            &before[0],
+            "--now",
+            &now,
+        ])
+        .await;
+    assert_eq!(bundle["proposed"], true, "{bundle}");
+    let after: Vec<&str> = bundle["diff"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| line["after"].as_str().unwrap().trim())
+        .collect();
+    assert_eq!(
+        after,
+        ["fingerprint: {section: {role: region, name: Line Item Details}, near_text: \"Line Item Details\"}";
+            2],
+        "{bundle}"
+    );
+    stand.close().await;
+}

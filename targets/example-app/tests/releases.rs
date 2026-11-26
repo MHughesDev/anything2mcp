@@ -95,6 +95,21 @@ async fn each_change_is_what_a_release_makes_and_a_reset_undoes_it() -> Outcome 
     assert!(at(&wrapped, "</h2>") < at(&wrapped, "<form"));
     assert!(at(&wrapped, "</form>") < at(&wrapped, "</section>"));
 
+    // Relabel: two labels say other words at once; nothing else moves.
+    app.change_screen(ChangedPage::LineItem, ScreenChange::Relabel)
+        .await?;
+    let relabelled = form(&app).await?;
+    assert!(relabelled.contains("<label for=\"description\">Item</label>"));
+    assert!(relabelled.contains("<label for=\"quantity\">Qty</label>"));
+    assert_eq!(
+        relabelled
+            .replace(">Item<", ">Description<")
+            .replace(">Qty<", ">Quantity<"),
+        first
+    );
+    app.change_screen(ChangedPage::LineItem, ScreenChange::Wrap)
+        .await?;
+
     // The control interface says what the page shows now.
     let reported: serde_json::Value = app
         .http()
@@ -143,6 +158,7 @@ async fn a_changed_form_keeps_every_name_and_role_its_script_reads() -> Outcome 
         ScreenChange::Restyle,
         ScreenChange::Reorder,
         ScreenChange::Wrap,
+        ScreenChange::Relabel,
     ] {
         app.change_screen(ChangedPage::LineItem, change).await?;
         let page = form(&app).await?;

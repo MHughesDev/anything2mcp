@@ -4,6 +4,11 @@
 //!
 //! - `/orders/{order_id}/summary`: the totals, asked for with no query and no
 //!   header of the page's own, as a read from inside the page would ask.
+//!   With `?picture=slow` the page also shows a picture,
+//!   `/pictures/slow`, that is answered only after [`SLOW_PICTURE`]: the
+//!   page says `Loaded.` as soon as its totals are read, and its network
+//!   stays busy for as long as a person reads it, as a page with a slow
+//!   picture or a long-lived request does.
 //! - `/orders/{order_id}/lengths-by-query`: the total length, asked for in
 //!   centimetres with a query, `?unit=cm`.
 //! - `/orders/{order_id}/lengths-by-header`: the same, asked for with a header
@@ -27,6 +32,13 @@
 //!   method, told apart by one field of its body (decision 0394).
 //!   `GET /__control/case-rows` reports the rows as stored and every body
 //!   the route was sent, by its `op`.
+//! - `POST /api/cases/rows/count`: a search that takes its filter in its
+//!   body, `{"status": "open", "op": "count"}`, and answers how many rows
+//!   are of that status, the first of them, and their keys; with
+//!   `op: "archive"` it archives the first row of that status. It hears
+//!   into the same list as the route above. `/cases/rows-count` is a page
+//!   on the same origin that sends nothing by itself, the page a read
+//!   from inside the page is made from (decision 0491).
 
 use axum::Router;
 use axum::extract::{Path, State};
@@ -52,6 +64,26 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/api/feed", get(feed))
         .route("/cases/rows-by-post", get(rows_by_post))
         .route("/api/cases/rows/search", post(rows_search))
+        .route("/cases/rows-count", get(rows_count_page))
+        .route("/api/cases/rows/count", post(rows_count))
+        .route("/pictures/slow", get(slow_picture))
+}
+
+/// How long `/pictures/slow` takes to answer: longer than a test's person
+/// reads a page.
+pub const SLOW_PICTURE: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// The smallest picture: one transparent pixel, in GIF.
+const PIXEL: &[u8] = &[
+    0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xff, 0xff, 0xff, 0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b,
+];
+
+/// A picture answered after [`SLOW_PICTURE`].
+async fn slow_picture() -> Response {
+    tokio::time::sleep(SLOW_PICTURE).await;
+    ([(axum::http::header::CONTENT_TYPE, "image/gif")], PIXEL).into_response()
 }
 
 fn page(title: &str, body: &str) -> Html<String> {
@@ -63,8 +95,9 @@ fn page(title: &str, body: &str) -> Html<String> {
 }
 
 /// A page that shows one value its script reads, and says `Loaded.` once it
-/// has. `call` is the script's `fetch` call, with the order's id as `id`.
-fn reading_page(title: &str, order_id: &str, call: &str, shown: &str) -> Response {
+/// has. `call` is the script's `fetch` call, with the order's id as `id`;
+/// `more` is put after it, as it is.
+fn reading_page(title: &str, order_id: &str, call: &str, shown: &str, more: &str) -> Response {
     let quoted = serde_json::to_string(order_id)
         .unwrap_or_default()
         .replace('<', "\\u003c");
@@ -80,19 +113,27 @@ fn reading_page(title: &str, order_id: &str, call: &str, shown: &str) -> Respons
                document.getElementById(\"value\").textContent = String(answer.{shown});\n\
                document.getElementById(\"state\").textContent = \"Loaded.\";\n\
              }})();\n\
-             </script>",
+             </script>{more}",
             escape(title)
         ),
     )
     .into_response()
 }
 
-async fn summary(Path(order_id): Path<String>) -> Response {
+async fn summary(Path(order_id): Path<String>, uri: Uri) -> Response {
+    let slow = uri
+        .query()
+        .is_some_and(|query| query.split('&').any(|entry| entry == "picture=slow"));
     reading_page(
         &format!("Summary of order {order_id}"),
         &order_id,
         "fetch(\"/api/orders/\" + id + \"/totals\")",
         "total_quantity",
+        if slow {
+            "\n<p><img src=\"/pictures/slow\" alt=\"Picture of the order\"></p>"
+        } else {
+            ""
+        },
     )
 }
 
@@ -102,6 +143,7 @@ async fn by_query(Path(order_id): Path<String>) -> Response {
         &order_id,
         "fetch(\"/api/orders/\" + id + \"/lengths?unit=cm\")",
         "total_length",
+        "",
     )
 }
 
@@ -111,6 +153,7 @@ async fn by_header(Path(order_id): Path<String>) -> Response {
         &order_id,
         "fetch(\"/api/orders/\" + id + \"/lengths\", {headers: {\"X-Unit\": \"cm\"}})",
         "total_length",
+        "",
     )
 }
 
@@ -340,6 +383,59 @@ async fn rows_search(State(state): State<AppState>, body: axum::body::Bytes) -> 
             }
             None => axum::Json(json!({"rows": []})).into_response(),
         },
+        _ => (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "unknown_op"})),
+        )
+            .into_response(),
+    }
+}
+
+/// A page on the cases' origin whose script sends nothing.
+async fn rows_count_page() -> Response {
+    page(
+        "Case counts",
+        "<h1>Case counts</h1>\n<p id=\"state\">Loaded.</p>",
+    )
+    .into_response()
+}
+
+/// `op: "count"` answers how many rows are of the body's status, the key of
+/// the first, empty when there is none, and every key; `op: "archive"`
+/// archives the first of them. Anything else is refused and changes
+/// nothing; every body is counted.
+async fn rows_count(State(state): State<AppState>, body: axum::body::Bytes) -> Response {
+    let mut inner = state.lock().await;
+    let Ok(asked) = serde_json::from_slice::<RowsAsked>(&body) else {
+        inner.case_rows.heard("unreadable");
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "bad_body"})),
+        )
+            .into_response();
+    };
+    inner.case_rows.heard(&asked.op);
+    let rows = &mut inner.case_rows.rows;
+    match asked.op.as_str() {
+        "count" => {
+            let cases: Vec<&str> = rows
+                .iter()
+                .filter(|row| row.status == asked.status)
+                .map(|row| row.case_id.as_str())
+                .collect();
+            axum::Json(json!({
+                "count": cases.len(),
+                "first": cases.first().copied().unwrap_or_default(),
+                "cases": cases,
+            }))
+            .into_response()
+        }
+        "archive" => {
+            if let Some(row) = rows.iter_mut().find(|row| row.status == asked.status) {
+                row.status = "archived".to_owned();
+            }
+            axum::Json(json!({"count": 0, "first": "", "cases": []})).into_response()
+        }
         _ => (
             axum::http::StatusCode::BAD_REQUEST,
             axum::Json(json!({"error": "unknown_op"})),

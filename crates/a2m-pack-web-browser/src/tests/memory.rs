@@ -166,3 +166,88 @@ async fn a_browser_past_its_memory_limit_is_replaced_between_two_runs_and_never_
     drop((tab, browser));
     stand.end().await;
 }
+
+/// Sends a signal to a process from outside, as the system's own command
+/// does.
+#[cfg(unix)]
+fn signal(process: u32, which: &str) {
+    let done = std::process::Command::new("kill")
+        .args([which, &process.to_string()])
+        .output()
+        .unwrap();
+    assert!(done.status.success(), "kill {which} {process}: {done:?}");
+}
+
+/// A window's browser whose every handle is gone ends by itself, and while
+/// it ends it may not answer: that is no stop of another run's memory
+/// check. A browser that cannot be measured and is not ending still stops
+/// it (decisions 0425 and 0487). The window's browser is stopped from
+/// outside, so that it neither answers nor ends while the test looks; a
+/// Unix signal does that, and the rule tested is the same on every system.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_window_ending_by_itself_does_not_stop_another_runs_memory_check_and_a_browser_that_cannot_be_measured_still_does()
+ {
+    let Some(screen) = super::window::screen() else {
+        return;
+    };
+    let settings = BrowserSettings {
+        hang_probe: Duration::from_millis(500),
+        ..screen.settings()
+    };
+    let stand = Stand::new("memory-going", settings, &[]);
+    let watcher = profile("watcher");
+    let clerk = profile("clerk");
+    let window = must(
+        stand
+            .browsers
+            .open(
+                &watcher,
+                Visibility::Window {
+                    notice: "Watching example (test) for <the person>".to_owned(),
+                },
+            )
+            .await,
+    );
+    let process = stand
+        .supervisor
+        .list()
+        .iter()
+        .find(|running| running.id == window.subsystem())
+        .unwrap()
+        .process;
+    signal(process, "-STOP");
+
+    // While its handle is held, the window's browser is one that cannot be
+    // measured: another run's open starts nothing.
+    let refused = stand
+        .browsers
+        .open(&clerk, Visibility::Background)
+        .await
+        .unwrap_err();
+    assert_eq!(refused.failure().unwrap().code(), &codes::MEMORY_SHORT);
+    assert!(
+        matches!(
+            &refused,
+            BrowserError::LaunchFailed(LaunchReason::MemoryShort(short)) if short.held.is_none()
+        ),
+        "{refused}"
+    );
+
+    // Its last handle goes, with its notice: the browser has no window
+    // left and is ending. Another run's open goes, though the browser that
+    // ends still does not answer.
+    drop(window);
+    let browser = stand.open(&clerk).await;
+    let listing = stand.browsers.list();
+    assert!(
+        listing
+            .iter()
+            .any(|open| open.profile == clerk && open.subsystem == browser.subsystem()),
+        "{listing:?}"
+    );
+
+    signal(process, "-CONT");
+    drop(browser);
+    stand.end().await;
+}

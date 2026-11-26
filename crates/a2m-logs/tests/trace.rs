@@ -23,8 +23,9 @@ use a2m_core::{
 use a2m_logs::{
     Acting, CaptureKind, CaptureLevel, CaptureOutcome, CapturePoint, CaptureRef, ChoiceReason,
     Detail, DropReason, FREE_TEXT_LIMIT, FinishedTrace, Held, Locating, LogLevel, LogsAndTraces,
-    ManualClock, MaskReport, OfferedCapture, PassStart, Phase, StepLine, StepRecord, TRACE_SCHEMA,
-    TraceBuilder, TraceIdentity, TraceLine, TraceOutcome, TracedValue, read_trace,
+    ManualClock, Mark, MaskReport, OfferedCapture, PassStart, Phase, StepLine, StepRecord,
+    TRACE_SCHEMA, TimeMarks, TraceBuilder, TraceCheck, TraceIdentity, TraceLine, TraceOutcome,
+    TracedValue, check_trace, read_trace,
 };
 
 use common::{Planted, TestKey};
@@ -403,6 +404,79 @@ fn a_trace_reads_back_as_its_lines() {
     assert_eq!(failure.class(), FailureClass::Input);
     assert_eq!(failure.code(), &FailureCode::SCHEMA_INVALID);
     assert!(failure.message().contains("Line 1"), "{failure}");
+}
+
+/// The time marks of an attempt are written in the end line, in the
+/// schema's order, read back, and never enter the signature: two runs whose
+/// marks differ have one signature, and a trace written before the marks
+/// were added still reads, and checks whole (decision 0481).
+#[test]
+fn the_time_marks_are_in_the_end_line_and_not_in_the_signature() {
+    let marked = |run: u8, marks: TimeMarks| {
+        let mut builder = builder(run, CaptureLevel::Standard, Arc::new(NoSecrets));
+        for step in steps(run) {
+            builder.record(step);
+        }
+        builder.mark(marks);
+        builder.finish().unwrap()
+    };
+    let marks = TimeMarks {
+        run_us: 4_200,
+        policy: Mark {
+            calls: 1,
+            took_us: 40,
+        },
+        scheduling: Mark::default(),
+        session: Mark {
+            calls: 1,
+            took_us: 7,
+        },
+        ledger: Mark {
+            calls: 6,
+            took_us: 900,
+        },
+        loading: Mark {
+            calls: 1,
+            took_us: 12,
+        },
+    };
+    let trace = marked(1, marks);
+    assert_eq!(trace.signature, simulated(1).signature);
+    assert_eq!(trace.signature.to_string(), SIGNATURE);
+    let other = TimeMarks {
+        run_us: 99_000,
+        ..TimeMarks::default()
+    };
+    assert_eq!(marked(1, other).signature, trace.signature);
+    assert_eq!(marks.policy_scheduling_and_ledger_us(), 940);
+
+    // The end line, byte for byte: a part with no call is left out.
+    let last = text(&trace).lines().last().unwrap().to_owned();
+    assert_eq!(
+        last,
+        format!(
+            "{{\"type\":\"end\",\"records\":4,\"kept\":4,\"signature\":\"{}\",\
+             \"marks\":{{\"run_us\":4200,\"policy\":{{\"calls\":1,\"took_us\":40}},\
+             \"session\":{{\"calls\":1,\"took_us\":7}},\
+             \"ledger\":{{\"calls\":6,\"took_us\":900}},\
+             \"loading\":{{\"calls\":1,\"took_us\":12}}}}}}",
+            trace.signature
+        )
+    );
+    let lines = read_trace(&trace.bytes).unwrap();
+    assert_eq!(check_trace(&lines), TraceCheck::Whole);
+    let Some(TraceLine::End(end)) = lines.last() else {
+        panic!("the last line is the end");
+    };
+    assert_eq!(end.marks, Some(marks));
+
+    // A trace with no marks, as every trace before them was, reads with none.
+    let unmarked = read_trace(&simulated(1).bytes).unwrap();
+    let Some(TraceLine::End(end)) = unmarked.last() else {
+        panic!("the last line is the end");
+    };
+    assert_eq!(end.marks, None);
+    assert!(!text(&simulated(1)).contains("marks"));
 }
 
 #[test]

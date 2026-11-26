@@ -2,8 +2,9 @@
 //! screens, capture of exchanges, and endpoint inference.
 //!
 //! The crate looks at a web application through a browser the engine owns
-//! and returns findings. It registers discoverers and a describer only:
-//! no driver, no mode, no file kind. It cannot write, and the way it is
+//! and returns findings. It registers discoverers, a describer, and the
+//! repair proposer of its `screen` findings (decision 0492), and nothing
+//! else: no driver, no mode, no file kind. It cannot write, and the way it is
 //! built makes sure of that: it holds an observer of the base, which opens
 //! tabs that look and nothing else; the browser fails every request of a
 //! page that is not a read; and a link that looks like an action is not
@@ -35,6 +36,7 @@ mod describe;
 mod discover;
 mod infer;
 mod look;
+mod repair;
 mod screen;
 mod shape;
 mod watch;
@@ -44,7 +46,7 @@ mod tests;
 
 use std::sync::Arc;
 
-use a2m_core::{Failure, Value};
+use a2m_core::{Failure, FindingKind, Value};
 use a2m_pack_web_browser::{BrowserSettings, SharedBrowsers};
 use a2m_provider::{DiscovererName, Pack, PackContext, Registrar, RegistryBuilder};
 
@@ -78,6 +80,9 @@ pub const WEB_AUTH: &str = "web_auth";
 /// The discoverer a person drives: what their own use of the surface
 /// shows, in a watching tab (decision 0392).
 pub const WEB_USE: &str = "web_use";
+/// The finding kind of a snapshot of a screen, whose repair proposer the
+/// pack registers.
+pub const SCREEN_FINDING: &str = "screen";
 
 /// The most pages one discovery looks at, unless a setting says
 /// otherwise.
@@ -168,6 +173,13 @@ impl Pack for WebProbePack {
         to.discoverer(
             Arc::new(watch::WebUse(parts, DiscovererName::new(WEB_USE)?)),
             Arc::new(describe::WebDescriber),
+        )?;
+        // What proposes a repair of a screen from two of its snapshots
+        // (decision 0492). It reads the drafts' screen models as text, and
+        // reaches nothing.
+        to.repair_proposer(
+            FindingKind::new(SCREEN_FINDING)?,
+            Arc::new(repair::ScreenRepair),
         )?;
         Ok(())
     }
